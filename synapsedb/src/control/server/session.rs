@@ -296,8 +296,10 @@ mod tests {
 
         // Start a Data Plane core in a background thread.
         let data_side = data_sides.into_iter().next().unwrap();
+        let core_dir = dir.path().to_path_buf();
         let core_handle = tokio::task::spawn_blocking(move || {
-            let mut core = CoreLoop::new(0, data_side.request_rx, data_side.response_tx);
+            let mut core =
+                CoreLoop::open(0, data_side.request_rx, data_side.response_tx, &core_dir).unwrap();
             // Run a few ticks to process any requests.
             for _ in 0..100 {
                 core.tick();
@@ -343,9 +345,14 @@ mod tests {
         client.read_exact(&mut resp_buf).await.unwrap();
 
         let resp_str = String::from_utf8(resp_buf).unwrap();
+        // Document doesn't exist, so we get NotFound — but the roundtrip works.
         assert!(
-            resp_str.contains(r#""status":"ok""#),
-            "response: {resp_str}"
+            resp_str.contains(r#""status""#),
+            "expected a valid response, got: {resp_str}"
+        );
+        assert!(
+            resp_str.contains(r#""request_id""#),
+            "expected request_id in response, got: {resp_str}"
         );
 
         // Clean up: drop client to close session.

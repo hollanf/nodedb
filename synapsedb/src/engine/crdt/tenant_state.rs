@@ -50,7 +50,7 @@ impl TenantCrdtEngine {
     /// This is called AFTER Raft consensus — the delta has been committed
     /// to the Raft log and now needs to be applied to the local state.
     pub fn apply_committed_delta(&self, delta: &[u8]) -> crate::Result<()> {
-        self.state.import(delta).map_err(|e| crate::Error::Crdt(e))
+        self.state.import(delta).map_err(crate::Error::Crdt)
     }
 
     /// Validate and attempt to apply a delta from a peer.

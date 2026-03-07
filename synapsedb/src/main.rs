@@ -58,10 +58,17 @@ async fn main() -> anyhow::Result<()> {
     // Start Data Plane cores on dedicated OS threads (thread-per-core).
     let mut core_handles = Vec::with_capacity(num_cores);
     for (core_id, data_side) in data_sides.into_iter().enumerate() {
+        let data_dir = config.data_dir.clone();
         let handle = std::thread::Builder::new()
             .name(format!("data-core-{core_id}"))
             .spawn(move || {
-                let mut core = CoreLoop::new(core_id, data_side.request_rx, data_side.response_tx);
+                let mut core = CoreLoop::open(
+                    core_id,
+                    data_side.request_rx,
+                    data_side.response_tx,
+                    &data_dir,
+                )
+                .expect("failed to open CoreLoop engines");
                 info!(core_id, "data plane core started");
 
                 // Event loop: drain SPSC, execute tasks, yield when idle.
