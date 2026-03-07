@@ -44,6 +44,9 @@ nexar = { workspace = true }
 # CRDTs (needed for LoroValue in engine layer)
 loro = { workspace = true }
 
+# System calls (eventfd for TPC wake)
+libc = { workspace = true }
+
 # Query engine (Control Plane SQL/DSL planning)
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }

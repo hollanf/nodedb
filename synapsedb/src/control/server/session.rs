@@ -227,6 +227,22 @@ impl Session {
                     peer_id,
                 }
             }
+            "alter_collection_policy" => {
+                let policy = &body["policy"];
+                if policy.is_null() {
+                    return Err(crate::Error::BadRequest {
+                        detail: "missing 'policy' field".into(),
+                    });
+                }
+                let policy_json =
+                    serde_json::to_string(policy).map_err(|e| crate::Error::BadRequest {
+                        detail: format!("invalid policy JSON: {e}"),
+                    })?;
+                PhysicalPlan::SetCollectionPolicy {
+                    collection,
+                    policy_json,
+                }
+            }
             _ => {
                 return Err(crate::Error::BadRequest {
                     detail: format!("unknown op: {op}"),
@@ -320,8 +336,8 @@ mod tests {
         let core_handle = tokio::task::spawn_blocking(move || {
             let mut core =
                 CoreLoop::open(0, data_side.request_rx, data_side.response_tx, &core_dir).unwrap();
-            // Run a few ticks to process any requests.
-            for _ in 0..100 {
+            // Run ticks for up to 5 seconds to process any requests.
+            for _ in 0..5000 {
                 core.tick();
                 std::thread::sleep(Duration::from_millis(1));
             }
@@ -330,7 +346,7 @@ mod tests {
         // Start response poller.
         let shared_poller = Arc::clone(&shared);
         let poller_handle = tokio::spawn(async move {
-            for _ in 0..100 {
+            for _ in 0..5000 {
                 shared_poller.poll_and_route_responses();
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }

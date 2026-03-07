@@ -441,6 +441,27 @@ impl CoreLoop {
                 depth,
             } => self.execute_graph_subgraph(task, start_nodes, edge_label, *depth),
 
+            PhysicalPlan::SetCollectionPolicy {
+                collection,
+                policy_json,
+            } => {
+                debug!(core = self.core_id, %collection, "set collection policy");
+                let tenant_id = task.request.tenant_id;
+                let engine = self.get_crdt_engine(tenant_id);
+                match engine.set_collection_policy(collection, policy_json) {
+                    Ok(()) => self.response_ok(task),
+                    Err(e) => {
+                        warn!(core = self.core_id, error = %e, "set collection policy failed");
+                        self.response_error(
+                            task,
+                            ErrorCode::Internal {
+                                detail: e.to_string(),
+                            },
+                        )
+                    }
+                }
+            }
+
             PhysicalPlan::WalAppend { payload } => {
                 debug!(core = self.core_id, len = payload.len(), "wal append");
                 self.response_ok(task)

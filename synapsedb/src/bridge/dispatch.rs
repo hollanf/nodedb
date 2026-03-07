@@ -5,6 +5,7 @@ use synapsedb_bridge::buffer::{Consumer, Producer, RingBuffer};
 
 use crate::bridge::envelope;
 use crate::control::router::vshard::VShardRouter;
+use crate::data::eventfd::EventFdNotifier;
 
 /// Serialized form of a request that goes through the SPSC ring buffer.
 ///
@@ -34,6 +35,10 @@ pub struct CoreChannel {
 
     /// Backpressure controller for the request queue.
     pub backpressure: BackpressureController,
+
+    /// Eventfd notifier to wake the Data Plane core after pushing a request.
+    /// `None` until `set_notifier` is called (after core thread startup).
+    pub wake_notifier: Option<EventFdNotifier>,
 }
 
 /// Data Plane side of a core's channel pair.
@@ -75,6 +80,7 @@ impl Dispatcher {
                 request_tx: req_tx,
                 response_rx: resp_rx,
                 backpressure: BackpressureController::new(BackpressureConfig::default()),
+                wake_notifier: None,
             });
 
             data_sides.push(CoreChannelDataSide {
@@ -120,6 +126,11 @@ impl Dispatcher {
                 detail: format!("core {core_id}: {e}"),
             })?;
 
+        // Wake the Data Plane core via eventfd.
+        if let Some(ref notifier) = channel.wake_notifier {
+            notifier.notify();
+        }
+
         Ok(())
     }
 
@@ -141,6 +152,15 @@ impl Dispatcher {
     /// Number of Data Plane cores.
     pub fn num_cores(&self) -> usize {
         self.cores.len()
+    }
+
+    /// Set the eventfd notifier for a specific core.
+    ///
+    /// Called after `spawn_core` returns the `EventFdNotifier`.
+    pub fn set_notifier(&mut self, core_id: usize, notifier: EventFdNotifier) {
+        if let Some(channel) = self.cores.get_mut(core_id) {
+            channel.wake_notifier = Some(notifier);
+        }
     }
 
     /// Router reference for vShard lookups.

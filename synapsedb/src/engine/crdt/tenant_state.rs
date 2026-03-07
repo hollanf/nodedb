@@ -1,6 +1,7 @@
 use loro::LoroValue;
 
 use synapsedb_crdt::constraint::ConstraintSet;
+use synapsedb_crdt::policy::CollectionPolicy;
 use synapsedb_crdt::pre_validate::{self, PreValidationResult};
 use synapsedb_crdt::state::CrdtState;
 use synapsedb_crdt::validator::{ProposedChange, Validator};
@@ -17,8 +18,8 @@ pub struct TenantCrdtEngine {
     /// Leader's committed CRDT state for this tenant.
     state: CrdtState,
 
-    /// Constraint validator with DLQ.
-    validator: Validator,
+    /// Constraint validator with DLQ and policy registry.
+    pub(crate) validator: Validator,
 }
 
 impl TenantCrdtEngine {
@@ -102,6 +103,79 @@ impl TenantCrdtEngine {
     pub fn tenant_id(&self) -> TenantId {
         self.tenant_id
     }
+
+    /// Set conflict resolution policy for a collection from JSON.
+    ///
+    /// Called when the Data Plane receives a `SetCollectionPolicy` physical plan
+    /// from the `ALTER COLLECTION ... SET ON CONFLICT ...` DDL.
+    pub fn set_collection_policy(
+        &mut self,
+        collection: &str,
+        policy_json: &str,
+    ) -> crate::Result<()> {
+        let policy: CollectionPolicy =
+            serde_json::from_str(policy_json).map_err(|e| crate::Error::BadRequest {
+                detail: format!("invalid collection policy JSON: {e}"),
+            })?;
+        Self::validate_policy(&policy)?;
+        self.validator.policies_mut().set(collection, policy);
+        Ok(())
+    }
+
+    /// Validate business rules on a collection policy before accepting it.
+    fn validate_policy(policy: &CollectionPolicy) -> crate::Result<()> {
+        Self::validate_conflict_policy(&policy.unique, "unique")?;
+        Self::validate_conflict_policy(&policy.foreign_key, "foreign_key")?;
+        Self::validate_conflict_policy(&policy.not_null, "not_null")?;
+        Self::validate_conflict_policy(&policy.check, "check")?;
+        Ok(())
+    }
+
+    fn validate_conflict_policy(
+        policy: &synapsedb_crdt::policy::ConflictPolicy,
+        field_name: &str,
+    ) -> crate::Result<()> {
+        use synapsedb_crdt::policy::ConflictPolicy;
+        match policy {
+            ConflictPolicy::CascadeDefer {
+                max_retries,
+                ttl_secs,
+            } => {
+                if *max_retries == 0 {
+                    return Err(crate::Error::BadRequest {
+                        detail: format!("{field_name}: max_retries must be > 0"),
+                    });
+                }
+                if *ttl_secs == 0 {
+                    return Err(crate::Error::BadRequest {
+                        detail: format!("{field_name}: ttl_secs must be > 0"),
+                    });
+                }
+            }
+            ConflictPolicy::Custom {
+                webhook_url,
+                timeout_secs,
+            } => {
+                if webhook_url.is_empty() {
+                    return Err(crate::Error::BadRequest {
+                        detail: format!("{field_name}: webhook_url must not be empty"),
+                    });
+                }
+                if !webhook_url.starts_with("http://") && !webhook_url.starts_with("https://") {
+                    return Err(crate::Error::BadRequest {
+                        detail: format!("{field_name}: webhook_url must be an HTTP(S) URL"),
+                    });
+                }
+                if *timeout_secs == 0 {
+                    return Err(crate::Error::BadRequest {
+                        detail: format!("{field_name}: timeout_secs must be > 0"),
+                    });
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -142,6 +216,11 @@ mod tests {
     #[test]
     fn constraint_violation_routes_to_dlq() {
         let mut engine = TenantCrdtEngine::new(TenantId::new(1), 0, test_constraints());
+        // Use strict policy so violations escalate to DLQ instead of auto-resolving.
+        engine
+            .validator
+            .policies_mut()
+            .set("users", CollectionPolicy::strict());
 
         // Missing "name" field violates NOT NULL.
         let change = ProposedChange {
@@ -179,6 +258,11 @@ mod tests {
     #[test]
     fn unique_violation_after_first_write() {
         let mut engine = TenantCrdtEngine::new(TenantId::new(1), 0, test_constraints());
+        // Strict mode: UNIQUE violations escalate to DLQ.
+        engine
+            .validator
+            .policies_mut()
+            .set("users", CollectionPolicy::strict());
 
         let first = ProposedChange {
             collection: "users".into(),

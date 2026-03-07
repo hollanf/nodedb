@@ -174,6 +174,16 @@ pub enum PhysicalPlan {
     /// WAL append (write path).
     WalAppend { payload: Vec<u8> },
 
+    /// Set conflict resolution policy for a CRDT collection (DDL).
+    ///
+    /// Parsed from `ALTER COLLECTION <name> SET ON CONFLICT <policy>`.
+    /// The Data Plane updates its per-tenant PolicyRegistry.
+    SetCollectionPolicy {
+        collection: String,
+        /// JSON-serialized `CollectionPolicy` from synapsedb-crdt.
+        policy_json: String,
+    },
+
     /// Cancellation signal. Data Plane MUST stop the target request at next safe point.
     Cancel { target_request_id: RequestId },
 }
