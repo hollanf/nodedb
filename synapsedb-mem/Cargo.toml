@@ -1,0 +1,18 @@
+[package]
+name = "synapsedb-mem"
+description = "Global NUMA-aware memory governor preventing subsystem OOM and cache cannibalization"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tikv-jemallocator = { workspace = true }
+tikv-jemalloc-ctl = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+fluxbench = { workspace = true }
+tracing-subscriber = { workspace = true }

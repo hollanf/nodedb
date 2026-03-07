@@ -1,0 +1,39 @@
+[workspace]
+members = ["synapsedb-bridge", "synapsedb-wal", "synapsedb-mem"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# Foundation crates (internal)
+synapsedb-bridge = { path = "synapsedb-bridge" }
+synapsedb-wal = { path = "synapsedb-wal" }
+synapsedb-mem = { path = "synapsedb-mem" }
+
+# Async runtimes
+tokio = { version = "1", features = ["full"] }
+
+# Error handling & diagnostics
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+
+# Memory
+tikv-jemallocator = "0.6"
+tikv-jemalloc-ctl = { version = "0.6", features = ["stats"] }
+
+# System
+libc = "0.2"
+
+# Checksums
+crc32c = "0.6"
+
+# Benchmarking
+fluxbench = "0.1"
