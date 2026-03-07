@@ -1,0 +1,16 @@
+[package]
+name = "synapsedb-crdt"
+description = "CRDT engine with SQL constraint validation and dead-letter queue"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+loro = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
