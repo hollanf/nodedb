@@ -15,6 +15,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tikv-jemallocator = { workspace = true }
 tikv-jemalloc-ctl = { workspace = true }
+libc = { workspace = true }
 datafusion-common = { workspace = true, optional = true }
 datafusion-execution = { workspace = true, optional = true }
 
@@ -24,3 +25,4 @@ fluxbench = { workspace = true }
 tracing-subscriber = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-execution = { workspace = true }
+tempfile = "3"

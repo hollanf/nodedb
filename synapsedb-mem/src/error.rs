@@ -33,6 +33,10 @@ pub enum MemError {
     /// jemalloc introspection error.
     #[error("jemalloc error: {0}")]
     Jemalloc(String),
+
+    /// Overflow region error (mmap, I/O, or capacity).
+    #[error("overflow region error: {0}")]
+    Overflow(String),
 }
 
 pub type Result<T> = std::result::Result<T, MemError>;

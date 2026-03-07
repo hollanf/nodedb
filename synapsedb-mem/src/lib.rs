@@ -39,7 +39,9 @@ pub mod engine;
 pub mod error;
 pub mod governor;
 pub mod metrics;
+pub mod overflow;
 pub mod pressure;
+pub mod spill;
 
 pub use budget::Budget;
 #[cfg(feature = "datafusion")]
@@ -47,4 +49,6 @@ pub use datafusion_pool::GovernedMemoryPool;
 pub use engine::EngineId;
 pub use error::{MemError, Result};
 pub use governor::MemoryGovernor;
+pub use overflow::OverflowRegion;
 pub use pressure::{PressureLevel, PressureThresholds};
+pub use spill::{SpillAction, SpillConfig, SpillController};
