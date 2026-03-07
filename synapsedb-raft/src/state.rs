@@ -30,7 +30,7 @@ pub enum NodeRole {
     Follower,
     Candidate,
     Leader,
-    /// Non-voting member catching up (TDD §16.2: new node joins as learner first).
+    /// Non-voting member catching up : new node joins as learner first).
     Learner,
 }
 

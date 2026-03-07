@@ -54,6 +54,9 @@ pub struct Ready {
     pub vote_requests: Vec<(u64, RequestVoteRequest)>,
     /// Newly committed entries to apply to the state machine.
     pub committed_entries: Vec<LogEntry>,
+    /// Peers that need an InstallSnapshot RPC because their next_index
+    /// falls behind the leader's snapshot_index (log compacted).
+    pub snapshots_needed: Vec<u64>,
 }
 
 impl Ready {
@@ -62,6 +65,7 @@ impl Ready {
             && self.messages.is_empty()
             && self.vote_requests.is_empty()
             && self.committed_entries.is_empty()
+            && self.snapshots_needed.is_empty()
     }
 }
 
@@ -172,7 +176,7 @@ impl<S: LogStorage> RaftNode<S> {
             }
             NodeRole::Leader => {
                 if now >= self.heartbeat_deadline {
-                    self.send_heartbeats();
+                    self.replicate_to_all();
                     self.heartbeat_deadline = now + self.config.heartbeat_interval;
                 }
             }
@@ -203,7 +207,7 @@ impl<S: LogStorage> RaftNode<S> {
 
         self.log.append(entry)?;
 
-        // Immediately replicate to all peers.
+        // Replicate to all peers.
         self.replicate_to_all();
 
         // Single-node cluster: commit immediately.
@@ -334,10 +338,10 @@ impl<S: LogStorage> RaftNode<S> {
             return;
         }
 
-        let leader = self
-            .leader_state
-            .as_mut()
-            .expect("leader must have leader_state");
+        let leader = match self.leader_state.as_mut() {
+            Some(ls) => ls,
+            None => return,
+        };
 
         if resp.success {
             // Update match_index and next_index.
@@ -470,10 +474,10 @@ impl<S: LogStorage> RaftNode<S> {
         }
 
         // Send initial heartbeats (with the no-op).
-        self.send_heartbeats();
+        self.replicate_to_all();
     }
 
-    fn send_heartbeats(&mut self) {
+    fn replicate_to_all(&mut self) {
         let peers: Vec<u64> = self.config.peers.clone();
         for peer in peers {
             self.send_append_entries(peer);
@@ -488,14 +492,46 @@ impl<S: LogStorage> RaftNode<S> {
 
         let next_index = leader.next_index_for(peer);
         let prev_log_index = next_index.saturating_sub(1);
-        let prev_log_term = self.log.term_at(prev_log_index).unwrap_or(0);
 
-        // Gather entries to send.
+        // If prev_log_index falls in the compacted range, we cannot
+        // construct a valid AppendEntries — the follower needs a snapshot.
+        let prev_log_term = match self.log.term_at(prev_log_index) {
+            Some(term) => term,
+            None => {
+                // Term unavailable: index is compacted. Signal that this
+                // peer needs an InstallSnapshot (handled by the caller
+                // via Ready::snapshots_needed).
+                debug!(
+                    node = self.config.node_id,
+                    group = self.config.group_id,
+                    peer,
+                    next_index,
+                    snapshot_index = self.log.snapshot_index(),
+                    "peer needs snapshot (log compacted)"
+                );
+                self.ready.snapshots_needed.push(peer);
+                return;
+            }
+        };
+
+        // Gather entries to send. If the range is compacted, the follower
+        // needs a snapshot instead.
         let entries = if next_index <= self.log.last_index() {
-            self.log
-                .entries_range(next_index, self.log.last_index())
-                .unwrap_or(&[])
-                .to_vec()
+            match self.log.entries_range(next_index, self.log.last_index()) {
+                Ok(slice) => slice.to_vec(),
+                Err(RaftError::LogCompacted { .. }) => {
+                    debug!(
+                        node = self.config.node_id,
+                        group = self.config.group_id,
+                        peer,
+                        next_index,
+                        "peer needs snapshot (entries compacted)"
+                    );
+                    self.ready.snapshots_needed.push(peer);
+                    return;
+                }
+                Err(_) => vec![],
+            }
         } else {
             vec![]
         };
@@ -512,13 +548,6 @@ impl<S: LogStorage> RaftNode<S> {
                 group_id: self.config.group_id,
             },
         ));
-    }
-
-    fn replicate_to_all(&mut self) {
-        let peers: Vec<u64> = self.config.peers.clone();
-        for peer in peers {
-            self.send_append_entries(peer);
-        }
     }
 
     /// Try to advance commit_index based on match_index quorum.
@@ -839,6 +868,44 @@ mod tests {
         let node = &mut RaftNode::new(config, MemStorage::new());
         let err = node.propose(b"data".to_vec()).unwrap_err();
         assert!(matches!(err, RaftError::NotLeader { .. }));
+    }
+
+    #[test]
+    fn snapshot_needed_after_compaction() {
+        let config = test_config(1, vec![2, 3]);
+        let mut node = RaftNode::new(config, MemStorage::new());
+
+        // Make leader.
+        node.election_deadline = Instant::now() - Duration::from_millis(1);
+        node.tick();
+        let _ready = node.take_ready();
+        let resp = RequestVoteResponse {
+            term: 1,
+            vote_granted: true,
+        };
+        node.handle_request_vote_response(2, &resp);
+        assert_eq!(node.role(), NodeRole::Leader);
+        let _ = node.take_ready(); // drain initial heartbeats
+
+        // Append entries 2..10 (index 1 is the no-op).
+        for i in 0..9 {
+            node.propose(vec![i]).unwrap();
+        }
+        let _ = node.take_ready(); // drain messages
+
+        // Compact log up to index 8.
+        node.log.apply_snapshot(8, 1);
+
+        // Now try to replicate to peer 2 whose next_index is 1 (behind snapshot).
+        // The leader should detect this and signal snapshots_needed.
+        node.replicate_to_all();
+        let ready = node.take_ready();
+
+        // Peer 2 and 3 should both need snapshots (their next_index is behind snapshot_index=8).
+        assert!(
+            !ready.snapshots_needed.is_empty(),
+            "expected snapshots_needed to be non-empty"
+        );
     }
 
     #[test]
