@@ -11,7 +11,7 @@ use tracing_subscriber::EnvFilter;
 use synapsedb::ServerConfig;
 use synapsedb::bridge::dispatch::Dispatcher;
 use synapsedb::control::state::SharedState;
-use synapsedb::data::executor::core_loop::CoreLoop;
+use synapsedb::data::runtime::spawn_core;
 use synapsedb::wal::WalManager;
 
 #[tokio::main]
@@ -50,40 +50,32 @@ async fn main() -> anyhow::Result<()> {
 
     // Create SPSC bridge: Dispatcher (Control Plane) + CoreChannelDataSide (Data Plane).
     let num_cores = config.data_plane_cores;
-    let (dispatcher, data_sides) = Dispatcher::new(num_cores, 1024);
-
-    // Create shared state.
-    let shared = SharedState::new(dispatcher, Arc::clone(&wal));
+    let (mut dispatcher, data_sides) = Dispatcher::new(num_cores, 1024);
 
     // Start Data Plane cores on dedicated OS threads (thread-per-core).
+    // Each core gets: jemalloc arena pinning + eventfd-driven wake.
     let mut core_handles = Vec::with_capacity(num_cores);
+    let mut notifiers = Vec::with_capacity(num_cores);
     for (core_id, data_side) in data_sides.into_iter().enumerate() {
-        let data_dir = config.data_dir.clone();
-        let handle = std::thread::Builder::new()
-            .name(format!("data-core-{core_id}"))
-            .spawn(move || {
-                let mut core = CoreLoop::open(
-                    core_id,
-                    data_side.request_rx,
-                    data_side.response_tx,
-                    &data_dir,
-                )
-                .expect("failed to open CoreLoop engines");
-                info!(core_id, "data plane core started");
-
-                // Event loop: drain SPSC, execute tasks, yield when idle.
-                loop {
-                    let processed = core.tick();
-                    if processed == 0 {
-                        // No work — yield briefly to avoid busy-spinning.
-                        std::thread::sleep(Duration::from_micros(50));
-                    }
-                }
-            })?;
+        let (handle, notifier) = spawn_core(
+            core_id,
+            data_side.request_rx,
+            data_side.response_tx,
+            &config.data_dir,
+        )?;
         core_handles.push(handle);
+        notifiers.push((core_id, notifier));
     }
 
-    info!(num_cores, "data plane cores running");
+    // Wire notifiers into the dispatcher so it signals cores after pushing requests.
+    for (core_id, notifier) in &notifiers {
+        dispatcher.set_notifier(*core_id, *notifier);
+    }
+
+    info!(num_cores, "data plane cores running (eventfd-driven)");
+
+    // Create shared state (must happen after notifiers are wired).
+    let shared = SharedState::new(dispatcher, Arc::clone(&wal));
 
     // Start response poller: routes Data Plane responses to waiting sessions.
     let shared_poller = Arc::clone(&shared);
