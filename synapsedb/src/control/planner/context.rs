@@ -24,6 +24,13 @@ impl QueryContext {
 
         let session = SessionContext::new_with_config(config);
 
+        // Register all SynapseDB JSON UDFs.
+        use super::udf::{DocArrayContains, DocExists, DocGet};
+        use datafusion::logical_expr::ScalarUDF;
+        session.register_udf(ScalarUDF::new_from_impl(DocGet::new()));
+        session.register_udf(ScalarUDF::new_from_impl(DocExists::new()));
+        session.register_udf(ScalarUDF::new_from_impl(DocArrayContains::new()));
+
         Self {
             session,
             converter: PlanConverter::new(),
