@@ -1,5 +1,5 @@
 [workspace]
-members = ["synapsedb", "synapsedb-bridge", "synapsedb-wal", "synapsedb-mem", "synapsedb-crdt", "synapsedb-raft", "synapsedb-cluster"]
+members = ["nodedb", "nodedb-bridge", "nodedb-wal", "nodedb-mem", "nodedb-crdt", "nodedb-raft", "nodedb-cluster"]
 resolver = "2"
 
 [workspace.package]
@@ -10,12 +10,12 @@ license = "BUSL-1.1"
 
 [workspace.dependencies]
 # Foundation crates (internal)
-synapsedb-bridge = { path = "synapsedb-bridge" }
-synapsedb-wal = { path = "synapsedb-wal" }
-synapsedb-mem = { path = "synapsedb-mem" }
-synapsedb-crdt = { path = "synapsedb-crdt" }
-synapsedb-raft = { path = "synapsedb-raft" }
-synapsedb-cluster = { path = "synapsedb-cluster" }
+nodedb-bridge = { path = "nodedb-bridge" }
+nodedb-wal = { path = "nodedb-wal" }
+nodedb-mem = { path = "nodedb-mem" }
+nodedb-crdt = { path = "nodedb-crdt" }
+nodedb-raft = { path = "nodedb-raft" }
+nodedb-cluster = { path = "nodedb-cluster" }
 
 # Async runtimes
 tokio = { version = "1", features = ["full"] }
