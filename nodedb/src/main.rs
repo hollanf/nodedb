@@ -77,6 +77,28 @@ async fn main() -> anyhow::Result<()> {
     // Create shared state (must happen after notifiers are wired).
     let shared = SharedState::new(dispatcher, Arc::clone(&wal));
 
+    // Bootstrap credentials.
+    let auth_mode = config.auth.mode.clone();
+    match config.auth.resolve_superuser_password() {
+        Ok(Some(password)) => {
+            shared
+                .credentials
+                .bootstrap_superuser(&config.auth.superuser_name, &password)?;
+            info!(
+                user = config.auth.superuser_name,
+                mode = ?auth_mode,
+                "superuser bootstrapped"
+            );
+        }
+        Ok(None) => {
+            // Trust mode — no credentials needed.
+            info!(mode = ?auth_mode, "auth mode: trust (no authentication)");
+        }
+        Err(e) => {
+            return Err(e.into());
+        }
+    }
+
     // Start response poller: routes Data Plane responses to waiting sessions.
     let shared_poller = Arc::clone(&shared);
     tokio::spawn(async move {
@@ -88,7 +110,10 @@ async fn main() -> anyhow::Result<()> {
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
+    // Bind both listeners before starting accept loops.
     let listener = nodedb::control::server::listener::Listener::bind(config.listen).await?;
+    let pg_listener =
+        nodedb::control::server::pgwire::listener::PgListener::bind(config.pg_listen).await?;
 
     // Handle Ctrl+C.
     tokio::spawn(async move {
@@ -97,6 +122,16 @@ async fn main() -> anyhow::Result<()> {
         let _ = shutdown_tx.send(true);
     });
 
+    // Run pgwire listener in a separate task.
+    let shared_pg = Arc::clone(&shared);
+    let shutdown_rx_pg = shutdown_rx.clone();
+    tokio::spawn(async move {
+        if let Err(e) = pg_listener.run(shared_pg, auth_mode, shutdown_rx_pg).await {
+            tracing::error!(error = %e, "pgwire listener failed");
+        }
+    });
+
+    // Run native listener on main task.
     listener.run(shared, shutdown_rx).await?;
 
     Ok(())

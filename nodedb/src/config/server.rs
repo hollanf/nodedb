@@ -6,8 +6,12 @@ use serde::{Deserialize, Serialize};
 /// Top-level server configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
-    /// Address to bind the client-facing listener.
+    /// Address to bind the native wire protocol listener.
     pub listen: SocketAddr,
+
+    /// Address to bind the PostgreSQL wire protocol listener.
+    /// Defaults to 127.0.0.1:5432.
+    pub pg_listen: SocketAddr,
 
     /// Data directory for WAL, segments, and indexes.
     pub data_dir: PathBuf,
@@ -21,6 +25,10 @@ pub struct ServerConfig {
 
     /// Per-engine budget configuration.
     pub engines: super::EngineConfig,
+
+    /// Authentication and authorization configuration.
+    #[serde(default)]
+    pub auth: super::AuthConfig,
 }
 
 impl Default for ServerConfig {
@@ -31,10 +39,12 @@ impl Default for ServerConfig {
 
         Self {
             listen: SocketAddr::from(([127, 0, 0, 1], 5433)),
-            data_dir: PathBuf::from("./data"),
+            pg_listen: SocketAddr::from(([127, 0, 0, 1], 5432)),
+            data_dir: default_data_dir(),
             data_plane_cores: cores,
             memory_limit: 1024 * 1024 * 1024, // 1 GiB default
             engines: EngineConfig::default(),
+            auth: super::AuthConfig::default(),
         }
     }
 }
@@ -63,6 +73,67 @@ impl ServerConfig {
 
 use super::EngineConfig;
 
+/// Default data directory following platform conventions.
+///
+/// - Linux: `$XDG_DATA_HOME/nodedb` or `~/.local/share/nodedb`
+/// - macOS: `~/Library/Application Support/nodedb`
+/// - Windows: `%LOCALAPPDATA%\nodedb\data` (e.g. `C:\Users\<user>\AppData\Local\nodedb\data`)
+///
+/// Falls back to `./nodedb-data` if the home directory cannot be determined.
+fn default_data_dir() -> PathBuf {
+    if let Some(dir) = platform_data_dir() {
+        dir.join("nodedb")
+    } else {
+        // Last resort — never pollute cwd with just "data".
+        PathBuf::from("nodedb-data")
+    }
+}
+
+fn platform_data_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        // XDG Base Directory: $XDG_DATA_HOME or ~/.local/share
+        if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+            if !xdg.is_empty() {
+                return Some(PathBuf::from(xdg));
+            }
+        }
+        home_dir().map(|h| h.join(".local").join("share"))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        home_dir().map(|h| h.join("Library").join("Application Support"))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // %LOCALAPPDATA% (e.g. C:\Users\<user>\AppData\Local)
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            if !local.is_empty() {
+                return Some(PathBuf::from(local));
+            }
+        }
+        home_dir().map(|h| h.join("AppData").join("Local"))
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        home_dir().map(|h| h.join(".local").join("share"))
+    }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var("USERPROFILE").ok().map(PathBuf::from)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var("HOME").ok().map(PathBuf::from)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,12 +144,15 @@ mod tests {
         assert!(cfg.data_plane_cores >= 1);
         assert_eq!(cfg.memory_limit, 1024 * 1024 * 1024);
         assert_eq!(cfg.listen.port(), 5433);
+        assert_eq!(cfg.pg_listen.port(), 5432);
     }
 
     #[test]
     fn wal_dir_derived() {
         let cfg = ServerConfig::default();
-        assert_eq!(cfg.wal_dir(), PathBuf::from("./data/wal"));
+        assert!(
+            cfg.wal_dir().ends_with("nodedb/wal") || cfg.wal_dir().ends_with("nodedb-data/wal")
+        );
     }
 
     #[test]

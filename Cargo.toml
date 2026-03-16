@@ -1,5 +1,13 @@
 [workspace]
-members = ["nodedb", "nodedb-bridge", "nodedb-wal", "nodedb-mem", "nodedb-crdt", "nodedb-raft", "nodedb-cluster"]
+members = [
+  "nodedb",
+  "nodedb-bridge",
+  "nodedb-wal",
+  "nodedb-mem",
+  "nodedb-crdt",
+  "nodedb-raft",
+  "nodedb-cluster",
+]
 resolver = "2"
 
 [workspace.package]
@@ -73,6 +81,13 @@ nexar = "0.1"
 
 # Compression
 zstd = "0.13"
+
+# PostgreSQL wire protocol
+pgwire = { version = "0.38", default-features = false, features = [
+  "server-api-aws-lc-rs",
+] }
+async-trait = "0.1"
+futures = "0.3"
 
 # Benchmarking
 fluxbench = "0.1"

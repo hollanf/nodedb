@@ -44,6 +44,11 @@ nexar = { workspace = true }
 # CRDTs (needed for LoroValue in engine layer)
 loro = { workspace = true }
 
+# PostgreSQL wire protocol
+pgwire = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
 # Compression
 zstd = { workspace = true }
 
@@ -63,6 +68,7 @@ tikv-jemalloc-ctl = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"
+tokio-postgres = "0.7"
 
 [features]
 default = ["cpu"]

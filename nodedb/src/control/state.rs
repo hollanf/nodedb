@@ -4,6 +4,8 @@ use tracing::warn;
 
 use crate::bridge::dispatch::Dispatcher;
 use crate::control::request_tracker::RequestTracker;
+use crate::control::security::audit::AuditLog;
+use crate::control::security::credential::CredentialStore;
 use crate::wal::WalManager;
 
 /// Shared state accessible by all Control Plane sessions.
@@ -21,6 +23,12 @@ pub struct SharedState {
 
     /// Write-ahead log for durability.
     pub wal: Arc<WalManager>,
+
+    /// Credential store for user authentication.
+    pub credentials: Arc<CredentialStore>,
+
+    /// Audit log for security-relevant events.
+    pub audit: Mutex<AuditLog>,
 }
 
 impl SharedState {
@@ -29,7 +37,30 @@ impl SharedState {
             dispatcher: Mutex::new(dispatcher),
             tracker: RequestTracker::new(),
             wal,
+            credentials: Arc::new(CredentialStore::new()),
+            audit: Mutex::new(AuditLog::new(10_000)),
         })
+    }
+
+    /// Record an audit event.
+    pub fn audit_record(
+        &self,
+        event: crate::control::security::audit::AuditEvent,
+        tenant_id: Option<crate::types::TenantId>,
+        source: &str,
+        detail: &str,
+    ) {
+        match self.audit.lock() {
+            Ok(mut log) => {
+                log.record(event, tenant_id, source, detail);
+            }
+            Err(poisoned) => {
+                warn!("audit log mutex poisoned, recovering");
+                poisoned
+                    .into_inner()
+                    .record(event, tenant_id, source, detail);
+            }
+        }
     }
 
     /// Poll responses from all Data Plane cores and route them to waiting sessions.
