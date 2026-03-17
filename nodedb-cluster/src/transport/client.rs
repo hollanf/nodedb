@@ -17,16 +17,22 @@ use nodedb_raft::message::{
 use nodedb_raft::transport::RaftTransport;
 use tracing::{debug, info, warn};
 
+use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, RetryPolicy};
 use crate::error::{ClusterError, Result};
 use crate::rpc_codec::{self, RaftRpc};
 
 use super::config::{self, SNI_HOSTNAME};
 use super::server::{self, RaftRpcHandler};
 
-/// QUIC-based Raft transport.
+/// QUIC-based Raft transport with retry and circuit breaker.
 ///
 /// Implements [`RaftTransport`] for outbound RPCs and provides [`serve`]
 /// for inbound RPC handling. Thread-safe — wrap in `Arc` for shared use.
+///
+/// Resilience features:
+/// - **Retry**: Transient transport failures are retried with exponential backoff.
+/// - **Circuit breaker**: Peers with consecutive failures are fast-failed until cooldown.
+/// - **Connection eviction**: Stale connections are evicted on failure and re-established on retry.
 pub struct NexarTransport {
     node_id: u64,
     listener: nexar::TransportListener,
@@ -36,6 +42,8 @@ pub struct NexarTransport {
     /// Known peer addresses for connection establishment.
     peer_addrs: RwLock<HashMap<u64, SocketAddr>>,
     rpc_timeout: Duration,
+    circuit_breaker: CircuitBreaker,
+    retry_policy: RetryPolicy,
 }
 
 impl NexarTransport {
@@ -70,7 +78,14 @@ impl NexarTransport {
             peers: RwLock::new(HashMap::new()),
             peer_addrs: RwLock::new(HashMap::new()),
             rpc_timeout,
+            circuit_breaker: CircuitBreaker::new(CircuitBreakerConfig::default()),
+            retry_policy: RetryPolicy::default(),
         })
+    }
+
+    /// Access the circuit breaker (for observability / testing).
+    pub fn circuit_breaker(&self) -> &CircuitBreaker {
+        &self.circuit_breaker
     }
 
     /// The local address this transport is listening on.
@@ -212,17 +227,59 @@ impl NexarTransport {
         rpc_codec::decode(&response_frame)
     }
 
-    /// Send an RPC to a peer and await the response.
+    /// Send an RPC to a peer with retry and circuit breaker.
     pub async fn send_rpc(&self, target: u64, rpc: RaftRpc) -> Result<RaftRpc> {
+        // Pre-encode once (codec errors are not retryable).
         let frame = rpc_codec::encode(&rpc)?;
+
+        let mut last_err = None;
+        for attempt in 0..self.retry_policy.max_attempts {
+            // Check circuit breaker before each attempt.
+            self.circuit_breaker.check(target)?;
+
+            if attempt > 0 {
+                let delay = self.retry_policy.delay_for_attempt(attempt - 1);
+                debug!(target, attempt, ?delay, "retrying RPC");
+                tokio::time::sleep(delay).await;
+            }
+
+            match self.try_send_once(target, &frame).await {
+                Ok(resp) => {
+                    self.circuit_breaker.record_success(target);
+                    return resp;
+                }
+                Err(e) if RetryPolicy::is_retryable(&e) => {
+                    self.circuit_breaker.record_failure(target);
+                    // Evict stale connection so retry gets a fresh one.
+                    self.evict_peer(target);
+                    last_err = Some(e);
+                }
+                Err(e) => {
+                    // Non-retryable error — fail immediately.
+                    self.circuit_breaker.record_failure(target);
+                    return Err(e);
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| ClusterError::Transport {
+            detail: format!("send_rpc to node {target}: all attempts exhausted"),
+        }))
+    }
+
+    /// Single-attempt RPC send (no retry, no circuit breaker).
+    async fn try_send_once(
+        &self,
+        target: u64,
+        frame: &[u8],
+    ) -> std::result::Result<Result<RaftRpc>, ClusterError> {
         let conn = self.get_or_connect(target).await?;
 
         let (mut send, mut recv) = conn.open_bi().await.map_err(|e| ClusterError::Transport {
             detail: format!("open_bi to node {target}: {e}"),
         })?;
 
-        // Write request.
-        send.write_all(&frame)
+        send.write_all(frame)
             .await
             .map_err(|e| ClusterError::Transport {
                 detail: format!("write to node {target}: {e}"),
@@ -231,7 +288,6 @@ impl NexarTransport {
             detail: format!("finish send to node {target}: {e}"),
         })?;
 
-        // Read response with timeout.
         let response_frame = tokio::time::timeout(self.rpc_timeout, server::read_frame(&mut recv))
             .await
             .map_err(|_| ClusterError::Transport {
@@ -241,7 +297,15 @@ impl NexarTransport {
                 ),
             })??;
 
-        rpc_codec::decode(&response_frame)
+        // Decode errors are not transport errors — return them wrapped in Ok
+        // so the retry logic doesn't retry codec failures.
+        Ok(rpc_codec::decode(&response_frame))
+    }
+
+    /// Remove a cached connection (forces reconnect on next use).
+    fn evict_peer(&self, target: u64) {
+        let mut peers = self.peers.write().unwrap_or_else(|p| p.into_inner());
+        peers.remove(&target);
     }
 }
 

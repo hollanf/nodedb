@@ -1,5 +1,6 @@
 pub mod bootstrap;
 pub mod catalog;
+pub mod circuit_breaker;
 pub mod error;
 pub mod ghost;
 pub mod migration;

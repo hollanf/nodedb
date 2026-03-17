@@ -30,4 +30,7 @@ pub enum ClusterError {
 
     #[error("codec error: {detail}")]
     Codec { detail: String },
+
+    #[error("circuit open for node {node_id}: peer has {failures} consecutive failures")]
+    CircuitOpen { node_id: u64, failures: u32 },
 }
