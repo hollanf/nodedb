@@ -1,3 +1,5 @@
+//! Cluster topology DDL commands: SHOW NODES, SHOW NODE, REMOVE NODE, SHOW CLUSTER.
+
 use std::sync::Arc;
 
 use futures::stream;
@@ -7,7 +9,20 @@ use pgwire::error::PgWireResult;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 
-use super::super::types::{int8_field, sqlstate_error, text_field};
+use super::super::super::types::{int8_field, sqlstate_error, text_field};
+
+pub(super) fn node_state_str(state: nodedb_cluster::NodeState) -> &'static str {
+    match state {
+        nodedb_cluster::NodeState::Joining => "joining",
+        nodedb_cluster::NodeState::Active => "active",
+        nodedb_cluster::NodeState::Draining => "draining",
+        nodedb_cluster::NodeState::Decommissioned => "decommissioned",
+    }
+}
+
+fn encode_err(e: pgwire::error::PgWireError) -> pgwire::error::PgWireError {
+    e
+}
 
 /// SHOW NODES — list all cluster members with state.
 ///
@@ -53,12 +68,7 @@ pub fn show_nodes(
             .encode_field(&(node.node_id as i64))
             .map_err(encode_err)?;
         encoder.encode_field(&node.addr).map_err(encode_err)?;
-        let state_str = match node.state {
-            nodedb_cluster::NodeState::Joining => "joining",
-            nodedb_cluster::NodeState::Active => "active",
-            nodedb_cluster::NodeState::Draining => "draining",
-            nodedb_cluster::NodeState::Decommissioned => "decommissioned",
-        };
+        let state_str = node_state_str(node.state);
         encoder.encode_field(&state_str).map_err(encode_err)?;
         let groups_str: String = node
             .raft_groups
@@ -91,7 +101,6 @@ pub fn show_node(
         ));
     }
 
-    // SHOW NODE <node_id>
     if parts.len() < 3 {
         return Err(sqlstate_error("42601", "syntax: SHOW NODE <node_id>"));
     }
@@ -123,7 +132,6 @@ pub fn show_node(
     };
 
     let schema = Arc::new(vec![text_field("property"), text_field("value")]);
-
     let mut rows = Vec::new();
     let mut encoder = DataRowEncoder::new(schema.clone());
 
@@ -155,8 +163,7 @@ pub fn show_node(
 
 /// REMOVE NODE <node_id> — mark a node as decommissioned.
 ///
-/// Superuser only. This updates the local topology state.
-/// In production, this would be replicated via Raft.
+/// Superuser only.
 pub fn remove_node(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
@@ -169,7 +176,6 @@ pub fn remove_node(
         ));
     }
 
-    // REMOVE NODE <node_id>
     if parts.len() < 3 {
         return Err(sqlstate_error("42601", "syntax: REMOVE NODE <node_id>"));
     }
@@ -202,6 +208,56 @@ pub fn remove_node(
     Ok(vec![Response::Execution(Tag::new("REMOVE NODE"))])
 }
 
-fn encode_err(e: pgwire::error::PgWireError) -> pgwire::error::PgWireError {
-    e
+/// SHOW CLUSTER — cluster overview.
+///
+/// Superuser only.
+pub fn show_cluster(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+) -> PgWireResult<Vec<Response>> {
+    if !identity.is_superuser {
+        return Err(sqlstate_error(
+            "42501",
+            "permission denied: only superuser can view cluster status",
+        ));
+    }
+
+    let schema = Arc::new(vec![text_field("property"), text_field("value")]);
+    let mut rows = Vec::new();
+    let mut encoder = DataRowEncoder::new(schema.clone());
+
+    let mut props = vec![("node_id", state.node_id.to_string())];
+
+    if let Some(topo) = &state.cluster_topology {
+        let topo = topo.read().unwrap_or_else(|p| p.into_inner());
+        props.push(("nodes_total", topo.node_count().to_string()));
+        props.push(("nodes_active", topo.active_nodes().len().to_string()));
+        props.push(("topology_version", topo.version().to_string()));
+    } else {
+        props.push(("mode", "single-node".to_string()));
+    }
+
+    if let Some(routing) = &state.cluster_routing {
+        let routing = routing.read().unwrap_or_else(|p| p.into_inner());
+        props.push(("raft_groups", routing.num_groups().to_string()));
+        props.push(("vshards", "1024".to_string()));
+    }
+
+    if let Some(status_fn) = &state.raft_status_fn {
+        let statuses = status_fn();
+        let leaders = statuses.iter().filter(|s| s.role == "Leader").count();
+        props.push(("groups_leading", leaders.to_string()));
+        props.push(("groups_following", (statuses.len() - leaders).to_string()));
+    }
+
+    for (key, value) in &props {
+        encoder.encode_field(key).map_err(encode_err)?;
+        encoder.encode_field(value).map_err(encode_err)?;
+        rows.push(Ok(encoder.take_row()));
+    }
+
+    Ok(vec![Response::Query(QueryResponse::new(
+        schema,
+        stream::iter(rows),
+    ))])
 }

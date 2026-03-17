@@ -21,7 +21,7 @@ pub use forward::{NoopForwarder, RequestForwarder};
 pub use ghost::{GhostStub, GhostTable};
 pub use health::{HealthConfig, HealthMonitor};
 pub use migration::{MigrationPhase, MigrationState};
-pub use multi_raft::MultiRaft;
+pub use multi_raft::{GroupStatus, MultiRaft};
 pub use raft_loop::{CommitApplier, RaftLoop};
 pub use routing::RoutingTable;
 pub use rpc_codec::RaftRpc;

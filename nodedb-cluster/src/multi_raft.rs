@@ -13,6 +13,20 @@ use nodedb_raft::{
 use crate::error::{ClusterError, Result};
 use crate::routing::RoutingTable;
 
+/// Snapshot of a single Raft group's state for observability.
+#[derive(Debug, Clone)]
+pub struct GroupStatus {
+    pub group_id: u64,
+    /// Role as a human-readable string ("Leader", "Follower", "Candidate", "Learner").
+    pub role: String,
+    pub leader_id: u64,
+    pub term: u64,
+    pub commit_index: u64,
+    pub last_applied: u64,
+    pub member_count: usize,
+    pub vshard_count: usize,
+}
+
 /// Multi-Raft coordinator managing multiple Raft groups on a single node.
 ///
 /// This coordinator:
@@ -209,6 +223,32 @@ impl MultiRaft {
     /// Mutable access to the underlying Raft groups (for testing / bootstrap).
     pub fn groups_mut(&mut self) -> &mut HashMap<u64, RaftNode<MemStorage>> {
         &mut self.groups
+    }
+
+    /// Snapshot of all Raft group states for observability.
+    pub fn group_statuses(&self) -> Vec<GroupStatus> {
+        let mut statuses = Vec::with_capacity(self.groups.len());
+        for (&group_id, node) in &self.groups {
+            let vshard_count = self.routing.vshards_for_group(group_id).len();
+            let members = self
+                .routing
+                .group_info(group_id)
+                .map(|info| info.members.clone())
+                .unwrap_or_default();
+
+            statuses.push(GroupStatus {
+                group_id,
+                role: format!("{:?}", node.role()),
+                leader_id: node.leader_id(),
+                term: node.current_term(),
+                commit_index: node.commit_index(),
+                last_applied: node.last_applied(),
+                member_count: members.len(),
+                vshard_count,
+            });
+        }
+        statuses.sort_by_key(|s| s.group_id);
+        statuses
     }
 
     /// Get the leader for a given vShard (from local group state).

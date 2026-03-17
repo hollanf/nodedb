@@ -65,6 +65,9 @@ pub struct SharedState {
     /// Raft propose function — wraps RaftLoop::propose (None in single-node mode).
     /// Signature: (vshard_id, data) → Result<(group_id, log_index)>
     pub raft_proposer: Option<Arc<crate::control::wal_replication::RaftProposer>>,
+
+    /// Query Raft group statuses for observability (None in single-node mode).
+    pub raft_status_fn: Option<Arc<dyn Fn() -> Vec<nodedb_cluster::GroupStatus> + Send + Sync>>,
 }
 
 impl SharedState {
@@ -86,6 +89,7 @@ impl SharedState {
             node_id: 0,
             propose_tracker: None,
             raft_proposer: None,
+            raft_status_fn: None,
         })
     }
 
@@ -135,6 +139,7 @@ impl SharedState {
             node_id: 0,
             propose_tracker: None,
             raft_proposer: None,
+            raft_status_fn: None,
         }))
     }
 

@@ -201,6 +201,12 @@ impl<A: CommitApplier, F: RequestForwarder> RaftLoop<A, F> {
         let mut mr = self.multi_raft.lock().unwrap_or_else(|p| p.into_inner());
         mr.propose(vshard_id, data)
     }
+
+    /// Snapshot all Raft group states for observability (SHOW RAFT GROUPS).
+    pub fn group_statuses(&self) -> Vec<crate::multi_raft::GroupStatus> {
+        let mr = self.multi_raft.lock().unwrap_or_else(|p| p.into_inner());
+        mr.group_statuses()
+    }
 }
 
 // ── Incoming RPC handler ────────────────────────────────────────────

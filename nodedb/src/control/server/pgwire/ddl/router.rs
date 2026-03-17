@@ -62,7 +62,19 @@ pub fn dispatch(
         return Some(super::apikey::list_api_keys(state, identity, &parts));
     }
 
-    // Cluster management.
+    // Cluster management & observability.
+    if upper.starts_with("SHOW CLUSTER") {
+        return Some(super::cluster::show_cluster(state, identity));
+    }
+    if upper.starts_with("SHOW RAFT GROUPS") {
+        return Some(super::cluster::show_raft_groups(state, identity));
+    }
+    if upper.starts_with("SHOW RAFT GROUP ") {
+        return Some(super::cluster::show_raft_group(state, identity, &parts));
+    }
+    if upper.starts_with("SHOW PEER HEALTH") {
+        return Some(super::cluster::show_peer_health(state, identity));
+    }
     if upper.starts_with("SHOW NODES") {
         return Some(super::cluster::show_nodes(state, identity));
     }
