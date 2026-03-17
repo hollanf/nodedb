@@ -203,6 +203,11 @@ impl MultiRaft {
         self.groups.len()
     }
 
+    /// Mutable access to the underlying Raft groups (for testing / bootstrap).
+    pub fn groups_mut(&mut self) -> &mut HashMap<u64, RaftNode<MemStorage>> {
+        &mut self.groups
+    }
+
     /// Get the leader for a given vShard (from local group state).
     pub fn leader_for_vshard(&self, vshard_id: u16) -> Result<Option<u64>> {
         let group_id = self.routing.group_for_vshard(vshard_id)?;
