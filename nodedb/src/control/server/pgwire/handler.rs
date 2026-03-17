@@ -184,7 +184,135 @@ impl NodeDbPgHandler {
         Ok(response)
     }
 
-    /// Execute a SQL query end-to-end: resolve identity → plan → check perms → dispatch.
+    /// Try to handle a statement as a Control Plane DDL command.
+    ///
+    /// These commands are executed directly on the Control Plane without
+    /// going through DataFusion or the Data Plane. Returns `None` if the
+    /// statement is not a recognized DDL command.
+    fn handle_ddl(
+        &self,
+        identity: &AuthenticatedIdentity,
+        sql: &str,
+    ) -> Option<PgWireResult<Vec<Response>>> {
+        let upper = sql.to_uppercase();
+        let parts: Vec<&str> = sql.split_whitespace().collect();
+
+        // CREATE USER <name> WITH PASSWORD '<password>' [ROLE <role>] [TENANT <id>]
+        if upper.starts_with("CREATE USER ") {
+            return Some(self.handle_create_user(identity, &parts));
+        }
+
+        // DROP USER <name>
+        if upper.starts_with("DROP USER ") {
+            return Some(self.handle_drop_user(identity, &parts));
+        }
+
+        None
+    }
+
+    fn handle_create_user(
+        &self,
+        identity: &AuthenticatedIdentity,
+        parts: &[&str],
+    ) -> PgWireResult<Vec<Response>> {
+        // Only superuser or tenant_admin can create users.
+        if !identity.is_superuser && !identity.has_role(&Role::TenantAdmin) {
+            return Err(sqlstate_error("42501", "permission denied: only superuser or tenant_admin can create users"));
+        }
+
+        // Parse: CREATE USER <name> WITH PASSWORD '<password>' [ROLE <role>] [TENANT <id>]
+        if parts.len() < 6 {
+            return Err(sqlstate_error("42601", "syntax: CREATE USER <name> WITH PASSWORD '<password>' [ROLE <role>] [TENANT <id>]"));
+        }
+
+        let username = parts[2];
+        if !parts[3].eq_ignore_ascii_case("WITH") || !parts[4].eq_ignore_ascii_case("PASSWORD") {
+            return Err(sqlstate_error("42601", "expected WITH PASSWORD after username"));
+        }
+
+        // Extract password (handle single-quoted strings).
+        let password = extract_quoted_string(parts, 5)
+            .ok_or_else(|| sqlstate_error("42601", "password must be a single-quoted string"))?;
+
+        // Parse optional ROLE and TENANT.
+        let mut role = Role::ReadWrite;
+        let mut tenant_id = identity.tenant_id;
+        let mut i = next_after_quoted(parts, 5);
+        while i < parts.len() {
+            match parts[i].to_uppercase().as_str() {
+                "ROLE" if i + 1 < parts.len() => {
+                    role = parts[i + 1].parse().unwrap_or(Role::ReadWrite);
+                    i += 2;
+                }
+                "TENANT" if i + 1 < parts.len() => {
+                    if !identity.is_superuser {
+                        return Err(sqlstate_error("42501", "only superuser can assign tenants"));
+                    }
+                    let tid: u32 = parts[i + 1].parse().map_err(|_| {
+                        sqlstate_error("42601", "TENANT must be a numeric ID")
+                    })?;
+                    tenant_id = TenantId::new(tid);
+                    i += 2;
+                }
+                _ => i += 1,
+            }
+        }
+
+        self.state
+            .credentials
+            .create_user(username, &password, tenant_id, vec![role])
+            .map_err(|e| sqlstate_error("42710", &e.to_string()))?;
+
+        self.state.audit_record(
+            AuditEvent::PrivilegeChange,
+            Some(tenant_id),
+            &identity.username,
+            &format!("created user '{username}' in tenant {tenant_id}"),
+        );
+
+        Ok(vec![Response::Execution(Tag::new("CREATE USER"))])
+    }
+
+    fn handle_drop_user(
+        &self,
+        identity: &AuthenticatedIdentity,
+        parts: &[&str],
+    ) -> PgWireResult<Vec<Response>> {
+        if !identity.is_superuser && !identity.has_role(&Role::TenantAdmin) {
+            return Err(sqlstate_error("42501", "permission denied: only superuser or tenant_admin can drop users"));
+        }
+
+        if parts.len() < 3 {
+            return Err(sqlstate_error("42601", "syntax: DROP USER <name>"));
+        }
+
+        let username = parts[2];
+
+        // Prevent dropping yourself.
+        if username == identity.username {
+            return Err(sqlstate_error("42501", "cannot drop your own user"));
+        }
+
+        let dropped = self
+            .state
+            .credentials
+            .deactivate_user(username)
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+
+        if dropped {
+            self.state.audit_record(
+                AuditEvent::PrivilegeChange,
+                Some(identity.tenant_id),
+                &identity.username,
+                &format!("dropped user '{username}'"),
+            );
+            Ok(vec![Response::Execution(Tag::new("DROP USER"))])
+        } else {
+            Err(sqlstate_error("42704", &format!("user '{username}' does not exist")))
+        }
+    }
+
+    /// Execute a SQL query end-to-end: resolve identity → DDL check → plan → quota → perms → dispatch.
     async fn execute_sql(
         &self,
         identity: &AuthenticatedIdentity,
@@ -207,10 +335,43 @@ impl NodeDbPgHandler {
             return Ok(vec![Response::EmptyQuery]);
         }
 
+        // Try Control Plane DDL commands first (CREATE USER, DROP USER, etc.).
+        if let Some(result) = self.handle_ddl(identity, sql_trimmed) {
+            return result;
+        }
+
         // Tenant derived from authenticated identity — never from client.
         let tenant_id = identity.tenant_id;
 
+        // Tenant quota check before planning.
+        self.state.check_tenant_quota(tenant_id).map_err(|e| {
+            let (severity, code, message) = error_to_sqlstate(&e);
+            PgWireError::UserError(Box::new(ErrorInfo::new(
+                severity.to_owned(),
+                code.to_owned(),
+                message,
+            )))
+        })?;
+
+        // Track request for quota accounting.
+        self.state.tenant_request_start(tenant_id);
+
         // Plan via DataFusion.
+        let result = self.execute_planned_sql(identity, sql, tenant_id).await;
+
+        // Always decrement active request count.
+        self.state.tenant_request_end(tenant_id);
+
+        result
+    }
+
+    /// Plan and dispatch SQL after quota and DDL checks have passed.
+    async fn execute_planned_sql(
+        &self,
+        identity: &AuthenticatedIdentity,
+        sql: &str,
+        tenant_id: TenantId,
+    ) -> PgWireResult<Vec<Response>> {
         let tasks = self.query_ctx.plan_sql(sql, tenant_id).await.map_err(|e| {
             let (severity, code, message) = error_to_sqlstate(&e);
             PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -224,10 +385,8 @@ impl NodeDbPgHandler {
             return Ok(vec![Response::Execution(Tag::new("OK"))]);
         }
 
-        // Execute each task: check permission, dispatch, format response.
         let mut responses = Vec::with_capacity(tasks.len());
         for task in tasks {
-            // Permission check before dispatch.
             self.check_permission(identity, &task.plan)?;
 
             let plan_kind = describe_plan(&task.plan);
@@ -240,7 +399,6 @@ impl NodeDbPgHandler {
                 )))
             })?;
 
-            // Check for Data Plane errors.
             if let Some((severity, code, message)) =
                 response_status_to_sqlstate(resp.status, &resp.error_code)
             {
@@ -306,6 +464,71 @@ fn payload_to_response(payload: &[u8], kind: PlanKind) -> Response {
             }
         }
     }
+}
+
+// ── DDL helpers ─────────────────────────────────────────────────────
+
+/// Create a pgwire ErrorResponse with a SQLSTATE code.
+fn sqlstate_error(code: &str, message: &str) -> PgWireError {
+    PgWireError::UserError(Box::new(ErrorInfo::new(
+        "ERROR".to_owned(),
+        code.to_owned(),
+        message.to_owned(),
+    )))
+}
+
+/// Extract a single-quoted string from split parts starting at index `start`.
+/// Handles passwords like 'hello world' spanning multiple parts.
+fn extract_quoted_string(parts: &[&str], start: usize) -> Option<String> {
+    if start >= parts.len() {
+        return None;
+    }
+
+    let first = parts[start];
+    if !first.starts_with('\'') {
+        return None;
+    }
+
+    // Single part: 'password'
+    if first.ends_with('\'') && first.len() > 1 {
+        return Some(first[1..first.len() - 1].to_string());
+    }
+
+    // Multi-part: 'hello world'
+    let mut result = first[1..].to_string();
+    for &part in &parts[start + 1..] {
+        result.push(' ');
+        if part.ends_with('\'') {
+            result.push_str(&part[..part.len() - 1]);
+            return Some(result);
+        }
+        result.push_str(part);
+    }
+
+    None // Unterminated quote.
+}
+
+/// Find the index of the first part after a quoted string starting at `start`.
+fn next_after_quoted(parts: &[&str], start: usize) -> usize {
+    if start >= parts.len() {
+        return parts.len();
+    }
+
+    let first = parts[start];
+    if !first.starts_with('\'') {
+        return start + 1;
+    }
+
+    if first.ends_with('\'') && first.len() > 1 {
+        return start + 1;
+    }
+
+    for (i, part) in parts[start + 1..].iter().enumerate() {
+        if part.ends_with('\'') {
+            return start + 1 + i + 1;
+        }
+    }
+    parts.len()
 }
 
 // ── SimpleQueryHandler ──────────────────────────────────────────────

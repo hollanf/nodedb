@@ -108,6 +108,15 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Tenant rate counter reset (1-second timer).
+    let shared_rate = Arc::clone(&shared);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            shared_rate.reset_tenant_rate_counters();
+        }
+    });
+
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     // Bind both listeners before starting accept loops.
