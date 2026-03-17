@@ -9,7 +9,7 @@ use pgwire::tokio::process_socket;
 use crate::config::auth::AuthMode;
 use crate::control::state::SharedState;
 
-use super::handler::NodeDbPgHandlerFactory;
+use super::factory::NodeDbPgHandlerFactory;
 
 /// PostgreSQL wire protocol listener.
 ///

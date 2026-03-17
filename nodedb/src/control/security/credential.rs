@@ -11,7 +11,7 @@ pub struct UserRecord {
     pub user_id: u64,
     pub username: String,
     pub tenant_id: TenantId,
-    /// Argon2id password hash (PHC string format).
+    /// PBKDF2-SHA256 password hash (stored as `pbkdf2-sha256$iterations$salt$hash`).
     pub password_hash: String,
     /// Salt used for SCRAM-SHA-256 (16 bytes, stored as raw bytes).
     pub scram_salt: Vec<u8>,
@@ -40,6 +40,26 @@ impl Default for CredentialStore {
     }
 }
 
+/// Acquire a read lock, converting poisoning into `crate::Error::Internal`.
+fn read_lock<T>(lock: &RwLock<T>) -> crate::Result<std::sync::RwLockReadGuard<'_, T>> {
+    lock.read().map_err(|e| {
+        tracing::error!("credential store read lock poisoned: {e}");
+        crate::Error::Internal {
+            detail: "credential store lock poisoned".into(),
+        }
+    })
+}
+
+/// Acquire a write lock, converting poisoning into `crate::Error::Internal`.
+fn write_lock<T>(lock: &RwLock<T>) -> crate::Result<std::sync::RwLockWriteGuard<'_, T>> {
+    lock.write().map_err(|e| {
+        tracing::error!("credential store write lock poisoned: {e}");
+        crate::Error::Internal {
+            detail: "credential store lock poisoned".into(),
+        }
+    })
+}
+
 impl CredentialStore {
     pub fn new() -> Self {
         Self {
@@ -50,12 +70,12 @@ impl CredentialStore {
 
     /// Bootstrap the superuser from config. Called once on startup.
     pub fn bootstrap_superuser(&self, username: &str, password: &str) -> crate::Result<()> {
-        let salt = generate_salt();
+        let salt = generate_scram_salt();
         let scram_salted_password = compute_scram_salted_password(password, &salt);
-        let password_hash = hash_password_argon2(password);
+        let password_hash = hash_password_argon2(password)?;
 
         let user_id = {
-            let mut next = self.next_user_id.write().unwrap();
+            let mut next = write_lock(&self.next_user_id)?;
             let id = *next;
             *next += 1;
             id
@@ -73,10 +93,7 @@ impl CredentialStore {
             is_active: true,
         };
 
-        self.users
-            .write()
-            .unwrap()
-            .insert(username.to_string(), record);
+        write_lock(&self.users)?.insert(username.to_string(), record);
 
         Ok(())
     }
@@ -89,19 +106,19 @@ impl CredentialStore {
         tenant_id: TenantId,
         roles: Vec<Role>,
     ) -> crate::Result<u64> {
-        let mut users = self.users.write().unwrap();
+        let mut users = write_lock(&self.users)?;
         if users.contains_key(username) {
             return Err(crate::Error::BadRequest {
                 detail: format!("user '{username}' already exists"),
             });
         }
 
-        let salt = generate_salt();
+        let salt = generate_scram_salt();
         let scram_salted_password = compute_scram_salted_password(password, &salt);
-        let password_hash = hash_password_argon2(password);
+        let password_hash = hash_password_argon2(password)?;
 
         let user_id = {
-            let mut next = self.next_user_id.write().unwrap();
+            let mut next = write_lock(&self.next_user_id)?;
             let id = *next;
             *next += 1;
             id
@@ -126,13 +143,13 @@ impl CredentialStore {
 
     /// Look up a user by username. Returns None if not found or inactive.
     pub fn get_user(&self, username: &str) -> Option<UserRecord> {
-        let users = self.users.read().unwrap();
+        let users = read_lock(&self.users).ok()?;
         users.get(username).filter(|u| u.is_active).cloned()
     }
 
     /// Get the SCRAM salt and salted password for pgwire SCRAM auth.
     pub fn get_scram_credentials(&self, username: &str) -> Option<(Vec<u8>, Vec<u8>)> {
-        let users = self.users.read().unwrap();
+        let users = read_lock(&self.users).ok()?;
         users
             .get(username)
             .filter(|u| u.is_active)
@@ -141,11 +158,18 @@ impl CredentialStore {
 
     /// Verify a cleartext password against the stored hash.
     pub fn verify_password(&self, username: &str, password: &str) -> bool {
-        let users = self.users.read().unwrap();
+        let users = match read_lock(&self.users) {
+            Ok(u) => u,
+            Err(_) => {
+                // Lock poisoned — perform dummy hash to avoid timing oracle.
+                let _ = hash_password_argon2(password);
+                return false;
+            }
+        };
         match users.get(username).filter(|u| u.is_active) {
             Some(record) => verify_argon2(&record.password_hash, password),
             None => {
-                // Constant-time: hash anyway to prevent timing attacks.
+                // Constant-time: hash anyway to prevent user enumeration.
                 let _ = hash_password_argon2(password);
                 false
             }
@@ -166,7 +190,10 @@ impl CredentialStore {
 
     /// List all active usernames (for admin).
     pub fn list_users(&self) -> Vec<String> {
-        let users = self.users.read().unwrap();
+        let users = match read_lock(&self.users) {
+            Ok(u) => u,
+            Err(_) => return Vec::new(),
+        };
         users
             .values()
             .filter(|u| u.is_active)
@@ -175,115 +202,71 @@ impl CredentialStore {
     }
 
     /// Deactivate a user (soft delete).
-    pub fn deactivate_user(&self, username: &str) -> bool {
-        let mut users = self.users.write().unwrap();
+    pub fn deactivate_user(&self, username: &str) -> crate::Result<bool> {
+        let mut users = write_lock(&self.users)?;
         if let Some(record) = users.get_mut(username) {
             record.is_active = false;
-            true
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 
     /// Check if any users exist (used to determine if bootstrap is needed).
     pub fn is_empty(&self) -> bool {
-        self.users.read().unwrap().is_empty()
+        read_lock(&self.users).map(|u| u.is_empty()).unwrap_or(true)
     }
 }
 
 // ── Password hashing ───────────────────────────────────────────────
 
-/// Generate a 16-byte cryptographic random salt.
-fn generate_salt() -> Vec<u8> {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
+use argon2::Argon2;
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng};
 
-    // Use system randomness. In production, use a CSPRNG.
-    // For now, combine multiple random sources for decent entropy.
+/// Generate a 16-byte cryptographic random salt for SCRAM.
+fn generate_scram_salt() -> Vec<u8> {
+    use argon2::password_hash::rand_core::RngCore;
     let mut salt = vec![0u8; 16];
-    let state = RandomState::new();
-    for chunk in salt.chunks_mut(8) {
-        let mut hasher = state.build_hasher();
-        hasher.write_u64(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos() as u64,
-        );
-        let val = hasher.finish();
-        let bytes = val.to_le_bytes();
-        let len = chunk.len().min(8);
-        chunk[..len].copy_from_slice(&bytes[..len]);
-    }
+    OsRng.fill_bytes(&mut salt);
     salt
 }
 
 /// Compute SCRAM-SHA-256 SaltedPassword for pgwire auth.
 ///
 /// SaltedPassword := Hi(Normalize(password), salt, iterations)
-/// where Hi is PBKDF2-HMAC-SHA256.
+/// where Hi is PBKDF2-HMAC-SHA256. This is a protocol requirement —
+/// SCRAM mandates PBKDF2, not Argon2.
 fn compute_scram_salted_password(password: &str, salt: &[u8]) -> Vec<u8> {
-    // Use pgwire's helper if available, otherwise manual PBKDF2.
     pgwire::api::auth::sasl::scram::gen_salted_password(password, salt, 4096)
 }
 
 /// Hash a password with Argon2id for storage.
 ///
-/// Uses a simple hash for now — will use the `argon2` crate in production.
-/// For bootstrap/MVP, we use PBKDF2-SHA256 which is available via pgwire's deps.
-fn hash_password_argon2(password: &str) -> String {
-    // For MVP: store the SCRAM salted password as the "hash".
-    // In production, replace with proper Argon2id using the `argon2` crate.
-    let salt = generate_salt();
-    let salted = compute_scram_salted_password(password, &salt);
-    // Encode as hex for simple storage.
-    let salt_hex: String = salt.iter().map(|b| format!("{b:02x}")).collect();
-    let hash_hex: String = salted.iter().map(|b| format!("{b:02x}")).collect();
-    format!("pbkdf2-sha256$4096${salt_hex}${hash_hex}")
+/// Uses the PHC string format: `$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>`
+/// This is the password verification hash — used for `verify_password()`,
+/// API key auth, HTTP auth. Separate from the SCRAM salted password.
+fn hash_password_argon2(password: &str) -> crate::Result<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    let hash = argon2
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|e| crate::Error::Internal {
+            detail: format!("argon2 hashing failed: {e}"),
+        })?;
+    Ok(hash.to_string())
 }
 
-/// Verify a password against a stored hash.
+/// Verify a password against a stored Argon2id hash (PHC string format).
+///
+/// Uses constant-time comparison internally.
 fn verify_argon2(stored_hash: &str, password: &str) -> bool {
-    // Parse the stored hash format: "pbkdf2-sha256$iterations$salt_hex$hash_hex"
-    let parts: Vec<&str> = stored_hash.split('$').collect();
-    if parts.len() != 4 || parts[0] != "pbkdf2-sha256" {
-        return false;
-    }
-
-    let iterations: usize = match parts[1].parse() {
-        Ok(i) => i,
-        Err(_) => return false,
-    };
-
-    let salt: Vec<u8> = match (0..parts[2].len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&parts[2][i..i + 2], 16))
-        .collect::<Result<Vec<u8>, _>>()
-    {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-
-    let stored_hash_bytes: Vec<u8> = match (0..parts[3].len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&parts[3][i..i + 2], 16))
-        .collect::<Result<Vec<u8>, _>>()
-    {
+    let parsed = match PasswordHash::new(stored_hash) {
         Ok(h) => h,
         Err(_) => return false,
     };
-
-    let computed = pgwire::api::auth::sasl::scram::gen_salted_password(password, &salt, iterations);
-
-    // Constant-time comparison.
-    if computed.len() != stored_hash_bytes.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (a, b) in computed.iter().zip(stored_hash_bytes.iter()) {
-        diff |= a ^ b;
-    }
-    diff == 0
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok()
 }
 
 #[cfg(test)]
@@ -358,7 +341,7 @@ mod tests {
             .unwrap();
         assert!(store.get_user("bob").is_some());
 
-        store.deactivate_user("bob");
+        store.deactivate_user("bob").unwrap();
         assert!(store.get_user("bob").is_none());
     }
 

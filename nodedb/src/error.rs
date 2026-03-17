@@ -86,6 +86,9 @@ pub enum Error {
 
     #[error("configuration error: {detail}")]
     Config { detail: String },
+
+    #[error("internal error: {detail}")]
+    Internal { detail: String },
 }
 
 /// Result alias for NodeDB operations.

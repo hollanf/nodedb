@@ -8,13 +8,10 @@ use futures::sink::Sink;
 use futures::stream;
 
 use pgwire::api::auth::noop::NoopStartupHandler;
-use pgwire::api::auth::{
-    AuthSource, DefaultServerParameterProvider, LoginInfo, Password, StartupHandler,
-};
 use pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
 use pgwire::api::results::{DataRowEncoder, QueryResponse, Response, Tag};
 use pgwire::api::stmt::NoopQueryParser;
-use pgwire::api::{ClientInfo, ClientPortalStore, PgWireServerHandlers};
+use pgwire::api::{ClientInfo, ClientPortalStore};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 use pgwire::messages::PgWireBackendMessage;
 
@@ -23,7 +20,9 @@ use crate::config::auth::AuthMode;
 use crate::control::planner::context::QueryContext;
 use crate::control::planner::physical::PhysicalTask;
 use crate::control::security::audit::AuditEvent;
-use crate::control::security::credential::CredentialStore;
+use crate::control::security::identity::{
+    AuthMethod, AuthenticatedIdentity, Role, required_permission, role_grants_permission,
+};
 use crate::control::state::SharedState;
 use crate::types::{ReadConsistency, RequestId, TenantId};
 
@@ -35,29 +34,120 @@ const DEFAULT_DEADLINE: Duration = Duration::from_secs(30);
 /// PostgreSQL wire protocol handler for NodeDB.
 ///
 /// Implements `SimpleQueryHandler` + `ExtendedQueryHandler`.
-/// Receives SQL strings from clients (psql, drivers), plans them via
-/// DataFusion, dispatches to the Data Plane via SPSC, and returns results.
+/// Receives SQL strings from clients (psql, drivers), resolves the
+/// authenticated identity, checks permissions, plans via DataFusion,
+/// dispatches to the Data Plane via SPSC, and returns results.
 ///
 /// Lives on the Control Plane (Send + Sync).
 pub struct NodeDbPgHandler {
-    state: Arc<SharedState>,
+    pub(crate) state: Arc<SharedState>,
     query_ctx: QueryContext,
     next_request_id: AtomicU64,
     query_parser: Arc<NoopQueryParser>,
+    auth_mode: AuthMode,
 }
 
 impl NodeDbPgHandler {
-    pub fn new(state: Arc<SharedState>) -> Self {
+    pub fn new(state: Arc<SharedState>, auth_mode: AuthMode) -> Self {
         Self {
             state,
             query_ctx: QueryContext::new(),
             next_request_id: AtomicU64::new(1_000_000),
             query_parser: Arc::new(NoopQueryParser::new()),
+            auth_mode,
         }
     }
 
     fn next_request_id(&self) -> RequestId {
         RequestId::new(self.next_request_id.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Resolve the authenticated identity from pgwire client metadata.
+    ///
+    /// In password mode: looks up the username (set during SCRAM handshake) in
+    /// the credential store. In trust mode: returns a default superuser identity.
+    fn resolve_identity<C: ClientInfo>(&self, client: &C) -> PgWireResult<AuthenticatedIdentity> {
+        let username = client
+            .metadata()
+            .get("user")
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
+
+        match self.auth_mode {
+            AuthMode::Trust => {
+                // Trust mode: check if user exists in credential store, otherwise
+                // return a default superuser identity for backward compatibility.
+                if let Some(identity) = self
+                    .state
+                    .credentials
+                    .to_identity(&username, AuthMethod::Trust)
+                {
+                    Ok(identity)
+                } else {
+                    Ok(AuthenticatedIdentity {
+                        user_id: 0,
+                        username,
+                        tenant_id: TenantId::new(1),
+                        auth_method: AuthMethod::Trust,
+                        roles: vec![Role::Superuser],
+                        is_superuser: true,
+                    })
+                }
+            }
+            AuthMode::Password | AuthMode::Certificate => {
+                // Password/cert mode: user MUST exist (was authenticated by SCRAM).
+                self.state
+                    .credentials
+                    .to_identity(&username, AuthMethod::ScramSha256)
+                    .ok_or_else(|| {
+                        PgWireError::UserError(Box::new(ErrorInfo::new(
+                            "FATAL".to_owned(),
+                            "28000".to_owned(),
+                            format!(
+                                "authenticated user '{username}' not found in credential store"
+                            ),
+                        )))
+                    })
+            }
+        }
+    }
+
+    /// Check if the identity has permission for the given plan.
+    fn check_permission(
+        &self,
+        identity: &AuthenticatedIdentity,
+        plan: &PhysicalPlan,
+    ) -> PgWireResult<()> {
+        if identity.is_superuser {
+            return Ok(());
+        }
+
+        let required = required_permission(plan);
+        let has_permission = identity
+            .roles
+            .iter()
+            .any(|role| role_grants_permission(role, required));
+
+        if has_permission {
+            Ok(())
+        } else {
+            // Audit the denial.
+            self.state.audit_record(
+                AuditEvent::AuthzDenied,
+                Some(identity.tenant_id),
+                &identity.username,
+                &format!("permission {:?} denied", required),
+            );
+
+            Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "42501".to_owned(),
+                format!(
+                    "permission denied: user '{}' lacks {:?} permission",
+                    identity.username, required
+                ),
+            ))))
+        }
     }
 
     /// Dispatch a single physical task and wait for the response.
@@ -94,8 +184,12 @@ impl NodeDbPgHandler {
         Ok(response)
     }
 
-    /// Execute a SQL query end-to-end: parse → plan → dispatch → format as pgwire response.
-    async fn execute_sql(&self, sql: &str) -> PgWireResult<Vec<Response>> {
+    /// Execute a SQL query end-to-end: resolve identity → plan → check perms → dispatch.
+    async fn execute_sql(
+        &self,
+        identity: &AuthenticatedIdentity,
+        sql: &str,
+    ) -> PgWireResult<Vec<Response>> {
         let sql_trimmed = sql.trim();
 
         // Handle SET commands that pgwire clients send during connection setup.
@@ -113,8 +207,8 @@ impl NodeDbPgHandler {
             return Ok(vec![Response::EmptyQuery]);
         }
 
-        // TODO: derive tenant_id from authenticated session identity.
-        let tenant_id = TenantId::new(1);
+        // Tenant derived from authenticated identity — never from client.
+        let tenant_id = identity.tenant_id;
 
         // Plan via DataFusion.
         let tasks = self.query_ctx.plan_sql(sql, tenant_id).await.map_err(|e| {
@@ -130,9 +224,12 @@ impl NodeDbPgHandler {
             return Ok(vec![Response::Execution(Tag::new("OK"))]);
         }
 
-        // Execute each task and collect results.
+        // Execute each task: check permission, dispatch, format response.
         let mut responses = Vec::with_capacity(tasks.len());
         for task in tasks {
+            // Permission check before dispatch.
+            self.check_permission(identity, &task.plan)?;
+
             let plan_kind = describe_plan(&task.plan);
             let resp = self.dispatch_task(task).await.map_err(|e| {
                 let (severity, code, message) = error_to_sqlstate(&e);
@@ -154,7 +251,6 @@ impl NodeDbPgHandler {
                 ))));
             }
 
-            // Convert payload to pgwire response.
             let pg_response = payload_to_response(&resp.payload, plan_kind);
             responses.push(pg_response);
         }
@@ -216,13 +312,14 @@ fn payload_to_response(payload: &[u8], kind: PlanKind) -> Response {
 
 #[async_trait]
 impl SimpleQueryHandler for NodeDbPgHandler {
-    async fn do_query<C>(&self, _client: &mut C, query: &str) -> PgWireResult<Vec<Response>>
+    async fn do_query<C>(&self, client: &mut C, query: &str) -> PgWireResult<Vec<Response>>
     where
         C: ClientInfo + ClientPortalStore + Sink<PgWireBackendMessage> + Unpin + Send + Sync,
         C::Error: Debug,
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
-        self.execute_sql(query).await
+        let identity = self.resolve_identity(client)?;
+        self.execute_sql(&identity, query).await
     }
 }
 
@@ -239,7 +336,7 @@ impl ExtendedQueryHandler for NodeDbPgHandler {
 
     async fn do_query<C>(
         &self,
-        _client: &mut C,
+        client: &mut C,
         portal: &pgwire::api::portal::Portal<Self::Statement>,
         _max_rows: usize,
     ) -> PgWireResult<Response>
@@ -248,142 +345,14 @@ impl ExtendedQueryHandler for NodeDbPgHandler {
         C::Error: Debug,
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
+        let identity = self.resolve_identity(client)?;
         let query = &portal.statement.statement;
-        let mut results = self.execute_sql(query).await?;
+        let mut results = self.execute_sql(&identity, query).await?;
         Ok(results.pop().unwrap_or(Response::EmptyQuery))
     }
 }
 
 // Trust mode: NoopStartupHandler (no authentication).
-impl NoopStartupHandler for NodeDbPgHandler {}
-
-// ── AuthSource for SCRAM-SHA-256 ────────────────────────────────────
-
-/// Bridges NodeDB's CredentialStore to pgwire's `AuthSource` trait.
-///
-/// When pgwire needs to verify a client's SCRAM-SHA-256 credentials,
-/// it calls `get_password()` which looks up the SCRAM salt and salted
-/// password from our credential store.
-pub struct NodeDbAuthSource {
-    credentials: Arc<CredentialStore>,
-    state: Arc<SharedState>,
-}
-
-impl std::fmt::Debug for NodeDbAuthSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NodeDbAuthSource").finish()
-    }
-}
-
-#[async_trait]
-impl AuthSource for NodeDbAuthSource {
-    async fn get_password(&self, login: &LoginInfo) -> PgWireResult<Password> {
-        let username = login.user().unwrap_or("unknown");
-        let source = login.host();
-
-        match self.credentials.get_scram_credentials(username) {
-            Some((salt, salted_password)) => Ok(Password::new(Some(salt), salted_password)),
-            None => {
-                // Record auth failure.
-                self.state.audit_record(
-                    AuditEvent::AuthFailure,
-                    None,
-                    source,
-                    &format!("unknown user: {username}"),
-                );
-                Err(PgWireError::InvalidPassword(username.to_owned()))
-            }
-        }
-    }
-}
-
-// ── Server parameter provider ───────────────────────────────────────
-
-fn nodedb_parameter_provider() -> DefaultServerParameterProvider {
-    let mut params = DefaultServerParameterProvider::default();
-    params.server_version = format!("NodeDB 0.1.0 (pgwire {})", env!("CARGO_PKG_VERSION"));
-    params
-}
-
-// ── Factory ─────────────────────────────────────────────────────────
-
-/// Factory that wires together the pgwire handlers.
-///
-/// Supports both trust mode (NoopStartupHandler) and password mode
-/// (SCRAM-SHA-256) based on the auth config.
-pub struct NodeDbPgHandlerFactory {
-    handler: Arc<NodeDbPgHandler>,
-    auth_mode: AuthMode,
-    credentials: Arc<CredentialStore>,
-    state: Arc<SharedState>,
-}
-
-impl NodeDbPgHandlerFactory {
-    pub fn new(state: Arc<SharedState>, auth_mode: AuthMode) -> Self {
-        Self {
-            handler: Arc::new(NodeDbPgHandler::new(Arc::clone(&state))),
-            auth_mode,
-            credentials: Arc::clone(&state.credentials),
-            state,
-        }
-    }
-}
-
-impl PgWireServerHandlers for NodeDbPgHandlerFactory {
-    fn simple_query_handler(&self) -> Arc<impl SimpleQueryHandler> {
-        self.handler.clone()
-    }
-
-    fn extended_query_handler(&self) -> Arc<impl ExtendedQueryHandler> {
-        self.handler.clone()
-    }
-
-    fn startup_handler(&self) -> Arc<impl StartupHandler> {
-        match self.auth_mode {
-            AuthMode::Trust => {
-                // No authentication — development only.
-                Arc::new(TrustOrScramStartup::Trust(self.handler.clone()))
-            }
-            AuthMode::Password | AuthMode::Certificate => {
-                // SCRAM-SHA-256 authentication.
-                let auth_source = Arc::new(NodeDbAuthSource {
-                    credentials: Arc::clone(&self.credentials),
-                    state: Arc::clone(&self.state),
-                });
-                let scram = pgwire::api::auth::sasl::scram::ScramAuth::new(auth_source);
-                let params = Arc::new(nodedb_parameter_provider());
-                let sasl =
-                    pgwire::api::auth::sasl::SASLAuthStartupHandler::new(params).with_scram(scram);
-                Arc::new(TrustOrScramStartup::Scram(Box::new(sasl)))
-            }
-        }
-    }
-}
-
-/// Enum dispatch for startup handler — avoids dyn trait object issues.
-enum TrustOrScramStartup {
-    Trust(Arc<NodeDbPgHandler>),
-    Scram(Box<pgwire::api::auth::sasl::SASLAuthStartupHandler<DefaultServerParameterProvider>>),
-}
-
-#[async_trait]
-impl StartupHandler for TrustOrScramStartup {
-    async fn on_startup<C>(
-        &self,
-        client: &mut C,
-        message: pgwire::messages::PgWireFrontendMessage,
-    ) -> PgWireResult<()>
-    where
-        C: ClientInfo + Sink<PgWireBackendMessage> + Unpin + Send + Sync,
-        C::Error: Debug,
-        PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
-    {
-        match self {
-            TrustOrScramStartup::Trust(handler) => {
-                // NoopStartupHandler is implemented for NodeDbPgHandler.
-                <NodeDbPgHandler as StartupHandler>::on_startup(handler, client, message).await
-            }
-            TrustOrScramStartup::Scram(sasl) => sasl.on_startup(client, message).await,
-        }
-    }
+impl NoopStartupHandler for NodeDbPgHandler {
+    // Record auth success (trust mode) after startup completes.
 }

@@ -144,6 +144,38 @@ pub fn role_grants_permission(role: &Role, permission: Permission) -> bool {
     }
 }
 
+/// Map a PhysicalPlan to the Permission required to execute it.
+pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Permission {
+    use crate::bridge::envelope::PhysicalPlan;
+    match plan {
+        // Read operations.
+        PhysicalPlan::PointGet { .. }
+        | PhysicalPlan::RangeScan { .. }
+        | PhysicalPlan::VectorSearch { .. }
+        | PhysicalPlan::CrdtRead { .. }
+        | PhysicalPlan::GraphHop { .. }
+        | PhysicalPlan::GraphNeighbors { .. }
+        | PhysicalPlan::GraphPath { .. }
+        | PhysicalPlan::GraphSubgraph { .. }
+        | PhysicalPlan::GraphRagFusion { .. } => Permission::Read,
+
+        // Write operations.
+        PhysicalPlan::CrdtApply { .. }
+        | PhysicalPlan::VectorInsert { .. }
+        | PhysicalPlan::PointPut { .. }
+        | PhysicalPlan::PointDelete { .. }
+        | PhysicalPlan::EdgePut { .. }
+        | PhysicalPlan::EdgeDelete { .. }
+        | PhysicalPlan::WalAppend { .. } => Permission::Write,
+
+        // DDL / schema changes.
+        PhysicalPlan::SetCollectionPolicy { .. } => Permission::Alter,
+
+        // Control operations.
+        PhysicalPlan::Cancel { .. } => Permission::Admin,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

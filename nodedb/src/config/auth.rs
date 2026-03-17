@@ -21,8 +21,9 @@ pub struct AuthConfig {
     /// Superuser username (used on first-run bootstrap).
     pub superuser_name: String,
 
-    /// Superuser password. Can also be set via `NODEDB_SUPERUSER_PASSWORD` env var.
-    /// If neither is set and mode is not "trust", startup fails.
+    /// Superuser password. Prefer `NODEDB_SUPERUSER_PASSWORD` env var over this field —
+    /// passwords in config files risk exposure in logs, backups, and version control.
+    /// If neither env var nor this field is set and mode is not "trust", startup fails.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub superuser_password: Option<String>,
 

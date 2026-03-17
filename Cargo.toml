@@ -89,5 +89,8 @@ pgwire = { version = "0.38", default-features = false, features = [
 async-trait = "0.1"
 futures = "0.3"
 
+# Password hashing
+argon2 = "0.5"
+
 # Benchmarking
 fluxbench = "0.1"

@@ -44,6 +44,9 @@ nexar = { workspace = true }
 # CRDTs (needed for LoroValue in engine layer)
 loro = { workspace = true }
 
+# Password hashing
+argon2 = { workspace = true }
+
 # PostgreSQL wire protocol
 pgwire = { workspace = true }
 async-trait = { workspace = true }
