@@ -43,6 +43,9 @@ pub fn dispatch(
     if upper.starts_with("CREATE TENANT ") {
         return Some(super::tenant::create_tenant(state, identity, &parts));
     }
+    if upper.starts_with("ALTER TENANT ") {
+        return Some(super::tenant::alter_tenant(state, identity, &parts));
+    }
     if upper.starts_with("DROP TENANT ") {
         return Some(super::tenant::drop_tenant(state, identity, &parts));
     }
@@ -115,6 +118,9 @@ pub fn dispatch(
     }
     if upper.starts_with("SHOW SESSION") {
         return Some(super::inspect::show_session(identity));
+    }
+    if upper.starts_with("SHOW PERMISSIONS") {
+        return Some(super::inspect::show_permissions(state, identity, &parts));
     }
     if upper.starts_with("SHOW GRANTS") {
         return Some(super::inspect::show_grants(state, identity, &parts));
