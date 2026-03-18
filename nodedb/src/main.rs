@@ -195,7 +195,8 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Run native listener on main task.
-    listener.run(shared, shutdown_rx).await?;
+    let native_auth_mode = config.auth.mode.clone();
+    listener.run(shared, native_auth_mode, shutdown_rx).await?;
 
     Ok(())
 }

@@ -40,6 +40,7 @@ impl Listener {
     pub async fn run(
         self,
         state: Arc<SharedState>,
+        auth_mode: crate::config::auth::AuthMode,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> crate::Result<()> {
         info!(addr = %self.addr, "accepting connections");
@@ -50,7 +51,7 @@ impl Listener {
                     match result {
                         Ok((stream, peer_addr)) => {
                             info!(%peer_addr, "new client connection");
-                            let session = Session::new(stream, peer_addr, Arc::clone(&state));
+                            let session = Session::new(stream, peer_addr, Arc::clone(&state), auth_mode.clone());
                             tokio::spawn(async move {
                                 if let Err(e) = session.run().await {
                                     warn!(%peer_addr, error = %e, "session terminated with error");

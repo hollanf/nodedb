@@ -61,15 +61,25 @@ pub struct Session {
     peer_addr: SocketAddr,
     next_request_id: AtomicU64,
     state: Arc<SharedState>,
+    auth_mode: crate::config::auth::AuthMode,
+    /// Bound after auth handshake. None until first frame is processed.
+    identity: Option<crate::control::security::identity::AuthenticatedIdentity>,
 }
 
 impl Session {
-    pub fn new(stream: TcpStream, peer_addr: SocketAddr, state: Arc<SharedState>) -> Self {
+    pub fn new(
+        stream: TcpStream,
+        peer_addr: SocketAddr,
+        state: Arc<SharedState>,
+        auth_mode: crate::config::auth::AuthMode,
+    ) -> Self {
         Self {
             stream,
             peer_addr,
             next_request_id: AtomicU64::new(1),
             state,
+            auth_mode,
+            identity: None,
         }
     }
 
@@ -126,7 +136,11 @@ impl Session {
     }
 
     /// Parse a request frame and dispatch to the Data Plane.
-    async fn handle_frame(&self, request_id: RequestId, payload: &[u8]) -> crate::Result<Vec<u8>> {
+    async fn handle_frame(
+        &mut self,
+        request_id: RequestId,
+        payload: &[u8],
+    ) -> crate::Result<Vec<u8>> {
         // Parse the JSON request body.
         let body: serde_json::Value =
             serde_json::from_slice(payload).map_err(|e| crate::Error::BadRequest {
@@ -139,7 +153,50 @@ impl Session {
                 detail: "missing 'op' field".into(),
             })?;
 
-        let tenant_id = TenantId::new(body["tenant_id"].as_u64().unwrap_or(1) as u32);
+        // Auth handshake: must be first frame.
+        if op == "auth" {
+            let identity = super::session_auth::authenticate(
+                &self.state,
+                &self.auth_mode,
+                &body,
+                &self.peer_addr.to_string(),
+            )?;
+            let resp = format!(
+                r#"{{"status":"ok","username":"{}","tenant_id":{}}}"#,
+                identity.username,
+                identity.tenant_id.as_u32()
+            );
+            self.identity = Some(identity);
+            return Ok(resp.into_bytes());
+        }
+
+        // All other ops require auth. In trust mode, auto-authenticate on first frame.
+        if self.identity.is_none() {
+            if self.auth_mode == crate::config::auth::AuthMode::Trust {
+                self.identity = Some(super::session_auth::trust_identity(
+                    &self.state,
+                    "anonymous",
+                ));
+            } else {
+                return Err(crate::Error::RejectedAuthz {
+                    tenant_id: TenantId::new(0),
+                    resource: r#"not authenticated. Send {"op":"auth",...} first."#.into(),
+                });
+            }
+        }
+
+        let identity = match self.identity.as_ref() {
+            Some(id) => id,
+            None => {
+                return Err(crate::Error::RejectedAuthz {
+                    tenant_id: TenantId::new(0),
+                    resource: "not authenticated".into(),
+                });
+            }
+        };
+
+        // Tenant from authenticated identity, not from client payload.
+        let tenant_id = identity.tenant_id;
 
         let collection = body["collection"].as_str().unwrap_or("default").to_string();
 
@@ -397,7 +454,12 @@ mod tests {
         let shared_session = Arc::clone(&shared);
         let session_handle = tokio::spawn(async move {
             let (stream, peer_addr) = listener.accept().await.unwrap();
-            let session = Session::new(stream, peer_addr, shared_session);
+            let session = Session::new(
+                stream,
+                peer_addr,
+                shared_session,
+                crate::config::auth::AuthMode::Trust,
+            );
             session.run().await
         });
 
