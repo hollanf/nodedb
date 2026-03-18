@@ -47,6 +47,9 @@ pub struct SharedState {
     /// Per-tenant quota enforcement.
     pub tenants: Mutex<TenantIsolation>,
 
+    /// Audit retention in days (0 = keep forever).
+    audit_retention_days: u32,
+
     /// Cluster topology (None in single-node mode).
     pub cluster_topology: Option<Arc<RwLock<nodedb_cluster::ClusterTopology>>>,
 
@@ -94,6 +97,7 @@ impl SharedState {
             raft_proposer: None,
             raft_status_fn: None,
             migration_tracker: None,
+            audit_retention_days: 0,
         })
     }
 
@@ -108,6 +112,7 @@ impl SharedState {
         credentials.set_lockout_policy(
             auth_config.max_failed_logins,
             auth_config.lockout_duration_secs,
+            auth_config.password_expiry_days,
         );
 
         let api_keys = ApiKeyStore::new();
@@ -145,6 +150,7 @@ impl SharedState {
             raft_proposer: None,
             raft_status_fn: None,
             migration_tracker: None,
+            audit_retention_days: auth_config.audit_retention_days,
         }))
     }
 
@@ -258,6 +264,25 @@ impl SharedState {
                 }
             } else {
                 tracing::debug!(count = stored.len(), "flushed audit entries to catalog");
+
+                // Prune old entries based on retention policy.
+                if self.audit_retention_days > 0 {
+                    let retention_us = self.audit_retention_days as u64 * 86400 * 1_000_000; // days → microseconds
+                    let now_us = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_micros() as u64;
+                    let cutoff = now_us.saturating_sub(retention_us);
+                    match catalog.prune_audit_before(cutoff) {
+                        Ok(0) => {}
+                        Ok(n) => tracing::info!(
+                            pruned = n,
+                            days = self.audit_retention_days,
+                            "pruned old audit entries"
+                        ),
+                        Err(e) => warn!(error = %e, "failed to prune old audit entries"),
+                    }
+                }
             }
         }
     }

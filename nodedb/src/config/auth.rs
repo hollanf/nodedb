@@ -41,6 +41,15 @@ pub struct AuthConfig {
 
     /// Maximum connections per user (0 = unlimited).
     pub max_connections_per_user: u32,
+
+    /// Password expiry in days (0 = no expiry).
+    /// When set, users must change their password before it expires.
+    /// Expired passwords are rejected at SCRAM auth time.
+    pub password_expiry_days: u32,
+
+    /// Audit retention in days (0 = keep forever).
+    /// Entries older than this are pruned during periodic flush.
+    pub audit_retention_days: u32,
 }
 
 impl Default for AuthConfig {
@@ -54,6 +63,8 @@ impl Default for AuthConfig {
             lockout_duration_secs: 300,
             idle_timeout_secs: 3600,
             max_connections_per_user: 0,
+            password_expiry_days: 0,
+            audit_retention_days: 0,
         }
     }
 }
