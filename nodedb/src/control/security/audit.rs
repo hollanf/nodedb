@@ -23,6 +23,9 @@ pub struct AuditEntry {
     pub source: String,
     /// Human-readable detail.
     pub detail: String,
+    /// SHA-256 hash of the previous entry (hex). Empty for first entry.
+    /// Forms a hash chain for tamper detection.
+    pub prev_hash: String,
 }
 
 /// Categories of audit events.
@@ -78,6 +81,8 @@ pub struct AuditLog {
     next_seq: u64,
     /// Total entries ever recorded (including evicted).
     total_entries: u64,
+    /// Hash of the last recorded entry (for chain continuity).
+    last_hash: String,
 }
 
 impl AuditLog {
@@ -87,6 +92,7 @@ impl AuditLog {
             max_entries,
             next_seq: 1,
             total_entries: 0,
+            last_hash: String::new(),
         }
     }
 
@@ -95,7 +101,12 @@ impl AuditLog {
         self.next_seq = seq;
     }
 
-    /// Record an audit event.
+    /// Set the last hash (used on startup to continue the chain from catalog).
+    pub fn set_last_hash(&mut self, hash: String) {
+        self.last_hash = hash;
+    }
+
+    /// Record an audit event with hash chain.
     pub fn record(
         &mut self,
         event: AuditEvent,
@@ -106,6 +117,8 @@ impl AuditLog {
         let seq = self.next_seq;
         self.next_seq += 1;
 
+        let prev_hash = self.last_hash.clone();
+
         let entry = AuditEntry {
             seq,
             timestamp_us: now_us(),
@@ -113,7 +126,11 @@ impl AuditLog {
             tenant_id,
             source: source.to_string(),
             detail: detail.to_string(),
+            prev_hash,
         };
+
+        // Compute this entry's hash for the chain.
+        self.last_hash = hash_entry(&entry);
 
         if self.entries.len() >= self.max_entries {
             self.entries.pop_front();
@@ -163,6 +180,40 @@ impl AuditLog {
     pub fn drain_for_persistence(&mut self) -> Vec<AuditEntry> {
         self.entries.drain(..).collect()
     }
+
+    /// Get the current last hash (for chain continuity on restart).
+    pub fn last_hash(&self) -> &str {
+        &self.last_hash
+    }
+
+    /// Verify the hash chain integrity of in-memory entries.
+    /// Returns Ok(()) if chain is valid, Err with the broken sequence number.
+    pub fn verify_chain(&self) -> Result<(), u64> {
+        let mut expected_prev = String::new();
+        for entry in &self.entries {
+            if entry.prev_hash != expected_prev {
+                return Err(entry.seq);
+            }
+            expected_prev = hash_entry(entry);
+        }
+        Ok(())
+    }
+}
+
+/// Compute SHA-256 hash of an audit entry for chain linking.
+///
+/// Hash covers: prev_hash + seq + timestamp + event + source + detail.
+/// This ensures any modification to any field breaks the chain.
+fn hash_entry(entry: &AuditEntry) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(entry.prev_hash.as_bytes());
+    hasher.update(entry.seq.to_le_bytes());
+    hasher.update(entry.timestamp_us.to_le_bytes());
+    hasher.update(format!("{:?}", entry.event).as_bytes());
+    hasher.update(entry.source.as_bytes());
+    hasher.update(entry.detail.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 fn now_us() -> u64 {

@@ -65,6 +65,7 @@ pub fn create_api_key(
             target_user.user_id,
             target_user.tenant_id,
             expires_secs,
+            vec![], // TODO: parse SCOPE from DDL when implemented
             catalog.as_ref(),
         )
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;

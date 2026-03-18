@@ -16,6 +16,13 @@ use crate::types::TenantId;
 use super::catalog::{StoredApiKey, SystemCatalog};
 use super::identity::{AuthMethod, AuthenticatedIdentity, Role};
 
+/// A single scoped permission on a key: (permission, collection).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyScope {
+    pub permission: String,
+    pub collection: String,
+}
+
 /// In-memory API key record.
 #[derive(Debug, Clone)]
 pub struct ApiKeyRecord {
@@ -27,6 +34,8 @@ pub struct ApiKeyRecord {
     pub expires_at: u64,
     pub is_revoked: bool,
     pub created_at: u64,
+    /// Permission scope restriction. Empty = inherit all user permissions.
+    pub scope: Vec<KeyScope>,
 }
 
 impl ApiKeyRecord {
@@ -40,10 +49,26 @@ impl ApiKeyRecord {
             expires_at: self.expires_at,
             is_revoked: self.is_revoked,
             created_at: self.created_at,
+            scope: self
+                .scope
+                .iter()
+                .map(|s| format!("{}:{}", s.permission, s.collection))
+                .collect(),
         }
     }
 
     fn from_stored(s: StoredApiKey) -> Self {
+        let scope = s
+            .scope
+            .iter()
+            .filter_map(|s| {
+                let (perm, coll) = s.split_once(':')?;
+                Some(KeyScope {
+                    permission: perm.to_string(),
+                    collection: coll.to_string(),
+                })
+            })
+            .collect();
         Self {
             key_id: s.key_id,
             secret_hash: s.secret_hash,
@@ -53,6 +78,7 @@ impl ApiKeyRecord {
             expires_at: s.expires_at,
             is_revoked: s.is_revoked,
             created_at: s.created_at,
+            scope,
         }
     }
 
@@ -117,12 +143,16 @@ impl ApiKeyStore {
     }
 
     /// Create a new API key for a user. Returns the full key string (shown once).
+    ///
+    /// `scope`: if non-empty, restricts the key to specific (permission, collection) pairs.
+    /// An empty scope means the key inherits all of the user's permissions.
     pub fn create_key(
         &self,
         username: &str,
         user_id: u64,
         tenant_id: TenantId,
         expires_secs: u64,
+        scope: Vec<KeyScope>,
         catalog: Option<&SystemCatalog>,
     ) -> crate::Result<String> {
         let key_id = generate_key_id();
@@ -144,6 +174,7 @@ impl ApiKeyStore {
             expires_at,
             is_revoked: false,
             created_at: now_unix_secs(),
+            scope,
         };
 
         if let Some(catalog) = catalog {
@@ -310,7 +341,7 @@ mod tests {
     fn create_and_verify_key() {
         let store = ApiKeyStore::new();
         let token = store
-            .create_key("alice", 1, TenantId::new(1), 0, None)
+            .create_key("alice", 1, TenantId::new(1), 0, vec![], None)
             .unwrap();
 
         assert!(token.starts_with("ndb_"));
@@ -325,7 +356,7 @@ mod tests {
     fn invalid_token_rejected() {
         let store = ApiKeyStore::new();
         store
-            .create_key("alice", 1, TenantId::new(1), 0, None)
+            .create_key("alice", 1, TenantId::new(1), 0, vec![], None)
             .unwrap();
 
         assert!(store.verify_key("ndb_wrong_secret").is_none());
@@ -337,7 +368,7 @@ mod tests {
     fn revoked_key_rejected() {
         let store = ApiKeyStore::new();
         let token = store
-            .create_key("alice", 1, TenantId::new(1), 0, None)
+            .create_key("alice", 1, TenantId::new(1), 0, vec![], None)
             .unwrap();
 
         let (key_id, _) = parse_token(&token).unwrap();
@@ -363,6 +394,7 @@ mod tests {
             expires_at: 1, // Unix timestamp 1 = 1970, definitely expired.
             is_revoked: false,
             created_at: 1,
+            scope: vec![],
         };
 
         store.keys.write().unwrap().insert(key_id.clone(), record);
@@ -375,13 +407,13 @@ mod tests {
     fn list_keys_for_user() {
         let store = ApiKeyStore::new();
         store
-            .create_key("alice", 1, TenantId::new(1), 0, None)
+            .create_key("alice", 1, TenantId::new(1), 0, vec![], None)
             .unwrap();
         store
-            .create_key("alice", 1, TenantId::new(1), 0, None)
+            .create_key("alice", 1, TenantId::new(1), 0, vec![], None)
             .unwrap();
         store
-            .create_key("bob", 2, TenantId::new(1), 0, None)
+            .create_key("bob", 2, TenantId::new(1), 0, vec![], None)
             .unwrap();
 
         assert_eq!(store.list_keys_for_user("alice").len(), 2);

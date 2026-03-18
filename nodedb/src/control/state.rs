@@ -244,6 +244,7 @@ impl SharedState {
                     tenant_id: e.tenant_id.map(|t| t.as_u32()),
                     source: e.source.clone(),
                     detail: e.detail.clone(),
+                    prev_hash: e.prev_hash.clone(),
                 })
                 .collect();
 
