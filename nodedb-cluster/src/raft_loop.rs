@@ -134,13 +134,37 @@ impl<A: CommitApplier, F: RequestForwarder> RaftLoop<A, F> {
             return;
         }
 
-        // Phase 2: process each group's Ready outside the lock.
-        for (group_id, group_ready) in ready.groups {
-            // Dispatch AppendEntries RPCs (fire-and-forget, responses handled async).
-            for (peer, req) in group_ready.messages {
-                let transport = self.transport.clone();
-                let mr = self.multi_raft.clone();
-                tokio::spawn(async move {
+        // Phase 2: Batch messages by peer for efficient dispatch.
+        // Instead of spawning one task per (group, peer) message, we batch all
+        // messages to the same peer into one task, reducing QUIC stream overhead.
+        use std::collections::HashMap as BatchMap;
+
+        let mut ae_batches: BatchMap<u64, Vec<(u64, nodedb_raft::AppendEntriesRequest)>> =
+            BatchMap::new();
+        let mut vote_batches: BatchMap<u64, Vec<(u64, nodedb_raft::RequestVoteRequest)>> =
+            BatchMap::new();
+
+        for (group_id, group_ready) in &ready.groups {
+            for (peer, req) in &group_ready.messages {
+                ae_batches
+                    .entry(*peer)
+                    .or_default()
+                    .push((*group_id, req.clone()));
+            }
+            for (peer, req) in &group_ready.vote_requests {
+                vote_batches
+                    .entry(*peer)
+                    .or_default()
+                    .push((*group_id, req.clone()));
+            }
+        }
+
+        // Dispatch batched AppendEntries — one task per peer.
+        for (peer, messages) in ae_batches {
+            let transport = self.transport.clone();
+            let mr = self.multi_raft.clone();
+            tokio::spawn(async move {
+                for (group_id, req) in messages {
                     match transport.append_entries(peer, req).await {
                         Ok(resp) => {
                             let mut mr = mr.lock().unwrap_or_else(|p| p.into_inner());
@@ -151,16 +175,19 @@ impl<A: CommitApplier, F: RequestForwarder> RaftLoop<A, F> {
                         }
                         Err(e) => {
                             warn!(group_id, peer, error = %e, "append_entries RPC failed");
+                            break; // Peer is down — skip remaining groups.
                         }
                     }
-                });
-            }
+                }
+            });
+        }
 
-            // Dispatch RequestVote RPCs.
-            for (peer, req) in group_ready.vote_requests {
-                let transport = self.transport.clone();
-                let mr = self.multi_raft.clone();
-                tokio::spawn(async move {
+        // Dispatch batched RequestVote — one task per peer.
+        for (peer, votes) in vote_batches {
+            let transport = self.transport.clone();
+            let mr = self.multi_raft.clone();
+            tokio::spawn(async move {
+                for (group_id, req) in votes {
                     match transport.request_vote(peer, req).await {
                         Ok(resp) => {
                             let mut mr = mr.lock().unwrap_or_else(|p| p.into_inner());
@@ -170,11 +197,14 @@ impl<A: CommitApplier, F: RequestForwarder> RaftLoop<A, F> {
                         }
                         Err(e) => {
                             warn!(group_id, peer, error = %e, "request_vote RPC failed");
+                            break;
                         }
                     }
-                });
-            }
+                }
+            });
+        }
 
+        for (group_id, group_ready) in ready.groups {
             // Apply committed entries synchronously.
             if !group_ready.committed_entries.is_empty() {
                 // First, detect and apply any ConfChange entries to MultiRaft.
