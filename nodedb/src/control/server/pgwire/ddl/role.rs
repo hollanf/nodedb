@@ -48,6 +48,58 @@ pub fn create_role(
     Ok(vec![Response::Execution(Tag::new("CREATE ROLE"))])
 }
 
+/// ALTER ROLE <name> SET INHERIT <parent>
+pub fn alter_role(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+) -> PgWireResult<Vec<Response>> {
+    require_admin(identity, "alter roles")?;
+
+    // ALTER ROLE <name> SET INHERIT <parent>
+    if parts.len() < 6 {
+        return Err(sqlstate_error(
+            "42601",
+            "syntax: ALTER ROLE <name> SET INHERIT <parent>",
+        ));
+    }
+
+    let name = parts[2];
+    if !parts[3].eq_ignore_ascii_case("SET") || !parts[4].eq_ignore_ascii_case("INHERIT") {
+        return Err(sqlstate_error(
+            "42601",
+            "expected SET INHERIT after role name",
+        ));
+    }
+    let parent = parts[5];
+
+    // Drop and re-create with new parent (simple approach for immutable-role stores).
+    let catalog = state.credentials.catalog();
+    let old_role = state
+        .roles
+        .get_role(name)
+        .ok_or_else(|| sqlstate_error("42704", &format!("role '{name}' not found")))?;
+
+    state
+        .roles
+        .drop_role(name, catalog.as_ref())
+        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+
+    state
+        .roles
+        .create_role(name, old_role.tenant_id, Some(parent), catalog.as_ref())
+        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+
+    state.audit_record(
+        AuditEvent::PrivilegeChange,
+        Some(identity.tenant_id),
+        &identity.username,
+        &format!("altered role '{name}': set inherit '{parent}'"),
+    );
+
+    Ok(vec![Response::Execution(Tag::new("ALTER ROLE"))])
+}
+
 /// DROP ROLE <name>
 pub fn drop_role(
     state: &SharedState,

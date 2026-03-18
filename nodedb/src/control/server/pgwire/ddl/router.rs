@@ -62,8 +62,18 @@ pub fn dispatch(
     if upper.starts_with("CREATE ROLE ") {
         return Some(super::role::create_role(state, identity, &parts));
     }
+    if upper.starts_with("ALTER ROLE ") {
+        return Some(super::role::alter_role(state, identity, &parts));
+    }
     if upper.starts_with("DROP ROLE ") {
         return Some(super::role::drop_role(state, identity, &parts));
+    }
+
+    // Ownership transfer.
+    if upper.starts_with("ALTER COLLECTION ") && upper.contains("OWNER TO") {
+        return Some(super::ownership::alter_collection_owner(
+            state, identity, &parts,
+        ));
     }
 
     // API keys.
