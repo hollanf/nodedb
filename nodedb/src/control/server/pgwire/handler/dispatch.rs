@@ -147,10 +147,19 @@ impl NodeDbPgHandler {
             return Ok(vec![Response::Execution(Tag::new("OK"))]);
         }
 
+        // Determine read consistency and check if forwarding is needed.
         let consistency = self.consistency_for_tasks(&tasks);
+
+        // Check if ALL tasks go to a single remote leader (common case).
         if let Some(leader) = self.remote_leader_for_tasks(&tasks, consistency) {
             return self.forward_sql(sql, tenant_id, leader).await;
         }
+
+        // If tasks target multiple remote leaders, we can't forward the SQL as-is.
+        // Fall through to local dispatch — tasks targeting remote vShards will fail
+        // with a routing error. True scatter-gather across multiple leaders requires
+        // per-task forwarding with result merging (deferred to scatter-gather phase).
+        // For single-collection queries (the common case), all tasks share one leader.
 
         let mut responses = Vec::with_capacity(tasks.len());
         for task in tasks {
@@ -261,11 +270,23 @@ impl NodeDbPgHandler {
             },
         );
 
+        // Look up leader's address for the redirect hint.
+        let leader_addr = self
+            .state
+            .cluster_topology
+            .as_ref()
+            .and_then(|t| {
+                let topo = t.read().unwrap_or_else(|p| p.into_inner());
+                topo.get_node(leader).map(|n| n.addr.clone())
+            })
+            .unwrap_or_else(|| format!("node-{leader}"));
+
         let resp = transport.send_rpc(leader, req).await.map_err(|e| {
+            // Return a redirect hint so the client can reconnect directly.
             PgWireError::UserError(Box::new(ErrorInfo::new(
                 "ERROR".to_owned(),
-                "08006".to_owned(),
-                format!("forward to leader node {leader} failed: {e}"),
+                "01R01".to_owned(),
+                format!("not leader; redirect to {leader_addr} (forward failed: {e})"),
             )))
         })?;
 

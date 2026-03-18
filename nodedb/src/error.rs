@@ -49,6 +49,13 @@ pub enum Error {
     #[error("vshard {vshard_id} has no serving leader")]
     NoLeader { vshard_id: VShardId },
 
+    #[error("not leader for vshard {vshard_id}; leader is node {leader_node} at {leader_addr}")]
+    NotLeader {
+        vshard_id: VShardId,
+        leader_node: u64,
+        leader_addr: String,
+    },
+
     #[error("query fan-out exceeded: {shards_touched} shards > limit {limit}")]
     FanOutExceeded { shards_touched: u16, limit: u16 },
 

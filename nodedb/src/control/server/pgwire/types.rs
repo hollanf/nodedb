@@ -39,6 +39,14 @@ pub fn error_to_sqlstate(err: &crate::Error) -> (&'static str, &'static str, Str
         crate::Error::RejectedAuthz { .. } => ("ERROR", "42501", err.to_string()),
         crate::Error::MemoryExhausted { .. } => ("ERROR", "53200", err.to_string()),
         crate::Error::FanOutExceeded { .. } => ("ERROR", "54001", err.to_string()),
+        crate::Error::NoLeader { .. } => ("ERROR", "55P03", err.to_string()),
+        // SQLSTATE 01R01: custom — "not leader" with redirect hint.
+        // The message contains the leader's address so clients can reconnect.
+        crate::Error::NotLeader { leader_addr, .. } => (
+            "ERROR",
+            "01R01",
+            format!("not leader; redirect to {leader_addr}"),
+        ),
         _ => ("ERROR", "XX000", err.to_string()),
     }
 }
