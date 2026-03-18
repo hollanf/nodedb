@@ -2,18 +2,17 @@ use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 
-use tracing::{debug, warn};
+use tracing::warn;
 
 use nodedb_bridge::buffer::{Consumer, Producer};
-use nodedb_crdt::constraint::ConstraintSet;
 
 use crate::bridge::dispatch::{BridgeRequest, BridgeResponse};
-use crate::bridge::envelope::{ErrorCode, PhysicalPlan, Response, Status};
+use crate::bridge::envelope::{ErrorCode, Response, Status};
 use crate::engine::crdt::tenant_state::TenantCrdtEngine;
 use crate::engine::graph::csr::CsrIndex;
 use crate::engine::graph::edge_store::EdgeStore;
 use crate::engine::sparse::btree::SparseEngine;
-use crate::engine::vector::hnsw::{HnswIndex, HnswParams};
+use crate::engine::vector::hnsw::HnswIndex;
 use crate::types::{Lsn, TenantId};
 
 use super::task::{ExecutionTask, TaskState};
@@ -32,22 +31,22 @@ pub struct CoreLoop {
     pub(super) core_id: usize,
 
     /// SPSC channel: receives requests from Control Plane.
-    request_rx: Consumer<BridgeRequest>,
+    pub(super) request_rx: Consumer<BridgeRequest>,
 
     /// SPSC channel: sends responses to Control Plane.
-    response_tx: Producer<BridgeResponse>,
+    pub(super) response_tx: Producer<BridgeResponse>,
 
     /// Pending tasks ordered by priority then arrival.
-    task_queue: VecDeque<ExecutionTask>,
+    pub(super) task_queue: VecDeque<ExecutionTask>,
 
     /// Current watermark LSN for this core's shard data.
-    watermark: Lsn,
+    pub(super) watermark: Lsn,
 
     /// redb-backed sparse/metadata engine for this core.
     pub(crate) sparse: SparseEngine,
 
     /// Per-tenant CRDT engines, lazily initialized on first access.
-    crdt_engines: HashMap<TenantId, TenantCrdtEngine>,
+    pub(super) crdt_engines: HashMap<TenantId, TenantCrdtEngine>,
 
     /// Per-collection HNSW vector indexes, lazily initialized on first insert.
     pub(super) vector_indexes: HashMap<String, HnswIndex>,
@@ -57,6 +56,9 @@ pub struct CoreLoop {
 
     /// In-memory CSR adjacency index, rebuilt from edge_store on startup.
     pub(super) csr: CsrIndex,
+
+    /// vShards that are paused for write operations (during Phase 3 migration cutover).
+    pub(super) paused_vshards: std::collections::HashSet<crate::types::VShardId>,
 }
 
 impl CoreLoop {
@@ -88,11 +90,112 @@ impl CoreLoop {
             vector_indexes: HashMap::new(),
             edge_store,
             csr,
+            paused_vshards: std::collections::HashSet::new(),
         })
     }
 
     pub fn core_id(&self) -> usize {
         self.core_id
+    }
+
+    /// Pause writes to a vShard (during Phase 3 migration cutover).
+    ///
+    /// While paused, write operations (PointPut, CrdtApply, etc.) for this
+    /// vShard return `ErrorCode::ConflictRetry` so the client retries after
+    /// the routing table update commits.
+    pub fn pause_vshard(&mut self, vshard: crate::types::VShardId) {
+        self.paused_vshards.insert(vshard);
+    }
+
+    /// Resume writes to a vShard after cutover.
+    pub fn resume_vshard(&mut self, vshard: crate::types::VShardId) {
+        self.paused_vshards.remove(&vshard);
+    }
+
+    /// Check if a vShard is paused for writes.
+    pub fn is_vshard_paused(&self, vshard: crate::types::VShardId) -> bool {
+        self.paused_vshards.contains(&vshard)
+    }
+
+    /// Export the current state of all engines into a serializable snapshot.
+    ///
+    /// This captures the complete Data Plane state for this core:
+    /// redb tables (sparse + edge), in-memory HNSW indexes, and CRDT state.
+    pub fn export_snapshot(&self) -> crate::Result<crate::data::snapshot::CoreSnapshot> {
+        use crate::data::snapshot::*;
+
+        let sparse_documents: Vec<KvPair> = self
+            .sparse
+            .export_documents()?
+            .into_iter()
+            .map(|(k, v)| KvPair { key: k, value: v })
+            .collect();
+
+        let sparse_indexes: Vec<KvPair> = self
+            .sparse
+            .export_indexes()?
+            .into_iter()
+            .map(|(k, v)| KvPair { key: k, value: v })
+            .collect();
+
+        let edges: Vec<KvPair> = self
+            .edge_store
+            .export_edges()?
+            .into_iter()
+            .map(|(k, v)| KvPair { key: k, value: v })
+            .collect();
+
+        let reverse_edges: Vec<KvPair> = self
+            .edge_store
+            .export_reverse_edges()?
+            .into_iter()
+            .map(|(k, v)| KvPair { key: k, value: v })
+            .collect();
+
+        let hnsw_indexes: Vec<HnswSnapshot> = self
+            .vector_indexes
+            .iter()
+            .map(|(name, idx)| {
+                let metric = match idx.params().metric {
+                    crate::engine::vector::distance::DistanceMetric::L2 => 0u8,
+                    crate::engine::vector::distance::DistanceMetric::Cosine => 1,
+                    crate::engine::vector::distance::DistanceMetric::InnerProduct => 2,
+                };
+                HnswSnapshot {
+                    collection: name.clone(),
+                    dim: idx.dim(),
+                    m: idx.params().m,
+                    m0: idx.params().m0,
+                    ef_construction: idx.params().ef_construction,
+                    metric,
+                    entry_point: idx.entry_point(),
+                    max_layer: idx.max_layer(),
+                    rng_state: idx.rng_state(),
+                    vectors: idx.export_vectors(),
+                    neighbors: idx.export_neighbors(),
+                }
+            })
+            .collect();
+
+        let crdt_snapshots: Vec<CrdtSnapshot> = self
+            .crdt_engines
+            .iter()
+            .map(|(tid, engine)| CrdtSnapshot {
+                tenant_id: tid.as_u32(),
+                peer_id: engine.peer_id(),
+                snapshot_bytes: engine.export_snapshot_bytes(),
+            })
+            .collect();
+
+        Ok(CoreSnapshot {
+            watermark: self.watermark.as_u64(),
+            sparse_documents,
+            sparse_indexes,
+            edges,
+            reverse_edges,
+            hnsw_indexes,
+            crdt_snapshots,
+        })
     }
 
     /// Drain incoming requests from the SPSC bridge into the task queue.
@@ -194,318 +297,7 @@ impl CoreLoop {
         }
     }
 
-    /// Get or create a CRDT engine for the given tenant.
-    fn get_crdt_engine(&mut self, tenant_id: TenantId) -> &mut TenantCrdtEngine {
-        self.crdt_engines.entry(tenant_id).or_insert_with(|| {
-            debug!(core = self.core_id, %tenant_id, "creating CRDT engine for tenant");
-            TenantCrdtEngine::new(tenant_id, self.core_id as u64, ConstraintSet::new())
-        })
-    }
-
-    /// Execute a physical plan. Dispatches to the appropriate engine.
-    fn execute(&mut self, task: &ExecutionTask) -> Response {
-        match task.plan() {
-            PhysicalPlan::PointGet {
-                collection,
-                document_id,
-            } => {
-                debug!(core = self.core_id, %collection, %document_id, "point get");
-                match self.sparse.get(collection, document_id) {
-                    Ok(Some(data)) => self.response_with_payload(task, data),
-                    Ok(None) => self.response_error(task, ErrorCode::NotFound),
-                    Err(e) => {
-                        warn!(core = self.core_id, error = %e, "sparse get failed");
-                        self.response_error(
-                            task,
-                            ErrorCode::Internal {
-                                detail: e.to_string(),
-                            },
-                        )
-                    }
-                }
-            }
-
-            PhysicalPlan::VectorSearch {
-                collection,
-                query_vector,
-                top_k,
-                filter_bitmap,
-            } => {
-                debug!(core = self.core_id, %collection, top_k, "vector search");
-                let Some(index) = self.vector_indexes.get(collection) else {
-                    return self.response_error(task, ErrorCode::NotFound);
-                };
-                if index.is_empty() {
-                    return self.response_with_payload(task, b"[]".to_vec());
-                }
-                let ef = top_k.saturating_mul(4).max(64);
-                let results = match filter_bitmap {
-                    Some(bitmap_bytes) => {
-                        index.search_with_bitmap_bytes(query_vector, *top_k, ef, bitmap_bytes)
-                    }
-                    None => index.search(query_vector, *top_k, ef),
-                };
-                let serializable: Vec<_> = results
-                    .iter()
-                    .map(|r| serde_json::json!({"id": r.id, "distance": r.distance}))
-                    .collect();
-                match serde_json::to_vec(&serializable) {
-                    Ok(payload) => self.response_with_payload(task, payload),
-                    Err(e) => {
-                        warn!(core = self.core_id, error = %e, "vector search serialization failed");
-                        self.response_error(
-                            task,
-                            ErrorCode::Internal {
-                                detail: e.to_string(),
-                            },
-                        )
-                    }
-                }
-            }
-
-            PhysicalPlan::RangeScan {
-                collection,
-                field,
-                lower,
-                upper,
-                limit,
-            } => {
-                debug!(core = self.core_id, %collection, %field, limit, "range scan");
-                match self.sparse.range_scan(
-                    collection,
-                    field,
-                    lower.as_deref(),
-                    upper.as_deref(),
-                    *limit,
-                ) {
-                    Ok(results) => match serde_json::to_vec(&results) {
-                        Ok(payload) => self.response_with_payload(task, payload),
-                        Err(e) => {
-                            warn!(core = self.core_id, error = %e, "range scan serialization failed");
-                            self.response_error(
-                                task,
-                                ErrorCode::Internal {
-                                    detail: e.to_string(),
-                                },
-                            )
-                        }
-                    },
-                    Err(e) => {
-                        warn!(core = self.core_id, error = %e, "sparse range scan failed");
-                        self.response_error(
-                            task,
-                            ErrorCode::Internal {
-                                detail: e.to_string(),
-                            },
-                        )
-                    }
-                }
-            }
-
-            PhysicalPlan::CrdtRead {
-                collection,
-                document_id,
-            } => {
-                debug!(core = self.core_id, %collection, %document_id, "crdt read");
-                let tenant_id = task.request.tenant_id;
-                let engine = self.get_crdt_engine(tenant_id);
-                match engine.read_snapshot(collection, document_id) {
-                    Some(snapshot) => self.response_with_payload(task, snapshot),
-                    None => self.response_error(task, ErrorCode::NotFound),
-                }
-            }
-
-            PhysicalPlan::CrdtApply {
-                collection: _,
-                document_id: _,
-                delta,
-                peer_id: _,
-            } => {
-                let tenant_id = task.request.tenant_id;
-                let engine = self.get_crdt_engine(tenant_id);
-                match engine.apply_committed_delta(delta) {
-                    Ok(()) => self.response_ok(task),
-                    Err(e) => {
-                        warn!(core = self.core_id, error = %e, "crdt apply failed");
-                        self.response_error(
-                            task,
-                            ErrorCode::Internal {
-                                detail: e.to_string(),
-                            },
-                        )
-                    }
-                }
-            }
-
-            PhysicalPlan::VectorInsert {
-                collection,
-                vector,
-                dim,
-            } => {
-                debug!(core = self.core_id, %collection, dim, "vector insert");
-                // Check dimension mismatch before borrowing mutably.
-                if let Some(existing) = self.vector_indexes.get(collection) {
-                    if existing.dim() != *dim {
-                        let existing_dim = existing.dim();
-                        return self.response_error(
-                            task,
-                            ErrorCode::RejectedConstraint {
-                                constraint: format!(
-                                    "dimension mismatch: index has {existing_dim}, got {dim}"
-                                ),
-                            },
-                        );
-                    }
-                }
-                let core_id = self.core_id;
-                let index = self
-                    .vector_indexes
-                    .entry(collection.clone())
-                    .or_insert_with(|| {
-                        debug!(core = core_id, dim, "creating HNSW index");
-                        HnswIndex::with_seed(*dim, HnswParams::default(), core_id as u64 + 1)
-                    });
-                index.insert(vector.clone());
-                self.response_ok(task)
-            }
-
-            PhysicalPlan::PointPut {
-                collection,
-                document_id,
-                value,
-            } => {
-                debug!(core = self.core_id, %collection, %document_id, "point put");
-                match self.sparse.put(collection, document_id, value) {
-                    Ok(()) => self.response_ok(task),
-                    Err(e) => self.response_error(
-                        task,
-                        ErrorCode::Internal {
-                            detail: e.to_string(),
-                        },
-                    ),
-                }
-            }
-
-            PhysicalPlan::PointDelete {
-                collection,
-                document_id,
-            } => {
-                debug!(core = self.core_id, %collection, %document_id, "point delete");
-                match self.sparse.delete(collection, document_id) {
-                    Ok(_) => self.response_ok(task),
-                    Err(e) => self.response_error(
-                        task,
-                        ErrorCode::Internal {
-                            detail: e.to_string(),
-                        },
-                    ),
-                }
-            }
-
-            PhysicalPlan::EdgePut {
-                src_id,
-                label,
-                dst_id,
-                properties,
-            } => self.execute_edge_put(task, src_id, label, dst_id, properties),
-
-            PhysicalPlan::EdgeDelete {
-                src_id,
-                label,
-                dst_id,
-            } => self.execute_edge_delete(task, src_id, label, dst_id),
-
-            PhysicalPlan::GraphHop {
-                start_nodes,
-                edge_label,
-                direction,
-                depth,
-                options: _,
-            } => self.execute_graph_hop(task, start_nodes, edge_label, *direction, *depth),
-
-            PhysicalPlan::GraphNeighbors {
-                node_id,
-                edge_label,
-                direction,
-            } => self.execute_graph_neighbors(task, node_id, edge_label, *direction),
-
-            PhysicalPlan::GraphPath {
-                src,
-                dst,
-                edge_label,
-                max_depth,
-                options: _,
-            } => self.execute_graph_path(task, src, dst, edge_label, *max_depth),
-
-            PhysicalPlan::GraphSubgraph {
-                start_nodes,
-                edge_label,
-                depth,
-                options: _,
-            } => self.execute_graph_subgraph(task, start_nodes, edge_label, *depth),
-
-            PhysicalPlan::GraphRagFusion {
-                collection,
-                query_vector,
-                vector_top_k,
-                edge_label,
-                direction,
-                expansion_depth,
-                final_top_k,
-                rrf_k,
-                options,
-            } => self.execute_graph_rag_fusion(
-                task,
-                collection,
-                query_vector,
-                *vector_top_k,
-                edge_label,
-                *direction,
-                *expansion_depth,
-                *final_top_k,
-                *rrf_k,
-                options.max_visited,
-            ),
-
-            PhysicalPlan::SetCollectionPolicy {
-                collection,
-                policy_json,
-            } => {
-                debug!(core = self.core_id, %collection, "set collection policy");
-                let tenant_id = task.request.tenant_id;
-                let engine = self.get_crdt_engine(tenant_id);
-                match engine.set_collection_policy(collection, policy_json) {
-                    Ok(()) => self.response_ok(task),
-                    Err(e) => {
-                        warn!(core = self.core_id, error = %e, "set collection policy failed");
-                        self.response_error(
-                            task,
-                            ErrorCode::Internal {
-                                detail: e.to_string(),
-                            },
-                        )
-                    }
-                }
-            }
-
-            PhysicalPlan::WalAppend { payload } => {
-                debug!(core = self.core_id, len = payload.len(), "wal append");
-                self.response_ok(task)
-            }
-
-            PhysicalPlan::Cancel { target_request_id } => {
-                debug!(core = self.core_id, %target_request_id, "cancel");
-                if let Some(pos) = self
-                    .task_queue
-                    .iter()
-                    .position(|t| t.request_id() == *target_request_id)
-                {
-                    self.task_queue.remove(pos);
-                }
-                self.response_ok(task)
-            }
-        }
-    }
+    // execute() and get_crdt_engine() live in execute.rs
 
     pub fn pending_count(&self) -> usize {
         self.task_queue.len()
@@ -519,7 +311,7 @@ impl CoreLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bridge::envelope::{Priority, Request};
+    use crate::bridge::envelope::{PhysicalPlan, Priority, Request};
     use crate::engine::graph::edge_store::Direction;
     use crate::types::*;
     use nodedb_bridge::buffer::RingBuffer;
