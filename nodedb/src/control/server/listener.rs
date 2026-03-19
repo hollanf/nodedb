@@ -1,7 +1,9 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::net::TcpListener;
+use tokio::task::JoinSet;
 use tracing::{info, warn};
 
 use super::session::Session;
@@ -11,6 +13,9 @@ use crate::control::state::SharedState;
 ///
 /// Listens for incoming client connections and spawns a `Session` task for each.
 /// This runs on the Tokio runtime (Send + Sync).
+///
+/// On shutdown: stops accepting, waits up to 30s for active sessions to drain,
+/// then aborts remaining connections.
 pub struct Listener {
     tcp: TcpListener,
     addr: SocketAddr,
@@ -52,6 +57,8 @@ impl Listener {
         };
         info!(addr = %self.addr, tls = tls_label, "accepting native connections");
 
+        let mut connections = JoinSet::new();
+
         loop {
             tokio::select! {
                 result = self.tcp.accept() => {
@@ -62,7 +69,7 @@ impl Listener {
                             let mode = auth_mode.clone();
                             if let Some(ref acceptor) = tls_acceptor {
                                 let acceptor = acceptor.clone();
-                                tokio::spawn(async move {
+                                connections.spawn(async move {
                                     match acceptor.accept(stream).await {
                                         Ok(tls_stream) => {
                                             let session = Session::new_tls(tls_stream, peer_addr, state_clone, mode);
@@ -74,13 +81,15 @@ impl Listener {
                                             warn!(%peer_addr, error = %e, "native TLS handshake failed");
                                         }
                                     }
+                                    peer_addr
                                 });
                             } else {
                                 let session = Session::new(stream, peer_addr, state_clone, mode);
-                                tokio::spawn(async move {
+                                connections.spawn(async move {
                                     if let Err(e) = session.run().await {
                                         warn!(%peer_addr, error = %e, "session terminated with error");
                                     }
+                                    peer_addr
                                 });
                             }
                         }
@@ -89,15 +98,54 @@ impl Listener {
                         }
                     }
                 }
+                // Reap completed connections.
+                Some(result) = connections.join_next(), if !connections.is_empty() => {
+                    if let Ok(peer_addr) = result {
+                        info!(%peer_addr, "native connection closed");
+                    }
+                }
                 _ = shutdown.changed() => {
                     if *shutdown.borrow() {
-                        info!(addr = %self.addr, "shutdown signal received, stopping listener");
+                        info!(
+                            addr = %self.addr,
+                            active = connections.len(),
+                            "shutdown signal, draining native connections"
+                        );
                         break;
                     }
                 }
             }
         }
 
+        // Graceful drain: wait for in-flight connections with timeout.
+        let drain_timeout = Duration::from_secs(30);
+        if !connections.is_empty() {
+            info!(
+                active = connections.len(),
+                timeout_secs = drain_timeout.as_secs(),
+                "waiting for native connections to drain"
+            );
+
+            let drain_result = tokio::time::timeout(drain_timeout, async {
+                while let Some(result) = connections.join_next().await {
+                    if let Ok(peer_addr) = result {
+                        info!(%peer_addr, "drained native connection");
+                    }
+                }
+            })
+            .await;
+
+            if drain_result.is_err() {
+                let remaining = connections.len();
+                warn!(
+                    remaining,
+                    "drain timeout exceeded, aborting remaining native connections"
+                );
+                connections.abort_all();
+            }
+        }
+
+        info!(addr = %self.addr, "native listener stopped");
         Ok(())
     }
 }
