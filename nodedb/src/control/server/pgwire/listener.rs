@@ -56,6 +56,7 @@ impl PgListener {
         conn_semaphore: Arc<Semaphore>,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> crate::Result<()> {
+        let conn_state = Arc::clone(&state);
         let factory = Arc::new(NodeDbPgHandlerFactory::new(state, auth_mode));
 
         let tls_label = if tls_acceptor.is_some() {
@@ -80,6 +81,7 @@ impl PgListener {
                             let permit = match conn_semaphore.clone().try_acquire_owned() {
                                 Ok(permit) => permit,
                                 Err(_) => {
+                                    conn_state.connections_rejected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                     warn!(
                                         %peer_addr,
                                         "pgwire connection rejected: max_connections limit reached"
@@ -88,6 +90,7 @@ impl PgListener {
                                 }
                             };
 
+                            conn_state.connections_accepted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             info!(%peer_addr, "new pgwire connection");
                             let factory = Arc::clone(&factory);
                             let tls = tls_acceptor.clone();

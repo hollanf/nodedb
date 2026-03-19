@@ -82,6 +82,7 @@ impl Listener {
                             let permit = match conn_semaphore.clone().try_acquire_owned() {
                                 Ok(permit) => permit,
                                 Err(_) => {
+                                    state.connections_rejected.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                     warn!(
                                         %peer_addr,
                                         active = conn_semaphore.available_permits(),
@@ -92,6 +93,7 @@ impl Listener {
                                 }
                             };
 
+                            state.connections_accepted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             info!(%peer_addr, "new native connection");
                             let state_clone = Arc::clone(&state);
                             let mode = auth_mode.clone();

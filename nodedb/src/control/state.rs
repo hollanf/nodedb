@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, RwLock};
 
 use tracing::warn;
@@ -77,6 +78,12 @@ pub struct SharedState {
 
     /// Migration tracker for observability (None in single-node mode).
     pub migration_tracker: Option<Arc<nodedb_cluster::MigrationTracker>>,
+
+    /// Total connections rejected due to max_connections limit (monotonic counter).
+    pub connections_rejected: AtomicU64,
+
+    /// Total connections accepted since startup (monotonic counter).
+    pub connections_accepted: AtomicU64,
 }
 
 impl SharedState {
@@ -102,6 +109,8 @@ impl SharedState {
             migration_tracker: None,
             audit_retention_days: 0,
             idle_timeout_secs: 0,
+            connections_rejected: AtomicU64::new(0),
+            connections_accepted: AtomicU64::new(0),
         })
     }
 
@@ -156,6 +165,8 @@ impl SharedState {
             migration_tracker: None,
             audit_retention_days: auth_config.audit_retention_days,
             idle_timeout_secs: auth_config.idle_timeout_secs,
+            connections_rejected: AtomicU64::new(0),
+            connections_accepted: AtomicU64::new(0),
         }))
     }
 
