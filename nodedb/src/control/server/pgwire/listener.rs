@@ -113,15 +113,14 @@ impl PgListener {
                 "waiting for pgwire connections to drain"
             );
 
-            let drain_result =
-                tokio::time::timeout(drain_timeout, async {
-                    while let Some(result) = connections.join_next().await {
-                        if let Ok(peer_addr) = result {
-                            info!(%peer_addr, "drained pgwire connection");
-                        }
+            let drain_result = tokio::time::timeout(drain_timeout, async {
+                while let Some(result) = connections.join_next().await {
+                    if let Ok(peer_addr) = result {
+                        info!(%peer_addr, "drained pgwire connection");
                     }
-                })
-                .await;
+                }
+            })
+            .await;
 
             if drain_result.is_err() {
                 let remaining = connections.len();

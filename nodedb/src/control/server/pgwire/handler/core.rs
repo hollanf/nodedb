@@ -30,7 +30,9 @@ use crate::control::security::identity::{
 use crate::control::state::SharedState;
 use crate::types::{RequestId, TenantId};
 
-use super::super::session::{SessionStore, TransactionState, parse_set_command, parse_show_command};
+use super::super::session::{
+    SessionStore, TransactionState, parse_set_command, parse_show_command,
+};
 use super::super::types::{error_to_sqlstate, notice_warning, text_field};
 use super::plan::extract_collection;
 
@@ -186,11 +188,7 @@ impl NodeDbPgHandler {
     }
 
     /// Handle SET commands: parse, validate, store in session.
-    fn handle_set(
-        &self,
-        addr: &std::net::SocketAddr,
-        sql: &str,
-    ) -> PgWireResult<Vec<Response>> {
+    fn handle_set(&self, addr: &std::net::SocketAddr, sql: &str) -> PgWireResult<Vec<Response>> {
         let (key, value) = match parse_set_command(sql) {
             Some(kv) => kv,
             None => {
@@ -229,11 +227,7 @@ impl NodeDbPgHandler {
     }
 
     /// Handle SHOW commands: return session parameter values.
-    fn handle_show(
-        &self,
-        addr: &std::net::SocketAddr,
-        sql: &str,
-    ) -> PgWireResult<Vec<Response>> {
+    fn handle_show(&self, addr: &std::net::SocketAddr, sql: &str) -> PgWireResult<Vec<Response>> {
         let param = match parse_show_command(sql) {
             Some(p) => p,
             None => {
@@ -269,14 +263,8 @@ impl NodeDbPgHandler {
     }
 
     /// SHOW ALL — return all session parameters.
-    fn handle_show_all(
-        &self,
-        addr: &std::net::SocketAddr,
-    ) -> PgWireResult<Vec<Response>> {
-        let schema = Arc::new(vec![
-            text_field("name"),
-            text_field("setting"),
-        ]);
+    fn handle_show_all(&self, addr: &std::net::SocketAddr) -> PgWireResult<Vec<Response>> {
+        let schema = Arc::new(vec![text_field("name"), text_field("setting")]);
 
         let params = self.sessions.all_parameters(addr);
         let mut rows = Vec::with_capacity(params.len());
@@ -319,7 +307,14 @@ impl NodeDbPgHandler {
         // Check if it's a DDL command.
         if super::super::ddl::dispatch(&self.state, identity, inner_sql).is_some() {
             let schema = Arc::new(vec![text_field("QUERY PLAN")]);
-            let plan_text = format!("DDL: {}", inner_sql.split_whitespace().take(3).collect::<Vec<_>>().join(" "));
+            let plan_text = format!(
+                "DDL: {}",
+                inner_sql
+                    .split_whitespace()
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
             let mut encoder = DataRowEncoder::new(schema.clone());
             encoder.encode_field(&plan_text)?;
             let row = encoder.take_row();
@@ -331,14 +326,18 @@ impl NodeDbPgHandler {
 
         // Plan via DataFusion to get the physical plan description.
         let tenant_id = identity.tenant_id;
-        let tasks = self.query_ctx.plan_sql(inner_sql, tenant_id).await.map_err(|e| {
-            let (severity, code, message) = error_to_sqlstate(&e);
-            PgWireError::UserError(Box::new(ErrorInfo::new(
-                severity.to_owned(),
-                code.to_owned(),
-                message,
-            )))
-        })?;
+        let tasks = self
+            .query_ctx
+            .plan_sql(inner_sql, tenant_id)
+            .await
+            .map_err(|e| {
+                let (severity, code, message) = error_to_sqlstate(&e);
+                PgWireError::UserError(Box::new(ErrorInfo::new(
+                    severity.to_owned(),
+                    code.to_owned(),
+                    message,
+                )))
+            })?;
 
         let schema = Arc::new(vec![text_field("QUERY PLAN")]);
         let mut rows = Vec::new();
@@ -502,7 +501,9 @@ impl NodeDbPgHandler {
         })?;
 
         self.state.tenant_request_start(tenant_id);
-        let result = self.execute_planned_sql(identity, sql_trimmed, tenant_id).await;
+        let result = self
+            .execute_planned_sql(identity, sql_trimmed, tenant_id)
+            .await;
         self.state.tenant_request_end(tenant_id);
 
         // If the query failed and we're in a transaction block, mark as failed.

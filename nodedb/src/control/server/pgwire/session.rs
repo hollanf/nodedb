@@ -48,10 +48,7 @@ impl PgSession {
         parameters.insert("standard_conforming_strings".into(), "on".into());
         parameters.insert("integer_datetimes".into(), "on".into());
         parameters.insert("search_path".into(), "public".into());
-        parameters.insert(
-            "transaction_isolation".into(),
-            "read committed".into(),
-        );
+        parameters.insert("transaction_isolation".into(), "read committed".into());
         // NodeDB-specific defaults.
         parameters.insert("nodedb.consistency".into(), "strong".into());
         Self {
@@ -107,7 +104,11 @@ impl SessionStore {
         sessions
             .get(addr)
             .map(|s| {
-                let mut params: Vec<_> = s.parameters.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let mut params: Vec<_> = s
+                    .parameters
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
                 params.sort_by(|a, b| a.0.cmp(&b.0));
                 params
             })
@@ -136,9 +137,9 @@ impl SessionStore {
                     // PostgreSQL issues a WARNING here, not an error.
                     Ok(())
                 }
-                TransactionState::Failed => {
-                    Err("current transaction is aborted, commands ignored until end of transaction block")
-                }
+                TransactionState::Failed => Err(
+                    "current transaction is aborted, commands ignored until end of transaction block",
+                ),
             }
         } else {
             Ok(())
@@ -243,10 +244,7 @@ pub fn parse_set_command(sql: &str) -> Option<(String, String)> {
     }
 
     // Strip quotes from value.
-    let value = value
-        .trim_matches('\'')
-        .trim_matches('"')
-        .to_string();
+    let value = value.trim_matches('\'').trim_matches('"').to_string();
 
     Some((key.to_lowercase(), value))
 }
@@ -304,7 +302,10 @@ mod tests {
 
     #[test]
     fn parse_show() {
-        assert_eq!(parse_show_command("SHOW client_encoding"), Some("client_encoding".into()));
+        assert_eq!(
+            parse_show_command("SHOW client_encoding"),
+            Some("client_encoding".into())
+        );
         assert_eq!(parse_show_command("SHOW ALL"), Some("all".into()));
         assert_eq!(parse_show_command("SHOW"), None);
     }
@@ -337,10 +338,16 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:5000".parse().unwrap();
         store.ensure_session(addr);
 
-        assert_eq!(store.get_parameter(&addr, "client_encoding"), Some("UTF8".into()));
+        assert_eq!(
+            store.get_parameter(&addr, "client_encoding"),
+            Some("UTF8".into())
+        );
 
         store.set_parameter(&addr, "application_name".into(), "test_app".into());
-        assert_eq!(store.get_parameter(&addr, "application_name"), Some("test_app".into()));
+        assert_eq!(
+            store.get_parameter(&addr, "application_name"),
+            Some("test_app".into())
+        );
     }
 
     #[test]

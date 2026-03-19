@@ -126,27 +126,57 @@ pub fn jsonb_field(name: &str) -> FieldInfo {
 
 /// Build a FieldInfo for a timestamptz column.
 pub fn timestamptz_field(name: &str) -> FieldInfo {
-    FieldInfo::new(name.to_owned(), None, None, Type::TIMESTAMPTZ, FieldFormat::Text)
+    FieldInfo::new(
+        name.to_owned(),
+        None,
+        None,
+        Type::TIMESTAMPTZ,
+        FieldFormat::Text,
+    )
 }
 
 /// Build a FieldInfo for a timestamp column.
 pub fn timestamp_field(name: &str) -> FieldInfo {
-    FieldInfo::new(name.to_owned(), None, None, Type::TIMESTAMP, FieldFormat::Text)
+    FieldInfo::new(
+        name.to_owned(),
+        None,
+        None,
+        Type::TIMESTAMP,
+        FieldFormat::Text,
+    )
 }
 
 /// Build a FieldInfo for a varchar column.
 pub fn varchar_field(name: &str) -> FieldInfo {
-    FieldInfo::new(name.to_owned(), None, None, Type::VARCHAR, FieldFormat::Text)
+    FieldInfo::new(
+        name.to_owned(),
+        None,
+        None,
+        Type::VARCHAR,
+        FieldFormat::Text,
+    )
 }
 
 /// Build a FieldInfo for a float4 array column (vector embeddings).
 pub fn float4_array_field(name: &str) -> FieldInfo {
-    FieldInfo::new(name.to_owned(), None, None, Type::FLOAT4_ARRAY, FieldFormat::Text)
+    FieldInfo::new(
+        name.to_owned(),
+        None,
+        None,
+        Type::FLOAT4_ARRAY,
+        FieldFormat::Text,
+    )
 }
 
 /// Build a FieldInfo for a float8 array column.
 pub fn float8_array_field(name: &str) -> FieldInfo {
-    FieldInfo::new(name.to_owned(), None, None, Type::FLOAT8_ARRAY, FieldFormat::Text)
+    FieldInfo::new(
+        name.to_owned(),
+        None,
+        None,
+        Type::FLOAT8_ARRAY,
+        FieldFormat::Text,
+    )
 }
 
 /// Map a NodeDB/DataFusion field type name to a pgwire Type.
