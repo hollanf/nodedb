@@ -69,6 +69,14 @@ pub fn dispatch(
         return Some(super::role::drop_role(state, identity, &parts));
     }
 
+    // Backup / Restore.
+    if upper.starts_with("BACKUP TENANT ") {
+        return Some(super::backup::backup_tenant(state, identity, &parts));
+    }
+    if upper.starts_with("RESTORE TENANT ") {
+        return Some(super::backup::restore_tenant(state, identity, &parts));
+    }
+
     // Collection management.
     if upper.starts_with("CREATE COLLECTION ") {
         return Some(super::collection::create_collection(
