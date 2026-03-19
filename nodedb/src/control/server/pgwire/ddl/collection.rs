@@ -144,6 +144,135 @@ pub fn drop_collection(
     Ok(vec![Response::Execution(Tag::new("DROP COLLECTION"))])
 }
 
+/// CREATE INDEX <name> ON <collection> (<field>)
+///
+/// Creates an index owned by the collection's owner.
+pub fn create_index(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+) -> PgWireResult<Vec<Response>> {
+    // CREATE INDEX <name> ON <collection> (<field>)
+    if parts.len() < 6 {
+        return Err(sqlstate_error(
+            "42601",
+            "syntax: CREATE INDEX <name> ON <collection> (<field>)",
+        ));
+    }
+
+    let index_name = parts[2];
+    if !parts[3].eq_ignore_ascii_case("ON") {
+        return Err(sqlstate_error("42601", "expected ON after index name"));
+    }
+    let collection = parts[4];
+    let field = parts[5].trim_matches(|c| c == '(' || c == ')');
+    let tenant_id = identity.tenant_id;
+
+    // Verify collection exists and user has CREATE permission.
+    if let Some(catalog) = state.credentials.catalog() {
+        match catalog.get_collection(tenant_id.as_u32(), collection) {
+            Ok(Some(coll)) if coll.is_active => {
+                // Check: must be collection owner, superuser, or tenant_admin.
+                let is_owner = coll.owner == identity.username;
+                if !is_owner
+                    && !identity.is_superuser
+                    && !identity.has_role(&crate::control::security::identity::Role::TenantAdmin)
+                {
+                    return Err(sqlstate_error(
+                        "42501",
+                        "permission denied: must be collection owner or admin to create indexes",
+                    ));
+                }
+            }
+            _ => {
+                return Err(sqlstate_error(
+                    "42P01",
+                    &format!("collection '{collection}' does not exist"),
+                ));
+            }
+        }
+    }
+
+    // Index ownership inherits from the collection owner.
+    let catalog = state.credentials.catalog();
+    let index_owner = if let Some(cat) = catalog {
+        cat.get_collection(tenant_id.as_u32(), collection)
+            .ok()
+            .flatten()
+            .map(|c| c.owner)
+            .unwrap_or_else(|| identity.username.clone())
+    } else {
+        identity.username.clone()
+    };
+
+    state
+        .permissions
+        .set_owner(
+            "index",
+            tenant_id,
+            index_name,
+            &index_owner,
+            catalog.as_ref(),
+        )
+        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+
+    state.audit_record(
+        AuditEvent::AdminAction,
+        Some(tenant_id),
+        &identity.username,
+        &format!("created index '{index_name}' on '{collection}' ({field})"),
+    );
+
+    Ok(vec![Response::Execution(Tag::new("CREATE INDEX"))])
+}
+
+/// DROP INDEX <name>
+pub fn drop_index(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+) -> PgWireResult<Vec<Response>> {
+    if parts.len() < 3 {
+        return Err(sqlstate_error("42601", "syntax: DROP INDEX <name>"));
+    }
+
+    let index_name = parts[2];
+    let tenant_id = identity.tenant_id;
+
+    // Check ownership or admin.
+    let is_owner = state
+        .permissions
+        .get_owner("index", tenant_id, index_name)
+        .as_deref()
+        == Some(&identity.username);
+
+    if !is_owner
+        && !identity.is_superuser
+        && !identity.has_role(&crate::control::security::identity::Role::TenantAdmin)
+    {
+        return Err(sqlstate_error(
+            "42501",
+            "permission denied: must be index owner or admin",
+        ));
+    }
+
+    // Remove ownership record.
+    let catalog = state.credentials.catalog();
+    state
+        .permissions
+        .remove_owner("index", tenant_id, index_name, catalog.as_ref())
+        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+
+    state.audit_record(
+        AuditEvent::AdminAction,
+        Some(tenant_id),
+        &identity.username,
+        &format!("dropped index '{index_name}'"),
+    );
+
+    Ok(vec![Response::Execution(Tag::new("DROP INDEX"))])
+}
+
 /// SHOW COLLECTIONS
 ///
 /// Lists all active collections for the current tenant.

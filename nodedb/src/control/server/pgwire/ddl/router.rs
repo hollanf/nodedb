@@ -89,6 +89,12 @@ pub fn dispatch(
     if upper == "SHOW COLLECTIONS" || upper.starts_with("SHOW COLLECTIONS") {
         return Some(super::collection::show_collections(state, identity));
     }
+    if upper.starts_with("CREATE INDEX ") {
+        return Some(super::collection::create_index(state, identity, &parts));
+    }
+    if upper.starts_with("DROP INDEX ") {
+        return Some(super::collection::drop_index(state, identity, &parts));
+    }
 
     // Ownership transfer.
     if upper.starts_with("ALTER COLLECTION ") && upper.contains("OWNER TO") {
@@ -149,6 +155,15 @@ pub fn dispatch(
     }
     if upper.starts_with("SHOW SESSION") {
         return Some(super::inspect::show_session(identity));
+    }
+    if upper.starts_with("TRUNCATE AUDIT")
+        || upper.starts_with("DELETE AUDIT")
+        || upper.starts_with("CLEAR AUDIT")
+    {
+        return Some(Err(super::super::types::sqlstate_error(
+            "42501",
+            "audit log cannot be manually truncated. Entries are pruned automatically by the retention policy (audit_retention_days in config).",
+        )));
     }
     if upper.starts_with("SHOW AUDIT LOG") || upper.starts_with("SHOW AUDIT_LOG") {
         return Some(super::inspect::show_audit_log(state, identity, &parts));
