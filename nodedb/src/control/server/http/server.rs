@@ -26,6 +26,19 @@ fn build_router(state: AppState) -> Router {
         .route("/health/ready", get(routes::health::ready))
         .route("/metrics", get(routes::metrics::metrics))
         .route("/query", post(routes::query::query))
+        .route("/status", get(routes::status::status))
+        .route(
+            "/collections/{name}/documents",
+            post(routes::document::insert_document),
+        )
+        .route(
+            "/collections/{name}/documents/{id}",
+            get(routes::document::get_document).delete(routes::document::delete_document),
+        )
+        .route(
+            "/collections/{name}/search",
+            post(routes::search::vector_search),
+        )
         .with_state(state)
 }
 

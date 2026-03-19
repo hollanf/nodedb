@@ -1,3 +1,6 @@
+pub mod document;
 pub mod health;
 pub mod metrics;
 pub mod query;
+pub mod search;
+pub mod status;
