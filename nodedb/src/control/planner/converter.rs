@@ -7,7 +7,7 @@ use crate::types::{TenantId, VShardId};
 
 use super::extract::{
     expr_to_scan_filters, expr_to_usize, extract_delete_targets, extract_insert_values,
-    extract_update_assignments,
+    extract_update_assignments, try_range_scan_from_predicate,
 };
 use super::search::{extract_table_name, try_extract_vector_search};
 
@@ -56,10 +56,13 @@ impl PlanConverter {
                         return Ok(vec![task]);
                     }
 
-                    // Try secondary index: equality on a non-id field → RangeScan.
-                    if let Some(task) =
-                        try_range_scan_from_eq(&collection, &filter.predicate, tenant_id, vshard)
-                    {
+                    // Try secondary index: equality or range on a non-id field → RangeScan.
+                    if let Some(task) = try_range_scan_from_predicate(
+                        &collection,
+                        &filter.predicate,
+                        tenant_id,
+                        vshard,
+                    ) {
                         return Ok(vec![task]);
                     }
 
@@ -81,9 +84,28 @@ impl PlanConverter {
                             offset: 0,
                             sort_keys: Vec::new(),
                             filters: filter_bytes,
+                            distinct: false,
                         },
                     }]);
                 }
+                // Filter wrapping Aggregate = HAVING clause.
+                if matches!(filter.input.as_ref(), LogicalPlan::Aggregate(_)) {
+                    let mut tasks = self.convert(&filter.input, tenant_id)?;
+                    let having_filters = expr_to_scan_filters(&filter.predicate);
+                    let having_bytes = serde_json::to_vec(&having_filters).map_err(|e| {
+                        crate::Error::Serialization {
+                            format: "json".into(),
+                            detail: format!("having serialization: {e}"),
+                        }
+                    })?;
+                    for task in &mut tasks {
+                        if let PhysicalPlan::Aggregate { having, .. } = &mut task.plan {
+                            *having = having_bytes.clone();
+                        }
+                    }
+                    return Ok(tasks);
+                }
+
                 // Filter wrapping something else — recurse and apply filters.
                 let mut tasks = self.convert(&filter.input, tenant_id)?;
                 let filters = expr_to_scan_filters(&filter.predicate);
@@ -137,6 +159,7 @@ impl PlanConverter {
                         offset: 0,
                         sort_keys: Vec::new(),
                         filters: filter_bytes,
+                        distinct: false,
                     },
                 }])
             }
@@ -186,6 +209,7 @@ impl PlanConverter {
                                 collection,
                                 query_vector: std::sync::Arc::from(query_vector.as_slice()),
                                 top_k,
+                                ef_search: 0,
                                 filter_bitmap: None,
                             },
                         }]);
@@ -277,6 +301,7 @@ impl PlanConverter {
                         group_by,
                         aggregates,
                         filters: filter_bytes,
+                        having: Vec::new(),
                         limit: 10000,
                     },
                 }])
@@ -286,8 +311,16 @@ impl PlanConverter {
 
             LogicalPlan::Join(join) => super::join::convert_join(join, tenant_id),
 
-            // Pass through — deduplication happens post-scan.
-            LogicalPlan::Distinct(distinct) => self.convert(distinct.input(), tenant_id),
+            // DISTINCT: recurse into input, then mark DocumentScan for dedup.
+            LogicalPlan::Distinct(distinct) => {
+                let mut tasks = self.convert(distinct.input(), tenant_id)?;
+                for task in &mut tasks {
+                    if let PhysicalPlan::DocumentScan { distinct, .. } = &mut task.plan {
+                        *distinct = true;
+                    }
+                }
+                Ok(tasks)
+            }
 
             // Scalar subqueries are handled by DataFusion's optimizer.
             // If we reach here, the subquery wasn't optimized away.
@@ -440,53 +473,6 @@ impl PlanConverter {
         }
         Ok(None)
     }
-}
-
-/// Try to convert a single equality predicate on a non-id field into a RangeScan.
-///
-/// This generates an index-backed scan when the WHERE clause is `field = value`
-/// for a field that might have a secondary index. The Data Plane's RangeScan
-/// scans the INDEXES table (`{tenant}:{collection}:{field}:{value}:*`) and
-/// returns matching document IDs directly — much faster than scanning all
-/// documents and filtering post-fetch.
-///
-/// Only fires for simple equality predicates. Compound WHERE clauses
-/// (AND/OR with multiple fields) fall through to DocumentScan.
-fn try_range_scan_from_eq(
-    collection: &str,
-    predicate: &Expr,
-    tenant_id: TenantId,
-    vshard: VShardId,
-) -> Option<PhysicalTask> {
-    if let Expr::BinaryExpr(binary) = predicate {
-        if binary.op == Operator::Eq {
-            let (col_name, value) = match (&*binary.left, &*binary.right) {
-                (Expr::Column(col), Expr::Literal(lit)) => (col.name.as_str(), lit.to_string()),
-                (Expr::Literal(lit), Expr::Column(col)) => (col.name.as_str(), lit.to_string()),
-                _ => return None,
-            };
-
-            // id/document_id equality is handled by try_point_get, not here.
-            if col_name == "id" || col_name == "document_id" {
-                return None;
-            }
-
-            let value_clean = value.trim_matches('\'').trim_matches('"').to_string();
-
-            return Some(PhysicalTask {
-                tenant_id,
-                vshard_id: vshard,
-                plan: PhysicalPlan::RangeScan {
-                    collection: collection.to_string(),
-                    field: col_name.to_string(),
-                    lower: Some(value_clean.as_bytes().to_vec()),
-                    upper: Some(format!("{value_clean}\x00").as_bytes().to_vec()),
-                    limit: 1000,
-                },
-            });
-        }
-    }
-    None
 }
 
 #[cfg(test)]

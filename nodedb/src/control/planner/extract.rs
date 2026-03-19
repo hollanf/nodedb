@@ -4,9 +4,13 @@
 //! DataFusion `Expr` trees into NodeDB scan filters, update assignments,
 //! and scalar values.
 
-use datafusion::logical_expr::{LogicalPlan, Operator};
+use datafusion::logical_expr::{BinaryExpr, LogicalPlan, Operator};
 use datafusion::prelude::*;
 use tracing::warn;
+
+use crate::bridge::envelope::PhysicalPlan;
+use crate::control::planner::physical::PhysicalTask;
+use crate::types::{TenantId, VShardId};
 
 /// Convert a DataFusion expression to scan filter predicates.
 ///
@@ -299,5 +303,142 @@ pub(super) fn extract_delete_targets(
         _ => Err(crate::Error::PlanError {
             detail: format!("unsupported DELETE input plan: {}", plan.display()),
         }),
+    }
+}
+
+/// Try to convert a predicate on a non-id field into an index-backed RangeScan.
+///
+/// Supports:
+/// - Equality: `WHERE field = value` → exact range `[value, value\0)`
+/// - Range: `WHERE field > lower AND field < upper` → range `(lower, upper)`
+/// - Single-bound: `WHERE field >= value` → range `[value, ...)`
+///
+/// The Data Plane's RangeScan scans the INDEXES table
+/// (`{tenant}:{collection}:{field}:{value}:*`) and returns matching
+/// document IDs directly — much faster than scanning all documents.
+///
+/// Only fires for single-field predicates. Multi-field WHERE clauses
+/// fall through to DocumentScan.
+pub(super) fn try_range_scan_from_predicate(
+    collection: &str,
+    predicate: &Expr,
+    tenant_id: TenantId,
+    vshard: VShardId,
+) -> Option<PhysicalTask> {
+    match predicate {
+        // Simple equality: field = value
+        Expr::BinaryExpr(binary) if binary.op == Operator::Eq => {
+            let (col_name, value) = extract_col_literal(binary)?;
+            if col_name == "id" || col_name == "document_id" {
+                return None;
+            }
+            let value_clean = value.trim_matches('\'').trim_matches('"').to_string();
+            Some(PhysicalTask {
+                tenant_id,
+                vshard_id: vshard,
+                plan: PhysicalPlan::RangeScan {
+                    collection: collection.to_string(),
+                    field: col_name.to_string(),
+                    lower: Some(value_clean.as_bytes().to_vec()),
+                    upper: Some(format!("{value_clean}\x00").as_bytes().to_vec()),
+                    limit: 1000,
+                },
+            })
+        }
+
+        // Range predicates on single field: GT, GTE, LT, LTE
+        Expr::BinaryExpr(binary)
+            if matches!(
+                binary.op,
+                Operator::Gt | Operator::GtEq | Operator::Lt | Operator::LtEq
+            ) =>
+        {
+            let (col_name, value) = extract_col_literal(binary)?;
+            if col_name == "id" || col_name == "document_id" {
+                return None;
+            }
+            let value_clean = value.trim_matches('\'').trim_matches('"').to_string();
+            let value_bytes = value_clean.as_bytes().to_vec();
+
+            let (lower, upper) = match binary.op {
+                // field > value: exclusive lower bound (append \0 to skip exact match).
+                Operator::Gt => (Some(format!("{value_clean}\x00").as_bytes().to_vec()), None),
+                // field >= value: inclusive lower bound.
+                Operator::GtEq => (Some(value_bytes), None),
+                // field < value: exclusive upper bound.
+                Operator::Lt => (None, Some(value_bytes)),
+                // field <= value: inclusive upper bound (append \0 to include exact match).
+                Operator::LtEq => (None, Some(format!("{value_clean}\x00").as_bytes().to_vec())),
+                _ => return None,
+            };
+
+            Some(PhysicalTask {
+                tenant_id,
+                vshard_id: vshard,
+                plan: PhysicalPlan::RangeScan {
+                    collection: collection.to_string(),
+                    field: col_name.to_string(),
+                    lower,
+                    upper,
+                    limit: 1000,
+                },
+            })
+        }
+
+        // AND of two range predicates on the same field:
+        // WHERE field >= lower AND field < upper
+        Expr::BinaryExpr(binary) if binary.op == Operator::And => {
+            let left_scan =
+                try_range_scan_from_predicate(collection, &binary.left, tenant_id, vshard)?;
+            let right_scan =
+                try_range_scan_from_predicate(collection, &binary.right, tenant_id, vshard)?;
+
+            // Both must be RangeScans on the same field.
+            if let (
+                PhysicalPlan::RangeScan {
+                    field: f1,
+                    lower: l1,
+                    upper: u1,
+                    ..
+                },
+                PhysicalPlan::RangeScan {
+                    field: f2,
+                    lower: l2,
+                    upper: u2,
+                    ..
+                },
+            ) = (&left_scan.plan, &right_scan.plan)
+            {
+                if f1 == f2 {
+                    // Merge bounds: take whichever side provides lower/upper.
+                    let merged_lower = l1.clone().or_else(|| l2.clone());
+                    let merged_upper = u1.clone().or_else(|| u2.clone());
+                    return Some(PhysicalTask {
+                        tenant_id,
+                        vshard_id: vshard,
+                        plan: PhysicalPlan::RangeScan {
+                            collection: collection.to_string(),
+                            field: f1.clone(),
+                            lower: merged_lower,
+                            upper: merged_upper,
+                            limit: 1000,
+                        },
+                    });
+                }
+            }
+            None
+        }
+
+        _ => None,
+    }
+}
+
+/// Extract (column_name, literal_value_string) from a binary expression
+/// where one side is a Column and the other is a Literal.
+pub(super) fn extract_col_literal(binary: &BinaryExpr) -> Option<(String, String)> {
+    match (&*binary.left, &*binary.right) {
+        (Expr::Column(col), Expr::Literal(lit)) => Some((col.name.clone(), lit.to_string())),
+        (Expr::Literal(lit), Expr::Column(col)) => Some((col.name.clone(), lit.to_string())),
+        _ => None,
     }
 }
