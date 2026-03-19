@@ -5,16 +5,37 @@
 //! provides total ordering for JSON values used in sort and range comparisons.
 
 /// A single filter predicate for DocumentScan post-scan evaluation.
+///
+/// Supports simple comparison operators (eq, ne, gt, gte, lt, lte, contains,
+/// is_null, is_not_null) and disjunctive groups via the `"or"` operator.
+///
+/// OR representation: `{"op": "or", "clauses": [[filter1, filter2], [filter3]]}`
+/// means `(filter1 AND filter2) OR filter3`. Each clause is an AND-group;
+/// the document matches if ANY clause group fully matches.
 #[derive(serde::Deserialize, Default)]
 pub(super) struct ScanFilter {
+    #[serde(default)]
     field: String,
     op: String,
+    #[serde(default)]
     value: serde_json::Value,
+    /// Disjunctive clause groups for OR predicates.
+    /// Each inner Vec is an AND-group. The document matches if ANY group matches.
+    #[serde(default)]
+    clauses: Vec<Vec<ScanFilter>>,
 }
 
 impl ScanFilter {
     /// Evaluate this filter against a JSON document.
     pub(super) fn matches(&self, doc: &serde_json::Value) -> bool {
+        // OR predicate: document matches if ANY clause group fully matches.
+        if self.op == "or" {
+            return self
+                .clauses
+                .iter()
+                .any(|clause| clause.iter().all(|f| f.matches(doc)));
+        }
+
         let field_val = match doc.get(&self.field) {
             Some(v) => v,
             None => return self.op == "is_null",

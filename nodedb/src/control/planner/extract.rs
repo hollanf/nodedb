@@ -10,13 +10,37 @@ use datafusion::prelude::*;
 /// Convert a DataFusion expression to scan filter predicates.
 ///
 /// Supports: eq, ne, gt, gte, lt, lte on any field.
-/// Supports AND/OR combinations (flattened to a list of AND predicates).
+/// AND: flattened to a list of predicates (all must match).
+/// OR: emitted as `{"op": "or", "clauses": [[...], [...]]}` — each clause
+///     is a list of AND predicates. The document matches if ANY clause matches.
+///
+/// This representation lets the Data Plane evaluate OR without changing the
+/// simple `ScanFilter` struct: the executor handles the `"or"` filter type
+/// by evaluating each clause group as an AND-set and short-circuiting on
+/// the first match.
 pub(super) fn expr_to_scan_filters(expr: &Expr) -> Vec<serde_json::Value> {
     match expr {
         Expr::BinaryExpr(binary) if binary.op == Operator::And => {
             let mut filters = expr_to_scan_filters(&binary.left);
             filters.extend(expr_to_scan_filters(&binary.right));
             filters
+        }
+        Expr::BinaryExpr(binary) if binary.op == Operator::Or => {
+            // Collect each side of the OR as an independent AND-group.
+            let left_filters = expr_to_scan_filters(&binary.left);
+            let right_filters = expr_to_scan_filters(&binary.right);
+
+            // If either side produced no filters (unsupported expression),
+            // we can't safely evaluate the OR — return empty to avoid
+            // silently dropping predicates (which would return too many rows).
+            if left_filters.is_empty() || right_filters.is_empty() {
+                return Vec::new();
+            }
+
+            vec![serde_json::json!({
+                "op": "or",
+                "clauses": [left_filters, right_filters],
+            })]
         }
         Expr::BinaryExpr(binary) => {
             let op_str = match binary.op {
