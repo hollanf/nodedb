@@ -11,6 +11,8 @@
 /// Serializable snapshot of a single HNSW index.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HnswSnapshot {
+    #[serde(default)]
+    pub tenant_id: u32,
     pub collection: String,
     pub dim: usize,
     pub m: usize,
@@ -172,6 +174,7 @@ mod tests {
                 value: vec![],
             }],
             hnsw_indexes: vec![HnswSnapshot {
+                tenant_id: 1,
                 collection: "embeddings".into(),
                 dim: 3,
                 m: 16,
@@ -213,6 +216,7 @@ mod tests {
         for metric in [0u8, 1, 2] {
             let snap = CoreSnapshot {
                 hnsw_indexes: vec![HnswSnapshot {
+                    tenant_id: 1,
                     collection: "test".into(),
                     dim: 2,
                     m: 8,

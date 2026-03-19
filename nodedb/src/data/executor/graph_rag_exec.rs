@@ -27,6 +27,7 @@ impl CoreLoop {
     pub(super) fn execute_graph_rag_fusion(
         &self,
         task: &ExecutionTask,
+        tenant_id: u32,
         collection: &str,
         query_vector: &[f32],
         vector_top_k: usize,
@@ -47,7 +48,8 @@ impl CoreLoop {
         );
 
         // Step 1: Vector search — top-K semantically similar nodes.
-        let Some(index) = self.vector_indexes.get(collection) else {
+        let index_key = CoreLoop::vector_index_key(tenant_id, collection);
+        let Some(index) = self.vector_indexes.get(&index_key) else {
             return self.response_error(task, ErrorCode::NotFound);
         };
         if index.is_empty() {

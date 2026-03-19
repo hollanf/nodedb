@@ -55,7 +55,8 @@ impl CoreLoop {
                 filter_bitmap,
             } => {
                 debug!(core = self.core_id, %collection, top_k, "vector search");
-                let Some(index) = self.vector_indexes.get(collection) else {
+                let index_key = CoreLoop::vector_index_key(tid, collection);
+                let Some(index) = self.vector_indexes.get(&index_key) else {
                     return self.response_error(task, ErrorCode::NotFound);
                 };
                 if index.is_empty() {
@@ -167,7 +168,8 @@ impl CoreLoop {
                 dim,
             } => {
                 debug!(core = self.core_id, %collection, dim, "vector insert");
-                if let Some(existing) = self.vector_indexes.get(collection) {
+                let index_key = CoreLoop::vector_index_key(tid, collection);
+                if let Some(existing) = self.vector_indexes.get(&index_key) {
                     if existing.dim() != *dim {
                         let existing_dim = existing.dim();
                         return self.response_error(
@@ -181,13 +183,10 @@ impl CoreLoop {
                     }
                 }
                 let core_id = self.core_id;
-                let index = self
-                    .vector_indexes
-                    .entry(collection.clone())
-                    .or_insert_with(|| {
-                        debug!(core = core_id, dim, "creating HNSW index");
-                        HnswIndex::with_seed(*dim, HnswParams::default(), core_id as u64 + 1)
-                    });
+                let index = self.vector_indexes.entry(index_key).or_insert_with(|| {
+                    debug!(core = core_id, dim, "creating HNSW index");
+                    HnswIndex::with_seed(*dim, HnswParams::default(), core_id as u64 + 1)
+                });
                 index.insert(vector.clone());
                 self.response_ok(task)
             }
@@ -279,6 +278,7 @@ impl CoreLoop {
                 options,
             } => self.execute_graph_rag_fusion(
                 task,
+                tid,
                 collection,
                 query_vector,
                 *vector_top_k,

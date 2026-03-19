@@ -156,13 +156,19 @@ impl CoreLoop {
             .vector_indexes
             .iter()
             .map(|(name, idx)| {
+                // Key format is "{tenant_id}:{collection}" — split to store separately.
+                let (tenant_id, collection) = name
+                    .split_once(':')
+                    .map(|(t, c)| (t.parse::<u32>().unwrap_or(0), c.to_string()))
+                    .unwrap_or((0, name.clone()));
                 let metric = match idx.params().metric {
                     crate::engine::vector::distance::DistanceMetric::L2 => 0u8,
                     crate::engine::vector::distance::DistanceMetric::Cosine => 1,
                     crate::engine::vector::distance::DistanceMetric::InnerProduct => 2,
                 };
                 HnswSnapshot {
-                    collection: name.clone(),
+                    tenant_id,
+                    collection,
                     dim: idx.dim(),
                     m: idx.params().m,
                     m0: idx.params().m0,
@@ -295,6 +301,11 @@ impl CoreLoop {
             watermark_lsn: self.watermark,
             error_code: Some(error_code),
         }
+    }
+
+    /// Build a tenant-scoped vector index key.
+    pub(super) fn vector_index_key(tenant_id: u32, collection: &str) -> String {
+        format!("{tenant_id}:{collection}")
     }
 
     // execute() and get_crdt_engine() live in execute.rs
