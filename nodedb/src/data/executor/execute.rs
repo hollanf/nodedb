@@ -13,6 +13,31 @@ use super::scan_filter::{ScanFilter, compare_json_values};
 use super::task::ExecutionTask;
 
 impl CoreLoop {
+    /// Get or create a vector index, validating dimension compatibility.
+    fn get_or_create_vector_index(
+        &mut self,
+        tid: u32,
+        collection: &str,
+        dim: usize,
+    ) -> Result<&mut HnswIndex, ErrorCode> {
+        let index_key = CoreLoop::vector_index_key(tid, collection);
+        if let Some(existing) = self.vector_indexes.get(&index_key) {
+            if existing.dim() != dim {
+                return Err(ErrorCode::RejectedConstraint {
+                    constraint: format!(
+                        "dimension mismatch: index has {}, got {dim}",
+                        existing.dim()
+                    ),
+                });
+            }
+        }
+        let core_id = self.core_id;
+        Ok(self.vector_indexes.entry(index_key).or_insert_with(|| {
+            debug!(core = core_id, dim, "creating HNSW index");
+            HnswIndex::with_seed(dim, HnswParams::default(), core_id as u64 + 1)
+        }))
+    }
+
     /// Execute a physical plan. Dispatches to the appropriate engine.
     pub(super) fn execute(&mut self, task: &ExecutionTask) -> Response {
         let tid = task.request.tenant_id.as_u32();
@@ -157,27 +182,66 @@ impl CoreLoop {
                 dim,
             } => {
                 debug!(core = self.core_id, %collection, dim, "vector insert");
-                let index_key = CoreLoop::vector_index_key(tid, collection);
-                if let Some(existing) = self.vector_indexes.get(&index_key) {
-                    if existing.dim() != *dim {
-                        let existing_dim = existing.dim();
-                        return self.response_error(
-                            task,
-                            ErrorCode::RejectedConstraint {
-                                constraint: format!(
-                                    "dimension mismatch: index has {existing_dim}, got {dim}"
-                                ),
-                            },
-                        );
+                match self.get_or_create_vector_index(tid, collection, *dim) {
+                    Ok(index) => {
+                        index.insert(vector.clone());
+                        self.response_ok(task)
                     }
+                    Err(err) => self.response_error(task, err),
                 }
-                let core_id = self.core_id;
-                let index = self.vector_indexes.entry(index_key).or_insert_with(|| {
-                    debug!(core = core_id, dim, "creating HNSW index");
-                    HnswIndex::with_seed(*dim, HnswParams::default(), core_id as u64 + 1)
-                });
-                index.insert(vector.clone());
-                self.response_ok(task)
+            }
+
+            PhysicalPlan::VectorBatchInsert {
+                collection,
+                vectors,
+                dim,
+            } => {
+                debug!(core = self.core_id, %collection, dim, count = vectors.len(), "vector batch insert");
+                match self.get_or_create_vector_index(tid, collection, *dim) {
+                    Ok(index) => {
+                        for vector in vectors {
+                            if vector.len() != *dim {
+                                return self.response_error(
+                                    task,
+                                    ErrorCode::RejectedConstraint {
+                                        constraint: format!(
+                                            "dimension mismatch in batch: expected {dim}, got {}",
+                                            vector.len()
+                                        ),
+                                    },
+                                );
+                            }
+                            index.insert(vector.clone());
+                        }
+                        let payload = serde_json::json!({"inserted": vectors.len()});
+                        match serde_json::to_vec(&payload) {
+                            Ok(bytes) => self.response_with_payload(task, bytes),
+                            Err(e) => self.response_error(
+                                task,
+                                ErrorCode::Internal {
+                                    detail: format!("batch insert response serialization: {e}"),
+                                },
+                            ),
+                        }
+                    }
+                    Err(err) => self.response_error(task, err),
+                }
+            }
+
+            PhysicalPlan::VectorDelete {
+                collection,
+                vector_id,
+            } => {
+                debug!(core = self.core_id, %collection, vector_id, "vector delete");
+                let index_key = CoreLoop::vector_index_key(tid, collection);
+                let Some(index) = self.vector_indexes.get_mut(&index_key) else {
+                    return self.response_error(task, ErrorCode::NotFound);
+                };
+                if index.delete(*vector_id) {
+                    self.response_ok(task)
+                } else {
+                    self.response_error(task, ErrorCode::NotFound)
+                }
             }
 
             PhysicalPlan::PointPut {

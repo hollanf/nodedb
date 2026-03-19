@@ -114,6 +114,19 @@ pub enum PhysicalPlan {
         dim: usize,
     },
 
+    /// Batch insert vectors into the HNSW index (write path).
+    ///
+    /// Amortizes SPSC bridge overhead and enables single WAL group commit
+    /// for the entire batch.
+    VectorBatchInsert {
+        collection: String,
+        vectors: Vec<Vec<f32>>,
+        dim: usize,
+    },
+
+    /// Soft-delete a vector by internal node ID.
+    VectorDelete { collection: String, vector_id: u32 },
+
     /// Point write: insert/update a document in the sparse engine.
     PointPut {
         collection: String,

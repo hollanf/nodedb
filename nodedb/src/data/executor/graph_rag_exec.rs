@@ -212,7 +212,8 @@ impl CoreLoop {
         let effective_limit = max_visited.min(budget_node_limit);
 
         let mut visited: HashSet<String> = HashSet::with_capacity(effective_limit.min(1024));
-        let mut distances: HashMap<String, usize> = HashMap::with_capacity(effective_limit.min(1024));
+        let mut distances: HashMap<String, usize> =
+            HashMap::with_capacity(effective_limit.min(1024));
         let mut queue: VecDeque<(String, usize)> = VecDeque::new();
         let mut truncated = false;
 

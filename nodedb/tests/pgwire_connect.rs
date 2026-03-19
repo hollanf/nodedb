@@ -56,7 +56,13 @@ async fn pgwire_connect_and_query() {
     let shared_pg = Arc::clone(&shared);
     let pg_handle = tokio::spawn(async move {
         pg_listener
-            .run(shared_pg, AuthMode::Trust, None, Arc::new(tokio::sync::Semaphore::new(128)), shutdown_rx)
+            .run(
+                shared_pg,
+                AuthMode::Trust,
+                None,
+                Arc::new(tokio::sync::Semaphore::new(128)),
+                shutdown_rx,
+            )
             .await
             .unwrap();
     });

@@ -17,7 +17,7 @@
 //! requests. A health watchdog tracks consecutive panics: if the threshold
 //! is exceeded, the core stops accepting new work and logs an alert.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::Arc;
 use std::thread::JoinHandle;

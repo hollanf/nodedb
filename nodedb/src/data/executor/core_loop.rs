@@ -958,7 +958,9 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&resp.inner.payload).unwrap();
 
         // Response has top-level structure: { results: [...], metadata: {...} }
-        let results = body["results"].as_array().expect("results should be an array");
+        let results = body["results"]
+            .as_array()
+            .expect("results should be an array");
         let metadata = body.get("metadata").expect("response should have metadata");
 
         // Should have results with rrf_score fields.
