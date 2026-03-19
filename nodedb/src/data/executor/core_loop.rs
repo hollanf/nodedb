@@ -29,10 +29,10 @@ use super::task::{ExecutionTask, TaskState};
 ///
 /// This type is intentionally `!Send` — pinned to a single core.
 pub struct CoreLoop {
-    pub(super) core_id: usize,
+    pub(in crate::data::executor) core_id: usize,
 
     /// SPSC channel: receives requests from Control Plane.
-    pub(super) request_rx: Consumer<BridgeRequest>,
+    pub(in crate::data::executor) request_rx: Consumer<BridgeRequest>,
 
     /// SPSC channel: sends responses to Control Plane.
     pub(crate) response_tx: Producer<BridgeResponse>,
@@ -47,23 +47,27 @@ pub struct CoreLoop {
     pub(crate) sparse: SparseEngine,
 
     /// Per-tenant CRDT engines, lazily initialized on first access.
-    pub(super) crdt_engines: HashMap<TenantId, TenantCrdtEngine>,
+    pub(in crate::data::executor) crdt_engines: HashMap<TenantId, TenantCrdtEngine>,
 
     /// Per-collection HNSW vector indexes, lazily initialized on first insert.
-    pub(super) vector_indexes: HashMap<String, HnswIndex>,
+    pub(in crate::data::executor) vector_indexes: HashMap<String, HnswIndex>,
 
     /// Per-collection HNSW parameters set via DDL. If a collection has no
     /// entry here, `HnswParams::default()` is used on first insert.
-    pub(super) vector_params: HashMap<String, crate::engine::vector::hnsw::HnswParams>,
+    pub(in crate::data::executor) vector_params:
+        HashMap<String, crate::engine::vector::hnsw::HnswParams>,
 
     /// redb-backed graph edge storage for this core.
-    pub(super) edge_store: EdgeStore,
+    pub(in crate::data::executor) edge_store: EdgeStore,
 
     /// In-memory CSR adjacency index, rebuilt from edge_store on startup.
-    pub(super) csr: CsrIndex,
+    pub(in crate::data::executor) csr: CsrIndex,
+
+    /// Base data directory for this core (used for sort spill temp files).
+    pub(in crate::data::executor) data_dir: std::path::PathBuf,
 
     /// vShards that are paused for write operations (during Phase 3 migration cutover).
-    pub(super) paused_vshards: std::collections::HashSet<crate::types::VShardId>,
+    pub(in crate::data::executor) paused_vshards: std::collections::HashSet<crate::types::VShardId>,
 }
 
 impl CoreLoop {
@@ -96,6 +100,7 @@ impl CoreLoop {
             vector_params: HashMap::new(),
             edge_store,
             csr,
+            data_dir: data_dir.to_path_buf(),
             paused_vshards: std::collections::HashSet::new(),
         })
     }
@@ -104,124 +109,7 @@ impl CoreLoop {
         self.core_id
     }
 
-    /// Replay WAL vector records to rebuild in-memory HNSW indexes after crash.
-    ///
-    /// Called once during startup, after `open()` but before the event loop.
-    /// Processes `VectorPut` and `VectorDelete` records, ignoring records
-    /// for other vShards (each core only replays records routed to it).
-    ///
-    /// Records are replayed in LSN order (WAL guarantees this). For batch
-    /// inserts, the payload contains multiple vectors in a single record.
-    pub fn replay_vector_wal(&mut self, records: &[nodedb_wal::WalRecord], num_cores: usize) {
-        use crate::engine::vector::hnsw::{HnswIndex, HnswParams};
-        use nodedb_wal::record::RecordType;
-
-        let mut inserted = 0usize;
-        let mut deleted = 0usize;
-        let mut skipped = 0usize;
-
-        for record in records {
-            let logical_type = record.logical_record_type();
-
-            // Only process vector records.
-            let is_vector_put = RecordType::from_raw(logical_type) == Some(RecordType::VectorPut);
-            let is_vector_delete =
-                RecordType::from_raw(logical_type) == Some(RecordType::VectorDelete);
-            if !is_vector_put && !is_vector_delete {
-                continue;
-            }
-
-            // Route check: only replay records assigned to this core.
-            // vShard → core mapping is round-robin (same as Dispatcher).
-            let vshard_id = record.header.vshard_id as usize;
-            let target_core = if num_cores > 0 {
-                vshard_id % num_cores
-            } else {
-                0
-            };
-            if target_core != self.core_id {
-                skipped += 1;
-                continue;
-            }
-
-            let tenant_id = record.header.tenant_id;
-
-            if is_vector_put {
-                // Payload is MessagePack: (collection, vector, dim) or (collection, vectors, dim)
-                // Try single vector first, then batch.
-                if let Ok((collection, vector, dim)) =
-                    rmp_serde::from_slice::<(String, Vec<f32>, usize)>(&record.payload)
-                {
-                    if vector.len() != dim {
-                        tracing::warn!(
-                            core = self.core_id,
-                            %collection,
-                            expected = dim,
-                            actual = vector.len(),
-                            "skipping WAL vector record: dimension mismatch"
-                        );
-                        continue;
-                    }
-                    let index_key = CoreLoop::vector_index_key(tenant_id, &collection);
-                    let index = self.vector_indexes.entry(index_key).or_insert_with(|| {
-                        HnswIndex::with_seed(dim, HnswParams::default(), self.core_id as u64 + 1)
-                    });
-                    if index.dim() != dim {
-                        tracing::warn!(
-                            core = self.core_id,
-                            %collection,
-                            index_dim = index.dim(),
-                            record_dim = dim,
-                            "skipping WAL vector record: index dimension mismatch"
-                        );
-                        continue;
-                    }
-                    index.insert(vector);
-                    inserted += 1;
-                } else if let Ok((collection, vectors, dim)) =
-                    rmp_serde::from_slice::<(String, Vec<Vec<f32>>, usize)>(&record.payload)
-                {
-                    let index_key = CoreLoop::vector_index_key(tenant_id, &collection);
-                    let index = self.vector_indexes.entry(index_key).or_insert_with(|| {
-                        HnswIndex::with_seed(dim, HnswParams::default(), self.core_id as u64 + 1)
-                    });
-                    for vector in vectors {
-                        index.insert(vector);
-                    }
-                    inserted += 1;
-                }
-                // If neither format matches, skip silently (forward compat).
-            } else if is_vector_delete {
-                // Payload is MessagePack: (collection, vector_id)
-                if let Ok((collection, vector_id)) =
-                    rmp_serde::from_slice::<(String, u32)>(&record.payload)
-                {
-                    let index_key = CoreLoop::vector_index_key(tenant_id, &collection);
-                    if let Some(index) = self.vector_indexes.get_mut(&index_key) {
-                        index.delete(vector_id);
-                        deleted += 1;
-                    }
-                }
-            }
-        }
-
-        if inserted > 0 || deleted > 0 {
-            tracing::info!(
-                core = self.core_id,
-                inserted,
-                deleted,
-                skipped,
-                indexes = self.vector_indexes.len(),
-                "WAL vector replay complete"
-            );
-        }
-    }
-
     /// Pause writes to a vShard (during Phase 3 migration cutover).
-    ///
-    /// While paused, write operations (PointPut, CrdtApply, etc.) for this
-    /// vShard return `ErrorCode::ConflictRetry` so the client retries after
-    /// the routing table update commits.
     pub fn pause_vshard(&mut self, vshard: crate::types::VShardId) {
         self.paused_vshards.insert(vshard);
     }
@@ -234,93 +122,6 @@ impl CoreLoop {
     /// Check if a vShard is paused for writes.
     pub fn is_vshard_paused(&self, vshard: crate::types::VShardId) -> bool {
         self.paused_vshards.contains(&vshard)
-    }
-
-    /// Export the current state of all engines into a serializable snapshot.
-    ///
-    /// This captures the complete Data Plane state for this core:
-    /// redb tables (sparse + edge), in-memory HNSW indexes, and CRDT state.
-    pub fn export_snapshot(&self) -> crate::Result<crate::data::snapshot::CoreSnapshot> {
-        use crate::data::snapshot::*;
-
-        let sparse_documents: Vec<KvPair> = self
-            .sparse
-            .export_documents()?
-            .into_iter()
-            .map(|(k, v)| KvPair { key: k, value: v })
-            .collect();
-
-        let sparse_indexes: Vec<KvPair> = self
-            .sparse
-            .export_indexes()?
-            .into_iter()
-            .map(|(k, v)| KvPair { key: k, value: v })
-            .collect();
-
-        let edges: Vec<KvPair> = self
-            .edge_store
-            .export_edges()?
-            .into_iter()
-            .map(|(k, v)| KvPair { key: k, value: v })
-            .collect();
-
-        let reverse_edges: Vec<KvPair> = self
-            .edge_store
-            .export_reverse_edges()?
-            .into_iter()
-            .map(|(k, v)| KvPair { key: k, value: v })
-            .collect();
-
-        let hnsw_indexes: Vec<HnswSnapshot> = self
-            .vector_indexes
-            .iter()
-            .map(|(name, idx)| {
-                // Key format is "{tenant_id}:{collection}" — split to store separately.
-                let (tenant_id, collection) = name
-                    .split_once(':')
-                    .map(|(t, c)| (t.parse::<u32>().unwrap_or(0), c.to_string()))
-                    .unwrap_or((0, name.clone()));
-                let metric = match idx.params().metric {
-                    crate::engine::vector::distance::DistanceMetric::L2 => 0u8,
-                    crate::engine::vector::distance::DistanceMetric::Cosine => 1,
-                    crate::engine::vector::distance::DistanceMetric::InnerProduct => 2,
-                };
-                HnswSnapshot {
-                    tenant_id,
-                    collection,
-                    dim: idx.dim(),
-                    m: idx.params().m,
-                    m0: idx.params().m0,
-                    ef_construction: idx.params().ef_construction,
-                    metric,
-                    entry_point: idx.entry_point(),
-                    max_layer: idx.max_layer(),
-                    rng_state: idx.rng_state(),
-                    vectors: idx.export_vectors(),
-                    neighbors: idx.export_neighbors(),
-                }
-            })
-            .collect();
-
-        let crdt_snapshots: Vec<CrdtSnapshot> = self
-            .crdt_engines
-            .iter()
-            .map(|(tid, engine)| CrdtSnapshot {
-                tenant_id: tid.as_u32(),
-                peer_id: engine.peer_id(),
-                snapshot_bytes: engine.export_snapshot_bytes(),
-            })
-            .collect();
-
-        Ok(CoreSnapshot {
-            watermark: self.watermark.as_u64(),
-            sparse_documents,
-            sparse_indexes,
-            edges,
-            reverse_edges,
-            hnsw_indexes,
-            crdt_snapshots,
-        })
     }
 
     /// Drain incoming requests from the SPSC bridge into the task queue.
@@ -340,7 +141,6 @@ impl CoreLoop {
             return false;
         };
 
-        // Check deadline before executing.
         let response = if task.is_expired() {
             task.state = TaskState::Failed;
             Response {
@@ -359,7 +159,6 @@ impl CoreLoop {
             resp
         };
 
-        // Send response back to Control Plane via SPSC.
         if let Err(e) = self
             .response_tx
             .try_push(BridgeResponse { inner: response })
@@ -386,7 +185,7 @@ impl CoreLoop {
         processed
     }
 
-    pub(super) fn response_ok(&self, task: &ExecutionTask) -> Response {
+    pub(in crate::data::executor) fn response_ok(&self, task: &ExecutionTask) -> Response {
         Response {
             request_id: task.request_id(),
             status: Status::Ok,
@@ -398,7 +197,11 @@ impl CoreLoop {
         }
     }
 
-    pub(super) fn response_with_payload(&self, task: &ExecutionTask, payload: Vec<u8>) -> Response {
+    pub(in crate::data::executor) fn response_with_payload(
+        &self,
+        task: &ExecutionTask,
+        payload: Vec<u8>,
+    ) -> Response {
         Response {
             request_id: task.request_id(),
             status: Status::Ok,
@@ -410,7 +213,11 @@ impl CoreLoop {
         }
     }
 
-    pub(super) fn response_error(&self, task: &ExecutionTask, error_code: ErrorCode) -> Response {
+    pub(in crate::data::executor) fn response_error(
+        &self,
+        task: &ExecutionTask,
+        error_code: ErrorCode,
+    ) -> Response {
         Response {
             request_id: task.request_id(),
             status: Status::Error,
@@ -423,19 +230,20 @@ impl CoreLoop {
     }
 
     /// Build a tenant-scoped vector index key.
-    pub(super) fn vector_index_key(tenant_id: u32, collection: &str) -> String {
+    pub(in crate::data::executor) fn vector_index_key(tenant_id: u32, collection: &str) -> String {
         format!("{tenant_id}:{collection}")
     }
 
     /// Get or create a CRDT engine for the given tenant.
-    pub(super) fn get_crdt_engine(&mut self, tenant_id: TenantId) -> &mut TenantCrdtEngine {
+    pub(in crate::data::executor) fn get_crdt_engine(
+        &mut self,
+        tenant_id: TenantId,
+    ) -> &mut TenantCrdtEngine {
         self.crdt_engines.entry(tenant_id).or_insert_with(|| {
             tracing::debug!(core = self.core_id, %tenant_id, "creating CRDT engine for tenant");
             TenantCrdtEngine::new(tenant_id, self.core_id as u64, ConstraintSet::new())
         })
     }
-
-    // execute() lives in execute.rs
 
     pub fn pending_count(&self) -> usize {
         self.task_queue.len()
@@ -501,7 +309,6 @@ mod tests {
     fn point_get_returns_data() {
         let (mut core, mut req_tx, mut resp_rx) = make_core();
 
-        // Insert data directly via the sparse engine.
         core.sparse.put(1, "users", "u1", b"alice-data").unwrap();
 
         req_tx
@@ -545,7 +352,6 @@ mod tests {
         core.tick();
         let resp = resp_rx.try_pop().unwrap();
         assert_eq!(resp.inner.status, Status::Ok);
-        // Payload is JSON-serialized Vec<(String, Vec<u8>)>.
         assert!(!resp.inner.payload.is_empty());
     }
 
@@ -673,7 +479,6 @@ mod tests {
     fn vector_insert_and_search() {
         let (mut core, mut req_tx, mut resp_rx) = make_core();
 
-        // Insert 10 vectors.
         for i in 0..10u32 {
             req_tx
                 .try_push(BridgeRequest {
@@ -695,7 +500,6 @@ mod tests {
                 .unwrap();
         }
 
-        // Process all inserts.
         let processed = core.tick();
         assert_eq!(processed, 10);
         for _ in 0..10 {
@@ -703,7 +507,6 @@ mod tests {
             assert_eq!(resp.inner.status, Status::Ok);
         }
 
-        // Search for the nearest vector to [5.0, 0.0, 0.0].
         req_tx
             .try_push(BridgeRequest {
                 inner: make_request(PhysicalPlan::VectorSearch {
@@ -720,7 +523,6 @@ mod tests {
         let resp = resp_rx.try_pop().unwrap();
         assert_eq!(resp.inner.status, Status::Ok);
 
-        // Payload should be JSON with results.
         let payload = String::from_utf8(resp.inner.payload.to_vec()).unwrap();
         assert!(payload.contains("\"id\""), "payload: {payload}");
         assert!(payload.contains("\"distance\""), "payload: {payload}");
@@ -752,7 +554,6 @@ mod tests {
     fn point_put_and_get() {
         let (mut core, mut req_tx, mut resp_rx) = make_core();
 
-        // Put via physical plan.
         req_tx
             .try_push(BridgeRequest {
                 inner: make_request(PhysicalPlan::PointPut {
@@ -767,7 +568,6 @@ mod tests {
         let resp = resp_rx.try_pop().unwrap();
         assert_eq!(resp.inner.status, Status::Ok);
 
-        // Get it back.
         req_tx
             .try_push(BridgeRequest {
                 inner: make_request(PhysicalPlan::PointGet {
@@ -787,7 +587,6 @@ mod tests {
     fn edge_put_and_graph_neighbors() {
         let (mut core, mut req_tx, mut resp_rx) = make_core();
 
-        // Insert edges: alice -KNOWS-> bob, alice -KNOWS-> carol
         for dst in &["bob", "carol"] {
             req_tx
                 .try_push(BridgeRequest {
@@ -804,7 +603,6 @@ mod tests {
         resp_rx.try_pop().unwrap();
         resp_rx.try_pop().unwrap();
 
-        // Query neighbors.
         req_tx
             .try_push(BridgeRequest {
                 inner: make_request(PhysicalPlan::GraphNeighbors {
@@ -827,7 +625,6 @@ mod tests {
     fn graph_hop_traversal() {
         let (mut core, mut req_tx, mut resp_rx) = make_core();
 
-        // a -> b -> c
         for (s, d) in &[("a", "b"), ("b", "c")] {
             req_tx
                 .try_push(BridgeRequest {
@@ -844,7 +641,6 @@ mod tests {
         resp_rx.try_pop().unwrap();
         resp_rx.try_pop().unwrap();
 
-        // Hop 2 from a.
         req_tx
             .try_push(BridgeRequest {
                 inner: make_request(PhysicalPlan::GraphHop {
@@ -870,7 +666,6 @@ mod tests {
     fn graph_path_and_subgraph() {
         let (mut core, mut req_tx, mut resp_rx) = make_core();
 
-        // a -> b -> c
         for (s, d) in &[("a", "b"), ("b", "c")] {
             req_tx
                 .try_push(BridgeRequest {
@@ -887,7 +682,6 @@ mod tests {
         resp_rx.try_pop().unwrap();
         resp_rx.try_pop().unwrap();
 
-        // Shortest path a -> c.
         req_tx
             .try_push(BridgeRequest {
                 inner: make_request(PhysicalPlan::GraphPath {
@@ -906,7 +700,6 @@ mod tests {
         let path: Vec<String> = serde_json::from_slice(&resp.inner.payload).unwrap();
         assert_eq!(path, vec!["a", "b", "c"]);
 
-        // Subgraph from a, depth 2.
         req_tx
             .try_push(BridgeRequest {
                 inner: make_request(PhysicalPlan::GraphSubgraph {
@@ -929,7 +722,6 @@ mod tests {
     fn edge_delete_updates_csr() {
         let (mut core, mut req_tx, mut resp_rx) = make_core();
 
-        // Insert then delete.
         req_tx
             .try_push(BridgeRequest {
                 inner: make_request(PhysicalPlan::EdgePut {
@@ -955,7 +747,6 @@ mod tests {
         core.tick();
         resp_rx.try_pop().unwrap();
 
-        // Neighbors should be empty now.
         req_tx
             .try_push(BridgeRequest {
                 inner: make_request(PhysicalPlan::GraphNeighbors {
@@ -991,7 +782,6 @@ mod tests {
         let resp = resp_rx.try_pop().unwrap();
         assert_eq!(resp.inner.status, Status::Ok);
 
-        // Should be gone.
         req_tx
             .try_push(BridgeRequest {
                 inner: make_request(PhysicalPlan::PointGet {
@@ -1010,7 +800,6 @@ mod tests {
     fn graph_rag_fusion_pipeline() {
         let (mut core, mut req_tx, mut resp_rx) = make_core();
 
-        // Insert vectors: node 0..9 with vectors [i, 0, 0].
         for i in 0..10u32 {
             req_tx
                 .try_push(BridgeRequest {
@@ -1036,7 +825,6 @@ mod tests {
             resp_rx.try_pop().unwrap();
         }
 
-        // Insert graph edges: "0" -> "1" -> "2" -> "3".
         for (s, d) in &[("0", "1"), ("1", "2"), ("2", "3")] {
             req_tx
                 .try_push(BridgeRequest {
@@ -1054,7 +842,6 @@ mod tests {
             resp_rx.try_pop().unwrap();
         }
 
-        // GraphRAG fusion: vector search near [1, 0, 0], expand 2 hops via CITES.
         req_tx
             .try_push(BridgeRequest {
                 inner: make_request(PhysicalPlan::GraphRagFusion {
@@ -1077,18 +864,15 @@ mod tests {
 
         let body: serde_json::Value = serde_json::from_slice(&resp.inner.payload).unwrap();
 
-        // Response has top-level structure: { results: [...], metadata: {...} }
         let results = body["results"]
             .as_array()
             .expect("results should be an array");
         let metadata = body.get("metadata").expect("response should have metadata");
 
-        // Should have results with rrf_score fields.
         assert!(!results.is_empty());
         assert!(results[0].get("rrf_score").is_some());
         assert!(results[0].get("node_id").is_some());
 
-        // Metadata should report expansion stats.
         assert!(metadata.get("vector_candidates").is_some());
         assert!(metadata.get("graph_expanded").is_some());
         assert_eq!(metadata["truncated"], false);

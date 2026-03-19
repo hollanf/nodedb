@@ -1,17 +1,15 @@
-//! Graph engine execution handlers for `CoreLoop`.
-//!
-//! Separated from `core_loop.rs` to keep per-file line counts within limits.
-//! Each method handles one `PhysicalPlan` graph variant.
+//! Graph operation handlers: EdgePut, EdgeDelete, GraphHop, GraphNeighbors,
+//! GraphPath, GraphSubgraph.
 
 use tracing::{debug, warn};
 
 use crate::bridge::envelope::{ErrorCode, Response};
 
-use super::core_loop::CoreLoop;
-use super::task::ExecutionTask;
+use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::task::ExecutionTask;
 
 impl CoreLoop {
-    pub(super) fn execute_edge_put(
+    pub(in crate::data::executor) fn execute_edge_put(
         &mut self,
         task: &ExecutionTask,
         src_id: &str,
@@ -34,7 +32,7 @@ impl CoreLoop {
         }
     }
 
-    pub(super) fn execute_edge_delete(
+    pub(in crate::data::executor) fn execute_edge_delete(
         &mut self,
         task: &ExecutionTask,
         src_id: &str,
@@ -56,7 +54,7 @@ impl CoreLoop {
         }
     }
 
-    pub(super) fn execute_graph_hop(
+    pub(in crate::data::executor) fn execute_graph_hop(
         &self,
         task: &ExecutionTask,
         start_nodes: &[String],
@@ -90,7 +88,7 @@ impl CoreLoop {
         }
     }
 
-    pub(super) fn execute_graph_neighbors(
+    pub(in crate::data::executor) fn execute_graph_neighbors(
         &self,
         task: &ExecutionTask,
         node_id: &str,
@@ -119,7 +117,7 @@ impl CoreLoop {
         }
     }
 
-    pub(super) fn execute_graph_path(
+    pub(in crate::data::executor) fn execute_graph_path(
         &self,
         task: &ExecutionTask,
         src: &str,
@@ -148,7 +146,7 @@ impl CoreLoop {
         }
     }
 
-    pub(super) fn execute_graph_subgraph(
+    pub(in crate::data::executor) fn execute_graph_subgraph(
         &self,
         task: &ExecutionTask,
         start_nodes: &[String],
