@@ -39,6 +39,18 @@ impl VShardId {
         self.0
     }
 
+    /// Compute vShard from a collection name.
+    ///
+    /// Uses a simple DJB-like hash (multiply-31) for deterministic
+    /// collection-to-shard routing.
+    pub fn from_collection(collection: &str) -> Self {
+        let hash = collection
+            .as_bytes()
+            .iter()
+            .fold(0u16, |h, &b| h.wrapping_mul(31).wrapping_add(b as u16));
+        Self::new(hash % Self::COUNT)
+    }
+
     /// Compute vShard from a shard key via consistent hashing.
     pub fn from_key(key: &[u8]) -> Self {
         // FxHash-style fast hash, modulo 1024.
