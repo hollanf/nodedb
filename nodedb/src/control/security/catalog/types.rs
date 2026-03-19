@@ -75,6 +75,9 @@ pub struct StoredUser {
     /// Unix timestamp (seconds) when the password expires. 0 = no expiry.
     #[serde(default)]
     pub password_expires_at: u64,
+    /// MD5 hash for pgwire MD5 auth: `md5(password + username)` as hex.
+    #[serde(default)]
+    pub md5_hash: String,
 }
 
 /// Serializable API key record for redb storage.
@@ -250,6 +253,7 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             password_expires_at: 0,
+            md5_hash: String::new(),
         };
 
         catalog.put_user(&user).unwrap();
@@ -279,6 +283,7 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             password_expires_at: 0,
+            md5_hash: String::new(),
         };
 
         catalog.put_user(&user).unwrap();
@@ -326,6 +331,7 @@ mod tests {
                     created_at: 0,
                     updated_at: 0,
                     password_expires_at: 0,
+                    md5_hash: String::new(),
                 })
                 .unwrap();
         }

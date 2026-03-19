@@ -98,6 +98,9 @@ argon2 = "0.5"
 # Encryption at rest
 aes-gcm = "0.10"
 
+# MD5 (for pgwire MD5 auth compatibility)
+md5 = "0.8"
+
 # HTTP API
 axum = "0.8"
 axum-server = { version = "0.8", features = ["tls-rustls"] }

@@ -32,6 +32,16 @@ pub(super) fn hash_password_argon2(password: &str) -> crate::Result<String> {
     Ok(hash.to_string())
 }
 
+/// Compute PostgreSQL-compatible MD5 hash: `md5(password + username)`.
+///
+/// Returns the hex-encoded MD5 digest (32 chars). Stored alongside
+/// the Argon2 hash to support pgwire MD5 authentication.
+pub(super) fn compute_md5_hash(username: &str, password: &str) -> String {
+    let input = format!("{password}{username}");
+    let digest = md5::compute(input.as_bytes());
+    format!("{digest:x}")
+}
+
 pub(super) fn verify_argon2(stored_hash: &str, password: &str) -> bool {
     let parsed = match PasswordHash::new(stored_hash) {
         Ok(h) => h,

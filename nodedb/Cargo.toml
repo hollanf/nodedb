@@ -49,6 +49,7 @@ loro = { workspace = true }
 # Password hashing & cryptography
 argon2 = { workspace = true }
 sha2 = "0.10"
+md5 = { workspace = true }
 
 # TLS
 tokio-rustls = { workspace = true }

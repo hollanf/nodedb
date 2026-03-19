@@ -87,7 +87,7 @@ impl NodeDbPgHandler {
                     })
                 }
             }
-            AuthMode::Password | AuthMode::Certificate => self
+            AuthMode::Password | AuthMode::Md5Password | AuthMode::Certificate => self
                 .state
                 .credentials
                 .to_identity(&username, AuthMethod::ScramSha256)

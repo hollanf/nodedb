@@ -8,8 +8,8 @@ use crate::types::TenantId;
 use super::super::catalog::SystemCatalog;
 use super::super::identity::{AuthMethod, AuthenticatedIdentity, Role};
 use super::hash::{
-    compute_scram_salted_password, generate_scram_salt, hash_password_argon2, now_secs,
-    verify_argon2,
+    compute_md5_hash, compute_scram_salted_password, generate_scram_salt, hash_password_argon2,
+    now_secs, verify_argon2,
 };
 use super::lockout::LoginAttemptTracker;
 use super::record::UserRecord;
@@ -179,6 +179,7 @@ impl CredentialStore {
                 created_at: now_secs(),
                 updated_at: now_secs(),
                 password_expires_at: self.compute_expiry(),
+                md5_hash: compute_md5_hash(username, password),
             };
             self.persist_user(&mut record)?;
             users.insert(username.to_string(), record);
@@ -221,7 +222,8 @@ impl CredentialStore {
             is_service_account: false,
             created_at: now_secs(),
             updated_at: now_secs(),
-            password_expires_at: 0,
+            password_expires_at: self.compute_expiry(),
+            md5_hash: compute_md5_hash(username, password),
         };
 
         self.persist_user(&mut record)?;
@@ -260,6 +262,7 @@ impl CredentialStore {
             created_at: now_secs(),
             updated_at: now_secs(),
             password_expires_at: 0,
+            md5_hash: String::new(), // Service accounts have no password.
         };
 
         self.persist_user(&mut record)?;
@@ -289,6 +292,25 @@ impl CredentialStore {
                 true
             })
             .map(|u| (u.scram_salt.clone(), u.scram_salted_password.clone()))
+    }
+
+    /// Get the MD5 hash for pgwire MD5 auth.
+    /// Returns `md5(password + username)` as stored during user creation.
+    /// Returns None for service accounts, expired passwords, or missing users.
+    pub fn get_md5_hash(&self, username: &str) -> Option<String> {
+        let users = read_lock(&self.users).ok()?;
+        users
+            .get(username)
+            .filter(|u| u.is_active && !u.is_service_account)
+            .filter(|u| {
+                if u.password_expires_at > 0 && now_secs() >= u.password_expires_at {
+                    tracing::warn!(username = u.username, "password expired, MD5 login denied");
+                    return false;
+                }
+                true
+            })
+            .filter(|u| !u.md5_hash.is_empty())
+            .map(|u| u.md5_hash.clone())
     }
 
     /// Verify a cleartext password against the stored Argon2 hash.
@@ -351,6 +373,7 @@ impl CredentialStore {
         record.scram_salt = salt;
         record.password_hash = hash_password_argon2(password)?;
         record.password_expires_at = self.compute_expiry();
+        record.md5_hash = compute_md5_hash(username, password);
         self.persist_user(record)?;
         Ok(())
     }
