@@ -400,13 +400,26 @@ impl NodeDbPgHandler {
         }
 
         if upper == "COMMIT" || upper == "END" || upper == "END TRANSACTION" {
-            self.sessions.commit(addr).map_err(|msg| {
+            let buffered = self.sessions.commit(addr).map_err(|msg| {
                 PgWireError::UserError(Box::new(ErrorInfo::new(
                     "ERROR".to_owned(),
                     "25000".to_owned(),
                     msg.to_owned(),
                 )))
             })?;
+
+            // Dispatch all buffered write tasks.
+            for task in buffered {
+                if let Err(e) = self.dispatch_task(task).await {
+                    tracing::warn!(error = %e, "transaction task dispatch failed");
+                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                        "ERROR".to_owned(),
+                        "40001".to_owned(),
+                        format!("transaction commit failed: {e}"),
+                    ))));
+                }
+            }
+
             return Ok(vec![Response::Execution(Tag::new("COMMIT"))]);
         }
 

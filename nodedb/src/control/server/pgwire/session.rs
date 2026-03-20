@@ -152,18 +152,38 @@ impl SessionStore {
 
     /// COMMIT — drain the write buffer and return to idle.
     ///
-    /// Transition out of transaction block.
-    /// Transaction blocks are advisory (per-statement commit model) —
-    /// writes are dispatched immediately, not buffered.
-    pub fn commit(&self, addr: &SocketAddr) -> Result<(), &'static str> {
+    /// Returns the buffered write tasks for atomic dispatch. If the
+    /// transaction is in Failed state, discards the buffer.
+    pub fn commit(
+        &self,
+        addr: &SocketAddr,
+    ) -> Result<Vec<crate::control::planner::physical::PhysicalTask>, &'static str> {
         let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
         if let Some(session) = sessions.get_mut(addr) {
-            session.tx_buffer.clear();
+            let buffer = std::mem::take(&mut session.tx_buffer);
             session.tx_state = TransactionState::Idle;
-            Ok(())
+            Ok(buffer)
         } else {
-            Ok(())
+            Ok(Vec::new())
         }
+    }
+
+    /// Buffer a write task during a transaction block.
+    ///
+    /// Returns `true` if buffered (in transaction), `false` if not (dispatch immediately).
+    pub fn buffer_write(
+        &self,
+        addr: &SocketAddr,
+        task: crate::control::planner::physical::PhysicalTask,
+    ) -> bool {
+        let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        if let Some(session) = sessions.get_mut(addr) {
+            if session.tx_state == TransactionState::InBlock {
+                session.tx_buffer.push(task);
+                return true;
+            }
+        }
+        false
     }
 
     /// ROLLBACK — discard the write buffer and return to idle.
