@@ -139,7 +139,10 @@ pub fn spawn_core(
             let mut core = CoreLoop::open(core_id, request_rx, response_tx, &data_dir)
                 .expect("failed to open CoreLoop engines");
 
-            // 3. Replay WAL vector records to rebuild HNSW indexes.
+            // 3. Load vector checkpoints (fast recovery).
+            core.load_vector_checkpoints();
+
+            // 4. Replay WAL vector records (only entries after checkpoint).
             if !wal_records.is_empty() {
                 core.replay_vector_wal(&wal_records, num_cores);
             }
@@ -147,8 +150,11 @@ pub fn spawn_core(
             info!(core_id, "data plane core started (eventfd-driven)");
 
             let mut watchdog = CoreHealthWatchdog::new();
+            let mut last_checkpoint = Instant::now();
+            /// Checkpoint interval: 5 minutes.
+            const CHECKPOINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
-            // 3. Event loop: poll → drain → tick → repeat.
+            // 5. Event loop: poll → drain → tick → checkpoint → repeat.
             loop {
                 // Block until signaled or timeout.
                 efd.poll_wait(IDLE_POLL_TIMEOUT_MS);
@@ -212,6 +218,12 @@ pub fn spawn_core(
                             break; // Exit inner loop; re-enter poll_wait.
                         }
                     }
+                }
+
+                // Periodic vector checkpoint (when idle and interval elapsed).
+                if last_checkpoint.elapsed() >= CHECKPOINT_INTERVAL {
+                    core.checkpoint_vector_indexes();
+                    last_checkpoint = Instant::now();
                 }
             }
         })?;

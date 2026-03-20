@@ -266,6 +266,109 @@ impl CoreLoop {
     pub fn advance_watermark(&mut self, lsn: Lsn) {
         self.watermark = lsn;
     }
+
+    /// Write HNSW checkpoints for all vector indexes to disk.
+    ///
+    /// Called periodically from the TPC event loop (e.g., every 5 minutes
+    /// or when idle). Each index is serialized to a file at
+    /// `{data_dir}/vector-ckpt/{index_key}.ckpt`.
+    ///
+    /// After checkpointing, WAL replay only needs to process entries
+    /// since the checkpoint — not the entire history.
+    pub fn checkpoint_vector_indexes(&self) -> usize {
+        if self.vector_indexes.is_empty() {
+            return 0;
+        }
+
+        let ckpt_dir = self.data_dir.join("vector-ckpt");
+        if std::fs::create_dir_all(&ckpt_dir).is_err() {
+            tracing::warn!(
+                core = self.core_id,
+                "failed to create vector checkpoint dir"
+            );
+            return 0;
+        }
+
+        let mut checkpointed = 0;
+        for (key, index) in &self.vector_indexes {
+            if index.is_empty() {
+                continue;
+            }
+            let bytes = index.checkpoint_to_bytes();
+            if bytes.is_empty() {
+                continue;
+            }
+            // Write to temp file, then rename for atomicity.
+            let ckpt_path = ckpt_dir.join(format!("{key}.ckpt"));
+            let tmp_path = ckpt_dir.join(format!("{key}.ckpt.tmp"));
+            if std::fs::write(&tmp_path, &bytes).is_ok()
+                && std::fs::rename(&tmp_path, &ckpt_path).is_ok()
+            {
+                checkpointed += 1;
+            }
+        }
+
+        if checkpointed > 0 {
+            tracing::info!(
+                core = self.core_id,
+                checkpointed,
+                total = self.vector_indexes.len(),
+                "vector indexes checkpointed"
+            );
+        }
+        checkpointed
+    }
+
+    /// Load HNSW checkpoints from disk on startup, before WAL replay.
+    ///
+    /// For each checkpoint file, loads the index. WAL replay then only
+    /// needs to process entries after the checkpoint LSN.
+    pub fn load_vector_checkpoints(&mut self) {
+        let ckpt_dir = self.data_dir.join("vector-ckpt");
+        if !ckpt_dir.exists() {
+            return;
+        }
+
+        let entries = match std::fs::read_dir(&ckpt_dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        let mut loaded = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("ckpt") {
+                continue;
+            }
+
+            let key = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if key.is_empty() {
+                continue;
+            }
+
+            if let Ok(bytes) = std::fs::read(&path) {
+                if let Some(index) = crate::engine::vector::hnsw::HnswIndex::from_checkpoint(&bytes)
+                {
+                    tracing::info!(
+                        core = self.core_id,
+                        %key,
+                        vectors = index.len(),
+                        "loaded vector checkpoint"
+                    );
+                    self.vector_indexes.insert(key, index);
+                    loaded += 1;
+                }
+            }
+        }
+
+        if loaded > 0 {
+            tracing::info!(core = self.core_id, loaded, "vector checkpoints loaded");
+        }
+    }
 }
 
 #[cfg(test)]

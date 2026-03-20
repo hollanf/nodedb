@@ -1,4 +1,27 @@
+use serde::{Deserialize, Serialize};
+
 use super::super::distance::{DistanceMetric, distance};
+
+/// Serializable HNSW snapshot for checkpointing.
+#[derive(Serialize, Deserialize)]
+struct HnswSnapshot {
+    dim: usize,
+    params_m: usize,
+    params_m0: usize,
+    params_ef_construction: usize,
+    params_metric: u8,
+    entry_point: Option<u32>,
+    max_layer: usize,
+    rng_state: u64,
+    nodes: Vec<NodeSnapshot>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct NodeSnapshot {
+    vector: Vec<f32>,
+    neighbors: Vec<Vec<u32>>,
+    deleted: bool,
+}
 
 /// HNSW index parameters.
 #[derive(Debug, Clone)]
@@ -230,6 +253,71 @@ impl HnswIndex {
     /// Export all neighbor lists for snapshot transfer.
     pub fn export_neighbors(&self) -> Vec<Vec<Vec<u32>>> {
         self.nodes.iter().map(|n| n.neighbors.clone()).collect()
+    }
+
+    /// Serialize the entire index to bytes for checkpointing.
+    ///
+    /// The snapshot includes all vectors, neighbor lists, deleted flags,
+    /// params, entry point, max layer, and RNG state. On reload, the
+    /// index is fully reconstructed without WAL replay.
+    pub fn checkpoint_to_bytes(&self) -> Vec<u8> {
+        let snapshot = HnswSnapshot {
+            dim: self.dim,
+            params_m: self.params.m,
+            params_m0: self.params.m0,
+            params_ef_construction: self.params.ef_construction,
+            params_metric: self.params.metric as u8,
+            entry_point: self.entry_point,
+            max_layer: self.max_layer,
+            rng_state: self.rng.0,
+            nodes: self
+                .nodes
+                .iter()
+                .map(|n| NodeSnapshot {
+                    vector: n.vector.clone(),
+                    neighbors: n.neighbors.clone(),
+                    deleted: n.deleted,
+                })
+                .collect(),
+        };
+        rmp_serde::to_vec_named(&snapshot).unwrap_or_default()
+    }
+
+    /// Restore an index from a checkpoint snapshot.
+    ///
+    /// Returns `None` if the snapshot is invalid or corrupt.
+    pub fn from_checkpoint(bytes: &[u8]) -> Option<Self> {
+        let snapshot: HnswSnapshot = rmp_serde::from_slice(bytes).ok()?;
+        let metric = match snapshot.params_metric {
+            0 => super::super::distance::DistanceMetric::L2,
+            1 => super::super::distance::DistanceMetric::Cosine,
+            2 => super::super::distance::DistanceMetric::InnerProduct,
+            _ => super::super::distance::DistanceMetric::Cosine,
+        };
+        let params = HnswParams {
+            m: snapshot.params_m,
+            m0: snapshot.params_m0,
+            ef_construction: snapshot.params_ef_construction,
+            metric,
+        };
+        let nodes: Vec<Node> = snapshot
+            .nodes
+            .into_iter()
+            .map(|n| Node {
+                vector: n.vector,
+                neighbors: n.neighbors,
+                deleted: n.deleted,
+            })
+            .collect();
+
+        Some(Self {
+            dim: snapshot.dim,
+            params,
+            nodes,
+            entry_point: snapshot.entry_point,
+            max_layer: snapshot.max_layer,
+            rng: Xorshift64::new(snapshot.rng_state),
+        })
     }
 
     /// Assign a random layer for a new node using the exponential distribution.
