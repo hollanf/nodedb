@@ -37,31 +37,80 @@ impl CoreLoop {
                 let mut groups: std::collections::HashMap<String, Vec<serde_json::Value>> =
                     std::collections::HashMap::new();
 
-                for (_, value) in &docs {
-                    let Some(doc) = super::super::doc_format::decode_document(value) else {
-                        continue;
-                    };
-
-                    if !filter_predicates.is_empty()
-                        && !filter_predicates.iter().all(|f| f.matches(&doc))
-                    {
-                        continue;
+                // Determine which fields we actually need to extract.
+                // This avoids full document deserialization when possible.
+                let mut needed_fields: Vec<&str> = Vec::new();
+                for f in group_by {
+                    if !needed_fields.contains(&f.as_str()) {
+                        needed_fields.push(f.as_str());
                     }
+                }
+                for (_, field) in aggregates {
+                    if field != "*" && !needed_fields.contains(&field.as_str()) {
+                        needed_fields.push(field.as_str());
+                    }
+                }
 
-                    let key = if group_by.is_empty() {
-                        "__all__".to_string()
+                // If filters are present, we need full deserialization for
+                // filter evaluation (filters can reference any field).
+                let needs_full_deser = !filter_predicates.is_empty();
+
+                for (_, value) in &docs {
+                    if needs_full_deser {
+                        // Full deserialization path (filters need arbitrary field access).
+                        let Some(doc) = super::super::doc_format::decode_document(value) else {
+                            continue;
+                        };
+                        if !filter_predicates.iter().all(|f| f.matches(&doc)) {
+                            continue;
+                        }
+                        let key = if group_by.is_empty() {
+                            "__all__".to_string()
+                        } else {
+                            let key_parts: Vec<serde_json::Value> = group_by
+                                .iter()
+                                .map(|field| {
+                                    doc.get(field.as_str())
+                                        .cloned()
+                                        .unwrap_or(serde_json::Value::Null)
+                                })
+                                .collect();
+                            serde_json::to_string(&key_parts).unwrap_or_else(|_| "[]".into())
+                        };
+                        groups.entry(key).or_default().push(doc);
                     } else {
-                        let key_parts: Vec<serde_json::Value> = group_by
-                            .iter()
-                            .map(|field| {
-                                doc.get(field.as_str())
-                                    .cloned()
-                                    .unwrap_or(serde_json::Value::Null)
-                            })
-                            .collect();
-                        serde_json::to_string(&key_parts).unwrap_or_else(|_| "[]".into())
-                    };
-                    groups.entry(key).or_default().push(doc);
+                        // Targeted extraction path: only extract needed fields.
+                        let extracted =
+                            super::super::doc_format::extract_fields(value, &needed_fields);
+
+                        // Build group key from extracted fields.
+                        let key = if group_by.is_empty() {
+                            "__all__".to_string()
+                        } else {
+                            let key_parts: Vec<serde_json::Value> = group_by
+                                .iter()
+                                .map(|field| {
+                                    let idx =
+                                        needed_fields.iter().position(|&n| n == field.as_str());
+                                    idx.and_then(|i| extracted[i].clone())
+                                        .unwrap_or(serde_json::Value::Null)
+                                })
+                                .collect();
+                            serde_json::to_string(&key_parts).unwrap_or_else(|_| "[]".into())
+                        };
+
+                        // Build a partial document with only the needed fields.
+                        let mut doc_map = serde_json::Map::new();
+                        for (i, &field_name) in needed_fields.iter().enumerate() {
+                            if let Some(val) = &extracted[i] {
+                                doc_map.insert(field_name.to_string(), val.clone());
+                            }
+                        }
+                        groups
+                            .entry(key)
+                            .or_default()
+                            .push(serde_json::Value::Object(doc_map));
+                    }
                 }
 
                 let mut results: Vec<serde_json::Value> = Vec::new();

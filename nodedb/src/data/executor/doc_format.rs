@@ -32,6 +32,90 @@ pub(super) fn decode_document(bytes: &[u8]) -> Option<serde_json::Value> {
     serde_json::from_slice(bytes).ok()
 }
 
+/// Extract multiple fields from a MessagePack document without full
+/// deserialization.
+///
+/// Parses the MessagePack blob as a dynamic `rmpv::Value`, extracts the
+/// named fields, and converts each to `serde_json::Value`. Faster than
+/// `decode_document()` when only a few fields are needed (e.g., GROUP BY
+/// keys + aggregate source fields). The blob is parsed only once.
+///
+/// Returns a vector of `Option<serde_json::Value>` matching `field_names`
+/// order. An element is `None` if the field is absent or the blob isn't a map.
+pub(super) fn extract_fields(bytes: &[u8], field_names: &[&str]) -> Vec<Option<serde_json::Value>> {
+    if bytes.is_empty() || field_names.is_empty() {
+        return vec![None; field_names.len()];
+    }
+
+    let first = bytes[0];
+    if (0x80..=0x8F).contains(&first) || first == 0xDE || first == 0xDF {
+        if let Ok(rmpv::Value::Map(pairs)) = rmpv::decode::read_value(&mut &bytes[..]) {
+            let mut results = vec![None; field_names.len()];
+            for (k, v) in &pairs {
+                if let rmpv::Value::String(key) = k {
+                    if let Some(key_str) = key.as_str() {
+                        if let Some(idx) = field_names.iter().position(|&n| n == key_str) {
+                            results[idx] = Some(rmpv_to_json(v));
+                        }
+                    }
+                }
+            }
+            return results;
+        }
+        return vec![None; field_names.len()];
+    }
+
+    // JSON fallback.
+    if let Ok(doc) = serde_json::from_slice::<serde_json::Value>(bytes) {
+        field_names
+            .iter()
+            .map(|name| doc.get(*name).cloned())
+            .collect()
+    } else {
+        vec![None; field_names.len()]
+    }
+}
+
+/// Convert an rmpv Value to a serde_json Value.
+fn rmpv_to_json(val: &rmpv::Value) -> serde_json::Value {
+    match val {
+        rmpv::Value::Nil => serde_json::Value::Null,
+        rmpv::Value::Boolean(b) => serde_json::Value::Bool(*b),
+        rmpv::Value::Integer(i) => {
+            if let Some(n) = i.as_i64() {
+                serde_json::Value::Number(n.into())
+            } else if let Some(n) = i.as_u64() {
+                serde_json::Value::Number(n.into())
+            } else {
+                serde_json::Value::Null
+            }
+        }
+        rmpv::Value::F32(f) => serde_json::Number::from_f64(*f as f64)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        rmpv::Value::F64(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        rmpv::Value::String(s) => serde_json::Value::String(s.as_str().unwrap_or("").to_string()),
+        rmpv::Value::Binary(b) => {
+            serde_json::Value::String(String::from_utf8_lossy(b).into_owned())
+        }
+        rmpv::Value::Array(arr) => serde_json::Value::Array(arr.iter().map(rmpv_to_json).collect()),
+        rmpv::Value::Map(pairs) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in pairs {
+                let key = match k {
+                    rmpv::Value::String(s) => s.as_str().unwrap_or("").to_string(),
+                    other => format!("{other}"),
+                };
+                map.insert(key, rmpv_to_json(v));
+            }
+            serde_json::Value::Object(map)
+        }
+        rmpv::Value::Ext(_, _) => serde_json::Value::Null,
+    }
+}
+
 /// Encode a JSON value as MessagePack bytes for storage.
 ///
 /// If encoding fails (should not happen for valid `serde_json::Value`),
@@ -115,5 +199,16 @@ mod tests {
     fn empty_bytes_handled() {
         assert!(decode_document(b"").is_none());
         assert!(json_to_msgpack(b"").is_empty());
+    }
+
+    #[test]
+    fn extract_multiple_fields() {
+        let value = serde_json::json!({"a": 1, "b": "hello", "c": true, "d": null});
+        let msgpack = rmp_serde::to_vec(&value).unwrap();
+
+        let results = extract_fields(&msgpack, &["a", "c", "z"]);
+        assert_eq!(results[0], Some(serde_json::json!(1)));
+        assert_eq!(results[1], Some(serde_json::json!(true)));
+        assert_eq!(results[2], None); // "z" doesn't exist
     }
 }
