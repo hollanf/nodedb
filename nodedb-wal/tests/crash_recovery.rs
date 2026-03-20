@@ -127,6 +127,11 @@ fn corrupted_checksum_stops_replay() {
 
     write_records(&path, 5);
 
+    // Remove the double-write buffer so torn write recovery can't help.
+    // This tests the raw WAL corruption detection without DWB fallback.
+    let dwb_path = path.with_extension("dwb");
+    let _ = std::fs::remove_file(&dwb_path);
+
     // Corrupt a byte in the middle of the file (inside the 3rd record's payload).
     {
         use std::io::{Read, Seek, SeekFrom};
@@ -148,7 +153,7 @@ fn corrupted_checksum_stops_replay() {
         file.write_all(&byte).unwrap();
     }
 
-    // Replay should stop at record 2 (3rd record has bad checksum).
+    // Replay should stop at record 2 (3rd record has bad checksum, no DWB to recover).
     let records = read_all(&path);
     assert_eq!(records.len(), 2);
 

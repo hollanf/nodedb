@@ -24,13 +24,28 @@ use crate::record::{HEADER_SIZE, RecordHeader, RecordType, WalRecord};
 pub struct WalReader {
     file: File,
     offset: u64,
+    /// Optional double-write buffer for torn write recovery.
+    double_write: Option<crate::double_write::DoubleWriteBuffer>,
 }
 
 impl WalReader {
     /// Open a WAL file for reading.
+    ///
+    /// Automatically opens the companion double-write buffer file
+    /// (`*.dwb`) if it exists alongside the WAL file.
     pub fn open(path: &Path) -> Result<Self> {
         let file = File::open(path)?;
-        Ok(Self { file, offset: 0 })
+        let dwb_path = path.with_extension("dwb");
+        let double_write = if dwb_path.exists() {
+            crate::double_write::DoubleWriteBuffer::open(&dwb_path).ok()
+        } else {
+            None
+        };
+        Ok(Self {
+            file,
+            offset: 0,
+            double_write,
+        })
     }
 
     /// Read the next record from the WAL.
@@ -73,7 +88,19 @@ impl WalReader {
 
         // Verify checksum.
         if record.verify_checksum().is_err() {
-            // Checksum mismatch — torn write or corruption. End of committed prefix.
+            // Checksum mismatch — torn write or corruption.
+            // Try to recover from double-write buffer if available.
+            if let Some(dwb) = &mut self.double_write {
+                if let Ok(Some(recovered)) = dwb.recover_record(header.lsn) {
+                    tracing::info!(
+                        lsn = header.lsn,
+                        "recovered torn write from double-write buffer"
+                    );
+                    self.offset += recovered.payload.len() as u64;
+                    return Ok(Some(recovered));
+                }
+            }
+            // No DWB recovery possible — end of committed prefix.
             return Ok(None);
         }
 
