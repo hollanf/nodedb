@@ -13,6 +13,7 @@ use crate::engine::crdt::tenant_state::TenantCrdtEngine;
 use crate::engine::graph::csr::CsrIndex;
 use crate::engine::graph::edge_store::EdgeStore;
 use crate::engine::sparse::btree::SparseEngine;
+use crate::engine::sparse::inverted::InvertedIndex;
 use crate::engine::vector::hnsw::HnswIndex;
 use crate::types::{Lsn, TenantId};
 
@@ -63,6 +64,9 @@ pub struct CoreLoop {
     /// In-memory CSR adjacency index, rebuilt from edge_store on startup.
     pub(in crate::data::executor) csr: CsrIndex,
 
+    /// Full-text inverted index (BM25), shares redb with sparse engine.
+    pub(in crate::data::executor) inverted: InvertedIndex,
+
     /// Base data directory for this core (used for sort spill temp files).
     pub(in crate::data::executor) data_dir: std::path::PathBuf,
 
@@ -88,6 +92,9 @@ impl CoreLoop {
         let edge_store = EdgeStore::open(&graph_path)?;
         let csr = CsrIndex::rebuild_from(&edge_store)?;
 
+        // Inverted index shares the sparse engine's redb database.
+        let inverted = InvertedIndex::open(sparse.db().clone())?;
+
         Ok(Self {
             core_id,
             request_rx,
@@ -100,6 +107,7 @@ impl CoreLoop {
             vector_params: HashMap::new(),
             edge_store,
             csr,
+            inverted,
             data_dir: data_dir.to_path_buf(),
             paused_vshards: std::collections::HashSet::new(),
         })

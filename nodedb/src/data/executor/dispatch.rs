@@ -217,6 +217,35 @@ impl CoreLoop {
                 policy_json,
             } => self.execute_set_collection_policy(task, collection, policy_json),
 
+            PhysicalPlan::TextSearch {
+                collection,
+                query,
+                top_k,
+                fuzzy,
+            } => self.execute_text_search(task, tid, collection, query, *top_k, *fuzzy),
+
+            PhysicalPlan::HybridSearch {
+                collection,
+                query_vector,
+                query_text,
+                top_k,
+                ef_search,
+                fuzzy,
+                vector_weight,
+                filter_bitmap,
+            } => self.execute_hybrid_search(
+                task,
+                tid,
+                collection,
+                query_vector,
+                query_text,
+                *top_k,
+                *ef_search,
+                *fuzzy,
+                *vector_weight,
+                filter_bitmap.as_ref(),
+            ),
+
             PhysicalPlan::WalAppend { payload } => self.execute_wal_append(task, payload),
 
             PhysicalPlan::Cancel { target_request_id } => {

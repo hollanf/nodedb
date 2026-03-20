@@ -78,6 +78,10 @@ roaring = "0.10"
 # Temp files (external sort spill)
 tempfile = "3"
 
+# Text search
+rust-stemmers = "1"
+unicode-normalization = "0.1"
+
 # Random
 rand = "0.9"
 

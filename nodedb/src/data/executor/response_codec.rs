@@ -114,6 +114,23 @@ pub(super) struct GraphRagResult {
 }
 
 #[derive(Serialize)]
+pub(super) struct TextSearchHit<'a> {
+    pub doc_id: &'a str,
+    pub score: f32,
+    pub fuzzy: bool,
+}
+
+#[derive(Serialize)]
+pub(super) struct HybridSearchHit<'a> {
+    pub doc_id: &'a str,
+    pub rrf_score: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vector_rank: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_rank: Option<usize>,
+}
+
+#[derive(Serialize)]
 pub(super) struct GraphRagResponse {
     pub results: Vec<GraphRagResult>,
     pub metadata: GraphRagMetadata,

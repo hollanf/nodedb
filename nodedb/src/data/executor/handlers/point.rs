@@ -1,6 +1,6 @@
 //! Point operation handlers: PointGet, PointPut, PointDelete, PointUpdate.
 
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
@@ -46,7 +46,28 @@ impl CoreLoop {
         debug!(core = self.core_id, %collection, %document_id, "point put");
         let stored = super::super::doc_format::json_to_msgpack(value);
         match self.sparse.put(tid, collection, document_id, &stored) {
-            Ok(()) => self.response_ok(task),
+            Ok(()) => {
+                // Auto-index text fields for full-text search.
+                // Extract all string values from the document and index them.
+                if let Some(doc) = super::super::doc_format::decode_document(value) {
+                    if let Some(obj) = doc.as_object() {
+                        let text_content: String = obj
+                            .values()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        if !text_content.is_empty() {
+                            if let Err(e) =
+                                self.inverted
+                                    .index_document(collection, document_id, &text_content)
+                            {
+                                warn!(core = self.core_id, %collection, %document_id, error = %e, "inverted index update failed");
+                            }
+                        }
+                    }
+                }
+                self.response_ok(task)
+            }
             Err(e) => self.response_error(
                 task,
                 ErrorCode::Internal {
@@ -65,7 +86,12 @@ impl CoreLoop {
     ) -> Response {
         debug!(core = self.core_id, %collection, %document_id, "point delete");
         match self.sparse.delete(tid, collection, document_id) {
-            Ok(_) => self.response_ok(task),
+            Ok(_) => {
+                if let Err(e) = self.inverted.remove_document(collection, document_id) {
+                    warn!(core = self.core_id, %collection, %document_id, error = %e, "inverted index removal failed");
+                }
+                self.response_ok(task)
+            }
             Err(e) => self.response_error(
                 task,
                 ErrorCode::Internal {

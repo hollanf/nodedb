@@ -315,6 +315,32 @@ pub enum PhysicalPlan {
         policy_json: String,
     },
 
+    /// Full-text search using BM25 scoring on the inverted index.
+    TextSearch {
+        collection: String,
+        query: String,
+        top_k: usize,
+        /// Enable fuzzy matching (Levenshtein) for typo tolerance.
+        fuzzy: bool,
+    },
+
+    /// Hybrid search: vector similarity + BM25 text, fused via RRF.
+    ///
+    /// Executes vector search and text search in parallel on the Data Plane,
+    /// then fuses results using Reciprocal Rank Fusion.
+    HybridSearch {
+        collection: String,
+        query_vector: Arc<[f32]>,
+        query_text: String,
+        top_k: usize,
+        ef_search: usize,
+        fuzzy: bool,
+        /// Weight for vector results in RRF (0.0-1.0). Text weight = 1.0 - vector_weight.
+        /// Default: 0.5 (equal weight). Higher values favor vector similarity.
+        vector_weight: f32,
+        filter_bitmap: Option<Arc<[u8]>>,
+    },
+
     /// Cancellation signal. Data Plane MUST stop the target request at next safe point.
     Cancel { target_request_id: RequestId },
 }
