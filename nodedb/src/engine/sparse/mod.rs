@@ -1,6 +1,7 @@
 pub mod btree;
 pub mod btree_scan;
 pub mod fuzzy;
+pub mod gsi;
 pub mod inverted;
 pub mod sparse_vector;
 pub mod stats;
