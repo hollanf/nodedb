@@ -245,6 +245,34 @@ impl PlanConverter {
                     }
                 }
 
+                // Index-ordered scan optimization:
+                // If sorting by a single ASC field on a plain TableScan with a LIMIT
+                // (no OFFSET), use RangeScan — results come back in index order,
+                // eliminating the sort. Only works for ASC because B-tree indexes
+                // are ascending. DESC or OFFSET queries fall through to DocumentScan.
+                if sort.expr.len() == 1 && sort.expr[0].asc {
+                    if let Expr::Column(col) = &sort.expr[0].expr {
+                        let sort_field = &col.name;
+                        if sort_field != "id" && sort_field != "document_id" {
+                            if let Some(collection) = extract_table_name(&sort.input) {
+                                let limit = sort.fetch.unwrap_or(1000);
+                                let vshard = VShardId::from_collection(&collection);
+                                return Ok(vec![PhysicalTask {
+                                    tenant_id,
+                                    vshard_id: vshard,
+                                    plan: PhysicalPlan::RangeScan {
+                                        collection,
+                                        field: sort_field.clone(),
+                                        lower: None,
+                                        upper: None,
+                                        limit,
+                                    },
+                                }]);
+                            }
+                        }
+                    }
+                }
+
                 let mut tasks = self.convert(&sort.input, tenant_id)?;
 
                 // Extract all sort expressions as (field, ascending) pairs.
