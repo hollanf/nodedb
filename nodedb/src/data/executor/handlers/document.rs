@@ -301,8 +301,11 @@ impl CoreLoop {
     ) -> Response {
         debug!(core = self.core_id, %collection, group_fields = group_by.len(), aggs = aggregates.len(), "aggregate");
 
-        let fetch_limit = limit.max(10000);
-        match self.sparse.scan_documents(tid, collection, fetch_limit) {
+        // Aggregates must scan all matching documents for correct results.
+        // Cap at 10M to prevent OOM on unbounded collections.
+        const AGGREGATE_SCAN_CAP: usize = 10_000_000;
+        let scan_limit = AGGREGATE_SCAN_CAP;
+        match self.sparse.scan_documents(tid, collection, scan_limit) {
             Ok(docs) => {
                 let filter_predicates: Vec<ScanFilter> = if filters.is_empty() {
                     Vec::new()
