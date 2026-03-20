@@ -446,6 +446,25 @@ impl PlanConverter {
             // at execution time if the Data Plane can't resolve them.
             LogicalPlan::Subquery(subquery) => self.convert(&subquery.subquery, tenant_id),
 
+            // UNION / UNION ALL: convert each input plan and concatenate tasks.
+            // The Data Plane executes each sub-plan independently; the Control
+            // Plane concatenates the result sets (UNION ALL) or deduplicates
+            // (UNION DISTINCT — handled by wrapping in Distinct if needed).
+            LogicalPlan::Union(union) => {
+                let mut all_tasks = Vec::new();
+                for input in &union.inputs {
+                    let tasks = self.convert(input, tenant_id)?;
+                    all_tasks.extend(tasks);
+                }
+                Ok(all_tasks)
+            }
+
+            // RecursiveQuery (WITH RECURSIVE): not supported yet.
+            // Non-recursive CTEs are inlined by DataFusion's optimizer.
+            LogicalPlan::RecursiveQuery(_) => Err(crate::Error::PlanError {
+                detail: "WITH RECURSIVE is not supported".into(),
+            }),
+
             _ => Err(crate::Error::PlanError {
                 detail: format!("unsupported logical plan type: {}", plan.display()),
             }),
