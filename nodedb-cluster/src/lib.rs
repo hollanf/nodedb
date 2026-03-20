@@ -5,6 +5,7 @@ pub mod conf_change;
 pub mod error;
 pub mod forward;
 pub mod ghost;
+pub mod ghost_sweeper;
 pub mod health;
 pub mod migration;
 pub mod migration_executor;
