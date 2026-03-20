@@ -16,8 +16,11 @@ fn aggregate_cache_key(
     collection: &str,
     group_by: &[String],
     aggregates: &[(String, String)],
+    sub_group_by: &[String],
+    sub_aggregates: &[(String, String)],
 ) -> String {
-    format!(
+    use std::fmt::Write;
+    let mut key = format!(
         "{tid}:{collection}\0{}\0{}",
         group_by.join(","),
         aggregates
@@ -25,7 +28,20 @@ fn aggregate_cache_key(
             .map(|(op, f)| format!("{op}({f})"))
             .collect::<Vec<_>>()
             .join(",")
-    )
+    );
+    if !sub_group_by.is_empty() || !sub_aggregates.is_empty() {
+        let _ = write!(
+            key,
+            "\0sub:{}\0{}",
+            sub_group_by.join(","),
+            sub_aggregates
+                .iter()
+                .map(|(op, f)| format!("{op}({f})"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    }
+    key
 }
 
 impl CoreLoop {
@@ -40,6 +56,8 @@ impl CoreLoop {
         filters: &[u8],
         having: &[u8],
         limit: usize,
+        sub_group_by: &[String],
+        sub_aggregates: &[(String, String)],
     ) -> Response {
         debug!(core = self.core_id, %collection, group_fields = group_by.len(), aggs = aggregates.len(), "aggregate");
 
@@ -47,7 +65,14 @@ impl CoreLoop {
         // If we've cached the result for this exact (collection, group_by, aggregates)
         // combination and there are no filters/having, return cached result directly.
         if filters.is_empty() && having.is_empty() {
-            let cache_key = aggregate_cache_key(tid, collection, group_by, aggregates);
+            let cache_key = aggregate_cache_key(
+                tid,
+                collection,
+                group_by,
+                aggregates,
+                sub_group_by,
+                sub_aggregates,
+            );
             if let Some(cached) = self.aggregate_cache.get(&cache_key) {
                 debug!(core = self.core_id, %collection, "aggregate cache hit");
                 return self.response_with_payload(task, cached.clone());
@@ -97,7 +122,13 @@ impl CoreLoop {
                 let filter_predicates: Vec<ScanFilter> = if filters.is_empty() {
                     Vec::new()
                 } else {
-                    rmp_serde::from_slice(filters).unwrap_or_default()
+                    match rmp_serde::from_slice(filters) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            tracing::warn!(core = self.core_id, error = %e, "filter predicate deserialization failed");
+                            Vec::new()
+                        }
+                    }
                 };
 
                 let mut groups: std::collections::HashMap<String, Vec<serde_json::Value>> =
@@ -199,12 +230,60 @@ impl CoreLoop {
                         row.insert(agg_key, val);
                     }
 
+                    // Nested sub-aggregation: within each group, further group
+                    // by sub_group_by fields and compute sub_aggregates.
+                    if !sub_group_by.is_empty() && !sub_aggregates.is_empty() {
+                        let mut sub_groups: std::collections::HashMap<
+                            String,
+                            Vec<serde_json::Value>,
+                        > = std::collections::HashMap::new();
+                        for doc in group_docs {
+                            let key_parts: Vec<serde_json::Value> = sub_group_by
+                                .iter()
+                                .map(|f| doc.get(f).cloned().unwrap_or(serde_json::Value::Null))
+                                .collect();
+                            let sub_key =
+                                serde_json::to_string(&key_parts).unwrap_or_else(|_| "[]".into());
+                            sub_groups.entry(sub_key).or_default().push(doc.clone());
+                        }
+
+                        let mut sub_results = Vec::new();
+                        for (sub_key, sub_docs) in &sub_groups {
+                            let mut sub_row = serde_json::Map::new();
+                            // Parse sub-group key back into fields.
+                            if let Ok(parts) =
+                                serde_json::from_str::<Vec<serde_json::Value>>(sub_key)
+                            {
+                                for (i, field) in sub_group_by.iter().enumerate() {
+                                    let val =
+                                        parts.get(i).cloned().unwrap_or(serde_json::Value::Null);
+                                    sub_row.insert(field.clone(), val);
+                                }
+                            }
+                            for (op, field) in sub_aggregates {
+                                let agg_key = format!("{op}_{field}").replace('*', "all");
+                                let val = compute_aggregate(op, field, sub_docs);
+                                sub_row.insert(agg_key, val);
+                            }
+                            sub_results.push(serde_json::Value::Object(sub_row));
+                        }
+                        row.insert(
+                            "sub_groups".to_string(),
+                            serde_json::Value::Array(sub_results),
+                        );
+                    }
+
                     results.push(serde_json::Value::Object(row));
                 }
 
                 if !having.is_empty() {
-                    let having_predicates: Vec<ScanFilter> =
-                        rmp_serde::from_slice(having).unwrap_or_default();
+                    let having_predicates: Vec<ScanFilter> = match rmp_serde::from_slice(having) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            tracing::warn!(core = self.core_id, error = %e, "HAVING predicate deserialization failed");
+                            Vec::new()
+                        }
+                    };
                     if !having_predicates.is_empty() {
                         results.retain(|row| having_predicates.iter().all(|f| f.matches(row)));
                     }
@@ -216,8 +295,14 @@ impl CoreLoop {
                     Ok(payload) => {
                         // Cache the result for future identical queries.
                         if filters.is_empty() && having.is_empty() {
-                            let cache_key =
-                                aggregate_cache_key(tid, collection, group_by, aggregates);
+                            let cache_key = aggregate_cache_key(
+                                tid,
+                                collection,
+                                group_by,
+                                aggregates,
+                                sub_group_by,
+                                sub_aggregates,
+                            );
                             // Bounded cache: max 256 entries per core.
                             if self.aggregate_cache.len() < 256 {
                                 self.aggregate_cache.insert(cache_key, payload.clone());

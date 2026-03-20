@@ -423,6 +423,8 @@ impl PlanConverter {
                         filters: filter_bytes,
                         having: Vec::new(),
                         limit: 10000,
+                        sub_group_by: Vec::new(),
+                        sub_aggregates: Vec::new(),
                     },
                 }])
             }

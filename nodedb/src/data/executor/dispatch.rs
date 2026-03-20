@@ -117,8 +117,19 @@ impl CoreLoop {
                 filters,
                 having,
                 limit,
+                sub_group_by,
+                sub_aggregates,
             } => self.execute_aggregate(
-                task, tid, collection, group_by, aggregates, filters, having, *limit,
+                task,
+                tid,
+                collection,
+                group_by,
+                aggregates,
+                filters,
+                having,
+                *limit,
+                sub_group_by,
+                sub_aggregates,
             ),
 
             PhysicalPlan::HashJoin {

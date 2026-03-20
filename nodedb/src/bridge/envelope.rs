@@ -332,6 +332,13 @@ pub enum PhysicalPlan {
         having: Vec<u8>,
         /// Maximum groups to return.
         limit: usize,
+        /// Optional nested sub-aggregation: within each group, further group
+        /// by these fields and compute these aggregate ops. Produces hierarchical
+        /// results: `{ group_key, agg_results, sub_groups: [{...}] }`.
+        /// Empty = no sub-aggregation (flat results).
+        sub_group_by: Vec<String>,
+        /// Sub-aggregation operations (same format as `aggregates`).
+        sub_aggregates: Vec<(String, String)>,
     },
 
     /// Insert a graph edge with properties.
