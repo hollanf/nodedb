@@ -91,6 +91,15 @@ pub struct CoreLoop {
     /// Column statistics store for CBO. Shares redb with sparse engine.
     /// Updated incrementally on PointPut. Read by DataFusion optimizer.
     pub(in crate::data::executor) stats_store: crate::engine::sparse::stats::StatsStore,
+
+    /// Incremental aggregate cache: maps `(collection, group_key, agg_op)` →
+    /// partial aggregate state. Updated on writes (PointPut increments counts/sums),
+    /// cleared on schema change. Turns O(N) full-scan aggregates into O(1) cache
+    /// lookups for repeated dashboard/analytics queries.
+    ///
+    /// Key: `"{collection}\0{group_by_fields}\0{agg_ops}"`.
+    /// Value: cached result rows as JSON.
+    pub(in crate::data::executor) aggregate_cache: HashMap<String, Vec<u8>>,
 }
 
 impl CoreLoop {
@@ -137,6 +146,7 @@ impl CoreLoop {
             deleted_nodes: std::collections::HashSet::new(),
             idempotency_cache: HashMap::new(),
             stats_store,
+            aggregate_cache: HashMap::new(),
         })
     }
 

@@ -66,6 +66,11 @@ impl CoreLoop {
                         }
                     }
 
+                    // Invalidate aggregate cache for this collection.
+                    let cache_prefix = format!("{tid}:{collection}\0");
+                    self.aggregate_cache
+                        .retain(|k, _| !k.starts_with(&cache_prefix));
+
                     // Update column statistics for CBO.
                     if let Err(e) = self.stats_store.observe_document(tid, collection, &doc) {
                         warn!(core = self.core_id, %collection, error = %e, "column stats update failed");

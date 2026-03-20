@@ -7,6 +7,27 @@ use crate::bridge::scan_filter::{ScanFilter, compute_aggregate};
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
 
+/// Build a cache key for an aggregate query.
+///
+/// Format: `"{tid}:{collection}\0{group_fields}\0{agg_ops}"`.
+/// Null bytes separate sections to avoid ambiguity with field names.
+fn aggregate_cache_key(
+    tid: u32,
+    collection: &str,
+    group_by: &[String],
+    aggregates: &[(String, String)],
+) -> String {
+    format!(
+        "{tid}:{collection}\0{}\0{}",
+        group_by.join(","),
+        aggregates
+            .iter()
+            .map(|(op, f)| format!("{op}({f})"))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
+
 impl CoreLoop {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::data::executor) fn execute_aggregate(
@@ -21,6 +42,17 @@ impl CoreLoop {
         limit: usize,
     ) -> Response {
         debug!(core = self.core_id, %collection, group_fields = group_by.len(), aggs = aggregates.len(), "aggregate");
+
+        // Fast path: incremental aggregate cache.
+        // If we've cached the result for this exact (collection, group_by, aggregates)
+        // combination and there are no filters/having, return cached result directly.
+        if filters.is_empty() && having.is_empty() {
+            let cache_key = aggregate_cache_key(tid, collection, group_by, aggregates);
+            if let Some(cached) = self.aggregate_cache.get(&cache_key) {
+                debug!(core = self.core_id, %collection, "aggregate cache hit");
+                return self.response_with_payload(task, cached.clone());
+            }
+        }
 
         // Fast path: index-backed COUNT/GROUP BY.
         // When GROUP BY has a single field, no filters, no HAVING, and the
@@ -181,7 +213,18 @@ impl CoreLoop {
                 results.truncate(limit);
 
                 match super::super::response_codec::encode(&results) {
-                    Ok(payload) => self.response_with_payload(task, payload),
+                    Ok(payload) => {
+                        // Cache the result for future identical queries.
+                        if filters.is_empty() && having.is_empty() {
+                            let cache_key =
+                                aggregate_cache_key(tid, collection, group_by, aggregates);
+                            // Bounded cache: max 256 entries per core.
+                            if self.aggregate_cache.len() < 256 {
+                                self.aggregate_cache.insert(cache_key, payload.clone());
+                            }
+                        }
+                        self.response_with_payload(task, payload)
+                    }
                     Err(e) => self.response_error(task, ErrorCode::Internal { detail: e }),
                 }
             }

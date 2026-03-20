@@ -362,6 +362,52 @@ impl SparseEngine {
         })
     }
 
+    /// Index-only scan: return `(doc_id, field_value)` pairs from the
+    /// INDEXES table without touching the DOCUMENTS table.
+    ///
+    /// Used when the query projection only needs the indexed field and doc_id.
+    /// Avoids document deserialization entirely — O(index_entries) with zero
+    /// allocation per document.
+    pub fn scan_index_values(
+        &self,
+        tenant_id: u32,
+        collection: &str,
+        field: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<(String, String)>> {
+        let prefix = format!("{tenant_id}:{collection}:{field}:");
+        let end = format!("{tenant_id}:{collection}:{field}:\u{ffff}");
+
+        let read_txn = self.db.begin_read().map_err(|e| redb_err("read txn", e))?;
+        let table = read_txn
+            .open_table(INDEXES)
+            .map_err(|e| redb_err("open table", e))?;
+
+        let range = table
+            .range(prefix.as_str()..end.as_str())
+            .map_err(|e| redb_err("index range", e))?;
+
+        let mut results = Vec::with_capacity(limit.min(256));
+        for entry in range {
+            if results.len() >= limit {
+                break;
+            }
+            let entry = entry.map_err(|e| redb_err("index entry", e))?;
+            let key = entry.0.value().to_string();
+            // Key format: "{tenant}:{collection}:{field}:{value}:{doc_id}"
+            if let Some(rest) = key.strip_prefix(&prefix) {
+                if let Some(colon_pos) = rest.rfind(':') {
+                    let value = &rest[..colon_pos];
+                    let doc_id = &rest[colon_pos + 1..];
+                    results.push((doc_id.to_string(), value.to_string()));
+                }
+            }
+        }
+
+        debug!(collection, field, count = results.len(), "index-only scan");
+        Ok(results)
+    }
+
     /// Get the underlying database handle (for advanced use / shared access).
     pub fn db(&self) -> &Arc<Database> {
         &self.db
