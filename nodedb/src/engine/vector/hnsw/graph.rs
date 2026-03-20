@@ -215,6 +215,21 @@ impl HnswIndex {
         self.nodes.get(id as usize).is_none_or(|n| n.deleted)
     }
 
+    /// Un-delete a previously soft-deleted node, clearing the tombstone flag.
+    ///
+    /// Used for transaction rollback when a VectorDelete needs to be undone.
+    /// Returns `true` if the node was found and un-deleted, `false` if the
+    /// ID is out of range or wasn't deleted.
+    pub fn undelete(&mut self, id: u32) -> bool {
+        if let Some(node) = self.nodes.get_mut(id as usize) {
+            if node.deleted {
+                node.deleted = false;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Return the vector dimensionality this index was created for.
     pub fn dim(&self) -> usize {
         self.dim
@@ -335,6 +350,94 @@ impl HnswIndex {
             &self.nodes[node_id as usize].vector,
             self.params.metric,
         )
+    }
+
+    /// Compact the index by removing all tombstoned nodes and reclaiming memory.
+    ///
+    /// Rebuilds the node array with only live nodes, remapping all neighbor
+    /// IDs to new dense indices. The old `Vec<Node>` — including all deleted
+    /// nodes' `Vec<f32>` vector data — is dropped, freeing the jemalloc
+    /// arena memory.
+    ///
+    /// At 768-dim FP32 (~3 KiB per vector), 90M deleted vectors waste ~270 GB.
+    /// This method reclaims that memory in a single atomic swap.
+    ///
+    /// Returns the number of nodes removed.
+    pub fn compact(&mut self) -> usize {
+        let tombstone_count = self.tombstone_count();
+        if tombstone_count == 0 {
+            return 0;
+        }
+
+        // Build old_id → new_id mapping. Deleted nodes map to u32::MAX.
+        let mut id_map: Vec<u32> = Vec::with_capacity(self.nodes.len());
+        let mut new_id = 0u32;
+        for node in &self.nodes {
+            if node.deleted {
+                id_map.push(u32::MAX);
+            } else {
+                id_map.push(new_id);
+                new_id += 1;
+            }
+        }
+
+        // Build new nodes vector with remapped neighbor IDs.
+        let mut new_nodes: Vec<Node> = Vec::with_capacity(new_id as usize);
+        for node in self.nodes.drain(..) {
+            if node.deleted {
+                // Drop the node — its Vec<f32> vector data is freed here.
+                continue;
+            }
+            let remapped_neighbors: Vec<Vec<u32>> = node
+                .neighbors
+                .into_iter()
+                .map(|layer_neighbors| {
+                    layer_neighbors
+                        .into_iter()
+                        .filter_map(|old_nid| {
+                            let new_nid = id_map[old_nid as usize];
+                            if new_nid == u32::MAX {
+                                None // Neighbor was deleted — remove edge.
+                            } else {
+                                Some(new_nid)
+                            }
+                        })
+                        .collect()
+                })
+                .collect();
+            new_nodes.push(Node {
+                vector: node.vector,
+                neighbors: remapped_neighbors,
+                deleted: false,
+            });
+        }
+
+        // Update entry point.
+        self.entry_point = if let Some(old_ep) = self.entry_point {
+            let new_ep = id_map[old_ep as usize];
+            if new_ep == u32::MAX {
+                // Entry point was deleted. Promote the node at the highest layer.
+                new_nodes
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, n)| n.neighbors.len())
+                    .map(|(i, _)| i as u32)
+            } else {
+                Some(new_ep)
+            }
+        } else {
+            None
+        };
+
+        // Recalculate max_layer from the remaining nodes.
+        self.max_layer = new_nodes
+            .iter()
+            .map(|n| n.neighbors.len().saturating_sub(1))
+            .max()
+            .unwrap_or(0);
+
+        self.nodes = new_nodes;
+        tombstone_count
     }
 
     /// Max neighbors allowed at a given layer.

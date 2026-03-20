@@ -291,4 +291,92 @@ mod tests {
         }));
         assert!(result.is_err());
     }
+
+    #[test]
+    fn compact_removes_tombstones_and_reclaims_memory() {
+        let mut idx = make_index();
+        for i in 0..20u32 {
+            idx.insert(vec![i as f32, 0.0, 0.0]);
+        }
+        assert_eq!(idx.len(), 20);
+        assert_eq!(idx.live_count(), 20);
+
+        // Delete every other node.
+        for i in (0..20u32).step_by(2) {
+            assert!(idx.delete(i));
+        }
+        assert_eq!(idx.tombstone_count(), 10);
+        assert_eq!(idx.live_count(), 10);
+
+        // Compact.
+        let removed = idx.compact();
+        assert_eq!(removed, 10);
+        assert_eq!(idx.len(), 10);
+        assert_eq!(idx.live_count(), 10);
+        assert_eq!(idx.tombstone_count(), 0);
+
+        // All remaining nodes should be searchable.
+        for target_old_id in (1..20u32).step_by(2) {
+            let query = vec![target_old_id as f32, 0.0, 0.0];
+            let results = idx.search(&query, 1, 32);
+            assert!(
+                !results.is_empty(),
+                "search failed for old_id={target_old_id}"
+            );
+            // The closest result should have the correct vector.
+            let found_vec = idx.get_vector(results[0].id).unwrap();
+            assert_eq!(found_vec[0], target_old_id as f32);
+        }
+    }
+
+    #[test]
+    fn compact_empty_index() {
+        let mut idx = make_index();
+        assert_eq!(idx.compact(), 0);
+    }
+
+    #[test]
+    fn compact_no_tombstones() {
+        let mut idx = make_index();
+        for i in 0..5u32 {
+            idx.insert(vec![i as f32, 0.0, 0.0]);
+        }
+        assert_eq!(idx.compact(), 0);
+        assert_eq!(idx.len(), 5);
+    }
+
+    #[test]
+    fn compact_all_deleted() {
+        let mut idx = make_index();
+        for i in 0..5u32 {
+            idx.insert(vec![i as f32, 0.0, 0.0]);
+        }
+        for i in 0..5u32 {
+            idx.delete(i);
+        }
+        let removed = idx.compact();
+        assert_eq!(removed, 5);
+        assert_eq!(idx.len(), 0);
+        assert!(idx.is_empty());
+        assert_eq!(idx.entry_point(), None);
+    }
+
+    #[test]
+    fn compact_preserves_entry_point() {
+        let mut idx = make_index();
+        for i in 0..10u32 {
+            idx.insert(vec![i as f32, 0.0, 0.0]);
+        }
+        let old_ep = idx.entry_point().unwrap();
+        // Delete nodes that are NOT the entry point.
+        for i in 0..10u32 {
+            if i != old_ep {
+                idx.delete(i);
+            }
+        }
+        idx.compact();
+        // Entry point should now be remapped to 0 (only remaining node).
+        assert_eq!(idx.entry_point(), Some(0));
+        assert_eq!(idx.len(), 1);
+    }
 }
