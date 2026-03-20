@@ -9,7 +9,7 @@ use super::extract::{
     expr_to_scan_filters, expr_to_usize, extract_delete_targets, extract_insert_values,
     extract_update_assignments, try_range_scan_from_predicate,
 };
-use super::search::{extract_table_name, try_extract_vector_search};
+use super::search::{extract_table_name, try_extract_text_search, try_extract_vector_search};
 
 /// Converts DataFusion logical plans into NodeDB physical tasks.
 ///
@@ -246,6 +246,23 @@ impl PlanConverter {
                             },
                         }]);
                     }
+                }
+
+                // Check for bm25_score() in sort expression → TextSearch.
+                if let Some((collection, query_text, top_k)) =
+                    try_extract_text_search(&sort.expr, &sort.input, sort.fetch)
+                {
+                    let vshard = VShardId::from_collection(&collection);
+                    return Ok(vec![PhysicalTask {
+                        tenant_id,
+                        vshard_id: vshard,
+                        plan: PhysicalPlan::TextSearch {
+                            collection,
+                            query: query_text,
+                            top_k,
+                            fuzzy: true,
+                        },
+                    }]);
                 }
 
                 // Index-ordered scan optimization:

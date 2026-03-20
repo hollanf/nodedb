@@ -1,4 +1,5 @@
-//! Vector search pattern detection helpers for the plan converter.
+//! Search pattern detection helpers for the plan converter.
+//! Handles both vector similarity and BM25 full-text search patterns.
 //!
 //! These are standalone functions extracted from `PlanConverter` to keep
 //! `converter.rs` under the 500-line limit. They handle the
@@ -99,4 +100,29 @@ pub(super) fn extract_table_name(plan: &LogicalPlan) -> Option<String> {
         LogicalPlan::SubqueryAlias(alias) => extract_table_name(&alias.input),
         _ => None,
     }
+}
+
+/// Detect `ORDER BY bm25_score(field, 'query') LIMIT k` and extract search parameters.
+///
+/// Returns `(collection, query_text, top_k)` if the pattern matches.
+pub(super) fn try_extract_text_search(
+    sort_exprs: &[datafusion::logical_expr::SortExpr],
+    input: &LogicalPlan,
+    fetch: Option<usize>,
+) -> Option<(String, String, usize)> {
+    let sort_expr = sort_exprs.first()?;
+    let Expr::ScalarFunction(func) = &sort_expr.expr else {
+        return None;
+    };
+    if func.name() != "bm25_score" || func.args.len() != 2 {
+        return None;
+    }
+    let (Expr::Literal(_field_lit), Expr::Literal(query_lit)) = (&func.args[0], &func.args[1])
+    else {
+        return None;
+    };
+    let query_text = query_lit.to_string().trim_matches('\'').to_string();
+    let collection = extract_table_name(input)?;
+    let top_k = fetch.unwrap_or(10);
+    Some((collection, query_text, top_k))
 }
