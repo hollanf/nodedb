@@ -397,10 +397,10 @@ impl VectorCollection {
         // Collect vector references for calibration.
         let mut refs: Vec<&[f32]> = Vec::with_capacity(n);
         for i in 0..n {
-            if !index.is_deleted(i as u32) {
-                if let Some(v) = index.get_vector(i as u32) {
-                    refs.push(v);
-                }
+            if !index.is_deleted(i as u32)
+                && let Some(v) = index.get_vector(i as u32)
+            {
+                refs.push(v);
             }
         }
         if refs.is_empty() {

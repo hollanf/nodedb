@@ -114,30 +114,26 @@ impl PlanConverter {
         use datafusion::logical_expr::Operator;
 
         for filter in filters {
-            if let Expr::BinaryExpr(binary) = filter {
-                if binary.op == Operator::Eq {
-                    let (col_name, value) = match (&*binary.left, &*binary.right) {
-                        (Expr::Column(col), Expr::Literal(lit)) => {
-                            (col.name.as_str(), lit.to_string())
-                        }
-                        (Expr::Literal(lit), Expr::Column(col)) => {
-                            (col.name.as_str(), lit.to_string())
-                        }
-                        _ => continue,
-                    };
+            if let Expr::BinaryExpr(binary) = filter
+                && binary.op == Operator::Eq
+            {
+                let (col_name, value) = match (&*binary.left, &*binary.right) {
+                    (Expr::Column(col), Expr::Literal(lit)) => (col.name.as_str(), lit.to_string()),
+                    (Expr::Literal(lit), Expr::Column(col)) => (col.name.as_str(), lit.to_string()),
+                    _ => continue,
+                };
 
-                    if col_name == "id" || col_name == "document_id" {
-                        let doc_id = value.trim_matches('\'').trim_matches('"').to_string();
+                if col_name == "id" || col_name == "document_id" {
+                    let doc_id = value.trim_matches('\'').trim_matches('"').to_string();
 
-                        return Ok(Some(PhysicalTask {
-                            tenant_id,
-                            vshard_id: vshard,
-                            plan: PhysicalPlan::PointGet {
-                                collection: collection.to_string(),
-                                document_id: doc_id,
-                            },
-                        }));
-                    }
+                    return Ok(Some(PhysicalTask {
+                        tenant_id,
+                        vshard_id: vshard,
+                        plan: PhysicalPlan::PointGet {
+                            collection: collection.to_string(),
+                            document_id: doc_id,
+                        },
+                    }));
                 }
             }
         }

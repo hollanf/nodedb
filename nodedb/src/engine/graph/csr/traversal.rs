@@ -28,10 +28,10 @@ impl CsrIndex {
         let mut queue: VecDeque<(u32, usize)> = VecDeque::new();
 
         for &node in start_nodes {
-            if let Some(&id) = self.node_to_id.get(node) {
-                if visited.insert(id) {
-                    queue.push_back((id, 0));
-                }
+            if let Some(&id) = self.node_to_id.get(node)
+                && visited.insert(id)
+            {
+                queue.push_back((id, 0));
             }
         }
 
@@ -191,10 +191,10 @@ impl CsrIndex {
         let mut edges = Vec::new();
 
         for &node in start_nodes {
-            if let Some(&id) = self.node_to_id.get(node) {
-                if visited.insert(id) {
-                    queue.push_back((id, 0));
-                }
+            if let Some(&id) = self.node_to_id.get(node)
+                && visited.insert(id)
+            {
+                queue.push_back((id, 0));
             }
         }
 

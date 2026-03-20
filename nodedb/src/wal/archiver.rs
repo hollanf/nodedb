@@ -125,10 +125,10 @@ impl WalArchiver {
             }
 
             // Parse segment filename: "wal-{first_lsn}-{last_lsn}.seg"
-            if let Some(seg) = parse_segment_filename(&path) {
-                if seg.last_lsn > self.state.last_archived_lsn {
-                    segments.push(seg);
-                }
+            if let Some(seg) = parse_segment_filename(&path)
+                && seg.last_lsn > self.state.last_archived_lsn
+            {
+                segments.push(seg);
             }
         }
 
@@ -182,14 +182,14 @@ impl WalArchiver {
         );
 
         // Delete local segment if configured.
-        if self.config.delete_after_archive {
-            if let Err(e) = std::fs::remove_file(&task.source) {
-                warn!(
-                    path = %task.source.display(),
-                    error = %e,
-                    "failed to delete archived WAL segment"
-                );
-            }
+        if self.config.delete_after_archive
+            && let Err(e) = std::fs::remove_file(&task.source)
+        {
+            warn!(
+                path = %task.source.display(),
+                error = %e,
+                "failed to delete archived WAL segment"
+            );
         }
     }
 

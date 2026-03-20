@@ -187,12 +187,12 @@ impl SessionStore {
         read_lsn: crate::types::Lsn,
     ) {
         let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
-        if let Some(session) = sessions.get_mut(addr) {
-            if session.tx_state == TransactionState::InBlock {
-                session
-                    .tx_read_set
-                    .push((collection, document_id, read_lsn));
-            }
+        if let Some(session) = sessions.get_mut(addr)
+            && session.tx_state == TransactionState::InBlock
+        {
+            session
+                .tx_read_set
+                .push((collection, document_id, read_lsn));
         }
     }
 
@@ -241,11 +241,11 @@ impl SessionStore {
         task: crate::control::planner::physical::PhysicalTask,
     ) -> bool {
         let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
-        if let Some(session) = sessions.get_mut(addr) {
-            if session.tx_state == TransactionState::InBlock {
-                session.tx_buffer.push(task);
-                return true;
-            }
+        if let Some(session) = sessions.get_mut(addr)
+            && session.tx_state == TransactionState::InBlock
+        {
+            session.tx_buffer.push(task);
+            return true;
         }
         false
     }
@@ -265,10 +265,10 @@ impl SessionStore {
     /// Mark the current transaction as failed (after a query error inside BEGIN).
     pub fn fail_transaction(&self, addr: &SocketAddr) {
         let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
-        if let Some(session) = sessions.get_mut(addr) {
-            if session.tx_state == TransactionState::InBlock {
-                session.tx_state = TransactionState::Failed;
-            }
+        if let Some(session) = sessions.get_mut(addr)
+            && session.tx_state == TransactionState::InBlock
+        {
+            session.tx_state = TransactionState::Failed;
         }
     }
 

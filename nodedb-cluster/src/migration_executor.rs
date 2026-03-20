@@ -195,10 +195,9 @@ impl MigrationExecutor {
         if let Some(node_info) = {
             let topo = self.topology.read().unwrap_or_else(|p| p.into_inner());
             topo.get_node(req.target_node).map(|n| n.addr.clone())
-        } {
-            if let Ok(addr) = node_info.parse() {
-                self.transport.register_peer(req.target_node, addr);
-            }
+        } && let Ok(addr) = node_info.parse()
+        {
+            self.transport.register_peer(req.target_node, addr);
         }
 
         // The ConfChange will be replicated and applied. The target node

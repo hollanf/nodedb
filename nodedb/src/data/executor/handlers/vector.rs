@@ -21,15 +21,15 @@ impl CoreLoop {
         field_name: &str,
     ) -> Result<&mut VectorCollection, ErrorCode> {
         let index_key = CoreLoop::vector_index_key(tid, collection, field_name);
-        if let Some(existing) = self.vector_collections.get(&index_key) {
-            if existing.dim() != dim {
-                return Err(ErrorCode::RejectedConstraint {
-                    constraint: format!(
-                        "dimension mismatch: index has {}, got {dim}",
-                        existing.dim()
-                    ),
-                });
-            }
+        if let Some(existing) = self.vector_collections.get(&index_key)
+            && existing.dim() != dim
+        {
+            return Err(ErrorCode::RejectedConstraint {
+                constraint: format!(
+                    "dimension mismatch: index has {}, got {dim}",
+                    existing.dim()
+                ),
+            });
         }
         let core_id = self.core_id;
         let params = self
@@ -68,14 +68,12 @@ impl CoreLoop {
         match self.get_or_create_vector_index(tid, collection, dim, field_name) {
             Ok(collection_ref) => {
                 collection_ref.insert(vector.to_vec());
-                if collection_ref.needs_seal() {
-                    if let Some(req) = collection_ref.seal(&index_key) {
-                        if let Some(tx) = &self.build_tx {
-                            if let Err(e) = tx.send(req) {
-                                warn!(core = self.core_id, error = %e, "failed to send HNSW build request");
-                            }
-                        }
-                    }
+                if collection_ref.needs_seal()
+                    && let Some(req) = collection_ref.seal(&index_key)
+                    && let Some(tx) = &self.build_tx
+                    && let Err(e) = tx.send(req)
+                {
+                    warn!(core = self.core_id, error = %e, "failed to send HNSW build request");
                 }
                 self.response_ok(task)
             }
@@ -111,14 +109,12 @@ impl CoreLoop {
                     }
                     collection_ref.insert(vector.clone());
                 }
-                if collection_ref.needs_seal() {
-                    if let Some(req) = collection_ref.seal(&index_key) {
-                        if let Some(tx) = &self.build_tx {
-                            if let Err(e) = tx.send(req) {
-                                warn!(core = self.core_id, error = %e, "failed to send HNSW build request");
-                            }
-                        }
-                    }
+                if collection_ref.needs_seal()
+                    && let Some(req) = collection_ref.seal(&index_key)
+                    && let Some(tx) = &self.build_tx
+                    && let Err(e) = tx.send(req)
+                {
+                    warn!(core = self.core_id, error = %e, "failed to send HNSW build request");
                 }
                 match super::super::response_codec::encode_count("inserted", vectors.len()) {
                     Ok(bytes) => self.response_with_payload(task, bytes),

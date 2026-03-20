@@ -302,12 +302,12 @@ impl MultiRaft {
             ConfChangeType::AddNode | ConfChangeType::PromoteLearner => {
                 node.add_peer(change.node_id);
                 // Update routing table members.
-                if let Some(info) = self.routing.group_info(group_id) {
-                    if !info.members.contains(&change.node_id) {
-                        let mut new_members = info.members.clone();
-                        new_members.push(change.node_id);
-                        self.routing.set_group_members(group_id, new_members);
-                    }
+                if let Some(info) = self.routing.group_info(group_id)
+                    && !info.members.contains(&change.node_id)
+                {
+                    let mut new_members = info.members.clone();
+                    new_members.push(change.node_id);
+                    self.routing.set_group_members(group_id, new_members);
                 }
             }
             ConfChangeType::RemoveNode => {

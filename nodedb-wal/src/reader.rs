@@ -90,15 +90,15 @@ impl WalReader {
         if record.verify_checksum().is_err() {
             // Checksum mismatch — torn write or corruption.
             // Try to recover from double-write buffer if available.
-            if let Some(dwb) = &mut self.double_write {
-                if let Ok(Some(recovered)) = dwb.recover_record(header.lsn) {
-                    tracing::info!(
-                        lsn = header.lsn,
-                        "recovered torn write from double-write buffer"
-                    );
-                    self.offset += recovered.payload.len() as u64;
-                    return Ok(Some(recovered));
-                }
+            if let Some(dwb) = &mut self.double_write
+                && let Ok(Some(recovered)) = dwb.recover_record(header.lsn)
+            {
+                tracing::info!(
+                    lsn = header.lsn,
+                    "recovered torn write from double-write buffer"
+                );
+                self.offset += recovered.payload.len() as u64;
+                return Ok(Some(recovered));
             }
             // No DWB recovery possible — end of committed prefix.
             return Ok(None);

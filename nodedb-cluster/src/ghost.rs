@@ -99,12 +99,12 @@ impl GhostTable {
     /// Decrement refcount for a ghost (when a local edge is deleted).
     /// Returns true if the ghost was purged (refcount reached zero).
     pub fn decrement_ref(&mut self, node_id: &str) -> bool {
-        if let Some(stub) = self.stubs.get_mut(node_id) {
-            if stub.decrement_ref() {
-                self.stubs.remove(node_id);
-                self.purge_count += 1;
-                return true;
-            }
+        if let Some(stub) = self.stubs.get_mut(node_id)
+            && stub.decrement_ref()
+        {
+            self.stubs.remove(node_id);
+            self.purge_count += 1;
+            return true;
         }
         false
     }

@@ -152,10 +152,10 @@ fn platform_data_dir() -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     {
         // XDG Base Directory: $XDG_DATA_HOME or ~/.local/share
-        if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-            if !xdg.is_empty() {
-                return Some(PathBuf::from(xdg));
-            }
+        if let Ok(xdg) = std::env::var("XDG_DATA_HOME")
+            && !xdg.is_empty()
+        {
+            return Some(PathBuf::from(xdg));
         }
         home_dir().map(|h| h.join(".local").join("share"))
     }
@@ -168,10 +168,10 @@ fn platform_data_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
         // %LOCALAPPDATA% (e.g. C:\Users\<user>\AppData\Local)
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            if !local.is_empty() {
-                return Some(PathBuf::from(local));
-            }
+        if let Ok(local) = std::env::var("LOCALAPPDATA")
+            && !local.is_empty()
+        {
+            return Some(PathBuf::from(local));
         }
         home_dir().map(|h| h.join("AppData").join("Local"))
     }

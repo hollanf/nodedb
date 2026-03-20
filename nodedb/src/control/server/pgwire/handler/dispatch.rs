@@ -20,16 +20,15 @@ impl NodeDbPgHandler {
     pub(super) async fn dispatch_task(&self, task: PhysicalTask) -> crate::Result<Response> {
         if let (Some(proposer), Some(tracker)) =
             (&self.state.raft_proposer, &self.state.propose_tracker)
-        {
-            if let Some(entry) = crate::control::wal_replication::to_replicated_entry(
+            && let Some(entry) = crate::control::wal_replication::to_replicated_entry(
                 task.tenant_id,
                 task.vshard_id,
                 &task.plan,
-            ) {
-                return self
-                    .dispatch_replicated_write(entry, proposer, tracker)
-                    .await;
-            }
+            )
+        {
+            return self
+                .dispatch_replicated_write(entry, proposer, tracker)
+                .await;
         }
 
         self.dispatch_local(task).await

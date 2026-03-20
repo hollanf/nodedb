@@ -155,20 +155,20 @@ impl CoreLoop {
                 match self.sparse.put(tid, collection, document_id, &stored) {
                     Ok(()) => {
                         // Auto-index text fields.
-                        if let Some(doc) = super::super::doc_format::decode_document(value) {
-                            if let Some(obj) = doc.as_object() {
-                                let text_content: String = obj
-                                    .values()
-                                    .filter_map(|v| v.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(" ");
-                                if !text_content.is_empty() {
-                                    let _ = self.inverted.index_document(
-                                        collection,
-                                        document_id,
-                                        &text_content,
-                                    );
-                                }
+                        if let Some(doc) = super::super::doc_format::decode_document(value)
+                            && let Some(obj) = doc.as_object()
+                        {
+                            let text_content: String = obj
+                                .values()
+                                .filter_map(|v| v.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            if !text_content.is_empty() {
+                                let _ = self.inverted.index_document(
+                                    collection,
+                                    document_id,
+                                    &text_content,
+                                );
                             }
                         }
 
@@ -261,13 +261,13 @@ impl CoreLoop {
                 vector_id,
             } => {
                 let index_key = Self::vector_index_key(tid, collection, "");
-                if let Some(index) = self.vector_collections.get_mut(&index_key) {
-                    if index.delete(*vector_id) {
-                        undo_log.push(UndoEntry::DeleteVector {
-                            index_key,
-                            vector_id: *vector_id,
-                        });
-                    }
+                if let Some(index) = self.vector_collections.get_mut(&index_key)
+                    && index.delete(*vector_id)
+                {
+                    undo_log.push(UndoEntry::DeleteVector {
+                        index_key,
+                        vector_id: *vector_id,
+                    });
                 }
                 Ok(self.response_ok(&dummy_task))
             }

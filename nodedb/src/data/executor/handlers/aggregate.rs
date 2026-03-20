@@ -90,26 +90,26 @@ impl CoreLoop {
             && aggregates[0].0 == "count"
         {
             let field = &group_by[0];
-            if let Ok(groups) = self.sparse.scan_index_groups(tid, collection, field) {
-                if !groups.is_empty() {
-                    let mut results: Vec<serde_json::Value> = groups
-                        .into_iter()
-                        .take(limit)
-                        .map(|(value, count)| {
-                            let mut row = serde_json::Map::new();
-                            row.insert(field.clone(), serde_json::Value::String(value));
-                            row.insert("count_all".into(), serde_json::json!(count));
-                            serde_json::Value::Object(row)
-                        })
-                        .collect();
-                    results.truncate(limit);
-                    return match super::super::response_codec::encode(&results) {
-                        Ok(payload) => self.response_with_payload(task, payload),
-                        Err(e) => self.response_error(task, ErrorCode::Internal { detail: e }),
-                    };
-                }
-                // Empty index — fall through to full scan (documents may exist
-                // without index entries if no secondary indexes are declared).
+            // Empty index — fall through to full scan (documents may exist
+            // without index entries if no secondary indexes are declared).
+            if let Ok(groups) = self.sparse.scan_index_groups(tid, collection, field)
+                && !groups.is_empty()
+            {
+                let mut results: Vec<serde_json::Value> = groups
+                    .into_iter()
+                    .take(limit)
+                    .map(|(value, count)| {
+                        let mut row = serde_json::Map::new();
+                        row.insert(field.clone(), serde_json::Value::String(value));
+                        row.insert("count_all".into(), serde_json::json!(count));
+                        serde_json::Value::Object(row)
+                    })
+                    .collect();
+                results.truncate(limit);
+                return match super::super::response_codec::encode(&results) {
+                    Ok(payload) => self.response_with_payload(task, payload),
+                    Err(e) => self.response_error(task, ErrorCode::Internal { detail: e }),
+                };
             }
         }
 
@@ -214,13 +214,12 @@ impl CoreLoop {
                 for (group_key, group_docs) in &groups {
                     let mut row = serde_json::Map::new();
 
-                    if !group_by.is_empty() {
-                        if let Ok(parts) = serde_json::from_str::<Vec<serde_json::Value>>(group_key)
-                        {
-                            for (i, field) in group_by.iter().enumerate() {
-                                let val = parts.get(i).cloned().unwrap_or(serde_json::Value::Null);
-                                row.insert(field.clone(), val);
-                            }
+                    if !group_by.is_empty()
+                        && let Ok(parts) = serde_json::from_str::<Vec<serde_json::Value>>(group_key)
+                    {
+                        for (i, field) in group_by.iter().enumerate() {
+                            let val = parts.get(i).cloned().unwrap_or(serde_json::Value::Null);
+                            row.insert(field.clone(), val);
                         }
                     }
 

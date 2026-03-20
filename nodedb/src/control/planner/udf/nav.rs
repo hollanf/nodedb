@@ -65,10 +65,10 @@ pub(crate) fn navigate_rmpv<'a>(value: &'a rmpv::Value, path: &str) -> Option<&'
 fn msgpack_get_field<'a>(value: &'a rmpv::Value, key: &str) -> Option<&'a rmpv::Value> {
     let map = value.as_map()?;
     for (k, v) in map {
-        if let Some(k_str) = k.as_str() {
-            if k_str == key {
-                return Some(v);
-            }
+        if let Some(k_str) = k.as_str()
+            && k_str == key
+        {
+            return Some(v);
         }
     }
     None

@@ -126,10 +126,11 @@ pub(super) fn try_extract_hybrid_search(
 
     // Extract vector_distance(...) from first arg.
     let mut query_vector = Vec::new();
-    if let Expr::ScalarFunction(vd) = &rrf_func.args[0] {
-        if vd.name() == "vector_distance" && vd.args.len() >= 2 {
-            query_vector = extract_float_array(&vd.args[1])?;
-        }
+    if let Expr::ScalarFunction(vd) = &rrf_func.args[0]
+        && vd.name() == "vector_distance"
+        && vd.args.len() >= 2
+    {
+        query_vector = extract_float_array(&vd.args[1])?;
     }
     if query_vector.is_empty() {
         return Ok(None);
@@ -137,12 +138,12 @@ pub(super) fn try_extract_hybrid_search(
 
     // Extract bm25_score(...) from second arg.
     let mut query_text = String::new();
-    if let Expr::ScalarFunction(bm) = &rrf_func.args[1] {
-        if bm.name() == "bm25_score" && bm.args.len() >= 2 {
-            if let Expr::Literal(lit) = &bm.args[1] {
-                query_text = lit.to_string().trim_matches('\'').to_string();
-            }
-        }
+    if let Expr::ScalarFunction(bm) = &rrf_func.args[1]
+        && bm.name() == "bm25_score"
+        && bm.args.len() >= 2
+        && let Expr::Literal(lit) = &bm.args[1]
+    {
+        query_text = lit.to_string().trim_matches('\'').to_string();
     }
     if query_text.is_empty() {
         return Ok(None);

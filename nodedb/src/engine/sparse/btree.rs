@@ -395,12 +395,12 @@ impl SparseEngine {
             let entry = entry.map_err(|e| redb_err("index entry", e))?;
             let key = entry.0.value().to_string();
             // Key format: "{tenant}:{collection}:{field}:{value}:{doc_id}"
-            if let Some(rest) = key.strip_prefix(&prefix) {
-                if let Some(colon_pos) = rest.rfind(':') {
-                    let value = &rest[..colon_pos];
-                    let doc_id = &rest[colon_pos + 1..];
-                    results.push((doc_id.to_string(), value.to_string()));
-                }
+            if let Some(rest) = key.strip_prefix(&prefix)
+                && let Some(colon_pos) = rest.rfind(':')
+            {
+                let value = &rest[..colon_pos];
+                let doc_id = &rest[colon_pos + 1..];
+                results.push((doc_id.to_string(), value.to_string()));
             }
         }
 

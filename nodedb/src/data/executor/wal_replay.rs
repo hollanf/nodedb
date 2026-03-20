@@ -144,15 +144,14 @@ impl CoreLoop {
                     }
                     inserted += 1;
                 }
-            } else if is_vector_delete {
-                if let Ok((collection, vector_id)) =
+            } else if is_vector_delete
+                && let Ok((collection, vector_id)) =
                     rmp_serde::from_slice::<(String, u32)>(&record.payload)
-                {
-                    let index_key = CoreLoop::vector_index_key(tenant_id, &collection, "");
-                    if let Some(index) = self.vector_collections.get_mut(&index_key) {
-                        index.delete(vector_id);
-                        deleted += 1;
-                    }
+            {
+                let index_key = CoreLoop::vector_index_key(tenant_id, &collection, "");
+                if let Some(index) = self.vector_collections.get_mut(&index_key) {
+                    index.delete(vector_id);
+                    deleted += 1;
                 }
             }
         }

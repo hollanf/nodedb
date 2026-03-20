@@ -52,12 +52,11 @@ pub(super) fn extract_fields(bytes: &[u8], field_names: &[&str]) -> Vec<Option<s
         if let Ok(rmpv::Value::Map(pairs)) = rmpv::decode::read_value(&mut &bytes[..]) {
             let mut results = vec![None; field_names.len()];
             for (k, v) in &pairs {
-                if let rmpv::Value::String(key) = k {
-                    if let Some(key_str) = key.as_str() {
-                        if let Some(idx) = field_names.iter().position(|&n| n == key_str) {
-                            results[idx] = Some(rmpv_to_json(v));
-                        }
-                    }
+                if let rmpv::Value::String(key) = k
+                    && let Some(key_str) = key.as_str()
+                    && let Some(idx) = field_names.iter().position(|&n| n == key_str)
+                {
+                    results[idx] = Some(rmpv_to_json(v));
                 }
             }
             return results;

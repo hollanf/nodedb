@@ -228,12 +228,12 @@ impl PlanConverter {
                 }
 
                 // Extract OFFSET (skip) value.
-                if let Some(skip) = &limit_plan.skip {
-                    if let Ok(skip_n) = expr_to_usize(skip) {
-                        for task in &mut tasks {
-                            if let PhysicalPlan::DocumentScan { offset, .. } = &mut task.plan {
-                                *offset = skip_n;
-                            }
+                if let Some(skip) = &limit_plan.skip
+                    && let Ok(skip_n) = expr_to_usize(skip)
+                {
+                    for task in &mut tasks {
+                        if let PhysicalPlan::DocumentScan { offset, .. } = &mut task.plan {
+                            *offset = skip_n;
                         }
                     }
                 }
@@ -313,26 +313,28 @@ impl PlanConverter {
                 // (no OFFSET), use RangeScan — results come back in index order,
                 // eliminating the sort. Only works for ASC because B-tree indexes
                 // are ascending. DESC or OFFSET queries fall through to DocumentScan.
-                if sort.expr.len() == 1 && sort.expr[0].asc {
-                    if let Expr::Column(col) = &sort.expr[0].expr {
-                        let sort_field = &col.name;
-                        if sort_field != "id" && sort_field != "document_id" {
-                            if let Some(collection) = extract_table_name(&sort.input) {
-                                let limit = sort.fetch.unwrap_or(1000);
-                                let vshard = VShardId::from_collection(&collection);
-                                return Ok(vec![PhysicalTask {
-                                    tenant_id,
-                                    vshard_id: vshard,
-                                    plan: PhysicalPlan::RangeScan {
-                                        collection,
-                                        field: sort_field.clone(),
-                                        lower: None,
-                                        upper: None,
-                                        limit,
-                                    },
-                                }]);
-                            }
-                        }
+                if sort.expr.len() == 1
+                    && sort.expr[0].asc
+                    && let Expr::Column(col) = &sort.expr[0].expr
+                {
+                    let sort_field = &col.name;
+                    if sort_field != "id"
+                        && sort_field != "document_id"
+                        && let Some(collection) = extract_table_name(&sort.input)
+                    {
+                        let limit = sort.fetch.unwrap_or(1000);
+                        let vshard = VShardId::from_collection(&collection);
+                        return Ok(vec![PhysicalTask {
+                            tenant_id,
+                            vshard_id: vshard,
+                            plan: PhysicalPlan::RangeScan {
+                                collection,
+                                field: sort_field.clone(),
+                                lower: None,
+                                upper: None,
+                                limit,
+                            },
+                        }]);
                     }
                 }
 

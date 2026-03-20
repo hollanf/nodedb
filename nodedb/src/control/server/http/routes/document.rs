@@ -144,17 +144,14 @@ pub async fn insert_document(
         .ok_or_else(|| ApiError::BadRequest("missing 'data' field".into()))?;
 
     // Schema validation: check document against collection's declared fields.
-    if let Some(catalog) = state.shared.credentials.catalog() {
-        if let Ok(Some(coll)) = catalog.get_collection(identity.tenant_id.as_u32(), &collection) {
-            if let Err(e) =
-                crate::control::server::pgwire::ddl::collection::validate_document_schema(
-                    &coll.fields,
-                    data,
-                )
-            {
-                return Err(ApiError::BadRequest(format!("schema validation: {e}")));
-            }
-        }
+    if let Some(catalog) = state.shared.credentials.catalog()
+        && let Ok(Some(coll)) = catalog.get_collection(identity.tenant_id.as_u32(), &collection)
+        && let Err(e) = crate::control::server::pgwire::ddl::collection::validate_document_schema(
+            &coll.fields,
+            data,
+        )
+    {
+        return Err(ApiError::BadRequest(format!("schema validation: {e}")));
     }
 
     let value =

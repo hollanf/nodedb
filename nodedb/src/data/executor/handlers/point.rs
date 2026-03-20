@@ -56,13 +56,12 @@ impl CoreLoop {
                             .filter_map(|v| v.as_str())
                             .collect::<Vec<_>>()
                             .join(" ");
-                        if !text_content.is_empty() {
-                            if let Err(e) =
+                        if !text_content.is_empty()
+                            && let Err(e) =
                                 self.inverted
                                     .index_document(collection, document_id, &text_content)
-                            {
-                                warn!(core = self.core_id, %collection, %document_id, error = %e, "inverted index update failed");
-                            }
+                        {
+                            warn!(core = self.core_id, %collection, %document_id, error = %e, "inverted index update failed");
                         }
                     }
 

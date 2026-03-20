@@ -131,20 +131,20 @@ impl<'a> DocumentEngine<'a> {
             .put(self.tenant_id, collection, doc_id, msgpack_bytes)?;
 
         // Extract indexes from the MessagePack blob.
-        if let Some(config) = self.configs.get(collection) {
-            if let Ok(value) = rmpv::decode::read_value(&mut &msgpack_bytes[..]) {
-                for index_path in &config.index_paths {
-                    let values =
-                        extract_index_values_rmpv(&value, &index_path.path, index_path.is_array);
-                    for v in values {
-                        self.sparse.index_put(
-                            self.tenant_id,
-                            collection,
-                            &index_path.path,
-                            &v,
-                            doc_id,
-                        )?;
-                    }
+        if let Some(config) = self.configs.get(collection)
+            && let Ok(value) = rmpv::decode::read_value(&mut &msgpack_bytes[..])
+        {
+            for index_path in &config.index_paths {
+                let values =
+                    extract_index_values_rmpv(&value, &index_path.path, index_path.is_array);
+                for v in values {
+                    self.sparse.index_put(
+                        self.tenant_id,
+                        collection,
+                        &index_path.path,
+                        &v,
+                        doc_id,
+                    )?;
                 }
             }
         }

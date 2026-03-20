@@ -157,12 +157,13 @@ impl HealthMonitor {
 
         // If node was not Active, mark it Active.
         let mut topo = self.topology.write().unwrap_or_else(|p| p.into_inner());
-        if let Some(node) = topo.get_node(peer_id) {
-            if node.state != NodeState::Active && node.state != NodeState::Decommissioned {
-                info!(peer_id, "peer recovered, marking active");
-                topo.set_state(peer_id, NodeState::Active);
-                return true;
-            }
+        if let Some(node) = topo.get_node(peer_id)
+            && node.state != NodeState::Active
+            && node.state != NodeState::Decommissioned
+        {
+            info!(peer_id, "peer recovered, marking active");
+            topo.set_state(peer_id, NodeState::Active);
+            return true;
         }
         false
     }
@@ -178,16 +179,16 @@ impl HealthMonitor {
 
         if count >= self.config.failure_threshold {
             let mut topo = self.topology.write().unwrap_or_else(|p| p.into_inner());
-            if let Some(node) = topo.get_node(peer_id) {
-                if node.state == NodeState::Active {
-                    warn!(
-                        peer_id,
-                        failures = count,
-                        "peer unreachable, marking draining"
-                    );
-                    topo.set_state(peer_id, NodeState::Draining);
-                    return true;
-                }
+            if let Some(node) = topo.get_node(peer_id)
+                && node.state == NodeState::Active
+            {
+                warn!(
+                    peer_id,
+                    failures = count,
+                    "peer unreachable, marking draining"
+                );
+                topo.set_state(peer_id, NodeState::Draining);
+                return true;
             }
         }
         false

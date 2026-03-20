@@ -250,7 +250,7 @@ pub fn parse_role(name: &str) -> Role {
 /// Returns `None` if the input has an odd number of characters or contains
 /// characters that are not valid hexadecimal digits.
 pub fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     let mut bytes = Vec::with_capacity(s.len() / 2);

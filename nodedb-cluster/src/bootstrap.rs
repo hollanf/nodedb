@@ -245,10 +245,10 @@ fn apply_join_response(
 
     // Register all peers in the transport.
     for node in &resp.nodes {
-        if node.node_id != config.node_id {
-            if let Ok(addr) = node.addr.parse::<SocketAddr>() {
-                transport.register_peer(node.node_id, addr);
-            }
+        if node.node_id != config.node_id
+            && let Ok(addr) = node.addr.parse::<SocketAddr>()
+        {
+            transport.register_peer(node.node_id, addr);
         }
     }
 
@@ -306,10 +306,10 @@ fn restart(
 
     // Register all known peers in the transport.
     for node in topology.all_nodes() {
-        if node.node_id != config.node_id {
-            if let Some(addr) = node.socket_addr() {
-                transport.register_peer(node.node_id, addr);
-            }
+        if node.node_id != config.node_id
+            && let Some(addr) = node.socket_addr()
+        {
+            transport.register_peer(node.node_id, addr);
         }
     }
 

@@ -243,21 +243,20 @@ pub fn drop_user(
         let catalog = state.credentials.catalog();
         for grant in &grants {
             // Find collections owned by this user and reassign.
-            if let Some(owner) = extract_collection_from_target(&grant.target) {
-                if state
+            if let Some(owner) = extract_collection_from_target(&grant.target)
+                && state
                     .permissions
                     .get_owner("collection", user_tenant, owner)
                     .as_deref()
                     == Some(username)
-                {
-                    let _ = state.permissions.set_owner(
-                        "collection",
-                        user_tenant,
-                        owner,
-                        &admin_name,
-                        catalog.as_ref(),
-                    );
-                }
+            {
+                let _ = state.permissions.set_owner(
+                    "collection",
+                    user_tenant,
+                    owner,
+                    &admin_name,
+                    catalog.as_ref(),
+                );
             }
         }
 

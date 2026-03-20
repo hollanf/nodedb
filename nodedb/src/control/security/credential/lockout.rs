@@ -48,18 +48,17 @@ impl CredentialStore {
             }
         };
 
-        if let Some(tracker) = attempts.get(username) {
-            if let Some(locked_until) = tracker.locked_until {
-                if Instant::now() < locked_until {
-                    return Err(crate::Error::RejectedAuthz {
-                        tenant_id: TenantId::new(0),
-                        resource: format!(
-                            "user '{username}' is locked out ({} failed attempts)",
-                            tracker.failed_count
-                        ),
-                    });
-                }
-            }
+        if let Some(tracker) = attempts.get(username)
+            && let Some(locked_until) = tracker.locked_until
+            && Instant::now() < locked_until
+        {
+            return Err(crate::Error::RejectedAuthz {
+                tenant_id: TenantId::new(0),
+                resource: format!(
+                    "user '{username}' is locked out ({} failed attempts)",
+                    tracker.failed_count
+                ),
+            });
         }
 
         Ok(())

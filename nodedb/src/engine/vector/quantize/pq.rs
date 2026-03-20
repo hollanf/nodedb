@@ -39,7 +39,10 @@ impl PqCodec {
     pub fn train(vectors: &[&[f32]], dim: usize, m: usize, k: usize, max_iter: usize) -> Self {
         assert!(!vectors.is_empty());
         assert!(dim > 0 && m > 0 && k > 0);
-        assert!(dim % m == 0, "dim ({dim}) must be divisible by m ({m})");
+        assert!(
+            dim.is_multiple_of(m),
+            "dim ({dim}) must be divisible by m ({m})"
+        );
 
         let sub_dim = dim / m;
         let mut codebooks = Vec::with_capacity(m);

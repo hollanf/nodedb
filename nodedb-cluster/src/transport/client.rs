@@ -152,10 +152,10 @@ impl NexarTransport {
         // Check cache — fast path.
         {
             let peers = self.peers.read().unwrap_or_else(|p| p.into_inner());
-            if let Some(conn) = peers.get(&target) {
-                if conn.close_reason().is_none() {
-                    return Ok(conn.clone());
-                }
+            if let Some(conn) = peers.get(&target)
+                && conn.close_reason().is_none()
+            {
+                return Ok(conn.clone());
             }
         }
 

@@ -104,11 +104,10 @@ impl NodeDbPgHandler {
             // Track reads for snapshot isolation conflict detection.
             if self.sessions.transaction_state(addr)
                 == crate::control::server::pgwire::session::TransactionState::InBlock
+                && let Some(collection) = collection_for_si
             {
-                if let Some(collection) = collection_for_si {
-                    self.sessions
-                        .record_read(addr, collection, String::new(), resp.watermark_lsn);
-                }
+                self.sessions
+                    .record_read(addr, collection, String::new(), resp.watermark_lsn);
             }
 
             responses.push(payload_to_response(&resp.payload, plan_kind));

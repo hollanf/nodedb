@@ -80,17 +80,17 @@ impl AuthConfig {
         }
 
         // Check env var first (higher priority, avoids storing in config file).
-        if let Ok(env_pw) = std::env::var("NODEDB_SUPERUSER_PASSWORD") {
-            if !env_pw.is_empty() {
-                return Ok(Some(env_pw));
-            }
+        if let Ok(env_pw) = std::env::var("NODEDB_SUPERUSER_PASSWORD")
+            && !env_pw.is_empty()
+        {
+            return Ok(Some(env_pw));
         }
 
         // Fall back to config file.
-        if let Some(ref pw) = self.superuser_password {
-            if !pw.is_empty() {
-                return Ok(Some(pw.clone()));
-            }
+        if let Some(ref pw) = self.superuser_password
+            && !pw.is_empty()
+        {
+            return Ok(Some(pw.clone()));
         }
 
         Err(crate::Error::Config {

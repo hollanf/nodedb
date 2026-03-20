@@ -127,31 +127,30 @@ impl NodeDbPgHandler {
         let collection = extract_collection(plan);
 
         // Block non-superuser access to system catalog collections.
-        if let Some(coll) = collection {
-            if coll.starts_with("_system") {
-                self.state.audit_record(
-                    AuditEvent::AuthzDenied,
-                    Some(identity.tenant_id),
-                    &identity.username,
-                    &format!("system catalog access denied: {coll}"),
-                );
-                return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                    "ERROR".to_owned(),
-                    "42501".to_owned(),
-                    "permission denied: system catalog access requires superuser".to_owned(),
-                ))));
-            }
+        if let Some(coll) = collection
+            && coll.starts_with("_system")
+        {
+            self.state.audit_record(
+                AuditEvent::AuthzDenied,
+                Some(identity.tenant_id),
+                &identity.username,
+                &format!("system catalog access denied: {coll}"),
+            );
+            return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "42501".to_owned(),
+                "permission denied: system catalog access requires superuser".to_owned(),
+            ))));
         }
 
         // Check collection-level permissions (ownership + explicit grants + role grants).
-        if let Some(coll) = collection {
-            if self
+        if let Some(coll) = collection
+            && self
                 .state
                 .permissions
                 .check(identity, required, coll, &self.state.roles)
-            {
-                return Ok(());
-            }
+        {
+            return Ok(());
         }
 
         // Fall back to role-based check.

@@ -123,20 +123,20 @@ fn contains_msgpack(data: &[u8], path: &str, needle: &str) -> bool {
     // Numeric comparison.
     if let Ok(needle_num) = needle.parse::<f64>() {
         for item in arr {
-            if let Some(n) = item.as_f64() {
-                if (n - needle_num).abs() < f64::EPSILON {
-                    return true;
-                }
+            if let Some(n) = item.as_f64()
+                && (n - needle_num).abs() < f64::EPSILON
+            {
+                return true;
             }
-            if let Some(i) = item.as_i64() {
-                if (i as f64 - needle_num).abs() < f64::EPSILON {
-                    return true;
-                }
+            if let Some(i) = item.as_i64()
+                && (i as f64 - needle_num).abs() < f64::EPSILON
+            {
+                return true;
             }
-            if let Some(u) = item.as_u64() {
-                if (u as f64 - needle_num).abs() < f64::EPSILON {
-                    return true;
-                }
+            if let Some(u) = item.as_u64()
+                && (u as f64 - needle_num).abs() < f64::EPSILON
+            {
+                return true;
             }
         }
     }
@@ -168,10 +168,10 @@ fn contains_json(json_str: &str, path: &str, needle: &str) -> bool {
 
     if let Ok(needle_num) = needle.parse::<f64>() {
         for item in arr {
-            if let Some(n) = item.as_f64() {
-                if (n - needle_num).abs() < f64::EPSILON {
-                    return true;
-                }
+            if let Some(n) = item.as_f64()
+                && (n - needle_num).abs() < f64::EPSILON
+            {
+                return true;
             }
         }
     }

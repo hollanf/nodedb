@@ -75,12 +75,12 @@ impl SparseEngine {
             let entry = entry.map_err(|e| redb_err("index entry", e))?;
             let key = entry.0.value().to_string();
             // Extract value from key: skip prefix, split on ':', take first part.
-            if let Some(rest) = key.strip_prefix(&prefix) {
-                // rest = "{value}:{doc_id}" — split at last ':' to get value.
-                if let Some(colon_pos) = rest.rfind(':') {
-                    let value = &rest[..colon_pos];
-                    *groups.entry(value.to_string()).or_default() += 1;
-                }
+            // rest = "{value}:{doc_id}" — split at last ':' to get value.
+            if let Some(rest) = key.strip_prefix(&prefix)
+                && let Some(colon_pos) = rest.rfind(':')
+            {
+                let value = &rest[..colon_pos];
+                *groups.entry(value.to_string()).or_default() += 1;
             }
         }
 

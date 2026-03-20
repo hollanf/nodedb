@@ -37,18 +37,18 @@ impl CoreLoop {
             Ok(()) => {
                 // Auto-index text fields for full-text search (same as PointPut).
                 for (doc_id, val) in documents {
-                    if let Some(doc) = super::super::doc_format::decode_document(val) {
-                        if let Some(obj) = doc.as_object() {
-                            let text_content: String = obj
-                                .values()
-                                .filter_map(|v| v.as_str())
-                                .collect::<Vec<_>>()
-                                .join(" ");
-                            if !text_content.is_empty() {
-                                let _ =
-                                    self.inverted
-                                        .index_document(collection, doc_id, &text_content);
-                            }
+                    if let Some(doc) = super::super::doc_format::decode_document(val)
+                        && let Some(obj) = doc.as_object()
+                    {
+                        let text_content: String = obj
+                            .values()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        if !text_content.is_empty() {
+                            let _ = self
+                                .inverted
+                                .index_document(collection, doc_id, &text_content);
                         }
                     }
                 }

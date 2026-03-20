@@ -67,12 +67,12 @@ pub fn compute_plan(routing: &RoutingTable, topology: &ClusterTopology) -> Resul
         active_nodes.iter().map(|&id| (id, Vec::new())).collect();
 
     for vshard_id in 0..crate::routing::VSHARD_COUNT {
-        if let Ok(group_id) = routing.group_for_vshard(vshard_id) {
-            if let Some(info) = routing.group_info(group_id) {
-                let leader = info.leader;
-                if leader > 0 {
-                    node_vshards.entry(leader).or_default().push(vshard_id);
-                }
+        if let Ok(group_id) = routing.group_for_vshard(vshard_id)
+            && let Some(info) = routing.group_info(group_id)
+        {
+            let leader = info.leader;
+            if leader > 0 {
+                node_vshards.entry(leader).or_default().push(vshard_id);
             }
         }
     }

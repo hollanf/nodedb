@@ -117,10 +117,10 @@ impl DeferredQueue {
         let mut ready = Vec::new();
 
         while let Some(front) = self.entries.front() {
-            if front.next_retry_ms <= now_ms {
-                if let Some(entry) = self.entries.pop_front() {
-                    ready.push(entry);
-                }
+            if front.next_retry_ms <= now_ms
+                && let Some(entry) = self.entries.pop_front()
+            {
+                ready.push(entry);
             } else {
                 break;
             }

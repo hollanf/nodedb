@@ -90,12 +90,13 @@ impl RoleStore {
         }
 
         // Validate parent exists (built-in or custom).
-        if let Some(parent_name) = parent {
-            if !is_builtin(parent_name) && !roles.contains_key(parent_name) {
-                return Err(crate::Error::BadRequest {
-                    detail: format!("parent role '{parent_name}' does not exist"),
-                });
-            }
+        if let Some(parent_name) = parent
+            && !is_builtin(parent_name)
+            && !roles.contains_key(parent_name)
+        {
+            return Err(crate::Error::BadRequest {
+                detail: format!("parent role '{parent_name}' does not exist"),
+            });
         }
 
         let now = std::time::SystemTime::now()

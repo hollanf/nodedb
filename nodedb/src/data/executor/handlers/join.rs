@@ -21,11 +21,11 @@ fn merge_join_docs(
             merged.insert(format!("{left_collection}.{k}"), v.clone());
         }
     }
-    if let Some(right) = right_doc {
-        if let Some(obj) = right.as_object() {
-            for (k, v) in obj {
-                merged.insert(format!("{right_collection}.{k}"), v.clone());
-            }
+    if let Some(right) = right_doc
+        && let Some(obj) = right.as_object()
+    {
+        for (k, v) in obj {
+            merged.insert(format!("{right_collection}.{k}"), v.clone());
         }
     }
     serde_json::Value::Object(merged)
