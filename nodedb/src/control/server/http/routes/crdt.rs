@@ -54,6 +54,7 @@ pub async fn crdt_apply(
         document_id: doc_id.to_string(),
         delta,
         peer_id: identity.user_id,
+        mutation_id: 0,
     };
 
     state.shared.tenant_request_start(identity.tenant_id);

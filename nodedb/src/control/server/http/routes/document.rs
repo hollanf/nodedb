@@ -71,6 +71,7 @@ pub(super) async fn dispatch_plan_with_trace(
         priority: Priority::Normal,
         trace_id,
         consistency: ReadConsistency::Strong,
+        idempotency_key: None,
     };
 
     let rx = state.shared.tracker.register(request_id);

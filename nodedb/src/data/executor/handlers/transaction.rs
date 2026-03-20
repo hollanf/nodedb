@@ -139,6 +139,7 @@ impl CoreLoop {
             priority: crate::bridge::envelope::Priority::Normal,
             trace_id: 0,
             consistency: crate::types::ReadConsistency::Strong,
+            idempotency_key: None,
         });
 
         match plan {
@@ -304,6 +305,7 @@ impl CoreLoop {
                     priority: crate::bridge::envelope::Priority::Normal,
                     trace_id: 0,
                     consistency: crate::types::ReadConsistency::Strong,
+                    idempotency_key: None,
                 }));
                 if resp.status == Status::Error {
                     return Err(resp.error_code.unwrap_or(ErrorCode::Internal {

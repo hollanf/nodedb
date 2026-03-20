@@ -82,6 +82,7 @@ impl RequestForwarder for LocalForwarder {
                 priority: Priority::Normal,
                 trace_id: req.trace_id,
                 consistency: ReadConsistency::Strong,
+                idempotency_key: None,
             };
 
             let rx = self.state.tracker.register(request_id);

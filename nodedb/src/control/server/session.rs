@@ -370,6 +370,7 @@ impl Session {
                     document_id,
                     delta,
                     peer_id,
+                    mutation_id: 0,
                 }
             }
             "graph_rag_fusion" => {
@@ -437,6 +438,7 @@ impl Session {
             priority: Priority::Normal,
             trace_id: 0,
             consistency: ReadConsistency::Strong,
+            idempotency_key: None,
         };
 
         // Register for response routing before dispatching.

@@ -185,6 +185,7 @@ pub fn to_replicated_entry(
             document_id,
             delta,
             peer_id,
+            mutation_id: _,
         } => ReplicatedWrite::CrdtApply {
             collection: collection.clone(),
             document_id: document_id.clone(),
@@ -296,6 +297,7 @@ fn to_physical_plan(write: &ReplicatedWrite) -> PhysicalPlan {
             document_id: document_id.clone(),
             delta: delta.clone(),
             peer_id: *peer_id,
+            mutation_id: 0,
         },
         ReplicatedWrite::EdgePut {
             src_id,
@@ -479,6 +481,7 @@ pub async fn run_apply_loop(
                 priority: Priority::Normal,
                 trace_id: 0,
                 consistency: ReadConsistency::Strong,
+                idempotency_key: None,
             };
 
             let rx = state.tracker.register(request_id);

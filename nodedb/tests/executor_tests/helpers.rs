@@ -27,6 +27,7 @@ pub fn make_request(plan: PhysicalPlan) -> Request {
         priority: Priority::Normal,
         trace_id: 0,
         consistency: ReadConsistency::Strong,
+        idempotency_key: None,
     }
 }
 

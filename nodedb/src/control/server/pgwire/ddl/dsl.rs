@@ -356,6 +356,7 @@ pub fn crdt_merge(
         document_id: target_id.to_string(),
         delta: source_bytes,
         peer_id: identity.user_id,
+        mutation_id: 0,
     };
 
     super::sync_dispatch::dispatch_sync(state, tenant_id, collection, apply_plan, DSL_DEADLINE)

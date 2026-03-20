@@ -109,6 +109,12 @@ pub struct Request {
 
     /// Read consistency level for this request.
     pub consistency: ReadConsistency,
+
+    /// Optional idempotency key for non-idempotent writes.
+    /// If present, the Data Plane deduplicates by skipping execution
+    /// when the same key has already been processed (returns the
+    /// cached response status).
+    pub idempotency_key: Option<u64>,
 }
 
 /// Response envelope: Data Plane -> Control Plane.
@@ -184,6 +190,10 @@ pub enum PhysicalPlan {
         document_id: String,
         delta: Vec<u8>,
         peer_id: u64,
+        /// Per-mutation unique ID for deduplication and compensation tracking.
+        /// Used by the DLQ and sync protocol to correlate rejected deltas
+        /// with compensation hints.
+        mutation_id: u64,
     },
 
     /// Insert a vector into the HNSW index (write path).
@@ -420,6 +430,19 @@ pub enum PhysicalPlan {
     /// Cancellation signal. Data Plane MUST stop the target request at next safe point.
     Cancel { target_request_id: RequestId },
 
+    /// Nested loop join: fallback for non-equi joins (`a.x > b.y`),
+    /// theta joins, and small cross joins where hash join can't operate.
+    NestedLoopJoin {
+        left_collection: String,
+        right_collection: String,
+        /// Join condition as serialized `Vec<ScanFilter>` (MessagePack).
+        /// Each filter references fields as `{collection}.{field}`.
+        /// Empty = cross join.
+        condition: Vec<u8>,
+        join_type: String,
+        limit: usize,
+    },
+
     /// Atomic transaction batch: execute all sub-plans atomically.
     ///
     /// On the Data Plane, all sub-plans execute within a single logical
@@ -476,6 +499,10 @@ pub enum ErrorCode {
     FanOutExceeded,
     /// Memory budget exhausted — DataFusion should spill.
     ResourcesExhausted,
+    /// Edge creation rejected: source or destination node does not exist.
+    RejectedDanglingEdge { missing_node: String },
+    /// Duplicate write detected via idempotency key.
+    DuplicateWrite,
     /// Internal error (io_uring failure, corruption, etc.)
     Internal { detail: String },
 }
@@ -498,6 +525,7 @@ mod tests {
             priority: Priority::Normal,
             trace_id: 0xABCD,
             consistency: ReadConsistency::Strong,
+            idempotency_key: None,
         }
     }
 
@@ -559,6 +587,7 @@ mod tests {
             priority: Priority::Critical,
             trace_id: 0,
             consistency: ReadConsistency::Eventual,
+            idempotency_key: None,
         };
         match req.plan {
             PhysicalPlan::Cancel { target_request_id } => {

@@ -123,6 +123,7 @@ pub fn crdt_apply(
         document_id: document_id.clone(),
         delta,
         peer_id: identity.user_id,
+        mutation_id: 0,
     };
 
     super::sync_dispatch::dispatch_sync(state, tenant_id, collection, plan, CRDT_DEADLINE)
