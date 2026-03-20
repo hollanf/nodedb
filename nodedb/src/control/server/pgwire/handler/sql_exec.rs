@@ -31,7 +31,12 @@ impl NodeDbPgHandler {
         }
 
         if upper == "BEGIN" || upper == "BEGIN TRANSACTION" || upper == "START TRANSACTION" {
-            self.sessions.begin(addr).map_err(|msg| {
+            // Capture current WAL LSN as the snapshot point for this transaction.
+            let snapshot_lsn = {
+                let next = self.state.wal.next_lsn();
+                crate::types::Lsn::new(next.as_u64().saturating_sub(1))
+            };
+            self.sessions.begin(addr, snapshot_lsn).map_err(|msg| {
                 PgWireError::UserError(Box::new(ErrorInfo::new(
                     "ERROR".to_owned(),
                     "25P02".to_owned(),
@@ -42,6 +47,26 @@ impl NodeDbPgHandler {
         }
 
         if upper == "COMMIT" || upper == "END" || upper == "END TRANSACTION" {
+            // Snapshot isolation: check for write conflicts before committing.
+            // If any collection read during this transaction has been modified
+            // since the snapshot LSN, reject with serialization failure.
+            let read_set = self.sessions.take_read_set(addr);
+            if let Some(snapshot_lsn) = self.sessions.snapshot_lsn(addr) {
+                let current_lsn = self.state.wal.next_lsn();
+                let current = crate::types::Lsn::new(current_lsn.as_u64().saturating_sub(1));
+                for (_collection, _doc_id, read_lsn) in &read_set {
+                    if current > *read_lsn && current > snapshot_lsn {
+                        // WAL advanced past what we read — concurrent write detected.
+                        self.sessions.rollback(addr).ok();
+                        return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                            "ERROR".to_owned(),
+                            "40001".to_owned(),
+                            "could not serialize access due to concurrent update".to_owned(),
+                        ))));
+                    }
+                }
+            }
+
             let buffered = self.sessions.commit(addr).map_err(|msg| {
                 PgWireError::UserError(Box::new(ErrorInfo::new(
                     "ERROR".to_owned(),

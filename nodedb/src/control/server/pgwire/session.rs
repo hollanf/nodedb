@@ -38,6 +38,15 @@ pub struct PgSession {
     /// Buffered write tasks accumulated between BEGIN and COMMIT.
     /// Dispatched atomically on COMMIT, discarded on ROLLBACK.
     pub tx_buffer: Vec<crate::control::planner::physical::PhysicalTask>,
+    /// Snapshot LSN captured at BEGIN for snapshot isolation.
+    /// All reads within the transaction see data as of this LSN.
+    /// Concurrent writes after this point are invisible to the transaction.
+    pub tx_snapshot_lsn: Option<crate::types::Lsn>,
+    /// Read-set: (collection, document_id, read_lsn) tuples for write
+    /// conflict detection. At COMMIT, each entry is checked — if the
+    /// document's current LSN > read_lsn, a concurrent write occurred
+    /// and the transaction is rejected with SERIALIZATION_FAILURE.
+    pub tx_read_set: Vec<(String, String, crate::types::Lsn)>,
 }
 
 impl PgSession {
@@ -63,6 +72,8 @@ impl PgSession {
             tx_state: TransactionState::Idle,
             parameters,
             tx_buffer: Vec::new(),
+            tx_snapshot_lsn: None,
+            tx_read_set: Vec::new(),
         }
     }
 }
@@ -133,13 +144,22 @@ impl SessionStore {
             .unwrap_or(TransactionState::Idle)
     }
 
-    /// BEGIN — enter transaction block.
-    pub fn begin(&self, addr: &SocketAddr) -> Result<(), &'static str> {
+    /// BEGIN — enter transaction block with snapshot isolation.
+    ///
+    /// Captures the current WAL LSN as the snapshot point. All reads
+    /// within this transaction see data as of this LSN.
+    pub fn begin(
+        &self,
+        addr: &SocketAddr,
+        current_lsn: crate::types::Lsn,
+    ) -> Result<(), &'static str> {
         let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
         if let Some(session) = sessions.get_mut(addr) {
             match session.tx_state {
                 TransactionState::Idle => {
                     session.tx_state = TransactionState::InBlock;
+                    session.tx_snapshot_lsn = Some(current_lsn);
+                    session.tx_read_set.clear();
                     Ok(())
                 }
                 TransactionState::InBlock => {
@@ -155,6 +175,43 @@ impl SessionStore {
         }
     }
 
+    /// Record a read for write conflict detection.
+    ///
+    /// Called after each read within a transaction to track which rows
+    /// were observed. At COMMIT, these are checked for concurrent modification.
+    pub fn record_read(
+        &self,
+        addr: &SocketAddr,
+        collection: String,
+        document_id: String,
+        read_lsn: crate::types::Lsn,
+    ) {
+        let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        if let Some(session) = sessions.get_mut(addr) {
+            if session.tx_state == TransactionState::InBlock {
+                session
+                    .tx_read_set
+                    .push((collection, document_id, read_lsn));
+            }
+        }
+    }
+
+    /// Get the snapshot LSN for the current transaction.
+    pub fn snapshot_lsn(&self, addr: &SocketAddr) -> Option<crate::types::Lsn> {
+        let sessions = self.sessions.read().unwrap_or_else(|p| p.into_inner());
+        sessions.get(addr).and_then(|s| s.tx_snapshot_lsn)
+    }
+
+    /// Drain the read-set for conflict checking at COMMIT time.
+    pub fn take_read_set(&self, addr: &SocketAddr) -> Vec<(String, String, crate::types::Lsn)> {
+        let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        if let Some(session) = sessions.get_mut(addr) {
+            std::mem::take(&mut session.tx_read_set)
+        } else {
+            Vec::new()
+        }
+    }
+
     /// COMMIT — drain the write buffer and return to idle.
     ///
     /// Returns the buffered write tasks for atomic dispatch. If the
@@ -167,6 +224,8 @@ impl SessionStore {
         if let Some(session) = sessions.get_mut(addr) {
             let buffer = std::mem::take(&mut session.tx_buffer);
             session.tx_state = TransactionState::Idle;
+            session.tx_snapshot_lsn = None;
+            // Read-set is drained separately via take_read_set() before commit.
             Ok(buffer)
         } else {
             Ok(Vec::new())
@@ -197,6 +256,8 @@ impl SessionStore {
         if let Some(session) = sessions.get_mut(addr) {
             session.tx_buffer.clear();
             session.tx_state = TransactionState::Idle;
+            session.tx_snapshot_lsn = None;
+            session.tx_read_set.clear();
         }
         Ok(())
     }
@@ -356,13 +417,13 @@ mod tests {
 
         assert_eq!(store.transaction_state(&addr), TransactionState::Idle);
 
-        store.begin(&addr).unwrap();
+        store.begin(&addr, crate::types::Lsn::new(1)).unwrap();
         assert_eq!(store.transaction_state(&addr), TransactionState::InBlock);
 
         store.commit(&addr).unwrap();
         assert_eq!(store.transaction_state(&addr), TransactionState::Idle);
 
-        store.begin(&addr).unwrap();
+        store.begin(&addr, crate::types::Lsn::new(1)).unwrap();
         store.fail_transaction(&addr);
         assert_eq!(store.transaction_state(&addr), TransactionState::Failed);
 

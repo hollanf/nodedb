@@ -141,6 +141,9 @@ pub(super) struct GraphRagMetadata {
     pub vector_candidates: usize,
     pub graph_expanded: usize,
     pub truncated: bool,
+    /// Snapshot watermark LSN at the time of query execution.
+    /// Consumers can use this to verify they are reading a consistent view.
+    pub watermark_lsn: u64,
 }
 
 #[cfg(test)]

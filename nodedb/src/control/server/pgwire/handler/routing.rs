@@ -10,7 +10,7 @@ use crate::types::{ReadConsistency, TenantId};
 
 use super::super::types::{error_to_sqlstate, response_status_to_sqlstate};
 use super::core::NodeDbPgHandler;
-use super::plan::{PlanKind, describe_plan, payload_to_response};
+use super::plan::{PlanKind, describe_plan, extract_collection, payload_to_response};
 
 /// Default request deadline: 30 seconds.
 const DEFAULT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
@@ -81,6 +81,7 @@ impl NodeDbPgHandler {
             }
 
             let plan_kind = describe_plan(&task.plan);
+            let collection_for_si = extract_collection(&task.plan).map(String::from);
             let resp = self.dispatch_task(task).await.map_err(|e| {
                 let (severity, code, message) = error_to_sqlstate(&e);
                 PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -98,6 +99,16 @@ impl NodeDbPgHandler {
                     code.to_owned(),
                     message,
                 ))));
+            }
+
+            // Track reads for snapshot isolation conflict detection.
+            if self.sessions.transaction_state(addr)
+                == crate::control::server::pgwire::session::TransactionState::InBlock
+            {
+                if let Some(collection) = collection_for_si {
+                    self.sessions
+                        .record_read(addr, collection, String::new(), resp.watermark_lsn);
+                }
             }
 
             responses.push(payload_to_response(&resp.payload, plan_kind));
