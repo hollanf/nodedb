@@ -76,7 +76,7 @@ mod tests {
     use nodedb_crdt::validator::ProposedChange;
 
     fn make_crdt_engine() -> TenantCrdtEngine {
-        TenantCrdtEngine::new(TenantId::new(1), 1, ConstraintSet::new())
+        TenantCrdtEngine::new(TenantId::new(1), 1, ConstraintSet::new()).unwrap()
     }
 
     #[test]

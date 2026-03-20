@@ -31,7 +31,7 @@ fn user_schema() -> ConstraintSet {
 /// The full split-brain scenario: two agents claim the same UNIQUE email.
 #[test]
 fn split_brain_unique_violation_with_compensation() {
-    let leader_state = CrdtState::new(0); // Leader's committed state.
+    let leader_state = CrdtState::new(0).unwrap(); // Leader's committed state.
 
     // Create a policy registry with strict mode to route violations to DLQ
     let mut policies = PolicyRegistry::new();
@@ -133,7 +133,7 @@ fn split_brain_unique_violation_with_compensation() {
 /// Foreign key violation: agent creates a post referencing a non-existent user.
 #[test]
 fn offline_agent_references_deleted_user() {
-    let leader_state = CrdtState::new(0);
+    let leader_state = CrdtState::new(0).unwrap();
 
     // Create a policy registry with strict mode
     let mut policies = PolicyRegistry::new();
@@ -179,7 +179,7 @@ fn offline_agent_references_deleted_user() {
 /// Pre-validation fast-rejects before Raft round-trip.
 #[test]
 fn pre_validation_saves_raft_roundtrip() {
-    let leader_state = CrdtState::new(0);
+    let leader_state = CrdtState::new(0).unwrap();
     let validator = Validator::new(user_schema(), 100);
 
     // Leader already has a user with this email.
@@ -221,8 +221,8 @@ fn pre_validation_saves_raft_roundtrip() {
 /// CRDT merge works correctly — two peers converge on the same state.
 #[test]
 fn crdt_merge_convergence() {
-    let peer_a = CrdtState::new(1);
-    let peer_b = CrdtState::new(2);
+    let peer_a = CrdtState::new(1).unwrap();
+    let peer_b = CrdtState::new(2).unwrap();
 
     // Peer A creates user "alice".
     peer_a
@@ -239,8 +239,8 @@ fn crdt_merge_convergence() {
         .unwrap();
 
     // Sync: A → B and B → A.
-    let snapshot_a = peer_a.export_snapshot();
-    let snapshot_b = peer_b.export_snapshot();
+    let snapshot_a = peer_a.export_snapshot().unwrap();
+    let snapshot_b = peer_b.export_snapshot().unwrap();
 
     peer_b.import(&snapshot_a).unwrap();
     peer_a.import(&snapshot_b).unwrap();
@@ -255,7 +255,7 @@ fn crdt_merge_convergence() {
 /// NOT NULL violation with clear compensation hint.
 #[test]
 fn not_null_violation_hints_provide_field() {
-    let state = CrdtState::new(0);
+    let state = CrdtState::new(0).unwrap();
     let validator = Validator::new(user_schema(), 100);
 
     let change = ProposedChange {

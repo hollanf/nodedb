@@ -558,7 +558,7 @@ mod tests {
     use super::*;
 
     fn setup() -> (CrdtState, ConstraintSet) {
-        let state = CrdtState::new(1);
+        let state = CrdtState::new(1).unwrap();
         let mut cs = ConstraintSet::new();
         cs.add_unique("users_email_unique", "users", "email");
         cs.add_not_null("users_name_nn", "users", "name");
@@ -593,7 +593,7 @@ mod tests {
     fn not_null_violation() {
         let (_state, cs) = setup();
         let validator = Validator::new(cs, 100);
-        let state = CrdtState::new(1);
+        let state = CrdtState::new(1).unwrap();
 
         let change = ProposedChange {
             collection: "users".into(),

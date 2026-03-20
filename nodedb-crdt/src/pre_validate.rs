@@ -54,7 +54,7 @@ mod tests {
 
     #[test]
     fn pre_validate_fast_rejects_not_null() {
-        let state = CrdtState::new(1);
+        let state = CrdtState::new(1).unwrap();
         let mut cs = ConstraintSet::new();
         cs.add_not_null("name_nn", "users", "name");
         let validator = Validator::new(cs, 10);
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn pre_validate_proceeds_when_valid() {
-        let state = CrdtState::new(1);
+        let state = CrdtState::new(1).unwrap();
         let mut cs = ConstraintSet::new();
         cs.add_not_null("name_nn", "users", "name");
         let validator = Validator::new(cs, 10);

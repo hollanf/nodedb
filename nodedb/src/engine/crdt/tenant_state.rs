@@ -24,12 +24,16 @@ pub struct TenantCrdtEngine {
 
 impl TenantCrdtEngine {
     /// Create a new engine for a tenant with the given peer ID and constraints.
-    pub fn new(tenant_id: TenantId, peer_id: u64, constraints: ConstraintSet) -> Self {
-        Self {
+    pub fn new(
+        tenant_id: TenantId,
+        peer_id: u64,
+        constraints: ConstraintSet,
+    ) -> crate::Result<Self> {
+        Ok(Self {
             tenant_id,
-            state: CrdtState::new(peer_id),
+            state: CrdtState::new(peer_id).map_err(crate::Error::Crdt)?,
             validator: Validator::new(constraints, 1000),
-        }
+        })
     }
 
     /// Get the peer ID for this CRDT engine.
@@ -38,16 +42,18 @@ impl TenantCrdtEngine {
     }
 
     /// Export the full CRDT state as binary bytes (for snapshot transfer).
-    pub fn export_snapshot_bytes(&self) -> Vec<u8> {
-        self.state.export_snapshot()
+    pub fn export_snapshot_bytes(&self) -> crate::Result<Vec<u8>> {
+        self.state.export_snapshot().map_err(crate::Error::Crdt)
     }
 
     /// Read a document's CRDT state, returning the raw snapshot bytes.
-    pub fn read_snapshot(&self, collection: &str, row_id: &str) -> Option<Vec<u8>> {
+    pub fn read_snapshot(&self, collection: &str, row_id: &str) -> crate::Result<Option<Vec<u8>>> {
         if self.state.row_exists(collection, row_id) {
-            Some(self.state.export_snapshot())
+            Ok(Some(
+                self.state.export_snapshot().map_err(crate::Error::Crdt)?,
+            ))
         } else {
-            None
+            Ok(None)
         }
     }
 
@@ -202,7 +208,7 @@ mod tests {
 
     #[test]
     fn valid_write_applies() {
-        let mut engine = TenantCrdtEngine::new(TenantId::new(1), 0, test_constraints());
+        let mut engine = TenantCrdtEngine::new(TenantId::new(1), 0, test_constraints()).unwrap();
 
         let change = ProposedChange {
             collection: "users".into(),
@@ -231,7 +237,7 @@ mod tests {
 
     #[test]
     fn constraint_violation_routes_to_dlq() {
-        let mut engine = TenantCrdtEngine::new(TenantId::new(1), 0, test_constraints());
+        let mut engine = TenantCrdtEngine::new(TenantId::new(1), 0, test_constraints()).unwrap();
         // Use strict policy so violations escalate to DLQ instead of auto-resolving.
         engine
             .validator
@@ -260,7 +266,7 @@ mod tests {
 
     #[test]
     fn pre_validate_fast_rejects() {
-        let engine = TenantCrdtEngine::new(TenantId::new(1), 0, test_constraints());
+        let engine = TenantCrdtEngine::new(TenantId::new(1), 0, test_constraints()).unwrap();
 
         let change = ProposedChange {
             collection: "users".into(),
@@ -278,7 +284,7 @@ mod tests {
 
     #[test]
     fn unique_violation_after_first_write() {
-        let mut engine = TenantCrdtEngine::new(TenantId::new(1), 0, test_constraints());
+        let mut engine = TenantCrdtEngine::new(TenantId::new(1), 0, test_constraints()).unwrap();
         // Strict mode: UNIQUE violations escalate to DLQ.
         engine
             .validator

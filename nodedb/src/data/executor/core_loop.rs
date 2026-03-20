@@ -246,11 +246,17 @@ impl CoreLoop {
     pub(in crate::data::executor) fn get_crdt_engine(
         &mut self,
         tenant_id: TenantId,
-    ) -> &mut TenantCrdtEngine {
-        self.crdt_engines.entry(tenant_id).or_insert_with(|| {
+    ) -> crate::Result<&mut TenantCrdtEngine> {
+        if !self.crdt_engines.contains_key(&tenant_id) {
             tracing::debug!(core = self.core_id, %tenant_id, "creating CRDT engine for tenant");
-            TenantCrdtEngine::new(tenant_id, self.core_id as u64, ConstraintSet::new())
-        })
+            let engine =
+                TenantCrdtEngine::new(tenant_id, self.core_id as u64, ConstraintSet::new())?;
+            self.crdt_engines.insert(tenant_id, engine);
+        }
+        Ok(self
+            .crdt_engines
+            .get_mut(&tenant_id)
+            .expect("just inserted"))
     }
 
     pub fn pending_count(&self) -> usize {

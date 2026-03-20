@@ -71,12 +71,14 @@ impl CoreLoop {
         let crdt_snapshots: Vec<CrdtSnapshot> = self
             .crdt_engines
             .iter()
-            .map(|(tid, engine)| CrdtSnapshot {
-                tenant_id: tid.as_u32(),
-                peer_id: engine.peer_id(),
-                snapshot_bytes: engine.export_snapshot_bytes(),
+            .map(|(tid, engine)| {
+                Ok(CrdtSnapshot {
+                    tenant_id: tid.as_u32(),
+                    peer_id: engine.peer_id(),
+                    snapshot_bytes: engine.export_snapshot_bytes()?,
+                })
             })
-            .collect();
+            .collect::<crate::Result<Vec<_>>>()?;
 
         Ok(CoreSnapshot {
             watermark: self.watermark.as_u64(),

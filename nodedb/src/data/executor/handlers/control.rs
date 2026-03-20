@@ -43,7 +43,18 @@ impl CoreLoop {
     ) -> Response {
         debug!(core = self.core_id, %collection, "set collection policy");
         let tenant_id = task.request.tenant_id;
-        let engine = self.get_crdt_engine(tenant_id);
+        let engine = match self.get_crdt_engine(tenant_id) {
+            Ok(e) => e,
+            Err(e) => {
+                warn!(core = self.core_id, error = %e, "failed to create CRDT engine");
+                return self.response_error(
+                    task,
+                    ErrorCode::Internal {
+                        detail: e.to_string(),
+                    },
+                );
+            }
+        };
         match engine.set_collection_policy(collection, policy_json) {
             Ok(()) => self.response_ok(task),
             Err(e) => {
@@ -106,10 +117,30 @@ impl CoreLoop {
     ) -> Response {
         debug!(core = self.core_id, %collection, %document_id, "crdt read");
         let tenant_id = task.request.tenant_id;
-        let engine = self.get_crdt_engine(tenant_id);
+        let engine = match self.get_crdt_engine(tenant_id) {
+            Ok(e) => e,
+            Err(e) => {
+                warn!(core = self.core_id, error = %e, "failed to create CRDT engine");
+                return self.response_error(
+                    task,
+                    ErrorCode::Internal {
+                        detail: e.to_string(),
+                    },
+                );
+            }
+        };
         match engine.read_snapshot(collection, document_id) {
-            Some(snapshot) => self.response_with_payload(task, snapshot),
-            None => self.response_error(task, ErrorCode::NotFound),
+            Ok(Some(snapshot)) => self.response_with_payload(task, snapshot),
+            Ok(None) => self.response_error(task, ErrorCode::NotFound),
+            Err(e) => {
+                warn!(core = self.core_id, error = %e, "crdt read snapshot failed");
+                self.response_error(
+                    task,
+                    ErrorCode::Internal {
+                        detail: e.to_string(),
+                    },
+                )
+            }
         }
     }
 
@@ -119,7 +150,18 @@ impl CoreLoop {
         delta: &[u8],
     ) -> Response {
         let tenant_id = task.request.tenant_id;
-        let engine = self.get_crdt_engine(tenant_id);
+        let engine = match self.get_crdt_engine(tenant_id) {
+            Ok(e) => e,
+            Err(e) => {
+                warn!(core = self.core_id, error = %e, "failed to create CRDT engine");
+                return self.response_error(
+                    task,
+                    ErrorCode::Internal {
+                        detail: e.to_string(),
+                    },
+                );
+            }
+        };
         match engine.apply_committed_delta(delta) {
             Ok(()) => self.response_ok(task),
             Err(e) => {
