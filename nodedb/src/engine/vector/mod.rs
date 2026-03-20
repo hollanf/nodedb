@@ -1,8 +1,10 @@
 pub mod adaptive_filter;
 pub mod builder;
 pub mod collection;
+mod collection_budget;
 mod collection_checkpoint;
 pub mod distance;
 pub mod flat;
 pub mod hnsw;
+pub mod mmap_segment;
 pub mod quantize;

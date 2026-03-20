@@ -43,6 +43,14 @@ pub struct CsrIndex {
 
     /// Edges deleted since last compaction: `(src, label, dst)`.
     pub(super) deleted_edges: std::collections::HashSet<(u32, u16, u32)>,
+
+    // ── Hot/cold access tracking ──
+    /// Per-node access counter: incremented on each neighbor/BFS/path query.
+    /// Uses `Cell<u32>` so access can be tracked through `&self` references
+    /// (traversal methods are `&self` for shared read access).
+    access_counts: Vec<std::cell::Cell<u32>>,
+    /// Total queries served since last access counter reset.
+    query_epoch: u64,
 }
 
 impl Default for CsrIndex {
@@ -67,6 +75,8 @@ impl CsrIndex {
             buffer_out: Vec::new(),
             buffer_in: Vec::new(),
             deleted_edges: std::collections::HashSet::new(),
+            access_counts: Vec::new(),
+            query_epoch: 0,
         }
     }
 
@@ -97,8 +107,9 @@ impl CsrIndex {
                 self.out_offsets
                     .push(*self.out_offsets.last().unwrap_or(&0));
                 self.in_offsets.push(*self.in_offsets.last().unwrap_or(&0));
-                // Extend buffer.
+                // Extend buffer and access tracking.
                 self.buffer_out.push(Vec::new());
+                self.access_counts.push(std::cell::Cell::new(0));
                 self.buffer_in.push(Vec::new());
                 id
             }
@@ -198,6 +209,7 @@ impl CsrIndex {
         let Some(&node_id) = self.node_to_id.get(node) else {
             return Vec::new();
         };
+        self.record_access(node_id);
         let label_id = label_filter.and_then(|l| self.label_to_id.get(l).copied());
 
         let mut result = Vec::new();
@@ -232,6 +244,45 @@ impl CsrIndex {
 
     pub fn contains_node(&self, node: &str) -> bool {
         self.node_to_id.contains_key(node)
+    }
+
+    /// Record an access to a node (callable through `&self` via Cell).
+    pub(super) fn record_access(&self, node_id: u32) {
+        if let Some(cell) = self.access_counts.get(node_id as usize) {
+            cell.set(cell.get().saturating_add(1));
+        }
+    }
+
+    /// Identify cold nodes: nodes with access count at or below threshold.
+    ///
+    /// Returns node IDs that have not been accessed frequently. These are
+    /// candidates for eviction to mmap-backed cold storage (L1 NVMe).
+    pub fn cold_nodes(&self, threshold: u32) -> Vec<u32> {
+        self.access_counts
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.get() <= threshold)
+            .map(|(id, _)| id as u32)
+            .collect()
+    }
+
+    /// Number of hot nodes (accessed above threshold).
+    pub fn hot_node_count(&self, threshold: u32) -> usize {
+        self.access_counts
+            .iter()
+            .filter(|c| c.get() > threshold)
+            .count()
+    }
+
+    /// Current query epoch.
+    pub fn query_epoch(&self) -> u64 {
+        self.query_epoch
+    }
+
+    /// Reset access counters (called during compaction or periodically).
+    pub fn reset_access_counts(&mut self) {
+        self.access_counts.iter().for_each(|c| c.set(0));
+        self.query_epoch = 0;
     }
 
     /// Merge the mutable buffer into the dense CSR arrays.

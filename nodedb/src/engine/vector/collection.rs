@@ -14,7 +14,9 @@
 use super::distance::{DistanceMetric, distance};
 use super::flat::FlatIndex;
 use super::hnsw::{HnswIndex, HnswParams, SearchResult};
+use super::mmap_segment::MmapVectorSegment;
 use super::quantize::sq8::Sq8Codec;
+use crate::storage::tier::StorageTier;
 
 /// Threshold for sealing the growing segment.
 /// 64K vectors × 768 dims × 4 bytes = ~192 MiB per segment.
@@ -57,6 +59,12 @@ pub(super) struct SealedSegment {
     /// When present, search uses asymmetric SQ8 distance for candidate
     /// selection (4x fewer cache misses), then reranks top-K×3 with FP32.
     pub(super) sq8: Option<(Sq8Codec, Vec<u8>)>,
+    /// Storage tier: L0Ram = FP32 vectors in HNSW nodes (default),
+    /// L1Nvme = FP32 vectors in mmap segment file (budget-constrained).
+    pub(super) tier: StorageTier,
+    /// mmap-backed vector segment for L1 NVMe tier.
+    /// When present, FP32 reranking reads from this instead of HnswIndex nodes.
+    pub(super) mmap_vectors: Option<MmapVectorSegment>,
 }
 
 /// Manages all vector segments for a single collection (one index key).
@@ -79,6 +87,16 @@ pub struct VectorCollection {
     pub(super) next_segment_id: u32,
     /// Dimensionality.
     pub(super) dim: usize,
+    /// Data directory for mmap segment files (L1 NVMe tier).
+    pub(super) data_dir: Option<std::path::PathBuf>,
+    /// Memory budget for this collection's RAM vectors (bytes).
+    /// 0 = unlimited (default). When exceeded, new sealed segments
+    /// spill FP32 vectors to mmap files (L1 NVMe) instead of RAM.
+    pub(super) ram_budget_bytes: usize,
+    /// Count of segments that fell back to mmap due to budget exhaustion.
+    pub(super) mmap_fallback_count: u32,
+    /// Count of segments currently backed by mmap files.
+    pub(super) mmap_segment_count: u32,
 }
 
 impl VectorCollection {
@@ -93,6 +111,10 @@ impl VectorCollection {
             next_id: 0,
             next_segment_id: 0,
             dim,
+            data_dir: None,
+            ram_budget_bytes: 0,
+            mmap_fallback_count: 0,
+            mmap_segment_count: 0,
         }
     }
 
@@ -192,10 +214,17 @@ impl VectorCollection {
                 }
 
                 // Phase 2: Rerank with exact FP32 distance.
+                // For L1 NVMe tier, read FP32 from mmap segment file
+                // instead of HNSW node vectors (which may be dummy/empty).
                 let mut reranked: Vec<SearchResult> = candidates
                     .iter()
                     .filter_map(|&(id, _)| {
-                        seg.index.get_vector(id).map(|v| SearchResult {
+                        let v = if let Some(mmap) = &seg.mmap_vectors {
+                            mmap.get_vector(id)?
+                        } else {
+                            seg.index.get_vector(id)?
+                        };
+                        Some(SearchResult {
                             id,
                             distance: distance(query, v, self.params.metric),
                         })
@@ -331,7 +360,8 @@ impl VectorCollection {
     /// Accept a completed HNSW build from the background thread.
     ///
     /// Finds the matching building segment, replaces it with a sealed segment
-    /// containing the built HNSW index. The flat index is dropped (memory freed).
+    /// containing the built HNSW index. If the RAM budget is exceeded, FP32
+    /// vectors are spilled to NVMe via mmap. The flat index is dropped.
     pub fn complete_build(&mut self, segment_id: u32, index: HnswIndex) {
         if let Some(pos) = self
             .building
@@ -339,14 +369,16 @@ impl VectorCollection {
             .position(|b| b.segment_id == segment_id)
         {
             let building = self.building.remove(pos);
-            // Quantize the sealed segment's vectors for accelerated search.
             let sq8 = Self::build_sq8_for_index(&index);
+            let (tier, mmap_vectors) = self.resolve_tier_for_build(segment_id, &index);
+
             self.sealed.push(SealedSegment {
                 index,
                 base_id: building.base_id,
                 sq8,
+                tier,
+                mmap_vectors,
             });
-            // building.flat is dropped here, freeing its memory.
         }
     }
 

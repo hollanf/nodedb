@@ -120,13 +120,13 @@ impl VectorCollection {
                     index,
                     base_id: ss.base_id,
                     sq8,
+                    tier: crate::storage::tier::StorageTier::L0Ram,
+                    mmap_vectors: None,
                 });
             }
         }
 
         // Building segments become sealed with fresh HNSW builds.
-        // Since we can't dispatch to a background thread during checkpoint load,
-        // we build them inline (they're typically small post-crash).
         for bs in &snap.building_segments {
             let mut index = HnswIndex::new(snap.dim, params.clone());
             for v in &bs.vectors {
@@ -137,6 +137,8 @@ impl VectorCollection {
                 index,
                 base_id: bs.base_id,
                 sq8,
+                tier: crate::storage::tier::StorageTier::L0Ram,
+                mmap_vectors: None,
             });
         }
 
@@ -151,6 +153,10 @@ impl VectorCollection {
             next_id: snap.next_id,
             next_segment_id,
             dim: snap.dim,
+            data_dir: None,
+            ram_budget_bytes: 0,
+            mmap_fallback_count: 0,
+            mmap_segment_count: 0,
         })
     }
 }
