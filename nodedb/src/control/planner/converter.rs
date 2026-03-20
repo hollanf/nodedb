@@ -283,11 +283,15 @@ impl PlanConverter {
                     }]);
                 }
 
-                // Check for rrf_score(vector_distance(...), bm25_score(...)) → HybridSearch.
-                if let Some((collection, query_vector, query_text, top_k)) =
+                // Check for rrf_score(vector_distance(...), bm25_score(...), k1, k2) → HybridSearch.
+                if let Some((collection, query_vector, query_text, top_k, vector_k, text_k)) =
                     try_extract_hybrid_search(&sort.expr, &sort.input, sort.fetch)?
                 {
                     let vshard = VShardId::from_collection(&collection);
+                    // Convert per-source k-constants to a vector_weight:
+                    // higher vector_k relative to text_k = more weight on text (inverse).
+                    // weight = text_k / (vector_k + text_k) so equal k → 0.5.
+                    let vector_weight = (text_k / (vector_k + text_k).max(0.001)) as f32;
                     return Ok(vec![PhysicalTask {
                         tenant_id,
                         vshard_id: vshard,
@@ -298,7 +302,7 @@ impl PlanConverter {
                             top_k,
                             ef_search: 0,
                             fuzzy: true,
-                            vector_weight: 0.5, // Default: equal weight.
+                            vector_weight,
                             filter_bitmap: None,
                         },
                     }]);

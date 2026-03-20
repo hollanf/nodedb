@@ -102,8 +102,8 @@ pub(super) fn extract_table_name(plan: &LogicalPlan) -> Option<String> {
     }
 }
 
-/// Hybrid search params: (collection, query_vector, query_text, top_k).
-type HybridParams = (String, Vec<f32>, String, usize);
+/// Hybrid search params: (collection, query_vector, query_text, top_k, vector_k, text_k).
+type HybridParams = (String, Vec<f32>, String, usize, f64, f64);
 
 /// Detect `ORDER BY rrf_score(vector_distance(...), bm25_score(...)) LIMIT k`.
 ///
@@ -154,7 +154,35 @@ pub(super) fn try_extract_hybrid_search(
     };
     let top_k = fetch.unwrap_or(10);
 
-    Ok(Some((collection, query_vector, query_text, top_k)))
+    // Extract optional per-source RRF k-constants from 3rd/4th args.
+    // Syntax: rrf_score(vector_distance(...), bm25_score(...), 60, 40)
+    //   → vector_k = 60, text_k = 40
+    // Defaults: 60.0 for both (standard RRF k).
+    let vector_k = rrf_func
+        .args
+        .get(2)
+        .and_then(|e| match e {
+            Expr::Literal(lit) => lit.to_string().parse::<f64>().ok(),
+            _ => None,
+        })
+        .unwrap_or(60.0);
+    let text_k = rrf_func
+        .args
+        .get(3)
+        .and_then(|e| match e {
+            Expr::Literal(lit) => lit.to_string().parse::<f64>().ok(),
+            _ => None,
+        })
+        .unwrap_or(60.0);
+
+    Ok(Some((
+        collection,
+        query_vector,
+        query_text,
+        top_k,
+        vector_k,
+        text_k,
+    )))
 }
 
 /// Detect `WHERE text_match(field, 'query')` in a filter predicate.
