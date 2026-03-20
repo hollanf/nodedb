@@ -169,6 +169,43 @@ impl CoreLoop {
         self.paused_vshards.contains(&vshard)
     }
 
+    /// Sweep dangling edges: detect edges whose source or destination
+    /// node has been deleted (present in `deleted_nodes`).
+    ///
+    /// Called periodically from the idle loop. Removes dangling edges
+    /// from both the CSR and persistent edge store. Returns the number
+    /// of edges removed.
+    pub fn sweep_dangling_edges(&mut self) -> usize {
+        if self.deleted_nodes.is_empty() {
+            return 0;
+        }
+        let mut removed = 0;
+        let deleted: Vec<String> = self.deleted_nodes.iter().cloned().collect();
+        for node in &deleted {
+            let edges = self.csr.remove_node_edges(node);
+            if edges > 0 {
+                if let Err(e) = self.edge_store.delete_edges_for_node(node) {
+                    tracing::warn!(
+                        core = self.core_id,
+                        node = %node,
+                        error = %e,
+                        "sweep: failed to delete edges from store"
+                    );
+                }
+                removed += edges;
+            }
+        }
+        if removed > 0 {
+            tracing::info!(
+                core = self.core_id,
+                removed,
+                deleted_nodes = deleted.len(),
+                "dangling edge sweep complete"
+            );
+        }
+        removed
+    }
+
     /// Drain incoming requests from the SPSC bridge into the task queue.
     pub fn drain_requests(&mut self) {
         let mut batch = Vec::new();
