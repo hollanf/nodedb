@@ -4,8 +4,8 @@
 use tracing::{debug, warn};
 
 use crate::bridge::envelope::{ErrorCode, Response};
-use crate::engine::vector::distance::DistanceMetric;
 use crate::engine::vector::collection::VectorCollection;
+use crate::engine::vector::distance::DistanceMetric;
 use crate::engine::vector::hnsw::HnswParams;
 
 use crate::data::executor::core_loop::CoreLoop;

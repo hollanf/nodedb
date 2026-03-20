@@ -46,11 +46,7 @@ pub fn spawn_builder(core_id: usize) -> (BuildSender, CompleteReceiver, JoinHand
 }
 
 /// Main loop for the builder thread: receive requests, build HNSW, send back.
-fn builder_loop(
-    core_id: usize,
-    rx: mpsc::Receiver<BuildRequest>,
-    tx: mpsc::Sender<BuildComplete>,
-) {
+fn builder_loop(core_id: usize, rx: mpsc::Receiver<BuildRequest>, tx: mpsc::Sender<BuildComplete>) {
     while let Ok(req) = rx.recv() {
         debug!(
             core_id,

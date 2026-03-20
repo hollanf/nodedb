@@ -55,7 +55,8 @@ pub struct CoreLoop {
     /// Background HNSW builder: send requests.
     pub(in crate::data::executor) build_tx: Option<crate::engine::vector::builder::BuildSender>,
     /// Background HNSW builder: receive completed builds.
-    pub(in crate::data::executor) build_rx: Option<crate::engine::vector::builder::CompleteReceiver>,
+    pub(in crate::data::executor) build_rx:
+        Option<crate::engine::vector::builder::CompleteReceiver>,
 
     /// Per-collection HNSW parameters set via DDL. If a collection has no
     /// entry here, `HnswParams::default()` is used on first insert.

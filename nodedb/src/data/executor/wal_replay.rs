@@ -103,9 +103,10 @@ impl CoreLoop {
                             );
                             HnswParams::default()
                         });
-                    let index = self.vector_collections.entry(index_key).or_insert_with(|| {
-                        VectorCollection::new(dim, params)
-                    });
+                    let index = self
+                        .vector_collections
+                        .entry(index_key)
+                        .or_insert_with(|| VectorCollection::new(dim, params));
                     if index.dim() != dim {
                         tracing::warn!(
                             core = self.core_id,
@@ -134,9 +135,10 @@ impl CoreLoop {
                             );
                             HnswParams::default()
                         });
-                    let index = self.vector_collections.entry(index_key).or_insert_with(|| {
-                        VectorCollection::new(dim, params)
-                    });
+                    let index = self
+                        .vector_collections
+                        .entry(index_key)
+                        .or_insert_with(|| VectorCollection::new(dim, params));
                     for vector in vectors {
                         index.insert(vector);
                     }
