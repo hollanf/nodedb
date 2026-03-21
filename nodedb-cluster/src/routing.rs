@@ -144,6 +144,34 @@ impl RoutingTable {
     }
 }
 
+/// Compute the primary vShard for a collection name.
+///
+/// Maps a collection name to its vShard ID.
+///
+/// Must match `VShardId::from_collection()` in the nodedb types module
+/// exactly — uses u16 accumulator with multiplier 31.
+pub fn vshard_for_collection(collection: &str) -> u16 {
+    let hash = collection
+        .as_bytes()
+        .iter()
+        .fold(0u16, |h, &b| h.wrapping_mul(31).wrapping_add(b as u16));
+    hash % VSHARD_COUNT
+}
+
+/// FNV-1a 64-bit hash for deterministic key partitioning.
+///
+/// Used by distributed join shuffle and shard split to assign keys
+/// to partitions. NOT for vShard routing — use `vshard_for_collection`
+/// for that.
+pub fn fnv1a_hash(key: &str) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in key.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

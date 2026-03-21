@@ -94,13 +94,7 @@ pub enum JoinStrategy {
 /// Uses consistent hashing: `partition = hash(key) % num_nodes`.
 /// The target node is selected from the routing table's active leaders.
 pub fn partition_for_key(key: &str, num_partitions: usize) -> u32 {
-    // FNV-1a hash for deterministic partitioning.
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in key.as_bytes() {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    (hash % num_partitions as u64) as u32
+    (crate::routing::fnv1a_hash(key) % num_partitions as u64) as u32
 }
 
 /// Plan the node assignments for a shuffle join.
