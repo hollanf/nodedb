@@ -147,11 +147,160 @@ impl SnapshotCatalog {
     pub fn all(&self) -> &[SnapshotMeta] {
         &self.snapshots
     }
+
+    /// Emit a snapshot begin marker with the current LSN boundary.
+    ///
+    /// Called at the start of a snapshot operation. The begin LSN
+    /// is the current WAL position — all data up to this point will
+    /// be included in the snapshot.
+    pub fn emit_begin_marker(&self, current_lsn: Lsn) -> SnapshotMarker {
+        info!(lsn = current_lsn.as_u64(), "snapshot BEGIN marker");
+        SnapshotMarker {
+            marker_type: MarkerType::Begin,
+            lsn: current_lsn,
+            timestamp_us: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_micros() as u64,
+        }
+    }
+
+    /// Emit a snapshot end marker with the final LSN boundary.
+    ///
+    /// Called after all snapshot data has been flushed. The end LSN
+    /// is the WAL position at completion — the snapshot covers
+    /// [begin_lsn, end_lsn] inclusively.
+    pub fn emit_end_marker(&self, end_lsn: Lsn) -> SnapshotMarker {
+        info!(lsn = end_lsn.as_u64(), "snapshot END marker");
+        SnapshotMarker {
+            marker_type: MarkerType::End,
+            lsn: end_lsn,
+            timestamp_us: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_micros() as u64,
+        }
+    }
+
+    /// Resolve a PITR target from an absolute UTC timestamp string.
+    ///
+    /// Accepts ISO 8601 format: `"2024-03-15T14:30:00Z"` or
+    /// Unix epoch microseconds: `"1710509400000000"`.
+    ///
+    /// Returns the resolved replay LSN and the full restore plan.
+    pub fn resolve_pitr_utc<F>(
+        &self,
+        utc_input: &str,
+        lsn_for_timestamp: F,
+    ) -> Result<PitrTarget, String>
+    where
+        F: Fn(u64) -> Option<Lsn>,
+    {
+        let timestamp_us = parse_utc_timestamp(utc_input)?;
+        self.resolve_pitr(timestamp_us, lsn_for_timestamp)
+            .ok_or_else(|| {
+                format!(
+                    "no snapshot available for PITR target timestamp {utc_input} \
+                     (resolved to {timestamp_us}µs)"
+                )
+            })
+    }
+}
+
+/// Snapshot begin/end marker for consistent LSN boundaries.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SnapshotMarker {
+    pub marker_type: MarkerType,
+    pub lsn: Lsn,
+    pub timestamp_us: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MarkerType {
+    Begin,
+    End,
 }
 
 impl Default for SnapshotCatalog {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Parse a UTC timestamp from various input formats.
+///
+/// Supports:
+/// - Unix epoch microseconds: `"1710509400000000"`
+/// - Unix epoch seconds: `"1710509400"`
+/// - ISO 8601: `"2024-03-15T14:30:00Z"` (basic parsing, no full chrono dependency)
+pub fn parse_utc_timestamp(input: &str) -> Result<u64, String> {
+    let trimmed = input.trim();
+
+    // Try parsing as integer (epoch micros or seconds).
+    if let Ok(n) = trimmed.parse::<u64>() {
+        // Heuristic: values > 1e15 are microseconds, otherwise seconds.
+        if n > 1_000_000_000_000_000 {
+            return Ok(n); // Already microseconds.
+        }
+        return Ok(n * 1_000_000); // Convert seconds to microseconds.
+    }
+
+    // Try ISO 8601 basic parsing: "YYYY-MM-DDTHH:MM:SSZ"
+    // This is a simplified parser — production should use chrono or time crate.
+    if trimmed.len() >= 19 && trimmed.contains('T') {
+        let date_part = &trimmed[..10]; // "YYYY-MM-DD"
+        let time_part = &trimmed[11..19]; // "HH:MM:SS"
+
+        let parts: Vec<u64> = date_part
+            .split('-')
+            .chain(time_part.split(':'))
+            .filter_map(|s| s.parse().ok())
+            .collect();
+
+        if parts.len() == 6 {
+            let (year, month, day, hour, min, sec) =
+                (parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]);
+
+            // Days from Unix epoch to the given date.
+            // Leap year: divisible by 4, except centuries unless divisible by 400.
+            let leap_days = |y: u64| -> u64 {
+                if y == 0 {
+                    return 0;
+                }
+                let y = y - 1; // count leap years before this year
+                y / 4 - y / 100 + y / 400 - (1969 / 4 - 1969 / 100 + 1969 / 400)
+            };
+            let is_leap =
+                |y: u64| y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
+            let leap_adj = if is_leap(year) && month > 2 { 1 } else { 0 };
+            let days_since_epoch =
+                (year - 1970) * 365 + leap_days(year) + month_to_days(month) + leap_adj + day - 1;
+            let epoch_secs = days_since_epoch * 86400 + hour * 3600 + min * 60 + sec;
+            return Ok(epoch_secs * 1_000_000);
+        }
+    }
+
+    Err(format!(
+        "cannot parse UTC timestamp: '{trimmed}'. Expected epoch micros, epoch seconds, or ISO 8601"
+    ))
+}
+
+/// Approximate days from Jan 1 to the start of the given month (non-leap year).
+fn month_to_days(month: u64) -> u64 {
+    match month {
+        1 => 0,
+        2 => 31,
+        3 => 59,
+        4 => 90,
+        5 => 120,
+        6 => 151,
+        7 => 181,
+        8 => 212,
+        9 => 243,
+        10 => 273,
+        11 => 304,
+        12 => 334,
+        _ => 0,
     }
 }
 
