@@ -265,18 +265,9 @@ mod tests {
 
     #[test]
     fn segment_filename_format() {
-        assert_eq!(
-            segment_filename(1),
-            "wal-00000000000000000001.seg"
-        );
-        assert_eq!(
-            segment_filename(999),
-            "wal-00000000000000000999.seg"
-        );
-        assert_eq!(
-            segment_filename(u64::MAX),
-            "wal-18446744073709551615.seg"
-        );
+        assert_eq!(segment_filename(1), "wal-00000000000000000001.seg");
+        assert_eq!(segment_filename(999), "wal-00000000000000000999.seg");
+        assert_eq!(segment_filename(u64::MAX), "wal-18446744073709551615.seg");
     }
 
     #[test]
@@ -390,9 +381,14 @@ mod tests {
 
         // Write a legacy WAL with some records.
         {
-            let mut writer = crate::writer::WalWriter::open_without_direct_io(&legacy_path).unwrap();
-            writer.append(crate::record::RecordType::Put as u16, 1, 0, b"hello").unwrap();
-            writer.append(crate::record::RecordType::Put as u16, 1, 0, b"world").unwrap();
+            let mut writer =
+                crate::writer::WalWriter::open_without_direct_io(&legacy_path).unwrap();
+            writer
+                .append(crate::record::RecordType::Put as u16, 1, 0, b"hello")
+                .unwrap();
+            writer
+                .append(crate::record::RecordType::Put as u16, 1, 0, b"world")
+                .unwrap();
             writer.sync().unwrap();
         }
 

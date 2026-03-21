@@ -158,7 +158,8 @@ impl SegmentedWal {
             self.roll_segment()?;
         }
 
-        self.writer.append(record_type, tenant_id, vshard_id, payload)
+        self.writer
+            .append(record_type, tenant_id, vshard_id, payload)
     }
 
     /// Flush all buffered records and fsync the active segment.
@@ -302,7 +303,8 @@ mod tests {
         {
             let mut wal = SegmentedWal::open(test_config(&wal_dir)).unwrap();
             wal.append(RecordType::Put as u16, 1, 0, b"first").unwrap();
-            wal.append(RecordType::Delete as u16, 2, 1, b"second").unwrap();
+            wal.append(RecordType::Delete as u16, 2, 1, b"second")
+                .unwrap();
             wal.append(RecordType::Put as u16, 1, 0, b"third").unwrap();
             wal.sync().unwrap();
         }
