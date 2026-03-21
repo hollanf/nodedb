@@ -17,10 +17,12 @@ pub mod multi_raft;
 pub mod quic_transport;
 pub mod raft_loop;
 pub mod raft_storage;
+pub mod rdma_transport;
 pub mod rebalance;
 pub mod rebalance_scheduler;
 pub mod routing;
 pub mod rpc_codec;
+pub mod shard_split;
 pub mod topology;
 pub mod transport;
 pub mod wire;
@@ -55,4 +57,6 @@ pub use distributed_join::{BroadcastJoinRequest, JoinStrategy, ShufflePartition,
 pub use lifecycle::{
     DecommissionResult, handle_learner_promotion, handle_node_join, plan_decommission,
 };
+pub use rdma_transport::{RdmaConfig, RdmaTransport};
 pub use rebalance_scheduler::{NodeMetrics, RebalanceScheduler, RebalanceTrigger, SchedulerConfig};
+pub use shard_split::{SplitPlan, SplitStrategy, plan_graph_split, plan_vector_split};
