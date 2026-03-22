@@ -104,7 +104,7 @@ tikv-jemalloc-ctl = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 rand = "0.8"
 tempfile = "3"
-tokio-postgres = "0.7"
+tokio-postgres = { workspace = true }
 
 [features]
 default = ["cpu"]

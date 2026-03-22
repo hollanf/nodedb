@@ -8,6 +8,7 @@ members = [
   "nodedb-raft",
   "nodedb-cluster",
   "nodedb-types",
+  "nodedb-client",
 ]
 resolver = "2"
 
@@ -20,6 +21,7 @@ license = "BUSL-1.1"
 [workspace.dependencies]
 # Foundation crates (internal)
 nodedb-types = { path = "nodedb-types" }
+nodedb-client = { path = "nodedb-client" }
 nodedb-bridge = { path = "nodedb-bridge" }
 nodedb-wal = { path = "nodedb-wal" }
 nodedb-mem = { path = "nodedb-mem" }
@@ -114,6 +116,7 @@ zstd = "0.13"
 pgwire = { version = "0.38", default-features = false, features = [
   "server-api-aws-lc-rs",
 ] }
+tokio-postgres = "0.7"
 async-trait = "0.1"
 futures = "0.3"
 

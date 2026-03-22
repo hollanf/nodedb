@@ -1,0 +1,26 @@
+[package]
+name = "nodedb-client"
+description = "Unified NodeDb trait and remote client for NodeDB Origin and Lite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+remote = ["tokio-postgres", "tokio", "serde_json"]
+
+[dependencies]
+nodedb-types = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+
+# Remote client dependencies (feature-gated)
+tokio-postgres = { workspace = true, optional = true, features = ["with-serde_json-1"] }
+tokio = { workspace = true, optional = true, features = ["rt", "sync"] }
+serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
