@@ -196,7 +196,9 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
         PhysicalPlan::TransactionBatch { .. } => Permission::Write,
 
         // System-level operations: require admin.
-        PhysicalPlan::Compact | PhysicalPlan::Checkpoint => Permission::Admin,
+        PhysicalPlan::CreateSnapshot | PhysicalPlan::Compact | PhysicalPlan::Checkpoint => {
+            Permission::Admin
+        }
     }
 }
 

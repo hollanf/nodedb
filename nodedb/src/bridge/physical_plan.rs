@@ -387,6 +387,14 @@ pub enum PhysicalPlan {
     /// dispatch).
     TransactionBatch { plans: Vec<PhysicalPlan> },
 
+    /// Create a snapshot: export all engine state for this core.
+    ///
+    /// The Data Plane core serializes its full state (redb, HNSW, CRDT)
+    /// as a `CoreSnapshot` and returns the serialized bytes as the response
+    /// payload. The Control Plane collects snapshots from all cores and
+    /// writes them to disk.
+    CreateSnapshot,
+
     /// On-demand compaction: compact all vector indexes (remove tombstones),
     /// compact CSR write buffers, and sweep dangling edges.
     ///

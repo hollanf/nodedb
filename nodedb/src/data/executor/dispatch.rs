@@ -347,6 +347,8 @@ impl CoreLoop {
                 )
             }
 
+            PhysicalPlan::CreateSnapshot => self.execute_create_snapshot(task),
+
             PhysicalPlan::Compact => self.execute_compact(task),
 
             PhysicalPlan::Checkpoint => self.execute_checkpoint(task),

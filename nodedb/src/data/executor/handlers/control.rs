@@ -144,6 +144,49 @@ impl CoreLoop {
         }
     }
 
+    /// Execute a snapshot creation request: export all engine state as bytes.
+    ///
+    /// Returns the serialized `CoreSnapshot` as the response payload.
+    /// The Control Plane collects these from all cores and writes to disk.
+    pub(in crate::data::executor) fn execute_create_snapshot(
+        &self,
+        task: &ExecutionTask,
+    ) -> Response {
+        match self.export_snapshot() {
+            Ok(snapshot) => match snapshot.to_bytes() {
+                Ok(bytes) => {
+                    info!(
+                        core = self.core_id,
+                        watermark = snapshot.watermark,
+                        documents = snapshot.sparse_documents.len(),
+                        vectors = snapshot.hnsw_indexes.len(),
+                        size_bytes = bytes.len(),
+                        "snapshot exported"
+                    );
+                    self.response_with_payload(task, bytes)
+                }
+                Err(e) => {
+                    warn!(core = self.core_id, error = %e, "snapshot serialization failed");
+                    self.response_error(
+                        task,
+                        ErrorCode::Internal {
+                            detail: e.to_string(),
+                        },
+                    )
+                }
+            },
+            Err(e) => {
+                warn!(core = self.core_id, error = %e, "snapshot export failed");
+                self.response_error(
+                    task,
+                    ErrorCode::Internal {
+                        detail: e.to_string(),
+                    },
+                )
+            }
+        }
+    }
+
     /// Execute a coordinated checkpoint: flush all engine state to disk
     /// and return this core's checkpoint LSN.
     ///
