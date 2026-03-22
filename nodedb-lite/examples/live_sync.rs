@@ -9,6 +9,7 @@ use std::time::Instant;
 use futures::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
+use nodedb_lite::engine::crdt::CrdtEngine;
 use nodedb_types::sync::wire::*;
 
 const ORIGIN_WS: &str = "ws://127.0.0.1:9090";
@@ -82,6 +83,9 @@ async fn main() {
     run_test!("reconnect_under_200ms", test_reconnect_latency());
     run_test!("vector_clock_sync", test_clock_sync());
     run_test!("shape_subscribe", test_shape_subscribe());
+    run_test!("real_loro_delta_push", test_real_loro_delta());
+    run_test!("concurrent_delta_push", test_concurrent_deltas());
+    run_test!("rls_violation_silent_drop", test_rls_violation());
 
     println!("\nresult: {passed} passed; {failed} failed");
     if failed > 0 {
@@ -279,4 +283,170 @@ async fn test_shape_subscribe() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Test with real Loro CRDT deltas (not raw JSON).
+async fn test_real_loro_delta() -> Result<(), String> {
+    let mut ws = connect_and_handshake().await;
+
+    // Generate a real Loro delta using the CRDT engine.
+    let mut engine = CrdtEngine::new(100).map_err(|e| format!("crdt engine: {e}"))?;
+    engine
+        .upsert(
+            "users",
+            "alice",
+            &[("name", loro::LoroValue::String("Alice".into()))],
+        )
+        .map_err(|e| format!("upsert: {e}"))?;
+
+    let deltas = engine.pending_deltas();
+    if deltas.is_empty() {
+        return Err("no deltas generated".into());
+    }
+
+    // Send the real Loro delta bytes through sync.
+    let delta_msg = DeltaPushMsg {
+        collection: "users".into(),
+        document_id: "alice".into(),
+        delta: deltas[0].delta_bytes.clone(),
+        peer_id: 100,
+        mutation_id: 1,
+    };
+    ws.send(Message::Binary(
+        SyncFrame::encode_or_empty(SyncMessageType::DeltaPush, &delta_msg)
+            .to_bytes()
+            .into(),
+    ))
+    .await
+    .map_err(|e| format!("send: {e}"))?;
+
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+        .await
+        .map_err(|_| "timeout")?
+        .ok_or("closed")?
+        .map_err(|e| format!("read: {e}"))?;
+
+    let frame = SyncFrame::from_bytes(resp.into_data().as_ref()).ok_or("bad frame")?;
+    // With real Loro deltas, the CRDT engine should accept them.
+    // DeltaAck = accepted, DeltaReject = constraint violation (both valid).
+    if frame.msg_type != SyncMessageType::DeltaAck && frame.msg_type != SyncMessageType::DeltaReject
+    {
+        return Err(format!("unexpected: {:?}", frame.msg_type));
+    }
+
+    Ok(())
+}
+
+/// Test two concurrent deltas from different peers.
+async fn test_concurrent_deltas() -> Result<(), String> {
+    let mut ws = connect_and_handshake().await;
+
+    // Peer 1 writes.
+    let mut engine1 = CrdtEngine::new(201).map_err(|e| format!("engine1: {e}"))?;
+    engine1
+        .upsert(
+            "notes",
+            "n1",
+            &[("author", loro::LoroValue::String("peer1".into()))],
+        )
+        .map_err(|e| format!("upsert1: {e}"))?;
+
+    // Peer 2 writes to different doc.
+    let mut engine2 = CrdtEngine::new(202).map_err(|e| format!("engine2: {e}"))?;
+    engine2
+        .upsert(
+            "notes",
+            "n2",
+            &[("author", loro::LoroValue::String("peer2".into()))],
+        )
+        .map_err(|e| format!("upsert2: {e}"))?;
+
+    // Send both deltas.
+    for (i, engine) in [&engine1, &engine2].iter().enumerate() {
+        let deltas = engine.pending_deltas();
+        if deltas.is_empty() {
+            return Err(format!("no deltas from engine {i}"));
+        }
+        let msg = DeltaPushMsg {
+            collection: "notes".into(),
+            document_id: deltas[0].document_id.clone(),
+            delta: deltas[0].delta_bytes.clone(),
+            peer_id: 200 + i as u64 + 1,
+            mutation_id: i as u64 + 1,
+        };
+        ws.send(Message::Binary(
+            SyncFrame::encode_or_empty(SyncMessageType::DeltaPush, &msg)
+                .to_bytes()
+                .into(),
+        ))
+        .await
+        .map_err(|e| format!("send {i}: {e}"))?;
+    }
+
+    // Read two responses.
+    for i in 0..2 {
+        let resp = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+            .await
+            .map_err(|_| format!("timeout on response {i}"))?
+            .ok_or(format!("closed on response {i}"))?
+            .map_err(|e| format!("read {i}: {e}"))?;
+
+        let frame =
+            SyncFrame::from_bytes(resp.into_data().as_ref()).ok_or(format!("bad frame {i}"))?;
+        if frame.msg_type != SyncMessageType::DeltaAck
+            && frame.msg_type != SyncMessageType::DeltaReject
+        {
+            return Err(format!("unexpected response {i}: {:?}", frame.msg_type));
+        }
+    }
+
+    Ok(())
+}
+
+/// Test RLS violation: delta to "orders" with status=draft should be silently dropped
+/// because the Origin has a write policy requiring status=active.
+///
+/// Requires: `CREATE RLS POLICY require_active ON orders FOR WRITE USING (status eq active)`
+async fn test_rls_violation() -> Result<(), String> {
+    let mut ws = connect_and_handshake().await;
+
+    // Delta with status=draft — violates the RLS write policy.
+    let violating_data = serde_json::json!({"status": "draft", "order_id": "ord-999"});
+    let delta_bytes =
+        rmp_serde::to_vec_named(&violating_data).map_err(|e| format!("serialize: {e}"))?;
+
+    let msg = DeltaPushMsg {
+        collection: "orders".into(),
+        document_id: "ord-999".into(),
+        delta: delta_bytes,
+        peer_id: 500,
+        mutation_id: 99,
+    };
+    ws.send(Message::Binary(
+        SyncFrame::encode_or_empty(SyncMessageType::DeltaPush, &msg)
+            .to_bytes()
+            .into(),
+    ))
+    .await
+    .map_err(|e| format!("send: {e}"))?;
+
+    // RLS silent drop = no response. DeltaReject from constraint validation also acceptable.
+    match tokio::time::timeout(std::time::Duration::from_secs(2), ws.next()).await {
+        Err(_) => Ok(()), // Timeout = silent drop = RLS worked.
+        Ok(Some(Ok(resp))) => {
+            if let Some(f) = SyncFrame::from_bytes(resp.into_data().as_ref()) {
+                match f.msg_type {
+                    SyncMessageType::DeltaReject => Ok(()), // Constraint validation caught it.
+                    SyncMessageType::DeltaAck => {
+                        Err("delta ACCEPTED — RLS policy did not block it".into())
+                    }
+                    other => Err(format!("unexpected: {other:?}")),
+                }
+            } else {
+                Err("bad frame".into())
+            }
+        }
+        Ok(Some(Err(e))) => Err(format!("read error: {e}")),
+        Ok(None) => Err("connection closed".into()),
+    }
 }
