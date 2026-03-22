@@ -26,7 +26,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use super::wire::CompensationHint;
+// Re-export shared types from nodedb-types so existing `use super::dlq::*` imports work.
+pub use nodedb_types::sync::compensation::CompensationHint;
+pub use nodedb_types::sync::violation::ViolationType;
 
 /// DLQ entry: a rejected sync delta with full forensic metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,45 +63,6 @@ pub struct DlqEntry {
     pub retry_count: u32,
     /// Whether this entry has been acknowledged/resolved.
     pub resolved: bool,
-}
-
-/// Why the delta was placed in the DLQ.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ViolationType {
-    /// RLS write policy rejected the delta.
-    RlsPolicyViolation { policy_name: String },
-    /// UNIQUE constraint violation.
-    UniqueViolation { field: String, value: String },
-    /// Foreign key reference missing.
-    ForeignKeyMissing { referenced_id: String },
-    /// Permission denied (no write access).
-    PermissionDenied,
-    /// Rate limit exceeded.
-    RateLimited,
-    /// Token expired during session.
-    TokenExpired,
-    /// Generic constraint violation.
-    ConstraintViolation { detail: String },
-}
-
-impl std::fmt::Display for ViolationType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::RlsPolicyViolation { policy_name } => {
-                write!(f, "rls_policy:{policy_name}")
-            }
-            Self::UniqueViolation { field, value } => {
-                write!(f, "unique:{field}={value}")
-            }
-            Self::ForeignKeyMissing { referenced_id } => {
-                write!(f, "fk_missing:{referenced_id}")
-            }
-            Self::PermissionDenied => write!(f, "permission_denied"),
-            Self::RateLimited => write!(f, "rate_limited"),
-            Self::TokenExpired => write!(f, "token_expired"),
-            Self::ConstraintViolation { detail } => write!(f, "constraint:{detail}"),
-        }
-    }
 }
 
 /// Originating device metadata attached to DLQ entries.

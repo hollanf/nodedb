@@ -1,0 +1,22 @@
+pub mod document;
+pub mod error;
+pub mod filter;
+pub mod id;
+pub mod lsn;
+pub mod namespace;
+pub mod result;
+pub mod sync;
+pub mod value;
+
+pub use document::Document;
+pub use error::NodeDbError;
+pub use filter::{EdgeFilter, MetadataFilter};
+pub use id::{CollectionId, DocumentId, EdgeId, NodeId, ShapeId, TenantId};
+pub use lsn::Lsn;
+pub use namespace::Namespace;
+pub use result::{QueryResult, SearchResult, SubGraph};
+pub use sync::compensation::CompensationHint;
+pub use sync::shape::{ShapeDefinition, ShapeType};
+pub use sync::violation::ViolationType;
+pub use sync::wire::{SyncFrame, SyncMessageType};
+pub use value::Value;

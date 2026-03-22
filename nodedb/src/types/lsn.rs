@@ -1,37 +1,9 @@
-use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde::{Deserialize, Serialize};
+// ── Re-export shared Lsn from nodedb-types ──
+pub use nodedb_types::Lsn;
 
-/// Log Sequence Number — monotonically increasing identifier for WAL records.
-///
-/// LSNs are the universal ordering primitive. Every write, every snapshot,
-/// every consistency check is anchored to an LSN.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct Lsn(u64);
-
-impl Lsn {
-    pub const ZERO: Lsn = Lsn(0);
-
-    pub const fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    pub const fn as_u64(self) -> u64 {
-        self.0
-    }
-
-    /// Returns the next LSN (self + 1).
-    pub const fn next(self) -> Self {
-        Self(self.0 + 1)
-    }
-}
-
-impl fmt::Display for Lsn {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "lsn:{}", self.0)
-    }
-}
+// ── Origin-only: thread-safe LSN generator (uses AtomicU64, not WASM-safe) ──
 
 /// Thread-safe monotonic LSN generator.
 pub struct LsnGenerator {
@@ -47,12 +19,12 @@ impl LsnGenerator {
 
     /// Atomically increment and return the next LSN.
     pub fn next(&self) -> Lsn {
-        Lsn(self.current.fetch_add(1, Ordering::Relaxed) + 1)
+        Lsn::new(self.current.fetch_add(1, Ordering::Relaxed) + 1)
     }
 
     /// Current value without incrementing (for snapshot watermarks).
     pub fn current(&self) -> Lsn {
-        Lsn(self.current.load(Ordering::Relaxed))
+        Lsn::new(self.current.load(Ordering::Relaxed))
     }
 }
 
