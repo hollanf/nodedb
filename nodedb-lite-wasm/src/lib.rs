@@ -1,32 +1,28 @@
 //! JavaScript/TypeScript bindings for NodeDB-Lite via wasm-bindgen.
 //!
-//! Provides a complete NodeDB-Lite instance running in the browser.
-//! Uses in-memory storage (future: OPFS via SQLite WASM).
+//! Uses `redb` with `InMemoryBackend` for storage (same engine as native).
+//! Future: OPFS persistence via custom `redb::StorageBackend` over OPFS.
 //!
 //! ```js
 //! import { NodeDbLiteWasm } from "nodedb-lite-wasm";
 //!
-//! const db = await NodeDbLiteWasm.open(1);
+//! const db = await NodeDbLiteWasm.open(1n);
 //! await db.vectorInsert("embeddings", "v1", new Float32Array([1.0, 0.0]));
 //! const results = await db.vectorSearch("embeddings", new Float32Array([1.0, 0.0]), 5);
 //! ```
 
-mod storage;
-
 use wasm_bindgen::prelude::*;
 
 use nodedb_client::NodeDb;
-use nodedb_lite::NodeDbLite;
+use nodedb_lite::{NodeDbLite, RedbStorage};
 use nodedb_types::document::Document;
 use nodedb_types::id::NodeId;
 use nodedb_types::value::Value;
 
-use storage::WasmSqliteStorage;
-
 /// NodeDB-Lite instance for browser/WASM environments.
 #[wasm_bindgen]
 pub struct NodeDbLiteWasm {
-    db: NodeDbLite<WasmSqliteStorage>,
+    db: NodeDbLite<RedbStorage>,
 }
 
 #[wasm_bindgen]
@@ -36,8 +32,7 @@ impl NodeDbLiteWasm {
     /// `peer_id` is the unique identifier for this device/browser tab (for CRDT).
     #[wasm_bindgen]
     pub async fn open(peer_id: u64) -> Result<NodeDbLiteWasm, JsError> {
-        let storage =
-            WasmSqliteStorage::open_in_memory().map_err(|e| JsError::new(&e.to_string()))?;
+        let storage = RedbStorage::open_in_memory().map_err(|e| JsError::new(&e.to_string()))?;
         let db = NodeDbLite::open(storage, peer_id)
             .await
             .map_err(|e| JsError::new(&e.to_string()))?;
@@ -74,12 +69,7 @@ impl NodeDbLiteWasm {
 
         let json: Vec<serde_json::Value> = results
             .iter()
-            .map(|r| {
-                serde_json::json!({
-                    "id": r.id,
-                    "distance": r.distance,
-                })
-            })
+            .map(|r| serde_json::json!({"id": r.id, "distance": r.distance}))
             .collect();
 
         serde_wasm_bindgen::to_value(&json).map_err(|e| JsError::new(&e.to_string()))
@@ -152,7 +142,7 @@ impl NodeDbLiteWasm {
         }
     }
 
-    /// Put (insert or update) a document. Takes a JSON object.
+    /// Put (insert or update) a document. Takes a JSON string of fields.
     #[wasm_bindgen(js_name = "documentPut")]
     pub async fn document_put(
         &self,

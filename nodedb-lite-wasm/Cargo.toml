@@ -13,16 +13,12 @@ crate-type = ["cdylib", "rlib"]
 nodedb-lite = { workspace = true }
 nodedb-types = { workspace = true }
 nodedb-client = { workspace = true }
-async-trait = { workspace = true }
 wasm-bindgen = { workspace = true }
 js-sys = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sqlite-wasm-rs = { workspace = true }
-sqlite-wasm-vfs = "0.2"
 wasm-bindgen-futures = "0.4"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
-tokio = { workspace = true, features = ["rt", "macros"] }
