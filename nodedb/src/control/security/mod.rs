@@ -2,6 +2,7 @@ pub mod apikey;
 pub mod audit;
 pub mod catalog;
 pub mod credential;
+pub mod crl;
 pub mod encryption;
 pub mod identity;
 pub mod jwt;

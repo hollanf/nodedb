@@ -52,7 +52,7 @@ loro = { workspace = true }
 
 # Password hashing & cryptography
 argon2 = { workspace = true }
-sha2 = "0.10"
+sha2 = { version = "0.10", features = ["oid"] }
 md5 = { workspace = true }
 hmac = { workspace = true }
 base64 = { workspace = true }
@@ -64,9 +64,12 @@ parquet = { workspace = true }
 object_store = { workspace = true }
 bytes = { workspace = true }
 
-# TLS
+# TLS & crypto
 tokio-rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
+x509-parser = "0.16"
+pem = "3"
+rsa = "0.9"
 
 # PostgreSQL wire protocol
 pgwire = { workspace = true }
@@ -98,6 +101,7 @@ tikv-jemalloc-ctl = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+rand = "0.8"
 tempfile = "3"
 tokio-postgres = "0.7"
 
