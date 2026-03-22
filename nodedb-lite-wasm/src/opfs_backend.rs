@@ -51,22 +51,21 @@ impl OpfsBackend {
 
 impl redb::StorageBackend for OpfsBackend {
     fn len(&self) -> Result<u64, io::Error> {
-        let handle = self.handle.lock().map_err(|_| {
-            io::Error::new(io::ErrorKind::Other, "OPFS handle lock poisoned")
-        })?;
+        let handle = self
+            .handle
+            .lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "OPFS handle lock poisoned"))?;
         let size = handle.get_size().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("OPFS getSize failed: {e:?}"),
-            )
+            io::Error::new(io::ErrorKind::Other, format!("OPFS getSize failed: {e:?}"))
         })?;
         Ok(size as u64)
     }
 
     fn read(&self, offset: u64, len: usize) -> Result<Vec<u8>, io::Error> {
-        let handle = self.handle.lock().map_err(|_| {
-            io::Error::new(io::ErrorKind::Other, "OPFS handle lock poisoned")
-        })?;
+        let handle = self
+            .handle
+            .lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "OPFS handle lock poisoned"))?;
 
         let buffer = Uint8Array::new_with_length(len as u32);
         let opts = web_sys::FileSystemReadWriteOptions::new();
@@ -74,12 +73,8 @@ impl redb::StorageBackend for OpfsBackend {
 
         let bytes_read = handle
             .read_with_buffer_source_and_options(&buffer, &opts)
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("OPFS read failed: {e:?}"),
-                )
-            })? as usize;
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("OPFS read failed: {e:?}")))?
+            as usize;
 
         let mut result = vec![0u8; bytes_read];
         buffer.slice(0, bytes_read as u32).copy_to(&mut result);
@@ -87,35 +82,32 @@ impl redb::StorageBackend for OpfsBackend {
     }
 
     fn set_len(&self, len: u64) -> Result<(), io::Error> {
-        let handle = self.handle.lock().map_err(|_| {
-            io::Error::new(io::ErrorKind::Other, "OPFS handle lock poisoned")
-        })?;
+        let handle = self
+            .handle
+            .lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "OPFS handle lock poisoned"))?;
 
         handle.truncate_with_u32(len as u32).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("OPFS truncate failed: {e:?}"),
-            )
+            io::Error::new(io::ErrorKind::Other, format!("OPFS truncate failed: {e:?}"))
         })
     }
 
     fn sync_data(&self, _eventual: bool) -> Result<(), io::Error> {
-        let handle = self.handle.lock().map_err(|_| {
-            io::Error::new(io::ErrorKind::Other, "OPFS handle lock poisoned")
-        })?;
+        let handle = self
+            .handle
+            .lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "OPFS handle lock poisoned"))?;
 
-        handle.flush().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("OPFS flush failed: {e:?}"),
-            )
-        })
+        handle
+            .flush()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("OPFS flush failed: {e:?}")))
     }
 
     fn write(&self, offset: u64, data: &[u8]) -> Result<(), io::Error> {
-        let handle = self.handle.lock().map_err(|_| {
-            io::Error::new(io::ErrorKind::Other, "OPFS handle lock poisoned")
-        })?;
+        let handle = self
+            .handle
+            .lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "OPFS handle lock poisoned"))?;
 
         let buffer = Uint8Array::from(data);
         let opts = web_sys::FileSystemReadWriteOptions::new();
@@ -124,10 +116,7 @@ impl redb::StorageBackend for OpfsBackend {
         handle
             .write_with_buffer_source_and_options(&buffer, &opts)
             .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("OPFS write failed: {e:?}"),
-                )
+                io::Error::new(io::ErrorKind::Other, format!("OPFS write failed: {e:?}"))
             })?;
 
         Ok(())

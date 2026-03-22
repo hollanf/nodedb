@@ -48,21 +48,17 @@ impl NodeDbLiteWasm {
     ///
     /// Data survives page reloads and browser restarts.
     #[wasm_bindgen(js_name = "openPersistent")]
-    pub async fn open_persistent(
-        filename: &str,
-        peer_id: u64,
-    ) -> Result<NodeDbLiteWasm, JsError> {
+    pub async fn open_persistent(filename: &str, peer_id: u64) -> Result<NodeDbLiteWasm, JsError> {
         // Get OPFS root directory.
         let global: web_sys::WorkerGlobalScope = js_sys::global()
             .dyn_into()
             .map_err(|_| JsError::new("openPersistent must be called from a Web Worker"))?;
         let storage = global.navigator().storage();
-        let root: web_sys::FileSystemDirectoryHandle =
-            JsFuture::from(storage.get_directory())
-                .await
-                .map_err(|e| JsError::new(&format!("OPFS getDirectory failed: {e:?}")))?
-                .dyn_into()
-                .map_err(|_| JsError::new("expected FileSystemDirectoryHandle"))?;
+        let root: web_sys::FileSystemDirectoryHandle = JsFuture::from(storage.get_directory())
+            .await
+            .map_err(|e| JsError::new(&format!("OPFS getDirectory failed: {e:?}")))?
+            .dyn_into()
+            .map_err(|_| JsError::new("expected FileSystemDirectoryHandle"))?;
 
         // Get or create the database file.
         let opts = web_sys::FileSystemGetFileOptions::new();
