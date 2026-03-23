@@ -20,7 +20,13 @@ pub(super) async fn pgwire_result_to_native(
             for resp in responses {
                 match resp {
                     PgResponse::Execution(tag) => {
-                        return NativeResponse::status_row(seq, format!("{tag:?}"));
+                        // Tag has no Display impl; extract command from Debug.
+                        let debug = format!("{tag:?}");
+                        let command = debug
+                            .strip_prefix("Tag { command: \"")
+                            .and_then(|s| s.split('"').next())
+                            .unwrap_or("OK");
+                        return NativeResponse::status_row(seq, command);
                     }
                     PgResponse::Query(mut query_resp) => {
                         let schema = query_resp.row_schema();
