@@ -50,7 +50,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Initialize tracing with format from config.
-    let filter = EnvFilter::from_default_env();
+    // Default to warn level for clean startup. Use RUST_LOG=info for verbose.
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
     if config.log_format == "json" {
         tracing_subscriber::fmt()
             .with_env_filter(filter)
@@ -251,11 +252,43 @@ async fn main() -> anyhow::Result<()> {
     let pg_listener =
         nodedb::control::server::pgwire::listener::PgListener::bind(config.pg_listen).await?;
 
-    // Handle Ctrl+C.
+    // Startup banner.
+    eprintln!();
+    eprintln!("  NodeDB v{}", env!("CARGO_PKG_VERSION"));
+    eprintln!("  ─────────────────────────────────────");
+    eprintln!("  Native protocol : {}", config.listen);
+    eprintln!("  PostgreSQL wire : {}", config.pg_listen);
+    eprintln!("  HTTP API        : {}", config.http_listen);
+    eprintln!("  Data Plane cores: {}", config.data_plane_cores);
+    eprintln!("  Data directory  : {}", config.data_dir.display());
+    eprintln!("  Auth mode       : {:?}", config.auth.mode);
+    eprintln!();
+    eprintln!("  Press Ctrl+C to stop.");
+    eprintln!();
+
+    // Handle Ctrl+C with two-stage shutdown.
+    let max_conns = config.max_connections;
+    let sem_clone = Arc::clone(&conn_semaphore);
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
-        info!("shutdown signal received");
+
+        let active = max_conns - sem_clone.available_permits();
+        if active > 0 {
+            eprintln!();
+            eprintln!(
+                "  {} active connection(s). Draining (30s timeout)...",
+                active
+            );
+            eprintln!("  Press Ctrl+C again to force stop.");
+        } else {
+            eprintln!("\n  Shutting down...");
+        }
         let _ = shutdown_tx.send(true);
+
+        // Second Ctrl+C: force exit immediately.
+        tokio::signal::ctrl_c().await.ok();
+        eprintln!("  Force stop.");
+        std::process::exit(1);
     });
 
     // Build TLS acceptor if configured.
@@ -362,5 +395,11 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
 
-    Ok(())
+    info!("server shutting down");
+
+    // Data Plane cores run on std::thread (not Tokio) and block in an
+    // infinite eventfd poll loop. They have no shutdown signal — they
+    // rely on process exit. Explicitly exit so they don't keep the
+    // process alive after the Control Plane has drained.
+    std::process::exit(0);
 }
