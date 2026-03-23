@@ -4,6 +4,7 @@ pub mod filter;
 pub mod id;
 pub mod lsn;
 pub mod namespace;
+pub mod protocol;
 pub mod result;
 pub mod sync;
 pub mod value;
