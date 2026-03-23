@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use nodedb_types::protocol::{NativeResponse, OpCode, TextFields};
-use nodedb_types::value::Value;
 
 use crate::bridge::envelope::{PhysicalPlan, Response, Status};
 use crate::data::executor::response_codec;
@@ -22,7 +21,7 @@ pub(crate) async fn handle_direct_op(
         .collection
         .as_deref()
         .unwrap_or("default")
-        .to_string();
+        .to_lowercase();
     let vshard_key = fields.document_id.as_deref().unwrap_or(&collection);
     let vshard_id = ctx.vshard_for_key(vshard_key);
     let tenant_id = ctx.tenant_id();
@@ -297,11 +296,12 @@ fn data_plane_response_to_native(seq: u64, resp: &Response) -> NativeResponse {
     }
 
     let json_text = response_codec::decode_payload_to_json(&resp.payload);
+    let (columns, rows) = super::parse_json_to_columns_rows(&json_text);
     NativeResponse {
         seq,
         status: nodedb_types::protocol::ResponseStatus::Ok,
-        columns: Some(vec!["result".into()]),
-        rows: Some(vec![vec![Value::String(json_text)]]),
+        columns: Some(columns),
+        rows: Some(rows),
         rows_affected: None,
         watermark_lsn: resp.watermark_lsn.as_u64(),
         error: None,

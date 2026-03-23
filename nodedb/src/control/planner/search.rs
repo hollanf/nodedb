@@ -92,9 +92,12 @@ pub(super) fn extract_float_array(expr: &Expr) -> crate::Result<Vec<f32>> {
 }
 
 /// Extract the table name from a logical plan (traversing projections/filters).
+///
+/// Returns the name normalized to lowercase, following the PostgreSQL convention
+/// that unquoted identifiers are folded to lowercase.
 pub(super) fn extract_table_name(plan: &LogicalPlan) -> Option<String> {
     match plan {
-        LogicalPlan::TableScan(scan) => Some(scan.table_name.to_string()),
+        LogicalPlan::TableScan(scan) => Some(scan.table_name.to_string().to_lowercase()),
         LogicalPlan::Projection(proj) => extract_table_name(&proj.input),
         LogicalPlan::Filter(filter) => extract_table_name(&filter.input),
         LogicalPlan::SubqueryAlias(alias) => extract_table_name(&alias.input),

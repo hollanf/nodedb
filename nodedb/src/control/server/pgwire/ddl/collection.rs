@@ -31,7 +31,8 @@ pub fn create_collection(
         ));
     }
 
-    let name = parts[2];
+    let name_lower = parts[2].to_lowercase();
+    let name = name_lower.as_str();
     let tenant_id = identity.tenant_id;
 
     // Check if collection already exists.
@@ -123,7 +124,8 @@ pub fn drop_collection(
         return Err(sqlstate_error("42601", "syntax: DROP COLLECTION <name>"));
     }
 
-    let name = parts[2];
+    let name_lower = parts[2].to_lowercase();
+    let name = name_lower.as_str();
     let tenant_id = identity.tenant_id;
 
     // Check ownership or admin.
@@ -166,6 +168,192 @@ pub fn drop_collection(
     );
 
     Ok(vec![Response::Execution(Tag::new("DROP COLLECTION"))])
+}
+
+/// INSERT INTO <collection> (col1, col2, ...) VALUES (val1, val2, ...)
+///
+/// Intercepts INSERT for schemaless collections. Parses column names
+/// and values manually, serializes as JSON, dispatches as PointPut.
+/// Returns `None` if the collection has a typed schema (let DataFusion handle it).
+pub async fn insert_document(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    sql: &str,
+) -> Option<PgWireResult<Vec<Response>>> {
+    // Extract collection name from the original SQL, normalized to lowercase
+    // per PostgreSQL convention (unquoted identifiers fold to lowercase).
+    let upper = sql.to_uppercase();
+    let into_pos = upper.find("INSERT INTO ")?;
+    let after_into = sql[into_pos + 12..].trim_start();
+    let coll_name_str = after_into.split_whitespace().next()?;
+    let coll_name_lower = coll_name_str.to_lowercase();
+    let coll_name = coll_name_lower.as_str();
+
+    // Check if collection is schemaless (no declared fields).
+    let tenant_id = identity.tenant_id;
+    if let Some(catalog) = state.credentials.catalog()
+        && let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), coll_name)
+        && !coll.fields.is_empty()
+    {
+        // Typed collection — let DataFusion handle it.
+        return None;
+    }
+
+    // Find the column list: first (...) in the SQL.
+    let first_open = match sql.find('(') {
+        Some(p) => p,
+        None => {
+            return Some(Err(sqlstate_error(
+                "42601",
+                "missing column list in INSERT",
+            )));
+        }
+    };
+    // Find matching close paren (before VALUES).
+    let values_kw = match upper.find("VALUES") {
+        Some(p) => p,
+        None => return Some(Err(sqlstate_error("42601", "missing VALUES clause"))),
+    };
+    let first_close = match sql[first_open..values_kw].rfind(')') {
+        Some(p) => first_open + p,
+        None => {
+            return Some(Err(sqlstate_error(
+                "42601",
+                "missing closing ) for column list",
+            )));
+        }
+    };
+    let cols_str = &sql[first_open + 1..first_close];
+    let columns: Vec<&str> = cols_str.split(',').map(|c| c.trim()).collect();
+
+    // Find VALUES (...).
+    let after_values = sql[values_kw + 6..].trim_start();
+    let vals_open = match after_values.find('(') {
+        Some(p) => p,
+        None => return Some(Err(sqlstate_error("42601", "missing VALUES (...)"))),
+    };
+    let vals_close = match after_values.rfind(')') {
+        Some(p) => p,
+        None => return Some(Err(sqlstate_error("42601", "missing closing ) for VALUES"))),
+    };
+    let vals_str = &after_values[vals_open + 1..vals_close];
+    let values: Vec<&str> = split_values(vals_str);
+
+    if columns.len() != values.len() {
+        return Some(Err(sqlstate_error(
+            "42601",
+            &format!(
+                "column count ({}) doesn't match value count ({})",
+                columns.len(),
+                values.len()
+            ),
+        )));
+    }
+
+    // First column should be 'id'. Build JSON document from the rest.
+    let mut doc_id = String::new();
+    let mut fields = serde_json::Map::new();
+
+    for (col, val) in columns.iter().zip(values.iter()) {
+        let col = col.trim().trim_matches('"');
+        let val = val.trim();
+        if col.eq_ignore_ascii_case("id") {
+            doc_id = val.trim_matches('\'').to_string();
+        } else {
+            let json_val = parse_sql_value(val);
+            fields.insert(col.to_string(), json_val);
+        }
+    }
+
+    if doc_id.is_empty() {
+        // Auto-generate ID.
+        doc_id = format!(
+            "{:016x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+    }
+
+    let value_bytes = serde_json::to_vec(&fields).unwrap_or_default();
+    // Route per-document for even distribution across cores.
+    // DocumentScan broadcasts to all cores to find all documents.
+    let vshard_id = crate::types::VShardId::from_key(doc_id.as_bytes());
+
+    let plan = crate::bridge::envelope::PhysicalPlan::PointPut {
+        collection: coll_name.to_string(),
+        document_id: doc_id,
+        value: value_bytes,
+    };
+
+    if let Err(e) = crate::control::server::dispatch_utils::wal_append_if_write(
+        &state.wal, tenant_id, vshard_id, &plan,
+    ) {
+        return Some(Err(sqlstate_error("XX000", &e.to_string())));
+    }
+
+    match crate::control::server::dispatch_utils::dispatch_to_data_plane(
+        state, tenant_id, vshard_id, plan, 0,
+    )
+    .await
+    {
+        Ok(_) => Some(Ok(vec![Response::Execution(Tag::new("INSERT"))])),
+        Err(e) => Some(Err(sqlstate_error("XX000", &e.to_string()))),
+    }
+}
+
+/// Split VALUES content respecting quoted strings.
+/// `'hello', 42, 'it''s'` → ["'hello'", "42", "'it''s'"]
+fn split_values(s: &str) -> Vec<&str> {
+    let mut results = Vec::new();
+    let mut start = 0;
+    let mut in_quote = false;
+    let bytes = s.as_bytes();
+
+    for i in 0..bytes.len() {
+        match bytes[i] {
+            b'\'' => in_quote = !in_quote,
+            b',' if !in_quote => {
+                results.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < s.len() {
+        results.push(&s[start..]);
+    }
+    results
+}
+
+/// Parse a SQL literal value to a serde_json::Value.
+fn parse_sql_value(val: &str) -> serde_json::Value {
+    let trimmed = val.trim();
+    if trimmed.eq_ignore_ascii_case("NULL") {
+        return serde_json::Value::Null;
+    }
+    if trimmed.eq_ignore_ascii_case("TRUE") {
+        return serde_json::Value::Bool(true);
+    }
+    if trimmed.eq_ignore_ascii_case("FALSE") {
+        return serde_json::Value::Bool(false);
+    }
+    // Quoted string.
+    if trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        let inner = &trimmed[1..trimmed.len() - 1];
+        let unescaped = inner.replace("''", "'");
+        return serde_json::Value::String(unescaped);
+    }
+    // Number.
+    if let Ok(i) = trimmed.parse::<i64>() {
+        return serde_json::json!(i);
+    }
+    if let Ok(f) = trimmed.parse::<f64>() {
+        return serde_json::json!(f);
+    }
+    // ARRAY[...] — keep as string for now.
+    serde_json::Value::String(trimmed.to_string())
 }
 
 /// CREATE INDEX <name> ON <collection> (<field>)

@@ -88,7 +88,7 @@ impl PlanConverter {
                 // Check if the filter predicate can be converted to a point get
                 // before recursing into the input.
                 if let LogicalPlan::TableScan(scan) = filter.input.as_ref() {
-                    let collection = scan.table_name.to_string();
+                    let collection = scan.table_name.to_string().to_lowercase();
                     let vshard = VShardId::from_collection(&collection);
 
                     if let Some(task) = self.try_point_get(
@@ -169,7 +169,7 @@ impl PlanConverter {
             }
 
             LogicalPlan::TableScan(scan) => {
-                let collection = scan.table_name.to_string();
+                let collection = scan.table_name.to_string().to_lowercase();
                 let vshard = VShardId::from_collection(&collection);
 
                 // Check for filter pushdown: equality on id → point get.

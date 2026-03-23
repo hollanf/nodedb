@@ -18,7 +18,7 @@ impl PlanConverter {
     ) -> crate::Result<Vec<PhysicalTask>> {
         use datafusion::logical_expr::WriteOp;
 
-        let collection = dml.table_name.to_string();
+        let collection = dml.table_name.to_string().to_lowercase();
         let vshard = VShardId::from_collection(&collection);
 
         match &dml.op {
