@@ -299,6 +299,88 @@ pub fn drop_index(
     Ok(vec![Response::Execution(Tag::new("DROP INDEX"))])
 }
 
+/// DESCRIBE <collection> — show fields, types, and schema info.
+pub fn describe_collection(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+) -> PgWireResult<Vec<Response>> {
+    if parts.len() < 2 {
+        return Err(sqlstate_error("42601", "syntax: DESCRIBE <collection>"));
+    }
+
+    let name_lower = parts[1].to_lowercase();
+    let name = name_lower.as_str();
+    let tenant_id = identity.tenant_id;
+
+    let catalog = match state.credentials.catalog() {
+        Some(c) => c,
+        None => return Err(sqlstate_error("XX000", "catalog not available")),
+    };
+
+    let coll = match catalog.get_collection(tenant_id.as_u32(), name) {
+        Ok(Some(c)) if c.is_active => c,
+        _ => {
+            return Err(sqlstate_error(
+                "42P01",
+                &format!("collection '{name}' not found"),
+            ));
+        }
+    };
+
+    let schema = Arc::new(vec![
+        text_field("field"),
+        text_field("type"),
+        text_field("nullable"),
+    ]);
+
+    let mut rows = Vec::new();
+    let mut encoder = DataRowEncoder::new(schema.clone());
+
+    // Always has an 'id' field.
+    encoder
+        .encode_field(&"id")
+        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+    encoder
+        .encode_field(&"TEXT")
+        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+    encoder
+        .encode_field(&"false")
+        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+    rows.push(Ok(encoder.take_row()));
+
+    if coll.fields.is_empty() {
+        encoder
+            .encode_field(&"document")
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+        encoder
+            .encode_field(&"JSON")
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+        encoder
+            .encode_field(&"true")
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+        rows.push(Ok(encoder.take_row()));
+    } else {
+        for (field_name, field_type) in &coll.fields {
+            encoder
+                .encode_field(field_name)
+                .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+            encoder
+                .encode_field(field_type)
+                .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+            encoder
+                .encode_field(&"true")
+                .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+            rows.push(Ok(encoder.take_row()));
+        }
+    }
+
+    Ok(vec![Response::Query(QueryResponse::new(
+        schema,
+        stream::iter(rows),
+    ))])
+}
+
 /// SHOW COLLECTIONS
 ///
 /// Lists all active collections for the current tenant.

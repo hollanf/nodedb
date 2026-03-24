@@ -85,6 +85,13 @@ pub async fn dispatch(
         return Some(super::backup::restore_tenant(state, identity, &parts));
     }
 
+    // Schema introspection.
+    if upper.starts_with("DESCRIBE ") || upper.starts_with("\\D ") {
+        return Some(super::collection::describe_collection(
+            state, identity, &parts,
+        ));
+    }
+
     // Collection management.
     if upper.starts_with("CREATE COLLECTION ") {
         return Some(super::collection::create_collection(

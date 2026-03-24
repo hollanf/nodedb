@@ -7,6 +7,7 @@ mod error;
 mod format;
 mod highlight;
 mod history;
+mod keywords;
 mod metacommand;
 mod tui;
 

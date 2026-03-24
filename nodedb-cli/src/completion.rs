@@ -2,86 +2,7 @@
 
 use nodedb_client::NativeClient;
 
-/// SQL keywords for completion (uppercase).
-const SQL_KEYWORDS: &[&str] = &[
-    "SELECT",
-    "INSERT",
-    "INTO",
-    "UPDATE",
-    "DELETE",
-    "FROM",
-    "WHERE",
-    "CREATE",
-    "DROP",
-    "ALTER",
-    "COLLECTION",
-    "INDEX",
-    "VECTOR",
-    "GRAPH",
-    "SEARCH",
-    "USING",
-    "FUSION",
-    "VALUES",
-    "SET",
-    "AND",
-    "OR",
-    "NOT",
-    "IN",
-    "EXISTS",
-    "BETWEEN",
-    "LIKE",
-    "ORDER",
-    "BY",
-    "ASC",
-    "DESC",
-    "LIMIT",
-    "OFFSET",
-    "GROUP",
-    "HAVING",
-    "JOIN",
-    "LEFT",
-    "RIGHT",
-    "INNER",
-    "OUTER",
-    "ON",
-    "AS",
-    "DISTINCT",
-    "COUNT",
-    "SUM",
-    "AVG",
-    "MIN",
-    "MAX",
-    "SHOW",
-    "COLLECTIONS",
-    "INDEXES",
-    "USERS",
-    "NODES",
-    "CLUSTER",
-    "CRDT",
-    "MERGE",
-    "TRAVERSE",
-    "NEIGHBORS",
-    "PATH",
-    "EDGE",
-    "ARRAY",
-    "NULL",
-    "TRUE",
-    "FALSE",
-    "BEGIN",
-    "COMMIT",
-    "ROLLBACK",
-    "EXPLAIN",
-    "COPY",
-    "BACKUP",
-    "RESTORE",
-    "GRANT",
-    "REVOKE",
-    "ROLE",
-    "TENANT",
-    "TYPE",
-    "DEPTH",
-    "DIRECTION",
-];
+use crate::keywords::SQL_KEYWORDS;
 
 /// Metacommands for completion.
 const METACOMMANDS: &[&str] = &[
@@ -114,6 +35,8 @@ const METACOMMANDS: &[&str] = &[
 /// Completion engine state.
 pub struct Completor {
     collections: Vec<String>,
+    /// Cached column names per collection: { "users" => ["id", "name", "age"] }
+    columns: std::collections::HashMap<String, Vec<String>>,
 }
 
 /// Active completion popup state.
@@ -167,10 +90,11 @@ impl Completor {
     pub fn new() -> Self {
         Self {
             collections: Vec::new(),
+            columns: std::collections::HashMap::new(),
         }
     }
 
-    /// Refresh cached collection names from the server.
+    /// Refresh cached collection names and their columns from the server.
     pub async fn refresh_collections(&mut self, client: &NativeClient) {
         if let Ok(result) = client.query("SHOW COLLECTIONS").await {
             self.collections = result
@@ -178,6 +102,21 @@ impl Completor {
                 .iter()
                 .filter_map(|row| row.first()?.as_str().map(String::from))
                 .collect();
+        }
+
+        // Fetch columns for each collection via DESCRIBE.
+        self.columns.clear();
+        for coll in &self.collections.clone() {
+            if let Ok(result) = client.query(&format!("DESCRIBE {coll}")).await {
+                let cols: Vec<String> = result
+                    .rows
+                    .iter()
+                    .filter_map(|row| row.first()?.as_str().map(String::from))
+                    .collect();
+                if !cols.is_empty() {
+                    self.columns.insert(coll.clone(), cols);
+                }
+            }
         }
     }
 
@@ -199,16 +138,48 @@ impl Completor {
             }
         } else {
             let upper = prefix.to_uppercase();
+
+            // Context-aware: if previous word is FROM/INTO/DESCRIBE/COLLECTION,
+            // prioritize collection names.
+            let context = context_before(buffer, prefix_start);
+
+            // Column names: if we're after a collection context (e.g., WHERE, SELECT ... FROM coll WHERE col)
+            if let Some(ref coll) = find_collection_context(buffer, &self.collections)
+                && let Some(cols) = self.columns.get(coll)
+            {
+                for col in cols {
+                    if col.to_uppercase().starts_with(&upper) && !candidates.contains(col) {
+                        candidates.push(col.clone());
+                    }
+                }
+            }
+
             // SQL keywords.
             for kw in SQL_KEYWORDS {
                 if kw.starts_with(&upper) {
                     candidates.push(kw.to_string());
                 }
             }
-            // Collection names (case-insensitive prefix match).
+
+            // Collection names (prioritize after FROM/INTO/DESCRIBE).
+            let is_collection_context = matches!(
+                context.as_deref(),
+                Some("FROM")
+                    | Some("INTO")
+                    | Some("DESCRIBE")
+                    | Some("COLLECTION")
+                    | Some("JOIN")
+                    | Some("TABLE")
+                    | Some("ON")
+            );
             for c in &self.collections {
                 if c.to_uppercase().starts_with(&upper) && !candidates.contains(c) {
-                    candidates.push(c.clone());
+                    if is_collection_context {
+                        // Insert at front for priority.
+                        candidates.insert(0, c.clone());
+                    } else {
+                        candidates.push(c.clone());
+                    }
                 }
             }
         }
@@ -228,6 +199,33 @@ impl Completor {
             active: true,
         }
     }
+}
+
+/// Get the word immediately before the current prefix (for context).
+/// e.g., in "SELECT * FROM us|", context = "FROM".
+fn context_before(buffer: &str, prefix_start: usize) -> Option<String> {
+    let before = buffer[..prefix_start].trim_end();
+    before
+        .split_whitespace()
+        .next_back()
+        .map(|w| w.to_uppercase())
+}
+
+/// Find which collection is referenced in the query (for column completion).
+/// Scans for FROM/INTO <collection> patterns.
+fn find_collection_context(buffer: &str, collections: &[String]) -> Option<String> {
+    let upper = buffer.to_uppercase();
+    let words: Vec<&str> = upper.split_whitespace().collect();
+
+    for (i, word) in words.iter().enumerate() {
+        if (*word == "FROM" || *word == "INTO" || *word == "JOIN") && i + 1 < words.len() {
+            let coll_name = words[i + 1].to_lowercase();
+            if collections.iter().any(|c| c == &coll_name) {
+                return Some(coll_name);
+            }
+        }
+    }
+    None
 }
 
 /// Extract the word being typed at the cursor position.
