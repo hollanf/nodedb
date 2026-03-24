@@ -203,6 +203,9 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Event trigger processor: evaluates DEFINE EVENT triggers on writes.
+    nodedb::control::event_trigger::spawn_event_trigger_processor(Arc::clone(&shared));
+
     // Tenant rate counter reset (1-second timer).
     let shared_rate = Arc::clone(&shared);
     tokio::spawn(async move {

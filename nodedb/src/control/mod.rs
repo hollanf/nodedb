@@ -4,6 +4,7 @@ pub mod checkpoint_manager;
 pub mod cluster;
 pub mod cluster_forwarder;
 pub mod distributed_applier;
+pub mod event_trigger;
 pub mod forward;
 pub mod metrics;
 pub mod planner;
@@ -17,6 +18,7 @@ pub mod state;
 pub mod trace_context;
 pub mod wal_replication;
 
+pub use event_trigger::spawn_event_trigger_processor;
 pub use forward::LocalForwarder;
 pub use request_tracker::RequestTracker;
 pub use state::SharedState;
