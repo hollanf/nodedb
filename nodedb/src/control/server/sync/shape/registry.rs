@@ -152,6 +152,31 @@ impl ShapeRegistry {
             .get(session_id)
             .and_then(|c| c.shapes.get(shape_id).cloned())
     }
+
+    /// Export all shapes for persistence (serializable snapshot).
+    pub fn export_all(&self) -> Vec<(String, u32, ShapeDefinition)> {
+        let sessions = self.sessions.read().unwrap_or_else(|p| p.into_inner());
+        let mut result = Vec::new();
+        for (session_id, client) in sessions.iter() {
+            for shape in client.shapes.values() {
+                result.push((session_id.clone(), client.tenant_id, shape.clone()));
+            }
+        }
+        result
+    }
+
+    /// Import shapes from a persisted snapshot (called on startup).
+    pub fn import(&self, shapes: Vec<(String, u32, ShapeDefinition)>) {
+        let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        for (session_id, tenant_id, shape) in shapes {
+            let client = sessions.entry(session_id).or_insert_with(|| ClientShapes {
+                shapes: HashMap::new(),
+                tenant_id,
+                last_modified: Instant::now(),
+            });
+            client.shapes.insert(shape.shape_id.clone(), shape);
+        }
+    }
 }
 
 #[cfg(test)]
