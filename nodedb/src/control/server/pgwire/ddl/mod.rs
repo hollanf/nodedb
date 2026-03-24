@@ -20,6 +20,7 @@ pub mod service_account;
 mod sql_parse;
 pub mod sync_dispatch;
 pub mod tenant;
+pub mod timeseries_ddl;
 pub mod user;
 
 pub use router::dispatch;

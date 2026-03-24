@@ -112,6 +112,17 @@ pub struct SharedState {
     /// System-wide metrics (contention, subscriptions, WAL fsync, etc.).
     /// Served via the HTTP metrics endpoint in Prometheus format.
     pub system_metrics: Option<Arc<crate::control::metrics::SystemMetrics>>,
+
+    /// Timeseries partition registries: keyed by "{tenant_id}:{collection_name}".
+    /// Stores partition metadata for all timeseries collections.
+    pub ts_partition_registries: Option<
+        Mutex<
+            std::collections::HashMap<
+                String,
+                crate::engine::timeseries::partition_registry::PartitionRegistry,
+            >,
+        >,
+    >,
 }
 
 impl SharedState {
@@ -146,6 +157,7 @@ impl SharedState {
             connections_rejected: AtomicU64::new(0),
             connections_accepted: AtomicU64::new(0),
             system_metrics: Some(Arc::new(crate::control::metrics::SystemMetrics::new())),
+            ts_partition_registries: Some(Mutex::new(std::collections::HashMap::new())),
         })
     }
 
@@ -209,12 +221,27 @@ impl SharedState {
             connections_rejected: AtomicU64::new(0),
             connections_accepted: AtomicU64::new(0),
             system_metrics: Some(Arc::new(crate::control::metrics::SystemMetrics::new())),
+            ts_partition_registries: Some(Mutex::new(std::collections::HashMap::new())),
         }))
     }
 
     /// Get the idle session timeout in seconds (0 = no timeout).
     pub fn idle_timeout_secs(&self) -> u64 {
         self.idle_timeout_secs
+    }
+
+    /// Access to timeseries partition registries.
+    pub fn timeseries_registries(
+        &self,
+    ) -> Option<
+        &Mutex<
+            std::collections::HashMap<
+                String,
+                crate::engine::timeseries::partition_registry::PartitionRegistry,
+            >,
+        >,
+    > {
+        self.ts_partition_registries.as_ref()
     }
 
     /// Check tenant quota before dispatching a request. Returns Ok if allowed.

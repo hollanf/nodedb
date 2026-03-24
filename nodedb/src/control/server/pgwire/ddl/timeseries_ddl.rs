@@ -1,0 +1,318 @@
+//! DDL handlers for timeseries collections.
+//!
+//! - `CREATE TIMESERIES name [WITH (...)]`
+//! - `SHOW PARTITIONS FOR name`
+//! - `ALTER TIMESERIES name SET (...)`
+
+use std::sync::Arc;
+
+use futures::stream;
+use pgwire::api::results::{DataRowEncoder, QueryResponse, Response};
+use pgwire::error::PgWireResult;
+
+use crate::control::security::catalog::StoredCollection;
+use crate::control::security::identity::AuthenticatedIdentity;
+use crate::control::state::SharedState;
+
+use super::super::types::{int8_field, sqlstate_error, text_field};
+
+/// CREATE TIMESERIES <name> [WITH (key = 'value', ...)]
+pub fn create_timeseries(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+) -> PgWireResult<Vec<Response>> {
+    if parts.len() < 3 {
+        return Err(sqlstate_error(
+            "42601",
+            "syntax: CREATE TIMESERIES <name> [WITH (key = 'value', ...)]",
+        ));
+    }
+
+    let name = parts[2].to_lowercase();
+    let tenant_id = identity.tenant_id;
+
+    if let Some(catalog) = state.credentials.catalog()
+        && let Ok(Some(_)) = catalog.get_collection(tenant_id.as_u32(), &name)
+    {
+        return Err(sqlstate_error(
+            "42P07",
+            &format!("collection '{name}' already exists"),
+        ));
+    }
+
+    let config_json = parse_with_clause(parts);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let fields = vec![
+        ("timestamp".into(), "TIMESTAMP".into()),
+        ("value".into(), "FLOAT".into()),
+    ];
+
+    let coll = StoredCollection {
+        tenant_id: tenant_id.as_u32(),
+        name: name.clone(),
+        owner: identity.username.clone(),
+        created_at: now,
+        fields,
+        field_defs: Vec::new(),
+        event_defs: Vec::new(),
+        collection_type: "timeseries".to_string(),
+        timeseries_config: config_json,
+        is_active: true,
+    };
+
+    if let Some(catalog) = state.credentials.catalog() {
+        catalog
+            .put_collection(&coll)
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+    }
+
+    // Initialize partition registry for this timeseries collection.
+    if let Some(registries) = state.timeseries_registries() {
+        let config = nodedb_types::timeseries::TieredPartitionConfig::origin_defaults();
+        let registry =
+            crate::engine::timeseries::partition_registry::PartitionRegistry::new(config);
+        let key = format!("{}:{}", tenant_id.as_u32(), name);
+        let mut regs =
+            crate::control::lock_utils::lock_or_recover(registries.lock(), "ts_registries");
+        regs.insert(key, registry);
+    }
+
+    tracing::info!(
+        collection = name,
+        tenant = tenant_id.as_u32(),
+        "timeseries collection created"
+    );
+
+    Ok(vec![Response::Execution(pgwire::api::results::Tag::new(
+        "CREATE TIMESERIES",
+    ))])
+}
+
+/// SHOW PARTITIONS FOR <name>
+pub fn show_partitions(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+) -> PgWireResult<Vec<Response>> {
+    if parts.len() < 4 {
+        return Err(sqlstate_error(
+            "42601",
+            "syntax: SHOW PARTITIONS FOR <collection>",
+        ));
+    }
+
+    let name = parts[3].to_lowercase();
+    let tenant_id = identity.tenant_id;
+
+    // Verify collection exists and is timeseries.
+    if let Some(catalog) = state.credentials.catalog() {
+        match catalog.get_collection(tenant_id.as_u32(), &name) {
+            Ok(Some(coll)) if coll.collection_type == "timeseries" => {}
+            Ok(Some(_)) => {
+                return Err(sqlstate_error(
+                    "42809",
+                    &format!("'{name}' is not a timeseries collection"),
+                ));
+            }
+            _ => {
+                return Err(sqlstate_error(
+                    "42P01",
+                    &format!("collection '{name}' does not exist"),
+                ));
+            }
+        }
+    }
+
+    let schema = Arc::new(vec![
+        text_field("partition"),
+        int8_field("min_ts"),
+        int8_field("max_ts"),
+        int8_field("rows"),
+        text_field("size"),
+        text_field("state"),
+    ]);
+
+    let mut rows = Vec::new();
+    let mut encoder = DataRowEncoder::new(schema.clone());
+
+    if let Some(registries) = state.timeseries_registries() {
+        let regs = crate::control::lock_utils::lock_or_recover(registries.lock(), "ts_registries");
+        let key = format!("{}:{}", tenant_id.as_u32(), name);
+        if let Some(registry) = regs.get(&key) {
+            for (_, entry) in registry.iter() {
+                if !entry.meta.is_queryable() {
+                    continue;
+                }
+                encoder
+                    .encode_field(&entry.dir_name)
+                    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+                encoder
+                    .encode_field(&entry.meta.min_ts)
+                    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+                encoder
+                    .encode_field(&entry.meta.max_ts)
+                    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+                encoder
+                    .encode_field(&(entry.meta.row_count as i64))
+                    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+                encoder
+                    .encode_field(&format_bytes(entry.meta.size_bytes))
+                    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+                encoder
+                    .encode_field(&format!("{:?}", entry.meta.state))
+                    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+                rows.push(Ok(encoder.take_row()));
+            }
+        }
+    }
+
+    Ok(vec![Response::Query(QueryResponse::new(
+        schema,
+        stream::iter(rows),
+    ))])
+}
+
+/// ALTER TIMESERIES <name> SET (key = 'value', ...)
+pub fn alter_timeseries(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+) -> PgWireResult<Vec<Response>> {
+    if parts.len() < 5 || parts[3].to_uppercase() != "SET" {
+        return Err(sqlstate_error(
+            "42601",
+            "syntax: ALTER TIMESERIES <name> SET (key = 'value', ...)",
+        ));
+    }
+
+    let name = parts[2].to_lowercase();
+    let tenant_id = identity.tenant_id;
+
+    if let Some(catalog) = state.credentials.catalog() {
+        let mut coll = catalog
+            .get_collection(tenant_id.as_u32(), &name)
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
+            .ok_or_else(|| {
+                sqlstate_error("42P01", &format!("collection '{name}' does not exist"))
+            })?;
+
+        if coll.collection_type != "timeseries" {
+            return Err(sqlstate_error(
+                "42809",
+                &format!("'{name}' is not a timeseries collection"),
+            ));
+        }
+
+        let new_config = parse_with_clause(parts);
+        if let Some(cfg) = new_config {
+            coll.timeseries_config = Some(cfg);
+        }
+
+        // Update partition registry interval if partition_by changed.
+        if let Some(registries) = state.timeseries_registries() {
+            let key = format!("{}:{}", tenant_id.as_u32(), name);
+            let mut regs =
+                crate::control::lock_utils::lock_or_recover(registries.lock(), "ts_registries");
+            if let Some(registry) = regs.get_mut(&key)
+                && let Some(ref config_str) = coll.timeseries_config
+                && let Ok(config) = serde_json::from_str::<serde_json::Value>(config_str)
+                && let Some(partition_by) = config.get("partition_by").and_then(|v| v.as_str())
+                && let Ok(interval) =
+                    nodedb_types::timeseries::PartitionInterval::parse(partition_by)
+            {
+                registry.set_partition_interval(interval);
+            }
+        }
+
+        catalog
+            .put_collection(&coll)
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+    } else {
+        return Err(sqlstate_error("XX000", "catalog unavailable"));
+    }
+
+    tracing::info!(collection = name, "timeseries config updated");
+
+    Ok(vec![Response::Execution(pgwire::api::results::Tag::new(
+        "ALTER TIMESERIES",
+    ))])
+}
+
+fn parse_with_clause(parts: &[&str]) -> Option<String> {
+    let sql = parts.join(" ");
+    let upper = sql.to_uppercase();
+    let with_pos = upper.find("WITH")?;
+    let after_with = &sql[with_pos + 4..].trim();
+
+    let open = after_with.find('(')?;
+    let close = after_with.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    let inner = &after_with[open + 1..close];
+
+    let mut config = serde_json::Map::new();
+    for pair in inner.split(',') {
+        let pair = pair.trim();
+        if let Some(eq) = pair.find('=') {
+            let key = pair[..eq].trim().to_lowercase();
+            let val = pair[eq + 1..].trim().trim_matches('\'').trim_matches('"');
+            config.insert(key, serde_json::Value::String(val.to_string()));
+        }
+    }
+
+    if config.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(config).to_string())
+    }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    if bytes >= 1_073_741_824 {
+        format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
+    } else if bytes >= 1_048_576 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_with_clause_basic() {
+        let parts: Vec<&str> =
+            "CREATE TIMESERIES metrics WITH (partition_by = '3d', retention_period = '30d')"
+                .split_whitespace()
+                .collect();
+        let config = parse_with_clause(&parts).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&config).unwrap();
+        assert_eq!(parsed["partition_by"], "3d");
+        assert_eq!(parsed["retention_period"], "30d");
+    }
+
+    #[test]
+    fn parse_with_clause_none() {
+        let parts: Vec<&str> = "CREATE TIMESERIES metrics".split_whitespace().collect();
+        assert!(parse_with_clause(&parts).is_none());
+    }
+
+    #[test]
+    fn format_bytes_test() {
+        assert_eq!(format_bytes(500), "500 B");
+        assert_eq!(format_bytes(1500), "1.5 KB");
+        assert_eq!(format_bytes(1_500_000), "1.4 MB");
+        assert_eq!(format_bytes(2_000_000_000), "1.9 GB");
+    }
+}

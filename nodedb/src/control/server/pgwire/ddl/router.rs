@@ -104,6 +104,23 @@ pub async fn dispatch(
     if upper == "SHOW COLLECTIONS" || upper.starts_with("SHOW COLLECTIONS") {
         return Some(super::collection::show_collections(state, identity));
     }
+    // Timeseries: CREATE TIMESERIES, SHOW PARTITIONS, ALTER TIMESERIES.
+    if upper.starts_with("CREATE TIMESERIES ") {
+        return Some(super::timeseries_ddl::create_timeseries(
+            state, identity, &parts,
+        ));
+    }
+    if upper.starts_with("SHOW PARTITIONS ") {
+        return Some(super::timeseries_ddl::show_partitions(
+            state, identity, &parts,
+        ));
+    }
+    if upper.starts_with("ALTER TIMESERIES ") {
+        return Some(super::timeseries_ddl::alter_timeseries(
+            state, identity, &parts,
+        ));
+    }
+
     // Pub/Sub: CREATE TOPIC, DROP TOPIC, SHOW TOPICS, PUBLISH TO, SUBSCRIBE TO.
     if upper.starts_with("CREATE TOPIC ") {
         return Some(super::pubsub::create_topic(state, identity, &parts));
