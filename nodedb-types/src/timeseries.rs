@@ -10,6 +10,37 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+/// Error parsing a partition interval string (e.g., "1h", "3d").
+#[derive(Debug, thiserror::Error)]
+pub enum IntervalParseError {
+    #[error("invalid interval format: '{input}' — expected format like '1h', '3d', '1w'")]
+    InvalidFormat { input: String },
+
+    #[error("invalid number in interval: '{input}'")]
+    InvalidNumber { input: String },
+
+    #[error("partition interval must be > 0")]
+    ZeroInterval,
+
+    #[error("unknown unit '{unit}': expected s, m, h, d, w, M, y")]
+    UnknownUnit { unit: String },
+
+    #[error("unsupported calendar interval '{input}': {hint}")]
+    UnsupportedCalendar { input: String, hint: &'static str },
+}
+
+/// Error validating a `TieredPartitionConfig`.
+#[derive(Debug, thiserror::Error)]
+#[error("config validation: {field} — {reason}")]
+pub struct ConfigValidationError {
+    pub field: String,
+    pub reason: String,
+}
+
+// ---------------------------------------------------------------------------
 // SeriesId — identity
 // ---------------------------------------------------------------------------
 
@@ -359,7 +390,7 @@ pub enum PartitionInterval {
 
 impl PartitionInterval {
     /// Parse a duration string like "1h", "3d", "1w", "1M", "1y", "AUTO", "UNBOUNDED".
-    pub fn parse(s: &str) -> Result<Self, String> {
+    pub fn parse(s: &str) -> Result<Self, IntervalParseError> {
         let s = s.trim();
         match s.to_uppercase().as_str() {
             "AUTO" => return Ok(Self::Auto),
@@ -370,9 +401,12 @@ impl PartitionInterval {
         if s.ends_with('M') && s.len() > 1 && s[..s.len() - 1].chars().all(|c| c.is_ascii_digit()) {
             let n: u64 = s[..s.len() - 1]
                 .parse()
-                .map_err(|e| format!("invalid month count: {e}"))?;
+                .map_err(|_| IntervalParseError::InvalidNumber { input: s.into() })?;
             if n != 1 {
-                return Err("only '1M' (one calendar month) is supported".into());
+                return Err(IntervalParseError::UnsupportedCalendar {
+                    input: s.into(),
+                    hint: "only '1M' (one calendar month) is supported",
+                });
             }
             return Ok(Self::Month);
         }
@@ -380,9 +414,12 @@ impl PartitionInterval {
         if s.ends_with('y') && s.len() > 1 && s[..s.len() - 1].chars().all(|c| c.is_ascii_digit()) {
             let n: u64 = s[..s.len() - 1]
                 .parse()
-                .map_err(|e| format!("invalid year count: {e}"))?;
+                .map_err(|_| IntervalParseError::InvalidNumber { input: s.into() })?;
             if n != 1 {
-                return Err("only '1y' (one calendar year) is supported".into());
+                return Err(IntervalParseError::UnsupportedCalendar {
+                    input: s.into(),
+                    hint: "only '1y' (one calendar year) is supported",
+                });
             }
             return Ok(Self::Year);
         }
@@ -391,16 +428,14 @@ impl PartitionInterval {
         let (num_str, unit) = if s.len() > 1 && s.as_bytes()[s.len() - 1].is_ascii_alphabetic() {
             (&s[..s.len() - 1], &s[s.len() - 1..])
         } else {
-            return Err(format!(
-                "invalid partition interval '{s}': expected format like '1h', '3d', '1w'"
-            ));
+            return Err(IntervalParseError::InvalidFormat { input: s.into() });
         };
 
         let n: u64 = num_str
             .parse()
-            .map_err(|e| format!("invalid number in interval: {e}"))?;
+            .map_err(|_| IntervalParseError::InvalidNumber { input: s.into() })?;
         if n == 0 {
-            return Err("partition interval must be > 0".into());
+            return Err(IntervalParseError::ZeroInterval);
         }
 
         let ms = match unit {
@@ -410,9 +445,7 @@ impl PartitionInterval {
             "d" => n * 86_400_000,
             "w" => n * 604_800_000,
             _ => {
-                return Err(format!(
-                    "unknown unit '{unit}': expected s, m, h, d, w, M, y"
-                ));
+                return Err(IntervalParseError::UnknownUnit { unit: unit.into() });
             }
         };
 
@@ -564,15 +597,21 @@ impl TieredPartitionConfig {
     }
 
     /// Validate configuration consistency.
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if self.merge_count < 2 {
-            return Err("merge_count must be >= 2".into());
+            return Err(ConfigValidationError {
+                field: "merge_count".into(),
+                reason: "must be >= 2".into(),
+            });
         }
         if self.retention_period_ms > 0
             && self.archive_after_ms > 0
             && self.retention_period_ms < self.archive_after_ms
         {
-            return Err("retention_period must be >= archive_after".into());
+            return Err(ConfigValidationError {
+                field: "retention_period".into(),
+                reason: "must be >= archive_after".into(),
+            });
         }
         Ok(())
     }
@@ -737,8 +776,14 @@ mod tests {
             PartitionInterval::parse("UNBOUNDED").unwrap(),
             PartitionInterval::Unbounded
         );
-        assert!(PartitionInterval::parse("0h").is_err());
-        assert!(PartitionInterval::parse("2M").is_err());
+        assert!(matches!(
+            PartitionInterval::parse("0h"),
+            Err(IntervalParseError::ZeroInterval)
+        ));
+        assert!(matches!(
+            PartitionInterval::parse("2M"),
+            Err(IntervalParseError::UnsupportedCalendar { .. })
+        ));
     }
 
     #[test]
@@ -790,12 +835,14 @@ mod tests {
         assert!(cfg.validate().is_ok());
 
         cfg.merge_count = 1;
-        assert!(cfg.validate().is_err());
+        let err = cfg.validate().unwrap_err();
+        assert_eq!(err.field, "merge_count");
 
         cfg.merge_count = 10;
         cfg.retention_period_ms = 1000;
         cfg.archive_after_ms = 2000;
-        assert!(cfg.validate().is_err());
+        let err = cfg.validate().unwrap_err();
+        assert_eq!(err.field, "retention_period");
     }
 
     #[test]

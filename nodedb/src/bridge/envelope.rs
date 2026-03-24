@@ -196,6 +196,30 @@ pub enum ErrorCode {
     Internal { detail: String },
 }
 
+impl From<crate::Error> for ErrorCode {
+    fn from(e: crate::Error) -> Self {
+        match e {
+            crate::Error::DeadlineExceeded { .. } => Self::DeadlineExceeded,
+            crate::Error::RejectedConstraint { constraint, .. } => {
+                Self::RejectedConstraint { constraint }
+            }
+            crate::Error::RejectedPrevalidation { reason, .. } => {
+                Self::RejectedPrevalidation { reason }
+            }
+            crate::Error::CollectionNotFound { .. } | crate::Error::DocumentNotFound { .. } => {
+                Self::NotFound
+            }
+            crate::Error::RejectedAuthz { .. } => Self::RejectedAuthz,
+            crate::Error::ConflictRetry { .. } => Self::ConflictRetry,
+            crate::Error::FanOutExceeded { .. } => Self::FanOutExceeded,
+            crate::Error::MemoryExhausted { .. } => Self::ResourcesExhausted,
+            other => Self::Internal {
+                detail: other.to_string(),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
