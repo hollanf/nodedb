@@ -10,9 +10,12 @@
 use std::collections::{HashMap, VecDeque};
 
 /// Composite cache key: `(tenant_id, collection, document_id)`.
-/// Stored as a single `String` to avoid triple-hashing.
-/// Format: `"{tenant_id}:{collection}:{document_id}"`.
-type CacheKey = String;
+#[derive(Eq, PartialEq, Hash, Clone)]
+struct CacheKey {
+    tenant_id: u32,
+    collection: String,
+    document_id: String,
+}
 
 /// Bounded LRU document cache.
 ///
@@ -68,7 +71,9 @@ impl DocCache {
         let key = Self::make_key(tenant_id, collection, document_id);
 
         // Update in-place if already present (no order change needed for FIFO).
-        #[allow(clippy::map_entry)] // Entry API can't be used here due to eviction self-borrow.
+        // Cannot use Entry API: the else branch mutates self.order and self.entries
+        // together, which would conflict with the entry borrow.
+        #[allow(clippy::map_entry)]
         if self.entries.contains_key(&key) {
             self.entries.insert(key, value.to_vec());
             return;
@@ -123,7 +128,11 @@ impl DocCache {
     }
 
     fn make_key(tenant_id: u32, collection: &str, document_id: &str) -> CacheKey {
-        format!("{tenant_id}:{collection}:{document_id}")
+        CacheKey {
+            tenant_id,
+            collection: collection.to_string(),
+            document_id: document_id.to_string(),
+        }
     }
 }
 

@@ -3,41 +3,29 @@
 //! Stores term → posting list mappings in redb. Each posting records
 //! the document ID, term frequency, and token positions (for phrase matching).
 //!
-//! BM25 scoring parameters:
-//! - k1 = 1.2 (term frequency saturation)
-//! - b = 0.75 (document length normalization)
-//!
-//! Supports:
-//! - Exact term matching
-//! - Fuzzy matching (Levenshtein) with score discount
-//! - Phrase matching via position tracking
-//! - Multi-term AND/OR query modes
+//! Search logic is in `inverted_search.rs`, highlighting in `inverted_highlight.rs`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use redb::{Database, ReadableTable, TableDefinition, WriteTransaction};
-use tracing::debug;
+use tracing::{debug, warn};
 
-use super::fuzzy;
 use super::text_analyzer;
 
 /// Inverted index table: key = "term", value = MessagePack-encoded Vec<Posting>.
-const POSTINGS: TableDefinition<&str, &[u8]> = TableDefinition::new("text.postings");
+pub(super) const POSTINGS: TableDefinition<&str, &[u8]> = TableDefinition::new("text.postings");
 
 /// Document length table: key = "doc_id", value = u32 (number of tokens).
-const DOC_LENGTHS: TableDefinition<&str, &[u8]> = TableDefinition::new("text.doc_lengths");
+pub(super) const DOC_LENGTHS: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("text.doc_lengths");
 
 /// Index metadata: key = name, value = MessagePack bytes.
 const INDEX_META: TableDefinition<&str, &[u8]> = TableDefinition::new("text.meta");
 
-// Reserved for future incremental stats caching.
-// const META_TOTAL_DOCS: &str = "total_docs";
-// const META_AVG_DOC_LEN: &str = "avg_doc_len";
-
 /// BM25 parameters.
-const BM25_K1: f32 = 1.2;
-const BM25_B: f32 = 0.75;
+pub(super) const BM25_K1: f32 = 1.2;
+pub(super) const BM25_B: f32 = 0.75;
 
 /// A single posting entry for a term in a document.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -45,6 +33,16 @@ pub struct Posting {
     pub doc_id: String,
     pub term_freq: u32,
     pub positions: Vec<u32>,
+}
+
+/// Boolean query mode for multi-term searches.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum QueryMode {
+    /// All query terms must match (intersection). Default.
+    #[default]
+    And,
+    /// Any query term can match (union).
+    Or,
 }
 
 /// A scored search result from the inverted index.
@@ -56,6 +54,14 @@ pub struct TextSearchResult {
     pub fuzzy: bool,
 }
 
+/// A character-level offset of a matched term in the original text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchOffset {
+    pub start: usize,
+    pub end: usize,
+    pub term: String,
+}
+
 /// Full-text inverted index backed by redb.
 pub struct InvertedIndex {
     db: Arc<Database>,
@@ -63,8 +69,6 @@ pub struct InvertedIndex {
 
 impl InvertedIndex {
     /// Open or create an inverted index at the given redb database.
-    ///
-    /// Shares the redb database with the sparse engine (different tables).
     pub fn open(db: Arc<Database>) -> crate::Result<Self> {
         let write_txn = db.begin_write().map_err(|e| crate::Error::Storage {
             engine: "inverted".into(),
@@ -98,11 +102,12 @@ impl InvertedIndex {
         Ok(Self { db })
     }
 
+    /// Access the underlying database (for sub-modules).
+    pub(super) fn db(&self) -> &Database {
+        &self.db
+    }
+
     /// Index a document's text content.
-    ///
-    /// Tokenizes the text, builds posting entries with positions,
-    /// and upserts into the inverted index. Call this when a document
-    /// is inserted or updated.
     pub fn index_document(&self, collection: &str, doc_id: &str, text: &str) -> crate::Result<()> {
         let write_txn = self.db.begin_write().map_err(|e| crate::Error::Storage {
             engine: "inverted".into(),
@@ -116,10 +121,7 @@ impl InvertedIndex {
         Ok(())
     }
 
-    /// Index a document's text content within an externally-owned write transaction.
-    ///
-    /// Same logic as `index_document` but uses the caller's transaction,
-    /// enabling document + inverted index + stats to share a single commit.
+    /// Index a document within an externally-owned write transaction.
     pub fn index_document_in_txn(
         &self,
         txn: &WriteTransaction,
@@ -130,9 +132,7 @@ impl InvertedIndex {
         self.write_index_data(txn, collection, doc_id, text)
     }
 
-    /// Core indexing logic: tokenize text, upsert postings and doc length.
-    ///
-    /// Shared by both `index_document` (own txn) and `index_document_in_txn` (external txn).
+    /// Core indexing logic shared by both index methods.
     fn write_index_data(
         &self,
         txn: &WriteTransaction,
@@ -145,7 +145,6 @@ impl InvertedIndex {
             return Ok(());
         }
 
-        // Build per-term posting with positions.
         let mut term_postings: HashMap<&str, (u32, Vec<u32>)> = HashMap::new();
         for (pos, token) in tokens.iter().enumerate() {
             let entry = term_postings
@@ -158,7 +157,6 @@ impl InvertedIndex {
         let scoped_doc_id = format!("{collection}:{doc_id}");
         let doc_len = tokens.len() as u32;
 
-        // Write postings.
         let mut postings_table = txn
             .open_table(POSTINGS)
             .map_err(|e| crate::Error::Storage {
@@ -181,7 +179,6 @@ impl InvertedIndex {
                 .and_then(|v| rmp_serde::from_slice(v.value()).ok())
                 .unwrap_or_default();
 
-            // Remove existing posting for this doc (update case).
             existing.retain(|p| p.doc_id != scoped_doc_id);
             existing.push(posting);
 
@@ -196,10 +193,8 @@ impl InvertedIndex {
                     detail: format!("insert posting: {e}"),
                 })?;
         }
-        // Drop postings_table before opening doc_lengths (redb single-table-at-a-time).
         drop(postings_table);
 
-        // Write document length.
         let mut lengths = txn
             .open_table(DOC_LENGTHS)
             .map_err(|e| crate::Error::Storage {
@@ -238,7 +233,6 @@ impl InvertedIndex {
                         detail: format!("open postings: {e}"),
                     })?;
 
-            // Scan all postings for this collection and remove entries for this doc.
             let prefix = format!("{collection}:");
             let end = format!("{collection}:\u{ffff}");
             let keys: Vec<String> = postings_table
@@ -250,7 +244,6 @@ impl InvertedIndex {
                 .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
                 .collect();
 
-            // Collect updates: (key, new_postings_bytes_or_none_to_delete).
             let mut updates: Vec<(String, Option<Vec<u8>>)> = Vec::new();
             for key in &keys {
                 if let Ok(Some(val)) = postings_table.get(key.as_str()) {
@@ -269,19 +262,21 @@ impl InvertedIndex {
                 }
             }
 
-            // Apply updates.
             for (key, new_val) in &updates {
                 match new_val {
                     None => {
-                        let _ = postings_table.remove(key.as_str());
+                        if let Err(e) = postings_table.remove(key.as_str()) {
+                            warn!(%collection, %doc_id, error = %e, "failed to remove posting");
+                        }
                     }
                     Some(bytes) => {
-                        let _ = postings_table.insert(key.as_str(), bytes.as_slice());
+                        if let Err(e) = postings_table.insert(key.as_str(), bytes.as_slice()) {
+                            warn!(%collection, %doc_id, error = %e, "failed to update posting");
+                        }
                     }
                 }
             }
 
-            // Remove doc length.
             let mut lengths =
                 write_txn
                     .open_table(DOC_LENGTHS)
@@ -289,7 +284,9 @@ impl InvertedIndex {
                         engine: "inverted".into(),
                         detail: format!("open doc_lengths: {e}"),
                     })?;
-            let _ = lengths.remove(scoped_doc_id.as_str());
+            if let Err(e) = lengths.remove(scoped_doc_id.as_str()) {
+                warn!(%collection, %doc_id, error = %e, "failed to remove doc length");
+            }
         }
         write_txn.commit().map_err(|e| crate::Error::Storage {
             engine: "inverted".into(),
@@ -297,201 +294,6 @@ impl InvertedIndex {
         })?;
 
         Ok(())
-    }
-
-    /// Search the inverted index using BM25 scoring.
-    ///
-    /// Tokenizes the query, looks up each term in the index, computes
-    /// BM25 scores, and returns results sorted by relevance.
-    ///
-    /// `fuzzy_enabled`: if true, terms not found exactly are fuzzy-matched
-    /// with a score discount.
-    pub fn search(
-        &self,
-        collection: &str,
-        query: &str,
-        top_k: usize,
-        fuzzy_enabled: bool,
-    ) -> crate::Result<Vec<TextSearchResult>> {
-        let query_tokens = text_analyzer::analyze(query);
-        if query_tokens.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let read_txn = self.db.begin_read().map_err(|e| crate::Error::Storage {
-            engine: "inverted".into(),
-            detail: format!("read txn: {e}"),
-        })?;
-        let postings_table = read_txn
-            .open_table(POSTINGS)
-            .map_err(|e| crate::Error::Storage {
-                engine: "inverted".into(),
-                detail: format!("open postings: {e}"),
-            })?;
-        let lengths_table =
-            read_txn
-                .open_table(DOC_LENGTHS)
-                .map_err(|e| crate::Error::Storage {
-                    engine: "inverted".into(),
-                    detail: format!("open doc_lengths: {e}"),
-                })?;
-
-        // Get index stats for BM25.
-        let (total_docs, avg_doc_len) = self.index_stats(collection)?;
-        if total_docs == 0 {
-            return Ok(Vec::new());
-        }
-
-        // Accumulate BM25 scores per document across all query terms.
-        let mut doc_scores: HashMap<String, (f32, bool)> = HashMap::new(); // (score, fuzzy)
-
-        for token in &query_tokens {
-            let term_key = format!("{collection}:{token}");
-
-            // Try exact match first.
-            let (postings, is_fuzzy) = if let Ok(Some(val)) = postings_table.get(term_key.as_str())
-            {
-                let list: Vec<Posting> = rmp_serde::from_slice(val.value()).unwrap_or_default();
-                (list, false)
-            } else if fuzzy_enabled {
-                // Fuzzy fallback: scan collection terms for close matches.
-                self.fuzzy_lookup(collection, token, &postings_table)?
-            } else {
-                (Vec::new(), false)
-            };
-
-            if postings.is_empty() {
-                continue;
-            }
-
-            // IDF = ln((N - df + 0.5) / (df + 0.5) + 1)
-            let df = postings.len() as f32;
-            let idf = ((total_docs as f32 - df + 0.5) / (df + 0.5) + 1.0).ln();
-
-            for posting in &postings {
-                // Get document length.
-                let doc_len = lengths_table
-                    .get(posting.doc_id.as_str())
-                    .ok()
-                    .flatten()
-                    .and_then(|v| rmp_serde::from_slice::<u32>(v.value()).ok())
-                    .unwrap_or(1) as f32;
-
-                // BM25 term score.
-                let tf = posting.term_freq as f32;
-                let tf_norm = (tf * (BM25_K1 + 1.0))
-                    / (tf + BM25_K1 * (1.0 - BM25_B + BM25_B * doc_len / avg_doc_len));
-                let mut score = idf * tf_norm;
-
-                // Apply fuzzy discount.
-                if is_fuzzy {
-                    score *= fuzzy::fuzzy_discount(1);
-                }
-
-                let entry = doc_scores
-                    .entry(posting.doc_id.clone())
-                    .or_insert((0.0, false));
-                entry.0 += score;
-                if is_fuzzy {
-                    entry.1 = true;
-                }
-            }
-        }
-
-        // Sort by score descending, take top_k.
-        let mut results: Vec<TextSearchResult> = doc_scores
-            .into_iter()
-            .map(|(doc_id, (score, fuzzy_flag))| TextSearchResult {
-                doc_id,
-                score,
-                fuzzy: fuzzy_flag,
-            })
-            .collect();
-        results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        results.truncate(top_k);
-
-        Ok(results)
-    }
-
-    /// Fuzzy lookup: find the best matching term in the collection's postings.
-    fn fuzzy_lookup(
-        &self,
-        collection: &str,
-        query_term: &str,
-        postings_table: &redb::ReadOnlyTable<&str, &[u8]>,
-    ) -> crate::Result<(Vec<Posting>, bool)> {
-        let prefix = format!("{collection}:");
-        let end = format!("{collection}:\u{ffff}");
-
-        // Collect all terms for this collection (strip prefix for fuzzy matching).
-        let terms: Vec<String> = postings_table
-            .range(prefix.as_str()..end.as_str())
-            .map_err(|e| crate::Error::Storage {
-                engine: "inverted".into(),
-                detail: format!("fuzzy range: {e}"),
-            })?
-            .filter_map(|r| {
-                r.ok()
-                    .and_then(|(k, _)| k.value().strip_prefix(&prefix).map(String::from))
-            })
-            .collect();
-
-        let matches = fuzzy::fuzzy_match(query_term, terms.iter().map(String::as_str));
-        if let Some((best_term, _dist)) = matches.first() {
-            let key = format!("{collection}:{best_term}");
-            if let Ok(Some(val)) = postings_table.get(key.as_str()) {
-                let list: Vec<Posting> = rmp_serde::from_slice(val.value()).unwrap_or_default();
-                return Ok((list, true));
-            }
-        }
-
-        Ok((Vec::new(), false))
-    }
-
-    /// Get total document count and average document length for a collection.
-    fn index_stats(&self, collection: &str) -> crate::Result<(usize, f32)> {
-        let read_txn = self.db.begin_read().map_err(|e| crate::Error::Storage {
-            engine: "inverted".into(),
-            detail: format!("read txn: {e}"),
-        })?;
-        let lengths_table =
-            read_txn
-                .open_table(DOC_LENGTHS)
-                .map_err(|e| crate::Error::Storage {
-                    engine: "inverted".into(),
-                    detail: format!("open doc_lengths: {e}"),
-                })?;
-
-        let prefix = format!("{collection}:");
-        let end = format!("{collection}:\u{ffff}");
-        let mut total_len = 0u64;
-        let mut count = 0usize;
-
-        for (_, val) in lengths_table
-            .range(prefix.as_str()..end.as_str())
-            .map_err(|e| crate::Error::Storage {
-                engine: "inverted".into(),
-                detail: format!("range: {e}"),
-            })?
-            .flatten()
-        {
-            if let Ok(len) = rmp_serde::from_slice::<u32>(val.value()) {
-                total_len += len as u64;
-                count += 1;
-            }
-        }
-
-        let avg = if count > 0 {
-            total_len as f32 / count as f32
-        } else {
-            1.0
-        };
-
-        Ok((count, avg))
     }
 }
 
@@ -519,7 +321,6 @@ mod tests {
 
         let results = idx.search("docs", "brown fox", 10, false).unwrap();
         assert!(!results.is_empty());
-        // d1 mentions both "brown" and "fox" → highest score.
         assert_eq!(results[0].doc_id, "docs:d1");
     }
 
@@ -531,7 +332,6 @@ mod tests {
         idx.index_document("docs", "d2", "the cat sat on a mat")
             .unwrap();
 
-        // "databases" stems to "databas", "distributed" to "distribut".
         let results = idx
             .search("docs", "database distribution", 10, false)
             .unwrap();
@@ -545,7 +345,6 @@ mod tests {
         idx.index_document("docs", "d1", "distributed database systems")
             .unwrap();
 
-        // "databse" is a typo for "database" — fuzzy should find it.
         let results = idx.search("docs", "databse", 10, true).unwrap();
         assert!(!results.is_empty());
         assert!(results[0].fuzzy);
@@ -570,7 +369,6 @@ mod tests {
         idx.index_document("docs", "d1", "some text here").unwrap();
 
         let results = idx.search("docs", "the a is", 10, false).unwrap();
-        // All stop words → empty query → no results.
         assert!(results.is_empty());
     }
 

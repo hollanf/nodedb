@@ -127,6 +127,89 @@ impl TextAnalyzer for LanguageAnalyzer {
     }
 }
 
+/// N-gram analyzer: generates all character n-grams of sizes min..=max for each token.
+///
+/// Useful for substring matching and partial-word search (e.g., autocomplete).
+/// Example: "database" with min=3, max=4 → ["dat", "ata", "tab", "aba", "bas", "ase", "data", "atab", "taba", "abas", "base"]
+pub struct NgramAnalyzer {
+    min: usize,
+    max: usize,
+}
+
+impl NgramAnalyzer {
+    pub fn new(min: usize, max: usize) -> Self {
+        Self {
+            min: min.max(1),
+            max: max.max(min.max(1)),
+        }
+    }
+}
+
+impl TextAnalyzer for NgramAnalyzer {
+    fn analyze(&self, text: &str) -> Vec<String> {
+        let lower = text.to_lowercase();
+        let mut ngrams = Vec::new();
+        for word in lower.split(|c: char| !c.is_alphanumeric()) {
+            if word.is_empty() {
+                continue;
+            }
+            let chars: Vec<char> = word.chars().collect();
+            for n in self.min..=self.max {
+                if n > chars.len() {
+                    break;
+                }
+                for window in chars.windows(n) {
+                    ngrams.push(window.iter().collect());
+                }
+            }
+        }
+        ngrams
+    }
+
+    fn name(&self) -> &str {
+        "ngram"
+    }
+}
+
+/// Edge n-gram analyzer: generates n-grams anchored to the start of each token.
+///
+/// Useful for prefix/autocomplete search.
+/// Example: "database" with min=2, max=5 → ["da", "dat", "data", "datab"]
+pub struct EdgeNgramAnalyzer {
+    min: usize,
+    max: usize,
+}
+
+impl EdgeNgramAnalyzer {
+    pub fn new(min: usize, max: usize) -> Self {
+        Self {
+            min: min.max(1),
+            max: max.max(min.max(1)),
+        }
+    }
+}
+
+impl TextAnalyzer for EdgeNgramAnalyzer {
+    fn analyze(&self, text: &str) -> Vec<String> {
+        let lower = text.to_lowercase();
+        let mut ngrams = Vec::new();
+        for word in lower.split(|c: char| !c.is_alphanumeric()) {
+            if word.is_empty() {
+                continue;
+            }
+            let chars: Vec<char> = word.chars().collect();
+            for n in self.min..=self.max.min(chars.len()) {
+                ngrams.push(chars[..n].iter().collect());
+            }
+        }
+        ngrams
+    }
+
+    fn name(&self) -> &str {
+        "edge_ngram"
+    }
+}
+
 /// Synonym map: expands query terms with their synonyms at query time.
 ///
 /// Each entry maps a term to a set of synonym terms. When a query term
@@ -220,11 +303,31 @@ impl AnalyzerRegistry {
     ///
     /// Supported names: "standard", "simple", "keyword", or any Snowball
     /// language ("english", "german", "french", "spanish", etc.).
+    /// Set the analyzer for a collection.
+    ///
+    /// Supported names: "standard", "simple", "keyword", "ngram", "edge_ngram",
+    /// or any Snowball language ("english", "german", "french", etc.).
+    ///
+    /// N-gram analyzers accept optional parameters: "ngram:2:4" (min:max).
     pub fn set_analyzer(&mut self, collection: &str, analyzer_name: &str) -> bool {
         let analyzer: Box<dyn TextAnalyzer> = match analyzer_name {
             "standard" => Box::new(StandardAnalyzer),
             "simple" => Box::new(SimpleAnalyzer),
             "keyword" => Box::new(KeywordAnalyzer),
+            "ngram" => Box::new(NgramAnalyzer::new(3, 4)),
+            "edge_ngram" => Box::new(EdgeNgramAnalyzer::new(2, 5)),
+            name if name.starts_with("ngram:") => {
+                let parts: Vec<&str> = name.splitn(3, ':').collect();
+                let min = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(3);
+                let max = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(4);
+                Box::new(NgramAnalyzer::new(min, max))
+            }
+            name if name.starts_with("edge_ngram:") => {
+                let parts: Vec<&str> = name.splitn(3, ':').collect();
+                let min = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
+                let max = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
+                Box::new(EdgeNgramAnalyzer::new(min, max))
+            }
             lang => match LanguageAnalyzer::new(lang) {
                 Some(a) => Box::new(a),
                 None => return false,
@@ -445,5 +548,72 @@ mod tests {
         // German stemming should apply.
         assert!(!tokens.is_empty());
         assert!(tokens.iter().all(|t| t == &t.to_lowercase()));
+    }
+
+    #[test]
+    fn ngram_analyzer() {
+        let analyzer = NgramAnalyzer::new(3, 4);
+        let tokens = analyzer.analyze("hello");
+        // 3-grams: hel, ell, llo  (3)
+        // 4-grams: hell, ello     (2)
+        assert_eq!(tokens.len(), 5);
+        assert!(tokens.contains(&"hel".to_string()));
+        assert!(tokens.contains(&"ell".to_string()));
+        assert!(tokens.contains(&"llo".to_string()));
+        assert!(tokens.contains(&"hell".to_string()));
+        assert!(tokens.contains(&"ello".to_string()));
+    }
+
+    #[test]
+    fn ngram_short_word() {
+        let analyzer = NgramAnalyzer::new(3, 5);
+        let tokens = analyzer.analyze("ab");
+        // "ab" is shorter than min=3, no n-grams produced.
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn edge_ngram_analyzer() {
+        let analyzer = EdgeNgramAnalyzer::new(2, 5);
+        let tokens = analyzer.analyze("database");
+        // 2: "da", 3: "dat", 4: "data", 5: "datab"
+        assert_eq!(tokens.len(), 4);
+        assert_eq!(tokens[0], "da");
+        assert_eq!(tokens[1], "dat");
+        assert_eq!(tokens[2], "data");
+        assert_eq!(tokens[3], "datab");
+    }
+
+    #[test]
+    fn edge_ngram_multiple_words() {
+        let analyzer = EdgeNgramAnalyzer::new(2, 3);
+        let tokens = analyzer.analyze("foo bar");
+        // "fo", "foo", "ba", "bar"
+        assert_eq!(tokens.len(), 4);
+        assert!(tokens.contains(&"fo".to_string()));
+        assert!(tokens.contains(&"foo".to_string()));
+        assert!(tokens.contains(&"ba".to_string()));
+        assert!(tokens.contains(&"bar".to_string()));
+    }
+
+    #[test]
+    fn registry_ngram_with_params() {
+        let mut registry = AnalyzerRegistry::new();
+        assert!(registry.set_analyzer("col", "ngram:2:3"));
+        let tokens = registry.analyze_for_index("col", "hello");
+        // 2-grams: he, el, ll, lo (4), 3-grams: hel, ell, llo (3) = 7
+        assert_eq!(tokens.len(), 7);
+        assert!(tokens.contains(&"he".to_string()));
+    }
+
+    #[test]
+    fn registry_edge_ngram() {
+        let mut registry = AnalyzerRegistry::new();
+        assert!(registry.set_analyzer("col", "edge_ngram:1:3"));
+        let tokens = registry.analyze_for_index("col", "test");
+        // 1: "t", 2: "te", 3: "tes"
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[0], "t");
+        assert_eq!(tokens[2], "tes");
     }
 }
