@@ -104,6 +104,23 @@ pub async fn dispatch(
     if upper == "SHOW COLLECTIONS" || upper.starts_with("SHOW COLLECTIONS") {
         return Some(super::collection::show_collections(state, identity));
     }
+    // Pub/Sub: CREATE TOPIC, DROP TOPIC, SHOW TOPICS, PUBLISH TO, SUBSCRIBE TO.
+    if upper.starts_with("CREATE TOPIC ") {
+        return Some(super::pubsub::create_topic(state, identity, &parts));
+    }
+    if upper.starts_with("DROP TOPIC ") {
+        return Some(super::pubsub::drop_topic(state, identity, &parts));
+    }
+    if upper == "SHOW TOPICS" || upper.starts_with("SHOW TOPICS") {
+        return Some(super::pubsub::show_topics(state));
+    }
+    if upper.starts_with("PUBLISH TO ") {
+        return Some(super::pubsub::publish_to(state, identity, sql, &parts));
+    }
+    if upper.starts_with("SUBSCRIBE TO ") {
+        return Some(super::pubsub::subscribe_to(state, identity, sql, &parts));
+    }
+
     if upper.starts_with("CREATE INDEX ") || upper.starts_with("CREATE UNIQUE INDEX ") {
         return Some(super::collection::create_index(
             state, identity, &parts, sql,

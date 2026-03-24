@@ -87,6 +87,9 @@ pub struct SharedState {
     /// Migration tracker for observability (None in single-node mode).
     pub migration_tracker: Option<Arc<nodedb_cluster::MigrationTracker>>,
 
+    /// Pub/Sub topic registry with persistent message storage.
+    pub topic_registry: crate::control::pubsub::TopicRegistry,
+
     /// Shape subscription registry for Lite client sync.
     /// Persists across handler invocations; export/import for disk persistence.
     pub shape_registry: crate::control::server::sync::shape::ShapeRegistry,
@@ -131,6 +134,7 @@ impl SharedState {
             sync_dlq: Mutex::new(SyncDlq::new(DlqConfig::default())),
             audit_retention_days: 0,
             idle_timeout_secs: 0,
+            topic_registry: crate::control::pubsub::TopicRegistry::new(10_000),
             shape_registry: crate::control::server::sync::shape::ShapeRegistry::new(),
             change_stream: crate::control::change_stream::ChangeStream::new(4096),
             connections_rejected: AtomicU64::new(0),
@@ -192,6 +196,7 @@ impl SharedState {
             sync_dlq: Mutex::new(SyncDlq::new(DlqConfig::default())),
             audit_retention_days: auth_config.audit_retention_days,
             idle_timeout_secs: auth_config.idle_timeout_secs,
+            topic_registry: crate::control::pubsub::TopicRegistry::new(10_000),
             shape_registry: crate::control::server::sync::shape::ShapeRegistry::new(),
             change_stream: crate::control::change_stream::ChangeStream::new(4096),
             connections_rejected: AtomicU64::new(0),

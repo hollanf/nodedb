@@ -8,6 +8,7 @@ pub mod event_trigger;
 pub mod forward;
 pub mod metrics;
 pub mod planner;
+pub mod pubsub;
 pub mod request_tracker;
 pub mod rolling_upgrade;
 pub mod router;

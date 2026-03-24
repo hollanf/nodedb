@@ -331,8 +331,8 @@ mod tests {
         assert_eq!(stream.events_published(), 10);
         assert_eq!(stream.last_lsn(), 9);
 
-        // Subscription was dropped at end of loop scope above,
-        // Drop impl automatically decrements the counter.
+        // Drop the subscription — Drop impl decrements the counter.
+        drop(_sub);
         assert_eq!(stream.subscriber_count(), 0);
     }
 }
