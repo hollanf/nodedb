@@ -160,17 +160,15 @@ impl DoubleWriteBuffer {
             return Ok(());
         }
 
-        // Write header with updated count and position.
+        // Write header atomically as a single write_all to prevent a crash
+        // between partial header writes from corrupting the DWB metadata.
+        let mut header = [0u8; DWB_HEADER_SIZE];
+        header[0..4].copy_from_slice(&DWB_MAGIC.to_le_bytes());
+        header[4..8].copy_from_slice(&self.count.to_le_bytes());
+        header[8..12].copy_from_slice(&self.write_pos.to_le_bytes());
+
         self.file.seek(SeekFrom::Start(0)).map_err(WalError::Io)?;
-        self.file
-            .write_all(&DWB_MAGIC.to_le_bytes())
-            .map_err(WalError::Io)?;
-        self.file
-            .write_all(&self.count.to_le_bytes())
-            .map_err(WalError::Io)?;
-        self.file
-            .write_all(&self.write_pos.to_le_bytes())
-            .map_err(WalError::Io)?;
+        self.file.write_all(&header).map_err(WalError::Io)?;
 
         self.file.sync_all().map_err(WalError::Io)?;
         self.dirty = false;
@@ -185,14 +183,16 @@ impl DoubleWriteBuffer {
 
     /// Try to recover a WAL record by LSN from the double-write buffer.
     ///
-    /// Scans all slots for a record matching the given LSN with valid CRC.
-    /// Returns `Some(WalRecord)` if found, `None` if not.
+    /// Scans **all** DWB_CAPACITY slots for a record matching the given LSN
+    /// with valid CRC. We scan every slot rather than relying on `count` or
+    /// `write_pos` because the header itself may be stale or corrupted after
+    /// a crash. Each slot is self-describing: the record's own CRC validates
+    /// whether the slot contains usable data.
     pub fn recover_record(&mut self, target_lsn: u64) -> Result<Option<WalRecord>> {
-        let slots_to_check = self.count.min(DWB_CAPACITY as u32) as usize;
+        let slot_size = 4 + HEADER_SIZE as u64 + 64 * 1024;
 
-        for i in 0..slots_to_check {
-            let slot_offset =
-                DWB_HEADER_SIZE as u64 + (i as u64) * (4 + HEADER_SIZE as u64 + 64 * 1024);
+        for i in 0..DWB_CAPACITY {
+            let slot_offset = DWB_HEADER_SIZE as u64 + (i as u64) * slot_size;
 
             self.file
                 .seek(SeekFrom::Start(slot_offset))
@@ -349,5 +349,54 @@ mod tests {
         dwb.flush().unwrap();
         dwb.flush().unwrap(); // Idempotent.
         assert!(!dwb.dirty);
+    }
+
+    #[test]
+    fn recover_after_wraparound() {
+        let dir = tempfile::tempdir().unwrap();
+        let dwb_path = dir.path().join("wrap.dwb");
+
+        let mut dwb = DoubleWriteBuffer::open(&dwb_path).unwrap();
+
+        // Write DWB_CAPACITY + 5 records to force wrap-around.
+        // Records with LSN 1..=DWB_CAPACITY fill all slots, then
+        // LSN DWB_CAPACITY+1..=DWB_CAPACITY+5 overwrite slots 0..4.
+        let total = super::DWB_CAPACITY as u64 + 5;
+        for lsn in 1..=total {
+            let record = WalRecord::new(
+                RecordType::Put as u16,
+                lsn,
+                1,
+                0,
+                format!("wrap-{lsn}").into_bytes(),
+                None,
+            )
+            .unwrap();
+            dwb.write_record_deferred(&record).unwrap();
+        }
+        dwb.flush().unwrap();
+
+        // The most recent records (after wrap) should be recoverable.
+        for lsn in (total - 4)..=total {
+            let recovered = dwb.recover_record(lsn).unwrap();
+            assert!(
+                recovered.is_some(),
+                "LSN {lsn} should be recoverable after wrap-around"
+            );
+            assert_eq!(
+                recovered.unwrap().payload,
+                format!("wrap-{lsn}").into_bytes()
+            );
+        }
+
+        // Old records that were overwritten should NOT be recoverable
+        // (their slots were overwritten by newer records).
+        for lsn in 1..=5u64 {
+            let recovered = dwb.recover_record(lsn).unwrap();
+            assert!(
+                recovered.is_none(),
+                "LSN {lsn} should have been overwritten by wrap-around"
+            );
+        }
     }
 }

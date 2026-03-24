@@ -214,8 +214,20 @@ impl WalWriter {
         // Write to double-write buffer (deferred — no fsync yet).
         // The DWB is fsynced in batch during `sync()`, before the WAL fsync.
         // This amortizes DWB fsync cost across the entire group commit batch.
-        if let Some(dwb) = &mut self.double_write {
-            let _ = dwb.write_record_deferred(&record); // Best-effort — DWB failure is non-fatal.
+        //
+        // DWB failure is non-fatal for the write itself (the WAL is the
+        // authoritative store), but we log a warning because it means
+        // torn-write recovery is degraded. If the DWB is persistently
+        // broken, we detach it to avoid repeated error noise.
+        if let Some(dwb) = &mut self.double_write
+            && let Err(e) = dwb.write_record_deferred(&record)
+        {
+            tracing::warn!(
+                lsn = lsn,
+                error = %e,
+                "DWB write failed — torn-write protection degraded, detaching DWB"
+            );
+            self.double_write = None;
         }
 
         let header_bytes = record.header.to_bytes();
@@ -251,8 +263,17 @@ impl WalWriter {
             return Ok(());
         }
         // Flush DWB first — records must be durable in DWB before WAL.
-        if let Some(dwb) = &mut self.double_write {
-            let _ = dwb.flush(); // Best-effort — DWB failure is non-fatal.
+        // If DWB flush fails, torn-write protection is lost for this batch.
+        // We log a warning and detach the DWB rather than silently continuing
+        // as if torn-write protection is active.
+        if let Some(dwb) = &mut self.double_write
+            && let Err(e) = dwb.flush()
+        {
+            tracing::warn!(
+                error = %e,
+                "DWB flush failed — torn-write protection lost for this batch, detaching DWB"
+            );
+            self.double_write = None;
         }
         self.flush_buffer()?;
         self.file.sync_all()?;

@@ -8,12 +8,23 @@
 //! 2. One thread becomes the "commit leader" (acquires the commit lock).
 //! 3. The leader drains all pending writes, appends them to the WAL writer,
 //!    issues a single `fsync`, and advances `durable_lsn`.
-//! 4. Non-leader threads spin-wait on `durable_lsn` until their write is covered.
+//! 4. Non-leader threads discover their write was already committed when the
+//!    pending queue is empty after acquiring the commit lock. They verify the
+//!    commit succeeded via `last_commit_failed` before returning `durable: true`.
 //!
 //! This converts N fsyncs into 1 fsync, which is critical for NVMe performance.
+//!
+//! ## Safety invariants
+//!
+//! - `durable_lsn` is updated atomically **only after** a successful fsync.
+//! - If fsync fails, `last_commit_failed` is set so non-leader threads whose
+//!   writes were in the failed batch propagate the error instead of falsely
+//!   reporting `durable: true`.
+//! - Fsync failure is treated as **fatal for the batch** — the data may or may not
+//!   be on disk, and the caller must handle the error (retry, abort, etc.).
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::error::{Result, WalError};
 use crate::writer::WalWriter;
@@ -45,13 +56,27 @@ pub struct CommitResult {
 /// Multiple threads call `submit()` which blocks until the record is durable.
 /// Internally, one thread becomes the commit leader and batches all pending
 /// writes into a single WAL flush.
+///
+/// ## Safety invariants
+///
+/// - A non-leader thread only returns `durable: true` if it confirms its
+///   write was drained from the pending queue **and** the leader's fsync
+///   succeeded (checked via `last_commit_failed`).
+/// - If the leader's fsync fails, all non-leader threads whose writes were
+///   in the failed batch receive an error.
+/// - `durable_lsn` is updated **only after** a successful fsync.
 pub struct GroupCommitter {
-    /// Pending writes queue. The mutex also serves as leader election:
-    /// the thread that holds it during commit is the leader.
+    /// Pending writes queue.
     pending: Mutex<Vec<PendingWrite>>,
 
     /// The durable LSN — all records with LSN <= this value are on disk.
     durable_lsn: AtomicU64,
+
+    /// Set to `true` if the most recent commit batch failed (fsync error).
+    /// Non-leader threads whose writes were part of the failed batch check
+    /// this flag and propagate the error instead of returning `durable: true`.
+    /// Cleared at the start of each successful commit.
+    last_commit_failed: AtomicBool,
 
     /// Serializes commit operations (drain + write + fsync).
     /// Separate from `pending` so enqueue doesn't block on I/O.
@@ -64,6 +89,7 @@ impl GroupCommitter {
         Self {
             pending: Mutex::new(Vec::with_capacity(1024)),
             durable_lsn: AtomicU64::new(0),
+            last_commit_failed: AtomicBool::new(false),
             commit_lock: Mutex::new(()),
         }
     }
@@ -71,7 +97,8 @@ impl GroupCommitter {
     /// Submit a write and block until it's durable.
     ///
     /// Returns the assigned LSN once the batch containing this write has been
-    /// fsynced to disk.
+    /// fsynced to disk. If fsync fails, the error is propagated to all threads
+    /// whose writes were in the failed batch.
     pub fn submit(&self, writer: &Mutex<WalWriter>, write: PendingWrite) -> Result<CommitResult> {
         // Enqueue the write.
         {
@@ -92,8 +119,8 @@ impl GroupCommitter {
             })?;
 
         // Drain pending writes. If the previous leader already committed our
-        // write, the pending queue might be empty (or only contain writes from
-        // threads that enqueued after us).
+        // write, the pending queue will be empty (our write was drained by
+        // that leader). If the queue is non-empty, we are the new leader.
         let batch: Vec<PendingWrite> = {
             let mut pending = self.pending.lock().map_err(|_| WalError::LockPoisoned {
                 context: "pending queue (drain)",
@@ -102,7 +129,15 @@ impl GroupCommitter {
         };
 
         if batch.is_empty() {
-            // Previous leader committed our write. Return the durable LSN.
+            // Previous leader drained our write. Check if that commit
+            // succeeded or failed. This is the critical fix: without this
+            // check, a non-leader would return durable:true even if the
+            // leader's fsync failed.
+            if self.last_commit_failed.load(Ordering::Acquire) {
+                return Err(WalError::Io(std::io::Error::other(
+                    "WAL fsync failed in previous group commit batch",
+                )));
+            }
             let lsn = self.durable_lsn.load(Ordering::Acquire);
             return Ok(CommitResult { lsn, durable: true });
         }
@@ -117,15 +152,29 @@ impl GroupCommitter {
             last_lsn = wal.append(w.record_type, w.tenant_id, w.vshard_id, &w.payload)?;
         }
 
-        wal.sync()?;
+        let sync_result = wal.sync();
         drop(wal);
 
-        self.durable_lsn.store(last_lsn, Ordering::Release);
-
-        Ok(CommitResult {
-            lsn: last_lsn,
-            durable: true,
-        })
+        match sync_result {
+            Ok(()) => {
+                // Order matters: clear error flag before advancing durable_lsn.
+                // Non-leaders check error flag AFTER seeing empty batch, so
+                // the flag must be cleared before they can observe the new LSN.
+                self.last_commit_failed.store(false, Ordering::Release);
+                self.durable_lsn.store(last_lsn, Ordering::Release);
+                Ok(CommitResult {
+                    lsn: last_lsn,
+                    durable: true,
+                })
+            }
+            Err(e) => {
+                // Fsync failed. Mark the error so non-leader threads whose
+                // writes were in this batch (drained from pending) know not
+                // to report success. Do NOT update durable_lsn.
+                self.last_commit_failed.store(true, Ordering::Release);
+                Err(e)
+            }
+        }
     }
 
     /// Current durable LSN (all records <= this are on disk).
