@@ -268,6 +268,7 @@ mod tests {
                 predicate: Vec::new(),
             },
             description: "test shape".into(),
+            field_filter: vec![],
         }
     }
 

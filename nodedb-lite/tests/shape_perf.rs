@@ -48,6 +48,7 @@ fn perf_1000_shapes_evaluation_under_1ms() {
                 tenant_id: 1,
                 shape_type,
                 description: format!("shape {i}"),
+                field_filter: vec![],
             }
         })
         .collect();
@@ -84,6 +85,7 @@ fn perf_could_match_is_fast_for_document_shapes() {
             predicate: Vec::new(),
         },
         description: "all orders".into(),
+        field_filter: vec![],
     };
 
     let start = Instant::now();

@@ -318,6 +318,7 @@ mod tests {
                     field_name: None,
                 },
                 description: "all embeddings".into(),
+                field_filter: vec![],
             },
         };
         let frame = SyncFrame::new_msgpack(SyncMessageType::ShapeSubscribe, &msg).unwrap();

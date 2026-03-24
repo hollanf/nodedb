@@ -22,6 +22,10 @@ pub struct ShapeDefinition {
     pub shape_type: ShapeType,
     /// Human-readable description (for debugging).
     pub description: String,
+    /// Optional field filter: only sync these fields (empty = all fields).
+    /// Enables selective field-level sync instead of full document sync.
+    #[serde(default)]
+    pub field_filter: Vec<String>,
 }
 
 /// Shape type: determines how mutations are evaluated for inclusion.
@@ -103,6 +107,7 @@ mod tests {
                 predicate: Vec::new(),
             },
             description: "all orders".into(),
+            field_filter: vec![],
         };
 
         assert!(shape.could_match("orders", "o1"));
@@ -121,6 +126,7 @@ mod tests {
                 edge_label: Some("KNOWS".into()),
             },
             description: "alice's network".into(),
+            field_filter: vec![],
         };
 
         assert!(shape.could_match("any_collection", "any_doc"));
@@ -137,6 +143,7 @@ mod tests {
                 field_name: Some("title".into()),
             },
             description: "title embeddings".into(),
+            field_filter: vec![],
         };
 
         assert!(shape.could_match("embeddings", "e1"));
@@ -153,6 +160,7 @@ mod tests {
                 predicate: vec![1, 2, 3],
             },
             description: "test shape".into(),
+            field_filter: vec![],
         };
         let bytes = rmp_serde::to_vec_named(&shape).unwrap();
         let decoded: ShapeDefinition = rmp_serde::from_slice(&bytes).unwrap();

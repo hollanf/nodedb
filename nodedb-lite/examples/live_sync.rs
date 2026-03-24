@@ -256,6 +256,7 @@ async fn test_shape_subscribe() -> Result<(), String> {
                 predicate: Vec::new(),
             },
             description: "test".into(),
+            field_filter: vec![],
         },
     };
     ws.send(Message::Binary(
@@ -491,6 +492,7 @@ async fn test_shape_snapshot_lsn() -> Result<(), String> {
                 predicate: Vec::new(),
             },
             description: "test WAL LSN".into(),
+            field_filter: vec![],
         },
     };
     ws.send(Message::Binary(

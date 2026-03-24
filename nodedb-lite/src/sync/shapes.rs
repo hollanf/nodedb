@@ -118,6 +118,7 @@ mod tests {
                 predicate: Vec::new(),
             },
             description: format!("all {collection}"),
+            field_filter: vec![],
         }
     }
 

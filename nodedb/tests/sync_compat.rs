@@ -164,6 +164,7 @@ fn lite_document_shape_subscribe() {
                 predicate: Vec::new(),
             },
             description: "all users".into(),
+            field_filter: vec![],
         },
     };
 
@@ -190,6 +191,7 @@ fn lite_graph_shape_subscribe() {
                 edge_label: Some("KNOWS".into()),
             },
             description: "alice network".into(),
+            field_filter: vec![],
         },
     };
 
@@ -224,6 +226,7 @@ fn lite_vector_shape_subscribe() {
                 field_name: None,
             },
             description: "all embeddings".into(),
+            field_filter: vec![],
         },
     };
 

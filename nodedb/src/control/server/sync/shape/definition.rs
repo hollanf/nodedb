@@ -23,6 +23,7 @@ mod tests {
                 predicate: Vec::new(),
             },
             description: "all orders".into(),
+            field_filter: vec![],
         };
 
         assert!(shape.could_match("orders", "o1"));
@@ -41,6 +42,7 @@ mod tests {
                 edge_label: Some("KNOWS".into()),
             },
             description: "alice's network".into(),
+            field_filter: vec![],
         };
 
         assert!(shape.could_match("any_collection", "any_doc"));
@@ -57,6 +59,7 @@ mod tests {
                 field_name: Some("title".into()),
             },
             description: "title embeddings".into(),
+            field_filter: vec![],
         };
 
         assert!(shape.could_match("embeddings", "e1"));

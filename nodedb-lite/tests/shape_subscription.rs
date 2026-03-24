@@ -31,6 +31,7 @@ async fn subscribe_shape_and_receive_snapshot() {
                 predicate: Vec::new(),
             },
             description: "all orders".into(),
+            field_filter: vec![],
         });
     }
 
@@ -72,6 +73,7 @@ async fn incremental_delta_advances_lsn() {
                 field_name: None,
             },
             description: "all embeddings".into(),
+            field_filter: vec![],
         });
         shapes.mark_snapshot_loaded("s1", 50);
     }
@@ -118,6 +120,7 @@ async fn unsubscribe_removes_shape() {
                 edge_label: None,
             },
             description: "temp graph".into(),
+            field_filter: vec![],
         });
     }
 
@@ -145,6 +148,7 @@ async fn handshake_includes_active_shapes() {
                 predicate: Vec::new(),
             },
             description: "orders".into(),
+            field_filter: vec![],
         });
         shapes.subscribe(ShapeDefinition {
             shape_id: "s2".into(),
@@ -154,6 +158,7 @@ async fn handshake_includes_active_shapes() {
                 field_name: None,
             },
             description: "vecs".into(),
+            field_filter: vec![],
         });
     }
 
@@ -177,6 +182,7 @@ async fn non_matching_shape_receives_nothing() {
                 predicate: Vec::new(),
             },
             description: "orders only".into(),
+            field_filter: vec![],
         });
     }
 

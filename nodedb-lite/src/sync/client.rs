@@ -316,6 +316,7 @@ mod tests {
                     predicate: Vec::new(),
                 },
                 description: "test".into(),
+                field_filter: vec![],
             });
         }
 
@@ -439,6 +440,7 @@ mod tests {
                     field_name: None,
                 },
                 description: "test".into(),
+                field_filter: vec![],
             });
         }
 

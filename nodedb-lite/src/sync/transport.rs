@@ -399,6 +399,7 @@ mod tests {
                     predicate: Vec::new(),
                 },
                 description: "test".into(),
+                field_filter: vec![],
             });
         }
 
