@@ -237,14 +237,61 @@ impl CoreLoop {
                     })
                     .collect();
 
-                match super::super::response_codec::encode(&result) {
-                    Ok(payload) => self.response_with_payload(task, payload),
-                    Err(e) => self.response_error(
+                // Stream results in chunks of STREAM_CHUNK_SIZE rows.
+                // Each chunk is sent as a partial response except the last.
+                const STREAM_CHUNK_SIZE: usize = 1000;
+
+                if result.len() <= STREAM_CHUNK_SIZE {
+                    // Small result: send as single response (no streaming overhead).
+                    match super::super::response_codec::encode(&result) {
+                        Ok(payload) => self.response_with_payload(task, payload),
+                        Err(e) => self.response_error(
+                            task,
+                            ErrorCode::Internal {
+                                detail: e.to_string(),
+                            },
+                        ),
+                    }
+                } else {
+                    // Large result: stream in chunks via partial responses.
+                    let chunks: Vec<_> = result.chunks(STREAM_CHUNK_SIZE).collect();
+                    let last_idx = chunks.len().saturating_sub(1);
+                    for (i, chunk) in chunks.iter().enumerate() {
+                        let is_last = i == last_idx;
+                        match super::super::response_codec::encode(chunk) {
+                            Ok(payload) => {
+                                if is_last {
+                                    // Final chunk: return as the function's response.
+                                    return self.response_with_payload(task, payload);
+                                }
+                                // Partial chunk: push directly to response queue.
+                                let partial = self.response_partial(task, payload);
+                                let _ = self.response_tx.try_push(
+                                    crate::bridge::dispatch::BridgeResponse { inner: partial },
+                                );
+                            }
+                            Err(e) => {
+                                return self.response_error(
+                                    task,
+                                    ErrorCode::Internal {
+                                        detail: e.to_string(),
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    // All chunks should have been sent and returned above.
+                    // If we reach here, the streaming loop exited unexpectedly.
+                    tracing::debug!(
+                        core = self.core_id,
+                        "streaming loop exited without final response"
+                    );
+                    self.response_error(
                         task,
                         ErrorCode::Internal {
-                            detail: e.to_string(),
+                            detail: "streaming response incomplete".into(),
                         },
-                    ),
+                    )
                 }
             }
             Err(e) => self.response_error(
@@ -264,6 +311,9 @@ impl CoreLoop {
         sort_keys: &[(String, bool)],
         output_limit: usize,
     ) -> Result<Vec<(String, Vec<u8>)>, String> {
+        // Spill directory for temporary sort run files. Temp files are
+        // auto-deleted on Drop; the directory persists but is cleaned up
+        // on the next external_sort call or server restart.
         let spill_dir = self
             .data_dir
             .join(format!("sort-spill/core-{}", self.core_id));
@@ -357,23 +407,34 @@ impl CoreLoop {
     }
 }
 
+/// Compare two JSON documents by a list of sort keys.
+///
+/// Used by both in-memory sort and external merge sort to ensure
+/// consistent ordering across all code paths.
+fn compare_docs_by_keys(
+    a_doc: &serde_json::Value,
+    b_doc: &serde_json::Value,
+    sort_keys: &[(String, bool)],
+) -> std::cmp::Ordering {
+    for (field, asc) in sort_keys {
+        let a_val = a_doc.get(field.as_str());
+        let b_val = b_doc.get(field.as_str());
+        let cmp = compare_json_values(a_val, b_val);
+        let ordered = if *asc { cmp } else { cmp.reverse() };
+        if ordered != std::cmp::Ordering::Equal {
+            return ordered;
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
 fn sort_rows(rows: &mut [(String, Vec<u8>)], sort_keys: &[(String, bool)]) {
     rows.sort_by(|(_, a_bytes), (_, b_bytes)| {
         let a_doc =
             super::super::doc_format::decode_document(a_bytes).unwrap_or(serde_json::Value::Null);
         let b_doc =
             super::super::doc_format::decode_document(b_bytes).unwrap_or(serde_json::Value::Null);
-
-        for (field, asc) in sort_keys {
-            let a_val = a_doc.get(field.as_str());
-            let b_val = b_doc.get(field.as_str());
-            let cmp = compare_json_values(a_val, b_val);
-            let ordered = if *asc { cmp } else { cmp.reverse() };
-            if ordered != std::cmp::Ordering::Equal {
-                return ordered;
-            }
-        }
-        std::cmp::Ordering::Equal
+        compare_docs_by_keys(&a_doc, &b_doc, sort_keys)
     });
 }
 
@@ -455,16 +516,6 @@ impl Ord for MergeEntry {
             .unwrap_or(serde_json::Value::Null);
         let b_doc = super::super::doc_format::decode_document(&other.row.1)
             .unwrap_or(serde_json::Value::Null);
-
-        for (field, asc) in &self.sort_keys {
-            let a_val = a_doc.get(field.as_str());
-            let b_val = b_doc.get(field.as_str());
-            let cmp = compare_json_values(a_val, b_val);
-            let ordered = if *asc { cmp } else { cmp.reverse() };
-            if ordered != std::cmp::Ordering::Equal {
-                return ordered;
-            }
-        }
-        std::cmp::Ordering::Equal
+        compare_docs_by_keys(&a_doc, &b_doc, &self.sort_keys)
     }
 }

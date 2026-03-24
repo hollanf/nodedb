@@ -5,6 +5,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::bridge::envelope::Payload;
 use crate::bridge::envelope::{PhysicalPlan, Priority, Request, Response};
 use crate::control::state::SharedState;
 use crate::types::{ReadConsistency, RequestId, TenantId, VShardId};
@@ -56,19 +57,50 @@ pub async fn dispatch_to_data_plane(
         idempotency_key: None,
     };
 
-    let rx = shared.tracker.register(request_id);
+    let mut rx = shared.tracker.register(request_id);
 
     match shared.dispatcher.lock() {
         Ok(mut d) => d.dispatch(request)?,
         Err(poisoned) => poisoned.into_inner().dispatch(request)?,
     };
 
-    let response = tokio::time::timeout(DEFAULT_DEADLINE, rx)
-        .await
-        .map_err(|_| crate::Error::DeadlineExceeded { request_id })?
-        .map_err(|_| crate::Error::Dispatch {
-            detail: "response channel closed".into(),
-        })?;
+    // Collect response(s). For non-streaming queries, exactly one arrives.
+    // For streaming queries, multiple partial chunks arrive before the final.
+    // The mpsc channel is unbounded but safe: Data Plane sends at most
+    // ceil(rows / STREAM_CHUNK_SIZE) partial messages, typically <100 chunks
+    // for even large scans. The timeout bounds total wait time.
+    let response = tokio::time::timeout(DEFAULT_DEADLINE, async {
+        let mut combined_payload: Vec<u8> = Vec::new();
+        let mut final_response: Option<Response> = None;
+
+        while let Some(resp) = rx.recv().await {
+            if resp.partial {
+                // Partial chunk: accumulate payload.
+                combined_payload.extend_from_slice(&resp.payload);
+            } else {
+                // Final response.
+                if combined_payload.is_empty() {
+                    // Non-streaming: return directly.
+                    final_response = Some(resp);
+                } else {
+                    // Streaming: append final payload and return combined.
+                    combined_payload.extend_from_slice(&resp.payload);
+                    final_response = Some(Response {
+                        payload: Payload::from_vec(combined_payload),
+                        ..resp
+                    });
+                }
+                break;
+            }
+        }
+
+        final_response.ok_or(())
+    })
+    .await
+    .map_err(|_| crate::Error::DeadlineExceeded { request_id })?
+    .map_err(|_| crate::Error::Dispatch {
+        detail: "response channel closed".into(),
+    })?;
 
     // Publish change events for successful writes.
     if response.status == crate::bridge::envelope::Status::Ok

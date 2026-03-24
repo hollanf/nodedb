@@ -393,6 +393,23 @@ impl CoreLoop {
         }
     }
 
+    /// Build a partial (streaming) response with payload.
+    pub(in crate::data::executor) fn response_partial(
+        &self,
+        task: &ExecutionTask,
+        payload: Vec<u8>,
+    ) -> Response {
+        Response {
+            request_id: task.request_id(),
+            status: Status::Partial,
+            attempt: 1,
+            partial: true,
+            payload: Payload::from_vec(payload),
+            watermark_lsn: self.watermark,
+            error_code: None,
+        }
+    }
+
     pub(in crate::data::executor) fn response_error(
         &self,
         task: &ExecutionTask,
