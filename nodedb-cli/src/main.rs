@@ -1,8 +1,11 @@
 mod args;
 mod batch;
+mod completion;
+mod config;
 mod connect;
 mod error;
 mod format;
+mod highlight;
 mod history;
 mod metacommand;
 mod tui;
@@ -15,22 +18,33 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use args::CliArgs;
+use config::CliConfig;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = CliArgs::parse();
-    let client = connect::build_client(&args)?;
+    // Load config file and resolve args (CLI > env > config > defaults).
+    let config = CliConfig::load();
+    let mut args = CliArgs::parse().resolve(&config);
+    let client = connect::build_client(&mut args)?;
 
     // Non-interactive: -e flag.
     if let Some(ref sql) = args.execute {
-        batch::run(&client, sql, args.format).await?;
+        batch::run(&client, sql, args.format, args.output.as_deref()).await?;
+        return Ok(());
+    }
+
+    // Non-interactive: -f flag (file input).
+    if let Some(ref path) = args.file {
+        let sql = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+        batch::run(&client, &sql, args.format, args.output.as_deref()).await?;
         return Ok(());
     }
 
     // Non-interactive: piped stdin.
     if !atty_is_stdin() {
         let sql = io::read_to_string(io::stdin())?;
-        batch::run(&client, &sql, args.format).await?;
+        batch::run(&client, &sql, args.format, args.output.as_deref()).await?;
         return Ok(());
     }
 
@@ -41,7 +55,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = tui::app::App::new(client, args.format, args.host.clone(), args.port);
+    let timing = config.timing.unwrap_or(true);
+    let mut app = tui::app::App::new(
+        client,
+        args.format,
+        args.host.clone(),
+        args.port,
+        timing,
+        args.output.clone(),
+    );
     let result = app.run(&mut terminal).await;
 
     // Restore terminal.
