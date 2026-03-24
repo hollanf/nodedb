@@ -1,4 +1,6 @@
+pub mod broadcast;
 pub mod dispatch_utils;
+pub mod graph_dispatch;
 pub mod http;
 pub mod listener;
 pub mod native;
@@ -7,3 +9,4 @@ pub mod session;
 pub mod session_auth;
 pub mod sync;
 pub mod tls_reload;
+pub mod wal_dispatch;
