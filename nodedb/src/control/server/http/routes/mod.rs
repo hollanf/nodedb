@@ -1,3 +1,4 @@
+pub mod cdc;
 pub mod crdt;
 pub mod document;
 pub mod health;

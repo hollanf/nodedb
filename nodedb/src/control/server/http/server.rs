@@ -44,6 +44,8 @@ fn build_router(state: AppState) -> Router {
             post(routes::crdt::crdt_apply),
         )
         .route("/ws", get(routes::ws_rpc::ws_handler))
+        .route("/cdc/{collection}", get(routes::cdc::sse_stream))
+        .route("/cdc/{collection}/poll", get(routes::cdc::poll_changes))
         .with_state(state)
 }
 

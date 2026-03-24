@@ -132,6 +132,7 @@ pgwire = { version = "0.38", default-features = false, features = [
 tokio-postgres = "0.7"
 async-trait = "0.1"
 futures = "0.3"
+async-stream = "0.3"
 
 # Password hashing
 argon2 = "0.5"
