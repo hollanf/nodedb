@@ -292,28 +292,49 @@ pub async fn dispatch(
                     }
                 }
             } else {
-                0
+                // Default: last 24 hours of changes.
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                now_ms.saturating_sub(86_400 * 1000)
             };
 
-            // Return change stream metadata as a query result.
+            let limit = upper
+                .find(" LIMIT ")
+                .and_then(|pos| sql[pos + 7..].split_whitespace().next())
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(1000);
+
+            let changes = state
+                .change_stream
+                .query_changes(Some(&coll_name), since_ms, limit);
+
             use futures::stream;
             use pgwire::api::results::{DataRowEncoder, QueryResponse, Response};
 
             let schema = std::sync::Arc::new(vec![
                 super::super::types::text_field("collection"),
-                super::super::types::text_field("since_ms"),
-                super::super::types::text_field("events_published"),
-                super::super::types::text_field("subscribers"),
+                super::super::types::text_field("operation"),
+                super::super::types::text_field("document_id"),
+                super::super::types::text_field("timestamp_ms"),
+                super::super::types::text_field("lsn"),
             ]);
-            let mut encoder = DataRowEncoder::new(schema.clone());
-            let _ = encoder.encode_field(&coll_name);
-            let _ = encoder.encode_field(&since_ms.to_string());
-            let _ = encoder.encode_field(&state.change_stream.events_published().to_string());
-            let _ = encoder.encode_field(&state.change_stream.subscriber_count().to_string());
-            let row = encoder.take_row();
+
+            let mut rows = Vec::with_capacity(changes.len());
+            for change in &changes {
+                let mut encoder = DataRowEncoder::new(schema.clone());
+                let _ = encoder.encode_field(&change.collection);
+                let _ = encoder.encode_field(&change.operation.as_str().to_string());
+                let _ = encoder.encode_field(&change.document_id);
+                let _ = encoder.encode_field(&change.timestamp_ms.to_string());
+                let _ = encoder.encode_field(&change.lsn.as_u64().to_string());
+                rows.push(Ok(encoder.take_row()));
+            }
+
             return Some(Ok(vec![Response::Query(QueryResponse::new(
                 schema,
-                stream::iter(vec![Ok(row)]),
+                stream::iter(rows),
             ))]));
         }
         return Some(Err(super::super::types::sqlstate_error(
@@ -323,7 +344,12 @@ pub async fn dispatch(
     }
 
     // LIVE SELECT ... FROM <collection> [WHERE ...]
-    // Registers a subscription on the change stream and returns the subscription ID.
+    //
+    // Registers a subscription on the change stream and returns the subscription
+    // ID + LISTEN channel name. Changes are delivered via PostgreSQL async
+    // notifications (same as LISTEN/NOTIFY). The client receives:
+    //   1. A query result with the subscription_id and channel name
+    //   2. Async NOTIFY messages for each matching change event
     if upper.starts_with("LIVE SELECT ") {
         if let Some(coll_name) = super::sql_parse::extract_collection_after(sql, " FROM ") {
             let tenant_id = identity.tenant_id;
@@ -332,12 +358,22 @@ pub async fn dispatch(
                 .subscribe(Some(coll_name.clone()), Some(tenant_id));
             let sub_id = sub.id;
 
+            // The channel name for LISTEN/NOTIFY delivery.
+            let channel = format!("live_{coll_name}");
+
             use futures::stream;
             use pgwire::api::results::{DataRowEncoder, QueryResponse, Response};
-            let schema =
-                std::sync::Arc::new(vec![super::super::types::text_field("subscription_id")]);
+            let schema = std::sync::Arc::new(vec![
+                super::super::types::text_field("subscription_id"),
+                super::super::types::text_field("channel"),
+                super::super::types::text_field("collection"),
+                super::super::types::text_field("status"),
+            ]);
             let mut encoder = DataRowEncoder::new(schema.clone());
             let _ = encoder.encode_field(&sub_id.to_string());
+            let _ = encoder.encode_field(&channel);
+            let _ = encoder.encode_field(&coll_name);
+            let _ = encoder.encode_field(&"active");
             let row = encoder.take_row();
             return Some(Ok(vec![Response::Query(QueryResponse::new(
                 schema,

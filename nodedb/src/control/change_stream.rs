@@ -79,6 +79,11 @@ pub struct ChangeStream {
     events_published: std::sync::atomic::AtomicU64,
     /// Last LSN processed from the WAL.
     last_lsn: std::sync::atomic::AtomicU64,
+    /// Ring buffer of recent change events for SHOW CHANGES queries.
+    /// RwLock allows concurrent reads (query_changes) with exclusive writes (publish).
+    recent_changes: std::sync::RwLock<std::collections::VecDeque<ChangeEvent>>,
+    /// Max recent changes to retain.
+    recent_capacity: usize,
 }
 
 impl ChangeStream {
@@ -94,6 +99,10 @@ impl ChangeStream {
             active_subscriptions: std::sync::atomic::AtomicU64::new(0),
             events_published: std::sync::atomic::AtomicU64::new(0),
             last_lsn: std::sync::atomic::AtomicU64::new(0),
+            recent_changes: std::sync::RwLock::new(std::collections::VecDeque::with_capacity(
+                capacity,
+            )),
+            recent_capacity: capacity,
         }
     }
 
@@ -137,6 +146,14 @@ impl ChangeStream {
         self.events_published
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
+        // Store in recent changes ring buffer.
+        if let Ok(mut buf) = self.recent_changes.write() {
+            if buf.len() >= self.recent_capacity {
+                buf.pop_front();
+            }
+            buf.push_back(event.clone());
+        }
+
         // broadcast::send returns Err if no receivers — that's fine.
         let _ = self.sender.send(event);
     }
@@ -163,6 +180,28 @@ impl ChangeStream {
     /// Last WAL LSN processed.
     pub fn last_lsn(&self) -> u64 {
         self.last_lsn.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Query recent changes for a collection since a given timestamp.
+    ///
+    /// Returns change events matching the collection filter that occurred
+    /// at or after `since_ms` (epoch milliseconds). Limited to the ring
+    /// buffer capacity (most recent N events).
+    pub fn query_changes(
+        &self,
+        collection: Option<&str>,
+        since_ms: u64,
+        limit: usize,
+    ) -> Vec<ChangeEvent> {
+        let buf = match self.recent_changes.read() {
+            Ok(b) => b,
+            Err(p) => p.into_inner(),
+        };
+        buf.iter()
+            .filter(|e| e.timestamp_ms >= since_ms && collection.is_none_or(|c| e.collection == c))
+            .take(limit)
+            .cloned()
+            .collect()
     }
 
     /// Record that a subscriber disconnected.
