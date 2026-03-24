@@ -151,7 +151,7 @@ impl NodeDbPgHandler {
             idempotency_key: None,
         };
 
-        let rx = self.state.tracker.register(request_id);
+        let rx = self.state.tracker.register_oneshot(request_id);
 
         match self.state.dispatcher.lock() {
             Ok(mut d) => d.dispatch(request)?,

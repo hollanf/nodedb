@@ -39,7 +39,7 @@ pub async fn dispatch_async(
         idempotency_key: None,
     };
 
-    let rx = state.tracker.register(request_id);
+    let rx = state.tracker.register_oneshot(request_id);
 
     match state.dispatcher.lock() {
         Ok(mut d) => d.dispatch(request).map_err(|e| e.to_string())?,

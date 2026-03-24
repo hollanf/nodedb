@@ -85,7 +85,7 @@ impl RequestForwarder for LocalForwarder {
                 idempotency_key: None,
             };
 
-            let rx = self.state.tracker.register(request_id);
+            let rx = self.state.tracker.register_oneshot(request_id);
 
             let dispatch_result = match self.state.dispatcher.lock() {
                 Ok(mut d) => d.dispatch(request),

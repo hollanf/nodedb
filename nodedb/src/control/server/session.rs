@@ -395,7 +395,7 @@ impl Session {
         };
 
         // Register for response routing before dispatching.
-        let rx = self.state.tracker.register(request_id);
+        let rx = self.state.tracker.register_oneshot(request_id);
 
         // Dispatch to Data Plane via SPSC.
         match self.state.dispatcher.lock() {

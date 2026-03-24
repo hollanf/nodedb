@@ -44,7 +44,7 @@ pub async fn broadcast_to_all_cores(
             idempotency_key: None,
         };
 
-        let rx = shared.tracker.register(request_id);
+        let rx = shared.tracker.register_oneshot(request_id);
         match shared.dispatcher.lock() {
             Ok(mut d) => d.dispatch_to_core(core_id, request)?,
             Err(p) => p.into_inner().dispatch_to_core(core_id, request)?,

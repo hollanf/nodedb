@@ -74,7 +74,7 @@ pub(super) async fn dispatch_plan_with_trace(
         idempotency_key: None,
     };
 
-    let rx = state.shared.tracker.register(request_id);
+    let rx = state.shared.tracker.register_oneshot(request_id);
 
     match state.shared.dispatcher.lock() {
         Ok(mut d) => d

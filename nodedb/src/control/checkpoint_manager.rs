@@ -94,7 +94,7 @@ pub async fn run_checkpoint_cycle(
                 idempotency_key: None,
             };
 
-            let rx = tracker.register(request_id);
+            let rx = tracker.register_oneshot(request_id);
 
             if let Err(e) = disp.dispatch_to_core(core_id, request) {
                 warn!(
