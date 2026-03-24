@@ -107,6 +107,14 @@ unicode-normalization = "0.1"
 # Random
 rand = "0.9"
 
+# ID types
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+ulid = "1"
+nanoid = "0.4"
+
+# Arbitrary-precision decimal
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+
 # QUIC transport
 quinn = "0.11"
 

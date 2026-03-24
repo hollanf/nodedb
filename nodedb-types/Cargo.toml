@@ -12,3 +12,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 rmp-serde = { workspace = true }
 rkyv = { workspace = true }
+uuid = { workspace = true }
+ulid = { workspace = true }
+nanoid = { workspace = true }
+rand = { workspace = true }
+rust_decimal = { workspace = true }

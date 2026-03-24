@@ -1,8 +1,11 @@
 pub mod conversion;
+pub mod datetime;
 pub mod document;
 pub mod error;
 pub mod filter;
+pub mod geometry;
 pub mod id;
+pub mod id_gen;
 pub mod lsn;
 pub mod namespace;
 pub mod protocol;
@@ -11,6 +14,7 @@ pub mod sync;
 pub mod value;
 pub mod vector_distance;
 
+pub use datetime::{NdbDateTime, NdbDuration};
 pub use document::Document;
 pub use error::NodeDbError;
 pub use filter::{EdgeFilter, MetadataFilter};

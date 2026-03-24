@@ -7,6 +7,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::datetime::{NdbDateTime, NdbDuration};
+use crate::geometry::Geometry;
+
 /// A dynamic value that can represent any field type in a document
 /// or any parameter in a SQL query.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,6 +30,38 @@ pub enum Value {
     Array(Vec<Value>),
     /// Nested key-value object.
     Object(HashMap<String, Value>),
+    /// UUID (any version, stored as 36-char hyphenated string).
+    Uuid(String),
+    /// ULID (26-char Crockford Base32).
+    Ulid(String),
+    /// UTC timestamp with microsecond precision.
+    DateTime(NdbDateTime),
+    /// Duration with microsecond precision (signed).
+    Duration(NdbDuration),
+    /// Arbitrary-precision decimal (financial calculations, exact arithmetic).
+    Decimal(rust_decimal::Decimal),
+    /// GeoJSON-compatible geometry (Point, LineString, Polygon, etc.).
+    Geometry(Geometry),
+    /// Ordered set of unique values (auto-deduplicated, maintains insertion order).
+    Set(Vec<Value>),
+    /// Compiled regex pattern (stored as pattern string).
+    Regex(String),
+    /// A range of values with optional bounds.
+    Range {
+        /// Start bound (None = unbounded).
+        start: Option<Box<Value>>,
+        /// End bound (None = unbounded).
+        end: Option<Box<Value>>,
+        /// Whether the end bound is inclusive (`..=` vs `..`).
+        inclusive: bool,
+    },
+    /// A typed reference to another record: `table:id`.
+    Record {
+        /// The table/collection name.
+        table: String,
+        /// The record's document ID.
+        id: String,
+    },
 }
 
 impl Value {
@@ -75,6 +110,102 @@ impl Value {
             _ => None,
         }
     }
+
+    /// Try to extract as UUID string.
+    pub fn as_uuid(&self) -> Option<&str> {
+        match self {
+            Value::Uuid(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Try to extract as ULID string.
+    pub fn as_ulid(&self) -> Option<&str> {
+        match self {
+            Value::Ulid(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Try to extract as DateTime.
+    pub fn as_datetime(&self) -> Option<&NdbDateTime> {
+        match self {
+            Value::DateTime(dt) => Some(dt),
+            _ => None,
+        }
+    }
+
+    /// Try to extract as Duration.
+    pub fn as_duration(&self) -> Option<&NdbDuration> {
+        match self {
+            Value::Duration(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// Try to extract as Decimal.
+    pub fn as_decimal(&self) -> Option<&rust_decimal::Decimal> {
+        match self {
+            Value::Decimal(d) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// Try to extract as Geometry.
+    pub fn as_geometry(&self) -> Option<&Geometry> {
+        match self {
+            Value::Geometry(g) => Some(g),
+            _ => None,
+        }
+    }
+
+    /// Try to extract as a set (deduplicated array).
+    pub fn as_set(&self) -> Option<&[Value]> {
+        match self {
+            Value::Set(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Try to extract as regex pattern string.
+    pub fn as_regex(&self) -> Option<&str> {
+        match self {
+            Value::Regex(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// Try to extract as a record reference (table, id).
+    pub fn as_record(&self) -> Option<(&str, &str)> {
+        match self {
+            Value::Record { table, id } => Some((table, id)),
+            _ => None,
+        }
+    }
+
+    /// Return the type name of this value as a string.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Value::Null => "null",
+            Value::Bool(_) => "bool",
+            Value::Integer(_) => "int",
+            Value::Float(_) => "float",
+            Value::String(_) => "string",
+            Value::Bytes(_) => "bytes",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+            Value::Uuid(_) => "uuid",
+            Value::Ulid(_) => "ulid",
+            Value::DateTime(_) => "datetime",
+            Value::Duration(_) => "duration",
+            Value::Decimal(_) => "decimal",
+            Value::Geometry(_) => "geometry",
+            Value::Set(_) => "set",
+            Value::Regex(_) => "regex",
+            Value::Range { .. } => "range",
+            Value::Record { .. } => "record",
+        }
+    }
 }
 
 /// Convenience conversions.
@@ -111,6 +242,30 @@ impl From<bool> for Value {
 impl From<Vec<u8>> for Value {
     fn from(b: Vec<u8>) -> Self {
         Value::Bytes(b)
+    }
+}
+
+impl From<NdbDateTime> for Value {
+    fn from(dt: NdbDateTime) -> Self {
+        Value::DateTime(dt)
+    }
+}
+
+impl From<NdbDuration> for Value {
+    fn from(d: NdbDuration) -> Self {
+        Value::Duration(d)
+    }
+}
+
+impl From<rust_decimal::Decimal> for Value {
+    fn from(d: rust_decimal::Decimal) -> Self {
+        Value::Decimal(d)
+    }
+}
+
+impl From<Geometry> for Value {
+    fn from(g: Geometry) -> Self {
+        Value::Geometry(g)
     }
 }
 
