@@ -20,6 +20,30 @@ impl NodeDbPgHandler {
         use super::super::session::parse_set_command;
         use pgwire::api::results::Tag;
 
+        // Handle SET TRANSACTION READ ONLY / READ WRITE.
+        let upper = sql.to_uppercase();
+        if upper.starts_with("SET TRANSACTION") || upper.starts_with("SET SESSION CHARACTERISTICS")
+        {
+            if upper.contains("READ ONLY") {
+                self.sessions.set_parameter(
+                    addr,
+                    "transaction_access_mode".into(),
+                    "read_only".into(),
+                );
+                return Ok(vec![Response::Execution(Tag::new("SET"))]);
+            }
+            if upper.contains("READ WRITE") {
+                self.sessions.set_parameter(
+                    addr,
+                    "transaction_access_mode".into(),
+                    "read_write".into(),
+                );
+                return Ok(vec![Response::Execution(Tag::new("SET"))]);
+            }
+            // Other SET TRANSACTION options (ISOLATION LEVEL, etc.) — acknowledge.
+            return Ok(vec![Response::Execution(Tag::new("SET"))]);
+        }
+
         let (key, value) = match parse_set_command(sql) {
             Some(kv) => kv,
             None => {
