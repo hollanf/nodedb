@@ -158,6 +158,76 @@ impl NodeDbPgHandler {
             return Ok(vec![Response::Execution(Tag::new("RELEASE"))]);
         }
 
+        // DECLARE cursor_name CURSOR FOR SELECT ...
+        if upper.starts_with("DECLARE ") && upper.contains(" CURSOR ") {
+            let parts: Vec<&str> = sql_trimmed.split_whitespace().collect();
+            let cursor_name = parts.get(1).unwrap_or(&"default").to_string();
+            // Extract the SQL after "CURSOR FOR"
+            if let Some(for_pos) = upper.find(" FOR ") {
+                let inner_sql = sql_trimmed[for_pos + 5..].trim();
+                // Execute the inner query to get results.
+                match self
+                    .execute_query_for_cursor(addr, inner_sql, identity)
+                    .await
+                {
+                    Ok(rows) => {
+                        self.sessions.declare_cursor(addr, cursor_name, rows);
+                        return Ok(vec![Response::Execution(Tag::new("DECLARE CURSOR"))]);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            return Ok(vec![Response::Execution(Tag::new("DECLARE CURSOR"))]);
+        }
+
+        // FETCH [count] FROM cursor_name
+        if upper.starts_with("FETCH ") {
+            let parts: Vec<&str> = sql_trimmed.split_whitespace().collect();
+            let (count, cursor_name) = if parts.len() >= 4 && parts[2].eq_ignore_ascii_case("FROM")
+            {
+                let n = parts[1].parse::<usize>().unwrap_or(1);
+                (n, parts[3].to_string())
+            } else if parts.len() >= 3 && parts[1].eq_ignore_ascii_case("FROM") {
+                (1, parts[2].to_string())
+            } else {
+                (1, parts.get(1).unwrap_or(&"default").to_string())
+            };
+
+            match self.sessions.fetch_cursor(addr, &cursor_name, count) {
+                Ok((rows, _exhausted)) => {
+                    let schema = std::sync::Arc::new(vec![text_field("result")]);
+                    let mut encoded_rows = Vec::with_capacity(rows.len());
+                    for row_json in &rows {
+                        let mut encoder = DataRowEncoder::new(schema.clone());
+                        let _ = encoder.encode_field(row_json);
+                        encoded_rows.push(Ok(encoder.take_row()));
+                    }
+                    return Ok(vec![Response::Query(QueryResponse::new(
+                        schema,
+                        futures::stream::iter(encoded_rows),
+                    ))]);
+                }
+                Err(msg) => {
+                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                        "ERROR".to_owned(),
+                        "34000".to_owned(),
+                        msg,
+                    ))));
+                }
+            }
+        }
+
+        // CLOSE cursor_name
+        if upper.starts_with("CLOSE ") {
+            let cursor_name = sql_trimmed
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("default")
+                .to_string();
+            self.sessions.close_cursor(addr, &cursor_name);
+            return Ok(vec![Response::Execution(Tag::new("CLOSE CURSOR"))]);
+        }
+
         if upper.starts_with("ROLLBACK TO ") {
             let sp_name = sql_trimmed
                 .split_whitespace()
@@ -292,5 +362,53 @@ impl NodeDbPgHandler {
         }
 
         result
+    }
+
+    /// Execute a SELECT query and return results as JSON strings for cursor storage.
+    async fn execute_query_for_cursor(
+        &self,
+        _addr: &std::net::SocketAddr,
+        sql: &str,
+        identity: &AuthenticatedIdentity,
+    ) -> PgWireResult<Vec<String>> {
+        let tenant_id = identity.tenant_id;
+        let query_ctx = crate::control::planner::context::QueryContext::with_catalog(
+            std::sync::Arc::clone(&self.state.credentials),
+            tenant_id.as_u32(),
+        );
+
+        let tasks = query_ctx.plan_sql(sql, tenant_id).await.map_err(|e| {
+            PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "42000".to_owned(),
+                e.to_string(),
+            )))
+        })?;
+
+        let mut rows = Vec::new();
+        for task in tasks {
+            let resp = crate::control::server::dispatch_utils::dispatch_to_data_plane(
+                &self.state,
+                task.tenant_id,
+                task.vshard_id,
+                task.plan,
+                0,
+            )
+            .await
+            .map_err(|e| {
+                PgWireError::UserError(Box::new(ErrorInfo::new(
+                    "ERROR".to_owned(),
+                    "XX000".to_owned(),
+                    e.to_string(),
+                )))
+            })?;
+
+            if !resp.payload.is_empty() {
+                let json =
+                    crate::data::executor::response_codec::decode_payload_to_json(&resp.payload);
+                rows.push(json);
+            }
+        }
+        Ok(rows)
     }
 }

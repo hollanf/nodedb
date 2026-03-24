@@ -82,6 +82,7 @@ pub async fn dispatch_to_data_plane(
             document_id: doc_id,
             operation: op,
             timestamp_ms: current_timestamp_ms(),
+            after: None,
         });
     }
 

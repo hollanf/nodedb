@@ -203,12 +203,14 @@ mod tests {
             document_id: "o1".into(),
             operation: ChangeOperation::Insert,
             timestamp_ms: 0,
+            after: None,
         };
         assert!(mgr.should_deliver(&a, &event));
 
         // Wrong collection.
         let event2 = ChangeEvent {
             collection: "users".into(),
+            after: None,
             ..event.clone()
         };
         assert!(!mgr.should_deliver(&a, &event2));
@@ -216,6 +218,7 @@ mod tests {
         // Wrong tenant.
         let event3 = ChangeEvent {
             tenant_id: TenantId::new(99),
+            after: None,
             ..event
         };
         assert!(!mgr.should_deliver(&a, &event3));
@@ -230,6 +233,7 @@ mod tests {
             document_id: "o42".into(),
             operation: ChangeOperation::Update,
             timestamp_ms: 0,
+            after: None,
         };
         assert_eq!(
             ListenNotifyManager::format_notification(&event),

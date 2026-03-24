@@ -196,6 +196,7 @@ mod tests {
             document_id: "o1".into(),
             operation: ChangeOperation::Insert,
             timestamp_ms: 0,
+            after: None,
         };
 
         assert!(matches_filter(&event, "orders", TenantId::new(1), None));
@@ -212,6 +213,7 @@ mod tests {
             document_id: "o1".into(),
             operation: ChangeOperation::Update,
             timestamp_ms: 12345,
+            after: None,
         };
         let notif = ChangeNotification::from(&event);
         assert_eq!(notif.event, "UPDATE");

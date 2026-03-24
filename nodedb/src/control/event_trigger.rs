@@ -21,7 +21,7 @@ pub fn spawn_event_trigger_processor(shared: Arc<SharedState>) {
 
     tokio::spawn(async move {
         loop {
-            match subscription.receiver.recv().await {
+            match subscription.recv_filtered().await {
                 Ok(event) => process_event(&shared, &event).await,
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     warn!(

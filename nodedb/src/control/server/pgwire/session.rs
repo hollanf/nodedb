@@ -30,6 +30,14 @@ impl TransactionState {
     }
 }
 
+/// Server-side cursor state.
+pub struct CursorState {
+    /// Pre-fetched result rows as JSON strings.
+    pub rows: Vec<String>,
+    /// Current position (next row to return).
+    pub position: usize,
+}
+
 /// Per-connection session state.
 pub struct PgSession {
     pub tx_state: TransactionState,
@@ -50,6 +58,8 @@ pub struct PgSession {
     /// Savepoint stack: each entry is (name, tx_buffer_len_at_savepoint).
     /// On ROLLBACK TO, truncate tx_buffer to the saved length.
     pub savepoints: Vec<(String, usize)>,
+    /// Server-side cursors: name → (cached result rows as JSON strings, current position).
+    pub cursors: HashMap<String, CursorState>,
 }
 
 impl PgSession {
@@ -78,6 +88,7 @@ impl PgSession {
             tx_snapshot_lsn: None,
             tx_read_set: Vec::new(),
             savepoints: Vec::new(),
+            cursors: HashMap::new(),
         }
     }
 }
@@ -140,6 +151,48 @@ impl SessionStore {
         session.tx_buffer.truncate(buffer_pos);
         session.savepoints.truncate(pos + 1);
         Ok(())
+    }
+
+    /// Declare a cursor with pre-fetched results.
+    pub fn declare_cursor(&self, addr: &SocketAddr, name: String, rows: Vec<String>) {
+        let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        if let Some(session) = sessions.get_mut(addr) {
+            session
+                .cursors
+                .insert(name, CursorState { rows, position: 0 });
+        }
+    }
+
+    /// Fetch N rows from a cursor. Returns the rows and whether cursor is exhausted.
+    pub fn fetch_cursor(
+        &self,
+        addr: &SocketAddr,
+        name: &str,
+        count: usize,
+    ) -> Result<(Vec<String>, bool), String> {
+        let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        let session = sessions
+            .get_mut(addr)
+            .ok_or_else(|| "no active session".to_string())?;
+        let cursor = session
+            .cursors
+            .get_mut(name)
+            .ok_or_else(|| format!("cursor \"{name}\" does not exist"))?;
+
+        let start = cursor.position;
+        let end = (start + count).min(cursor.rows.len());
+        let rows: Vec<String> = cursor.rows[start..end].to_vec();
+        cursor.position = end;
+        let exhausted = end >= cursor.rows.len();
+        Ok((rows, exhausted))
+    }
+
+    /// Close a cursor.
+    pub fn close_cursor(&self, addr: &SocketAddr, name: &str) {
+        let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        if let Some(session) = sessions.get_mut(addr) {
+            session.cursors.remove(name);
+        }
     }
 
     /// Set a session parameter.

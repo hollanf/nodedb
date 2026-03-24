@@ -111,6 +111,27 @@ pub(super) fn payload_to_response(payload: &[u8], kind: PlanKind) -> Response {
                 Response::Query(QueryResponse::new(schema, stream::empty()))
             } else {
                 let text = crate::data::executor::response_codec::decode_payload_to_json(payload);
+
+                // For multi-row results, parse the JSON array and stream each
+                // element as a separate pgwire row. This avoids materializing
+                // a single giant row for large result sets.
+                if matches!(kind, PlanKind::MultiRow)
+                    && let Ok(serde_json::Value::Array(items)) =
+                        serde_json::from_str::<serde_json::Value>(&text)
+                {
+                    let row_schema = schema.clone();
+                    let rows: Vec<_> = items
+                        .iter()
+                        .map(|item| {
+                            let mut encoder = DataRowEncoder::new(row_schema.clone());
+                            let _ = encoder.encode_field(&item.to_string());
+                            Ok(encoder.take_row())
+                        })
+                        .collect();
+                    return Response::Query(QueryResponse::new(schema, stream::iter(rows)));
+                }
+
+                // Single document or non-array: send as one row.
                 let mut encoder = DataRowEncoder::new(schema.clone());
                 if let Err(e) = encoder.encode_field(&text) {
                     tracing::error!(error = %e, "failed to encode field");

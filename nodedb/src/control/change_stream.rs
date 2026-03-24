@@ -31,6 +31,9 @@ pub struct ChangeEvent {
     pub operation: ChangeOperation,
     /// Timestamp (epoch milliseconds).
     pub timestamp_ms: u64,
+    /// Optional: document state after the change (for DIFF mode).
+    /// Only populated when at least one DIFF subscription exists.
+    pub after: Option<serde_json::Value>,
 }
 
 /// Type of mutation.
@@ -61,6 +64,36 @@ pub struct Subscription {
     pub collection_filter: Option<String>,
     /// Optional tenant filter (None = all tenants).
     pub tenant_filter: Option<TenantId>,
+}
+
+impl Subscription {
+    /// Receive the next event that matches this subscription's filters.
+    ///
+    /// Skips events that don't match the collection and tenant filters.
+    /// This provides server-side CDC filtering — subscribers only see
+    /// events for their subscribed collection/tenant.
+    pub async fn recv_filtered(
+        &mut self,
+    ) -> Result<ChangeEvent, tokio::sync::broadcast::error::RecvError> {
+        loop {
+            let event = self.receiver.recv().await?;
+            if self
+                .collection_filter
+                .as_ref()
+                .is_some_and(|c| event.collection != *c)
+            {
+                continue;
+            }
+            if self
+                .tenant_filter
+                .as_ref()
+                .is_some_and(|t| event.tenant_id != *t)
+            {
+                continue;
+            }
+            return Ok(event);
+        }
+    }
 }
 
 /// The change stream bus: broadcasts WAL mutations to subscribers.
@@ -227,6 +260,7 @@ mod tests {
             document_id: "u1".into(),
             operation: ChangeOperation::Insert,
             timestamp_ms: 1000,
+            after: None,
         };
         stream.publish(event);
 
@@ -248,6 +282,7 @@ mod tests {
             document_id: "o1".into(),
             operation: ChangeOperation::Update,
             timestamp_ms: 2000,
+            after: None,
         };
         stream.publish(event);
 
@@ -272,6 +307,7 @@ mod tests {
                 document_id: format!("d{i}"),
                 operation: ChangeOperation::Insert,
                 timestamp_ms: 0,
+                after: None,
             });
         }
         assert_eq!(stream.events_published(), 10);
