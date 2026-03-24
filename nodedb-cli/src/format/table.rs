@@ -72,7 +72,7 @@ pub fn format(qr: &QueryResult) -> String {
     out
 }
 
-fn display_value(v: &Value) -> String {
+pub fn display_value(v: &Value) -> String {
     match v {
         Value::Null => "NULL".to_string(),
         Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),

@@ -6,19 +6,42 @@ use crate::args::OutputFormat;
 use crate::error::CliResult;
 use crate::format;
 
-/// Execute one or more SQL statements and print formatted output.
-pub async fn run(client: &NativeClient, sql: &str, fmt: OutputFormat) -> CliResult<()> {
-    for stmt in split_statements(sql) {
+/// Execute one or more SQL statements and print/write formatted output.
+pub async fn run(
+    client: &NativeClient,
+    sql: &str,
+    fmt: OutputFormat,
+    output_path: Option<&std::path::Path>,
+) -> CliResult<()> {
+    let mut all_output = String::new();
+
+    for (stmt_num, stmt) in split_statements(sql).iter().enumerate() {
         let trimmed = stmt.trim();
         if trimmed.is_empty() {
             continue;
         }
-        let result = client.query(trimmed).await?;
-        let output = format::format_result(&result, fmt);
-        if !output.is_empty() {
-            print!("{output}");
+        match client.query(trimmed).await {
+            Ok(result) => {
+                let output = format::format_result(&result, fmt);
+                if !output.is_empty() {
+                    if output_path.is_some() {
+                        all_output.push_str(&output);
+                    } else {
+                        print!("{output}");
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("ERROR (statement {}): {e}", stmt_num + 1);
+            }
         }
     }
+
+    if let Some(path) = output_path {
+        std::fs::write(path, &all_output).map_err(crate::error::CliError::Io)?;
+        eprintln!("Output written to {}", path.display());
+    }
+
     Ok(())
 }
 

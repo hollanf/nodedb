@@ -64,6 +64,23 @@ impl History {
             .map(|s| s.as_str())
     }
 
+    /// Search history in reverse for entries containing `query`.
+    /// `skip` controls how many matches to skip (for Ctrl+R cycling).
+    /// Returns (offset_from_end, entry_text).
+    pub fn search(&self, query: &str, skip: usize) -> Option<(usize, &str)> {
+        if query.is_empty() {
+            return None;
+        }
+        let lower = query.to_lowercase();
+        self.entries
+            .iter()
+            .rev()
+            .enumerate()
+            .filter(|(_, entry)| entry.to_lowercase().contains(&lower))
+            .nth(skip)
+            .map(|(idx, entry)| (idx, entry.as_str()))
+    }
+
     /// Number of entries.
     #[cfg(test)]
     fn len(&self) -> usize {

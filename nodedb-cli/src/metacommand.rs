@@ -11,6 +11,18 @@ pub enum MetaAction {
     SetFormat(String),
     /// Toggle timing display.
     ToggleTiming,
+    /// Toggle expanded (vertical) display mode.
+    ToggleExpanded,
+    /// Show connection info.
+    ConnInfo,
+    /// Open external editor.
+    ExternalEditor,
+    /// Execute SQL from file.
+    ExecuteFile(String),
+    /// Save last results to file.
+    SaveResults(String),
+    /// Repeat last query every N seconds.
+    Watch(u64),
     /// Show help.
     Help,
     /// Quit the TUI.
@@ -73,6 +85,27 @@ pub fn parse(input: &str) -> MetaAction {
             }
         }
         "\\timing" => MetaAction::ToggleTiming,
+        "\\x" => MetaAction::ToggleExpanded,
+        "\\conninfo" => MetaAction::ConnInfo,
+        "\\e" | "\\edit" => MetaAction::ExternalEditor,
+        "\\i" => {
+            if arg.is_empty() {
+                MetaAction::Unknown("\\i requires a filename".into())
+            } else {
+                MetaAction::ExecuteFile(arg.to_string())
+            }
+        }
+        "\\g" => {
+            if arg.is_empty() {
+                MetaAction::Unknown("\\g requires a filename".into())
+            } else {
+                MetaAction::SaveResults(arg.to_string())
+            }
+        }
+        "\\watch" => {
+            let n = arg.parse::<u64>().unwrap_or(2);
+            MetaAction::Watch(n)
+        }
 
         // Help / quit
         "\\?" | "\\help" => MetaAction::Help,
@@ -102,10 +135,24 @@ Cluster:
 Session:
   \format <t|j|c>    Set output format (table/json/csv)
   \timing            Toggle query timing
+  \x                 Toggle expanded (vertical) display
+  \conninfo          Show connection details
   \connections       Show active connections
+
+Editor & Files:
+  \e                 Edit query in $EDITOR
+  \i <file>          Execute SQL from file
+  \g <file>          Save last results to file
+  \watch <N>         Repeat last query every N seconds
 
   \?                 Show this help
   \q                 Quit
+
+Keyboard:
+  Tab                Auto-complete keywords/collections
+  Ctrl+R             Reverse search history
+  Ctrl+C             Clear input (or quit if empty)
+  PageUp/PageDown    Scroll results
 
 SQL Examples:
   -- Collections & Documents
