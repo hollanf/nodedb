@@ -210,6 +210,12 @@ pub enum PhysicalPlan {
         /// Enables `SELECT price * qty AS total, UPPER(name) AS name_upper`.
         /// Empty = no computed columns (use `projection` for column selection).
         computed_columns: Vec<u8>,
+        /// Window function specifications (serialized `Vec<WindowFuncSpec>`).
+        ///
+        /// Evaluated after sort and before projection. Each spec produces a
+        /// new column appended to every row (e.g., ROW_NUMBER, RANK, SUM OVER).
+        /// Empty = no window functions.
+        window_functions: Vec<u8>,
     },
 
     /// Hash join: inner join two collections on matching fields.

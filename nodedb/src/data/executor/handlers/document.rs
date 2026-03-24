@@ -80,6 +80,7 @@ impl CoreLoop {
         distinct: bool,
         projection: &[String],
         computed_columns_bytes: &[u8],
+        window_functions_bytes: &[u8],
     ) -> Response {
         debug!(
             core = self.core_id,
@@ -89,6 +90,14 @@ impl CoreLoop {
             sort_fields = sort_keys.len(),
             "document scan"
         );
+
+        // Parse window function specs.
+        let window_specs: Vec<crate::bridge::window_func::WindowFuncSpec> =
+            if window_functions_bytes.is_empty() {
+                Vec::new()
+            } else {
+                rmp_serde::from_slice(window_functions_bytes).unwrap_or_default()
+            };
 
         // Parse computed column expressions.
         let computed_cols: Vec<crate::bridge::expr_eval::ComputedColumn> =
@@ -155,6 +164,28 @@ impl CoreLoop {
                             );
                         }
                     }
+                };
+
+                // Evaluate window functions (after sort, before dedup/limit).
+                let sorted = if !window_specs.is_empty() {
+                    let mut rows: Vec<(String, serde_json::Value)> = sorted
+                        .into_iter()
+                        .map(|(id, val)| {
+                            let doc = super::super::doc_format::decode_document(&val)
+                                .unwrap_or(serde_json::Value::Null);
+                            (id, doc)
+                        })
+                        .collect();
+                    crate::bridge::window_func::evaluate_window_functions(&mut rows, &window_specs);
+                    // Re-encode back to bytes for the rest of the pipeline.
+                    rows.into_iter()
+                        .map(|(id, doc)| {
+                            let bytes = super::super::doc_format::encode_to_msgpack(&doc);
+                            (id, bytes)
+                        })
+                        .collect()
+                } else {
+                    sorted
                 };
 
                 let deduped = if distinct {

@@ -149,6 +149,7 @@ impl PlanConverter {
                             distinct: false,
                             projection: Vec::new(),
                             computed_columns: Vec::new(),
+                            window_functions: Vec::new(),
                         },
                     }]);
                 }
@@ -228,6 +229,7 @@ impl PlanConverter {
                         distinct: false,
                         projection: Vec::new(),
                         computed_columns: Vec::new(),
+                        window_functions: Vec::new(),
                     },
                 }])
             }
@@ -416,14 +418,10 @@ impl PlanConverter {
                             .params
                             .args
                             .first()
-                            .map(|a| {
-                                #[allow(deprecated)]
-                                match a {
-                                    Expr::Column(col) => col.name.clone(),
-                                    Expr::Literal(..) => "*".into(),
-                                    Expr::Wildcard { .. } => "*".into(),
-                                    _ => format!("{a}"),
-                                }
+                            .map(|a| match a {
+                                Expr::Column(col) => col.name.clone(),
+                                Expr::Literal(..) => "*".into(),
+                                _ => format!("{a}"),
                             })
                             .unwrap_or_else(|| "*".into());
 
@@ -475,22 +473,26 @@ impl PlanConverter {
                 Ok(tasks)
             }
 
-            // Window functions: execute inner plan, add window columns post-scan.
-            //
-            // DataFusion represents `SELECT *, ROW_NUMBER() OVER (PARTITION BY x ORDER BY y)`
-            // as Window(input=Sort/Scan, window_exprs=[...]).
-            //
-            // We convert the inner plan normally (gets the data), then the
-            // Data Plane adds window columns to each result row based on the
-            // window function definitions. The window computation happens
-            // in the response — the Data Plane returns the inner scan results
-            // and the Control Plane can apply window numbering if needed.
-            //
-            // For now: pass through to inner plan. DataFusion's own optimizer
-            // often pushes window functions into projections that reference
-            // the underlying data, so the inner plan's results are usually
-            // sufficient. Window columns that can't be computed are omitted.
-            LogicalPlan::Window(window) => self.convert(&window.input, tenant_id),
+            // Window functions: convert inner plan + extract window specs.
+            LogicalPlan::Window(window) => {
+                let mut tasks = self.convert(&window.input, tenant_id)?;
+
+                // Convert window expressions to WindowFuncSpec.
+                let specs = super::sql_expr_convert::convert_window_exprs(&window.window_expr);
+                if !specs.is_empty() {
+                    let spec_bytes = rmp_serde::to_vec_named(&specs).unwrap_or_default();
+                    for task in &mut tasks {
+                        if let PhysicalPlan::DocumentScan {
+                            window_functions, ..
+                        } = &mut task.plan
+                        {
+                            *window_functions = spec_bytes.clone();
+                        }
+                    }
+                }
+
+                Ok(tasks)
+            }
 
             // Subqueries: DataFusion's optimizer decorrelates many subqueries
             // into joins before they reach the converter. If a Subquery node

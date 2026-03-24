@@ -187,6 +187,117 @@ pub(super) fn try_convert_projection(exprs: &[Expr]) -> Option<Vec<ComputedColum
     Some(columns)
 }
 
+/// Convert DataFusion window expressions to WindowFuncSpec list.
+pub(super) fn convert_window_exprs(
+    exprs: &[Expr],
+) -> Vec<crate::bridge::window_func::WindowFuncSpec> {
+    use crate::bridge::window_func::{WindowFrame, WindowFuncSpec};
+
+    let mut specs = Vec::new();
+    for expr in exprs {
+        // Unwrap alias if present.
+        let (alias, inner) = match expr {
+            Expr::Alias(a) => (a.name.clone(), &*a.expr),
+            other => (format!("{other}"), other),
+        };
+
+        if let Expr::WindowFunction(wf) = inner {
+            let func_name = wf.fun.name().to_lowercase();
+            let args: Vec<SqlExpr> = wf
+                .params
+                .args
+                .iter()
+                .filter_map(datafusion_expr_to_sql_expr)
+                .collect();
+            let partition_by: Vec<String> = wf
+                .params
+                .partition_by
+                .iter()
+                .filter_map(|e| {
+                    if let Expr::Column(col) = e {
+                        Some(col.name.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let order_by: Vec<(String, bool)> = wf
+                .params
+                .order_by
+                .iter()
+                .filter_map(|sort| {
+                    if let Expr::Column(col) = &sort.expr {
+                        Some((col.name.clone(), sort.asc))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            // Convert window frame.
+            let frame = {
+                let f = &wf.params.window_frame;
+                let mode = match f.units {
+                    datafusion::logical_expr::WindowFrameUnits::Rows => "rows",
+                    datafusion::logical_expr::WindowFrameUnits::Range => "range",
+                    datafusion::logical_expr::WindowFrameUnits::Groups => "groups",
+                };
+                let start = convert_frame_bound(&f.start_bound);
+                let end = convert_frame_bound(&f.end_bound);
+                WindowFrame {
+                    mode: mode.to_string(),
+                    start,
+                    end,
+                }
+            };
+
+            specs.push(WindowFuncSpec {
+                alias,
+                func_name,
+                args,
+                partition_by,
+                order_by,
+                frame,
+            });
+        }
+    }
+    specs
+}
+
+fn convert_frame_bound(
+    bound: &datafusion::logical_expr::WindowFrameBound,
+) -> crate::bridge::window_func::FrameBound {
+    use crate::bridge::window_func::FrameBound;
+    use datafusion::logical_expr::WindowFrameBound;
+    match bound {
+        WindowFrameBound::Preceding(v) => {
+            if v.is_null() {
+                FrameBound::UnboundedPreceding
+            } else {
+                let n = v.to_string().parse::<u64>().unwrap_or(0);
+                if n == 0 {
+                    FrameBound::UnboundedPreceding
+                } else {
+                    FrameBound::Preceding(n)
+                }
+            }
+        }
+        WindowFrameBound::CurrentRow => FrameBound::CurrentRow,
+        WindowFrameBound::Following(v) => {
+            if v.is_null() {
+                FrameBound::UnboundedFollowing
+            } else {
+                let n = v.to_string().parse::<u64>().unwrap_or(0);
+                if n == 0 {
+                    FrameBound::UnboundedFollowing
+                } else {
+                    FrameBound::Following(n)
+                }
+            }
+        }
+    }
+}
+
 fn arrow_type_to_cast_type(dt: &datafusion::arrow::datatypes::DataType) -> Option<CastType> {
     use datafusion::arrow::datatypes::DataType;
     match dt {

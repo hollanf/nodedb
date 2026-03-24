@@ -124,6 +124,7 @@ impl CoreLoop {
                 distinct,
                 projection,
                 computed_columns,
+                window_functions,
             } => self.execute_document_scan(
                 task,
                 tid,
@@ -135,6 +136,7 @@ impl CoreLoop {
                 *distinct,
                 projection,
                 computed_columns,
+                window_functions,
             ),
 
             PhysicalPlan::DocumentBatchInsert {
