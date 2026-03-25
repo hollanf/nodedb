@@ -398,15 +398,20 @@ impl TimeseriesEngine {
 
     /// Update sync watermark after Origin acknowledges a push.
     ///
-    /// Called when `TimeseriesAckMsg` is received with an LSN.
-    pub fn acknowledge_sync(&mut self, collection: &str, lsn: u64) {
-        // Update watermarks for all series in this collection.
+    /// Stores the max timestamp per series that has been synced.
+    /// Called when `TimeseriesAckMsg` is received.
+    pub fn acknowledge_sync(&mut self, collection: &str, max_synced_ts: u64) {
         if let Some(coll) = self.collections.get_mut(collection) {
-            for &sid in &coll.series_ids {
-                self.sync_watermarks
-                    .entry(sid)
-                    .and_modify(|w| *w = (*w).max(lsn))
-                    .or_insert(lsn);
+            // Find the actual max timestamp per series that was synced.
+            for i in 0..coll.series_ids.len() {
+                let sid = coll.series_ids[i];
+                let ts = coll.timestamps[i] as u64;
+                if ts <= max_synced_ts {
+                    self.sync_watermarks
+                        .entry(sid)
+                        .and_modify(|w| *w = (*w).max(ts))
+                        .or_insert(ts);
+                }
             }
             coll.dirty = false;
         }
@@ -495,6 +500,100 @@ impl TimeseriesEngine {
         let lsn = self.next_sync_lsn;
         self.next_sync_lsn += 1;
         lsn
+    }
+
+    // ─── Sync Push Payload ───────────────────────────────────────────
+
+    /// Build a sync push payload for a collection.
+    ///
+    /// If `sync_resolution_ms > 0`, downsamples to rollup buckets instead
+    /// of sending raw samples. This reduces bandwidth for mobile agents.
+    ///
+    /// Only includes data after the per-series sync watermark (delta sync).
+    pub fn build_sync_payload(
+        &mut self,
+        collection: &str,
+        lite_id: &str,
+    ) -> Option<nodedb_types::sync::wire::TimeseriesPushMsg> {
+        let coll = self.collections.get(collection)?;
+        if coll.timestamps.is_empty() {
+            return None;
+        }
+
+        let sync_resolution = self.config.sync_resolution_ms;
+
+        // Filter to only unsynced data.
+        // Watermark stores the max timestamp that's been synced per series.
+        // Only include samples with timestamp > watermark for that series.
+        let mut ts_to_sync = Vec::new();
+        let mut val_to_sync = Vec::new();
+        for i in 0..coll.timestamps.len() {
+            let sid = coll.series_ids[i];
+            let ts = coll.timestamps[i];
+            let last_synced_ts = self.sync_watermark(sid) as i64;
+            if ts > last_synced_ts {
+                ts_to_sync.push(ts);
+                val_to_sync.push(coll.values[i]);
+            }
+        }
+
+        if ts_to_sync.is_empty() {
+            return None;
+        }
+
+        // Apply pre-sync downsampling if configured.
+        let (final_ts, final_vals) = if sync_resolution > 0 {
+            let mut buckets: std::collections::BTreeMap<i64, (f64, u64)> =
+                std::collections::BTreeMap::new();
+            for i in 0..ts_to_sync.len() {
+                let bucket = (ts_to_sync[i] / sync_resolution as i64) * sync_resolution as i64;
+                let entry = buckets.entry(bucket).or_insert((0.0, 0));
+                entry.0 += val_to_sync[i];
+                entry.1 += 1;
+            }
+            let ts: Vec<i64> = buckets.keys().copied().collect();
+            let vals: Vec<f64> = buckets
+                .values()
+                .map(|(sum, count)| sum / *count as f64)
+                .collect();
+            (ts, vals)
+        } else {
+            (ts_to_sync, val_to_sync)
+        };
+
+        // Gorilla-encode for wire.
+        let mut ts_enc = nodedb_types::GorillaEncoder::new();
+        for &t in &final_ts {
+            ts_enc.encode(t, 0.0);
+        }
+        let mut val_enc = nodedb_types::GorillaEncoder::new();
+        for (i, &v) in final_vals.iter().enumerate() {
+            val_enc.encode(i as i64, v);
+        }
+
+        let min_ts = final_ts.iter().copied().min().unwrap_or(0);
+        let max_ts = final_ts.iter().copied().max().unwrap_or(0);
+
+        // Build watermarks map for the push.
+        let watermarks: HashMap<u64, u64> =
+            self.sync_watermarks.iter().map(|(&k, &v)| (k, v)).collect();
+
+        Some(nodedb_types::sync::wire::TimeseriesPushMsg {
+            lite_id: lite_id.to_string(),
+            collection: collection.to_string(),
+            ts_block: ts_enc.finish(),
+            val_block: val_enc.finish(),
+            series_block: Vec::new(), // Simplified: series IDs not needed for rollups.
+            sample_count: final_ts.len() as u64,
+            min_ts,
+            max_ts,
+            watermarks,
+        })
+    }
+
+    /// Get the configured sync interval in milliseconds.
+    pub fn sync_interval_ms(&self) -> u64 {
+        self.config.sync_interval_ms
     }
 }
 
@@ -786,22 +885,32 @@ mod tests {
                 value: 1.0,
             },
         );
+        engine.ingest_metric(
+            "m",
+            "cpu",
+            vec![("h".into(), "a".into())],
+            MetricSample {
+                timestamp_ms: 200,
+                value: 2.0,
+            },
+        );
 
         let sid = engine
             .catalog
             .resolve(&SeriesKey::new("cpu", vec![("h".into(), "a".into())]));
         assert_eq!(engine.sync_watermark(sid), 0);
 
-        engine.acknowledge_sync("m", 10);
-        assert_eq!(engine.sync_watermark(sid), 10);
+        // Acknowledge sync up to timestamp 100.
+        engine.acknowledge_sync("m", 100);
+        assert_eq!(engine.sync_watermark(sid), 100);
 
-        // Monotonicity: higher LSN replaces lower.
-        engine.acknowledge_sync("m", 20);
-        assert_eq!(engine.sync_watermark(sid), 20);
+        // Acknowledge sync up to timestamp 200 — advances.
+        engine.acknowledge_sync("m", 200);
+        assert_eq!(engine.sync_watermark(sid), 200);
 
-        // Monotonicity: lower LSN does NOT regress.
-        engine.acknowledge_sync("m", 5);
-        assert_eq!(engine.sync_watermark(sid), 20);
+        // Lower timestamp does NOT regress (monotonic).
+        engine.acknowledge_sync("m", 50);
+        assert_eq!(engine.sync_watermark(sid), 200);
     }
 
     #[test]
@@ -818,11 +927,11 @@ mod tests {
         );
         assert!(!engine.dirty_collections().is_empty());
 
-        engine.acknowledge_sync("m", 1);
+        engine.acknowledge_sync("m", 100);
         // Dirty cleared, but memtable still has data so dirty_collections includes it.
         // After flush + ack, it should be clean.
         engine.flush("m");
-        engine.acknowledge_sync("m", 2);
+        engine.acknowledge_sync("m", 100);
         assert!(engine.dirty_collections().is_empty());
     }
 
@@ -838,7 +947,7 @@ mod tests {
                 value: 1.0,
             },
         );
-        engine.acknowledge_sync("m", 42);
+        engine.acknowledge_sync("m", 100);
 
         let exported = engine.export_watermarks().clone();
         assert!(!exported.is_empty());
