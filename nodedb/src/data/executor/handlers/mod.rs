@@ -9,5 +9,6 @@ pub mod join;
 pub mod point;
 pub mod text_search;
 pub mod timeseries;
+pub mod timeseries_wal;
 pub mod transaction;
 pub mod vector;

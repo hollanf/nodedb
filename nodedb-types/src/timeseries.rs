@@ -618,6 +618,31 @@ impl TieredPartitionConfig {
 }
 
 // ---------------------------------------------------------------------------
+// WAL payload types
+// ---------------------------------------------------------------------------
+
+/// WAL record payload for a timeseries metric batch.
+///
+/// One WAL record per ingest batch. On crash recovery, replay all records
+/// with LSN > `last_flushed_wal_lsn` per partition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeseriesWalBatch {
+    /// Collection name.
+    pub collection: String,
+    /// Batch of metric samples: (series_id, timestamp_ms, value).
+    pub samples: Vec<(SeriesId, i64, f64)>,
+}
+
+/// WAL record payload for a timeseries log batch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogWalBatch {
+    /// Collection name.
+    pub collection: String,
+    /// Batch of log entries: (series_id, timestamp_ms, data).
+    pub entries: Vec<(SeriesId, i64, Vec<u8>)>,
+}
+
+// ---------------------------------------------------------------------------
 // Flushed data (existing types, preserved)
 // ---------------------------------------------------------------------------
 

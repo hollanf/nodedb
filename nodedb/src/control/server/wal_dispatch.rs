@@ -139,6 +139,21 @@ pub fn wal_append_if_write(
             })?;
             wal.append_vector_params(tenant_id, vshard_id, &entry)?;
         }
+        PhysicalPlan::TimeseriesIngest {
+            collection,
+            payload,
+            format: _,
+        } => {
+            // Use TimeseriesBatch WAL record. Payload is already the raw ILP/samples bytes.
+            // Wrap with collection name for replay routing.
+            let wal_payload = rmp_serde::to_vec(&(collection, payload)).map_err(|e| {
+                crate::Error::Serialization {
+                    format: "msgpack".into(),
+                    detail: format!("wal timeseries batch: {e}"),
+                }
+            })?;
+            wal.append_timeseries_batch(tenant_id, vshard_id, &wal_payload)?;
+        }
         // Read operations and control commands: no WAL needed.
         _ => {}
     }

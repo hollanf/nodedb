@@ -180,9 +180,10 @@ impl WalManager {
         Self::open(path, false)
     }
 
-    /// Append a Put record to the WAL. Returns the assigned LSN.
-    pub fn append_put(
+    /// Internal: append a record of the given type to the WAL.
+    fn append_record(
         &self,
+        record_type: RecordType,
         tenant_id: TenantId,
         vshard_id: VShardId,
         payload: &[u8],
@@ -190,7 +191,7 @@ impl WalManager {
         let mut wal = self.wal.lock().unwrap_or_else(|p| p.into_inner());
         let lsn = wal
             .append(
-                RecordType::Put as u16,
+                record_type as u16,
                 tenant_id.as_u32(),
                 vshard_id.as_u16(),
                 payload,
@@ -199,135 +200,54 @@ impl WalManager {
         Ok(Lsn::new(lsn))
     }
 
-    /// Append a Delete record to the WAL. Returns the assigned LSN.
-    pub fn append_delete(
-        &self,
-        tenant_id: TenantId,
-        vshard_id: VShardId,
-        payload: &[u8],
-    ) -> crate::Result<Lsn> {
-        let mut wal = self.wal.lock().unwrap_or_else(|p| p.into_inner());
-        let lsn = wal
-            .append(
-                RecordType::Delete as u16,
-                tenant_id.as_u32(),
-                vshard_id.as_u16(),
-                payload,
-            )
-            .map_err(crate::Error::Wal)?;
-        Ok(Lsn::new(lsn))
+    pub fn append_put(&self, tid: TenantId, vs: VShardId, p: &[u8]) -> crate::Result<Lsn> {
+        self.append_record(RecordType::Put, tid, vs, p)
     }
 
-    /// Append a Vector insert record. Returns the assigned LSN.
-    pub fn append_vector_put(
-        &self,
-        tenant_id: TenantId,
-        vshard_id: VShardId,
-        payload: &[u8],
-    ) -> crate::Result<Lsn> {
-        let mut wal = self.wal.lock().unwrap_or_else(|p| p.into_inner());
-        let lsn = wal
-            .append(
-                RecordType::VectorPut as u16,
-                tenant_id.as_u32(),
-                vshard_id.as_u16(),
-                payload,
-            )
-            .map_err(crate::Error::Wal)?;
-        Ok(Lsn::new(lsn))
+    pub fn append_delete(&self, tid: TenantId, vs: VShardId, p: &[u8]) -> crate::Result<Lsn> {
+        self.append_record(RecordType::Delete, tid, vs, p)
     }
 
-    /// Append a Vector delete record. Returns the assigned LSN.
+    pub fn append_vector_put(&self, tid: TenantId, vs: VShardId, p: &[u8]) -> crate::Result<Lsn> {
+        self.append_record(RecordType::VectorPut, tid, vs, p)
+    }
+
     pub fn append_vector_delete(
         &self,
-        tenant_id: TenantId,
-        vshard_id: VShardId,
-        payload: &[u8],
+        tid: TenantId,
+        vs: VShardId,
+        p: &[u8],
     ) -> crate::Result<Lsn> {
-        let mut wal = self.wal.lock().unwrap_or_else(|p| p.into_inner());
-        let lsn = wal
-            .append(
-                RecordType::VectorDelete as u16,
-                tenant_id.as_u32(),
-                vshard_id.as_u16(),
-                payload,
-            )
-            .map_err(crate::Error::Wal)?;
-        Ok(Lsn::new(lsn))
+        self.append_record(RecordType::VectorDelete, tid, vs, p)
     }
 
-    /// Append a Vector params record. Returns the assigned LSN.
     pub fn append_vector_params(
         &self,
-        tenant_id: TenantId,
-        vshard_id: VShardId,
-        payload: &[u8],
+        tid: TenantId,
+        vs: VShardId,
+        p: &[u8],
     ) -> crate::Result<Lsn> {
-        let mut wal = self.wal.lock().unwrap_or_else(|p| p.into_inner());
-        let lsn = wal
-            .append(
-                RecordType::VectorParams as u16,
-                tenant_id.as_u32(),
-                vshard_id.as_u16(),
-                payload,
-            )
-            .map_err(crate::Error::Wal)?;
-        Ok(Lsn::new(lsn))
+        self.append_record(RecordType::VectorParams, tid, vs, p)
     }
 
-    /// Append an atomic transaction record wrapping multiple sub-records.
-    ///
-    /// All sub-records share one CRC boundary and one fsync. On replay,
-    /// either all sub-records apply or none.
-    ///
-    /// Payload: MessagePack-encoded `Vec<(u16, Vec<u8>)>` — each tuple is
-    /// (record_type, sub-payload).
-    pub fn append_transaction(
-        &self,
-        tenant_id: TenantId,
-        vshard_id: VShardId,
-        payload: &[u8],
-    ) -> crate::Result<Lsn> {
-        let mut wal = self.wal.lock().unwrap_or_else(|p| p.into_inner());
-        let lsn = wal
-            .append(
-                RecordType::Transaction as u16,
-                tenant_id.as_u32(),
-                vshard_id.as_u16(),
-                payload,
-            )
-            .map_err(crate::Error::Wal)?;
-        Ok(Lsn::new(lsn))
+    pub fn append_transaction(&self, tid: TenantId, vs: VShardId, p: &[u8]) -> crate::Result<Lsn> {
+        self.append_record(RecordType::Transaction, tid, vs, p)
     }
 
-    /// Append a CRDT delta record. Returns the assigned LSN.
     pub fn append_crdt_delta(
         &self,
-        tenant_id: TenantId,
-        vshard_id: VShardId,
+        tid: TenantId,
+        vs: VShardId,
         delta: &[u8],
     ) -> crate::Result<Lsn> {
-        let mut wal = self.wal.lock().unwrap_or_else(|p| p.into_inner());
-        let lsn = wal
-            .append(
-                RecordType::CrdtDelta as u16,
-                tenant_id.as_u32(),
-                vshard_id.as_u16(),
-                delta,
-            )
-            .map_err(crate::Error::Wal)?;
-        Ok(Lsn::new(lsn))
+        self.append_record(RecordType::CrdtDelta, tid, vs, delta)
     }
 
-    /// Append a checkpoint marker to the WAL.
-    ///
-    /// Records the LSN at which a consistent checkpoint was taken.
-    /// WAL segments before this LSN are safe to truncate after all
-    /// engines have confirmed their dirty pages are flushed.
+    /// Append a checkpoint marker. Serializes the LSN before writing.
     pub fn append_checkpoint(
         &self,
-        tenant_id: TenantId,
-        vshard_id: VShardId,
+        tid: TenantId,
+        vs: VShardId,
         checkpoint_lsn: u64,
     ) -> crate::Result<Lsn> {
         let payload =
@@ -335,16 +255,20 @@ impl WalManager {
                 format: "msgpack".into(),
                 detail: format!("checkpoint: {e}"),
             })?;
-        let mut wal = self.wal.lock().unwrap_or_else(|p| p.into_inner());
-        let lsn = wal
-            .append(
-                RecordType::Checkpoint as u16,
-                tenant_id.as_u32(),
-                vshard_id.as_u16(),
-                &payload,
-            )
-            .map_err(crate::Error::Wal)?;
-        Ok(Lsn::new(lsn))
+        self.append_record(RecordType::Checkpoint, tid, vs, &payload)
+    }
+
+    pub fn append_timeseries_batch(
+        &self,
+        tid: TenantId,
+        vs: VShardId,
+        p: &[u8],
+    ) -> crate::Result<Lsn> {
+        self.append_record(RecordType::TimeseriesBatch, tid, vs, p)
+    }
+
+    pub fn append_log_batch(&self, tid: TenantId, vs: VShardId, p: &[u8]) -> crate::Result<Lsn> {
+        self.append_record(RecordType::LogBatch, tid, vs, p)
     }
 
     /// Truncate old WAL segments that are fully below the checkpoint LSN.
