@@ -3,12 +3,14 @@ pub mod collection;
 pub(crate) mod convert;
 mod core;
 mod graph_rag;
+mod health;
 pub(crate) mod lock_ext;
 mod sync_delegate;
 mod trait_impl;
 
 pub use collection::{CollectionMeta, TransactionOp};
 pub use core::NodeDbLite;
+pub use health::{HealthStatus, OverallStatus};
 pub(crate) use lock_ext::LockExt;
 
 #[cfg(test)]
