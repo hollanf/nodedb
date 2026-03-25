@@ -46,6 +46,7 @@ fn lite_delta_push_frame_roundtrips() {
         delta: vec![0xDE, 0xAD, 0xBE, 0xEF],
         peer_id: 12345,
         mutation_id: 7,
+        checksum: 0,
     };
 
     let frame = SyncFrame::new_msgpack(SyncMessageType::DeltaPush, &msg).unwrap();

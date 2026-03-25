@@ -20,19 +20,6 @@ use super::rate_limit::{RateLimitConfig, SyncRateLimiter};
 use super::security::{SyncRejectionReason, enforce_rls_on_delta, log_silent_rejection};
 use super::wire::*;
 
-/// Data extracted from a timeseries push for async Data Plane dispatch.
-#[derive(Debug)]
-pub struct TimeseriesIngestData {
-    /// Collection to ingest into.
-    pub collection: String,
-    /// ILP-format payload with `__source` tag injected.
-    pub ilp_payload: Vec<u8>,
-    /// Source Lite instance ID.
-    pub lite_id: String,
-    /// Number of decoded samples.
-    pub sample_count: u64,
-}
-
 /// State of a single sync session (one WebSocket connection).
 pub struct SyncSession {
     /// Unique session ID.
@@ -65,6 +52,10 @@ pub struct SyncSession {
     pub rate_limiter: SyncRateLimiter,
     /// Device metadata from handshake (for DLQ entries).
     pub device_metadata: DeviceMetadata,
+    /// Per-peer replay deduplication: highest mutation_id successfully processed.
+    /// Key = peer_id, Value = highest mutation_id seen from that peer.
+    /// Deltas with mutation_id <= this value are idempotently skipped.
+    pub last_seen_mutation: HashMap<u64, u64>,
 }
 
 impl SyncSession {
@@ -90,6 +81,7 @@ impl SyncSession {
             created_at: now,
             rate_limiter: SyncRateLimiter::new(rate_config),
             device_metadata: DeviceMetadata::default(),
+            last_seen_mutation: HashMap::new(),
         }
     }
 
@@ -302,9 +294,57 @@ impl SyncSession {
             ));
         }
 
+        // CRC32C integrity check (skip for legacy clients with checksum=0).
+        if msg.checksum != 0 {
+            let computed = crc32c::crc32c(&msg.delta);
+            if computed != msg.checksum {
+                self.mutations_rejected += 1;
+                warn!(
+                    session = %self.session_id,
+                    mutation_id = msg.mutation_id,
+                    expected = msg.checksum,
+                    computed,
+                    "CRC32C checksum mismatch on delta payload"
+                );
+                let reject = DeltaRejectMsg {
+                    mutation_id: msg.mutation_id,
+                    reason: format!(
+                        "CRC32C mismatch: expected {:#010x}, computed {:#010x}",
+                        msg.checksum, computed
+                    ),
+                    compensation: Some(CompensationHint::IntegrityViolation),
+                };
+                return Some(SyncFrame::encode_or_empty(
+                    SyncMessageType::DeltaReject,
+                    &reject,
+                ));
+            }
+        }
+
         // Update device metadata peer_id on first delta.
         if self.device_metadata.peer_id == 0 {
             self.device_metadata.peer_id = msg.peer_id;
+        }
+
+        // --- Replay deduplication ---
+        // If we've already processed this mutation_id from this peer, send a
+        // duplicate ACK without re-applying. This handles reconnect scenarios
+        // where Lite re-sends unACK'd deltas that Origin already committed.
+        if let Some(&last_seen) = self.last_seen_mutation.get(&msg.peer_id)
+            && msg.mutation_id <= last_seen
+        {
+            debug!(
+                session = %self.session_id,
+                peer_id = msg.peer_id,
+                mutation_id = msg.mutation_id,
+                last_seen,
+                "replay dedup: skipping already-processed delta"
+            );
+            let ack = DeltaAckMsg {
+                mutation_id: msg.mutation_id,
+                lsn: 0, // Already committed; exact LSN not tracked per-mutation.
+            };
+            return Some(SyncFrame::encode_or_empty(SyncMessageType::DeltaAck, &ack));
         }
 
         let identity = match &self.identity {
@@ -388,12 +428,18 @@ impl SyncSession {
             return None; // Silent drop.
         }
 
-        // Delta passes all checks (RLS, rate limit) — accept it.
+        // Delta passes all checks (RLS, rate limit, integrity, dedup) — accept it.
         // CRDT constraint validation (UNIQUE, FK) happens asynchronously in
         // the listener after the delta is dispatched to the Data Plane.
         // If the constraint check fails, the delta is retroactively rejected
         // and a CompensationHint is sent back to the client.
         self.mutations_processed += 1;
+
+        // Track highest mutation_id per peer for replay deduplication.
+        self.last_seen_mutation
+            .entry(msg.peer_id)
+            .and_modify(|v| *v = (*v).max(msg.mutation_id))
+            .or_insert(msg.mutation_id);
         debug!(
             session = %self.session_id,
             collection = %msg.collection,
@@ -436,97 +482,6 @@ impl SyncSession {
             sender_id: 0, // Server node ID (filled by caller).
         };
         SyncFrame::encode_or_empty(SyncMessageType::VectorClockSync, &response)
-    }
-
-    /// Process a timeseries push: decode Gorilla blocks, prepare for Data Plane ingest.
-    ///
-    /// Returns `(ack_frame, ingest_payload)`. The caller (listener) must dispatch
-    /// `ingest_payload` to the Data Plane via `dispatch_to_data_plane` with a
-    /// `TimeseriesIngest` physical plan. The ACK is sent immediately (optimistic),
-    /// similar to how `DeltaPush` works.
-    pub fn handle_timeseries_push(
-        &mut self,
-        msg: &TimeseriesPushMsg,
-    ) -> (SyncFrame, Option<TimeseriesIngestData>) {
-        self.last_activity = Instant::now();
-
-        if !self.authenticated {
-            let ack = TimeseriesAckMsg {
-                collection: msg.collection.clone(),
-                accepted: 0,
-                rejected: msg.sample_count,
-                lsn: 0,
-            };
-            return (
-                SyncFrame::encode_or_empty(SyncMessageType::TimeseriesAck, &ack),
-                None,
-            );
-        }
-
-        // Decode Gorilla blocks to verify integrity.
-        let timestamps = nodedb_types::GorillaDecoder::new(&msg.ts_block).decode_all();
-        let values = nodedb_types::GorillaDecoder::new(&msg.val_block).decode_all();
-
-        let decoded_count = timestamps.len().min(values.len());
-        if decoded_count == 0 {
-            let ack = TimeseriesAckMsg {
-                collection: msg.collection.clone(),
-                accepted: 0,
-                rejected: msg.sample_count,
-                lsn: 0,
-            };
-            return (
-                SyncFrame::encode_or_empty(SyncMessageType::TimeseriesAck, &ack),
-                None,
-            );
-        }
-
-        self.mutations_processed += decoded_count as u64;
-
-        // Build ILP-format payload for Data Plane ingest.
-        // Each decoded sample becomes an ILP line with `__source` tag.
-        let mut ilp_lines = String::with_capacity(decoded_count * 80);
-        for i in 0..decoded_count {
-            let (ts, _) = timestamps[i];
-            let (_, val) = values[i];
-            // ILP format: measurement,__source=lite_id value=X timestamp_ns
-            ilp_lines.push_str(&msg.collection);
-            ilp_lines.push_str(",__source=");
-            ilp_lines.push_str(&msg.lite_id);
-            ilp_lines.push_str(" value=");
-            ilp_lines.push_str(&val.to_string());
-            ilp_lines.push(' ');
-            // Convert ms to ns for ILP.
-            ilp_lines.push_str(&(ts * 1_000_000).to_string());
-            ilp_lines.push('\n');
-        }
-
-        debug!(
-            session = %self.session_id,
-            collection = %msg.collection,
-            decoded = decoded_count,
-            lite_id = %msg.lite_id,
-            "timeseries push decoded, dispatching to Data Plane"
-        );
-
-        let ack = TimeseriesAckMsg {
-            collection: msg.collection.clone(),
-            accepted: decoded_count as u64,
-            rejected: msg.sample_count.saturating_sub(decoded_count as u64),
-            lsn: self.mutations_processed,
-        };
-
-        let ingest = TimeseriesIngestData {
-            collection: msg.collection.clone(),
-            ilp_payload: ilp_lines.into_bytes(),
-            lite_id: msg.lite_id.clone(),
-            sample_count: decoded_count as u64,
-        };
-
-        (
-            SyncFrame::encode_or_empty(SyncMessageType::TimeseriesAck, &ack),
-            Some(ingest),
-        )
     }
 
     pub fn handle_ping(&mut self, msg: &PingPongMsg) -> SyncFrame {
@@ -603,6 +558,20 @@ impl SyncSession {
                 Some(ack)
             }
             SyncMessageType::TimeseriesAck => None, // Client-side only.
+            SyncMessageType::ResyncRequest => {
+                // Client detected a sequence gap or checksum failure.
+                // Log the request — full re-sync is handled by shape subscription.
+                if let Some(msg) = frame.decode_body::<ResyncRequestMsg>() {
+                    warn!(
+                        session = %self.session_id,
+                        reason = ?msg.reason,
+                        from_mutation_id = msg.from_mutation_id,
+                        collection = %msg.collection,
+                        "client requested re-sync"
+                    );
+                }
+                None // Re-sync is initiated via shape re-subscribe, not a direct response.
+            }
             SyncMessageType::PingPong => {
                 let msg: PingPongMsg = frame.decode_body()?;
                 if msg.is_pong {
@@ -692,6 +661,7 @@ mod tests {
             delta: vec![1, 2, 3],
             peer_id: 1,
             mutation_id: 100,
+            checksum: 0,
         };
 
         let response = session.handle_delta_push(&msg, None, None, None);
@@ -712,6 +682,7 @@ mod tests {
             delta: rmp_serde::to_vec_named(&data).unwrap(),
             peer_id: 1,
             mutation_id: 42,
+            checksum: 0,
         };
 
         let response = session.handle_delta_push(&msg, None, None, None);
@@ -757,6 +728,7 @@ mod tests {
             delta: rmp_serde::to_vec_named(&data).unwrap(),
             peer_id: 1,
             mutation_id: 42,
+            checksum: 0,
         };
 
         let response =
@@ -802,6 +774,7 @@ mod tests {
             delta: rmp_serde::to_vec_named(&data).unwrap(),
             peer_id: 1,
             mutation_id: 1,
+            checksum: 0,
         };
 
         // First should succeed (1 token available).
@@ -819,6 +792,7 @@ mod tests {
             delta: rmp_serde::to_vec_named(&data).unwrap(),
             peer_id: 1,
             mutation_id: 2,
+            checksum: 0,
         };
         let r2 = session.handle_delta_push(&msg2, None, Some(&mut audit_log), Some(&mut dlq));
         assert!(r2.is_none()); // Silent drop.
@@ -855,5 +829,99 @@ mod tests {
         let response = session.handle_vector_clock_sync(&msg);
         let sync: VectorClockSyncMsg = response.decode_body().unwrap();
         assert_eq!(*sync.clocks.get("orders").unwrap(), 42);
+    }
+
+    #[test]
+    fn replay_dedup_skips_already_processed() {
+        let mut session = make_authenticated_session();
+
+        let data = serde_json::json!({"key": "value"});
+        let delta = rmp_serde::to_vec_named(&data).unwrap();
+
+        let msg = DeltaPushMsg {
+            collection: "docs".into(),
+            document_id: "d1".into(),
+            delta: delta.clone(),
+            peer_id: 42,
+            mutation_id: 5,
+            checksum: 0,
+        };
+
+        // First push — accepted.
+        let r1 = session.handle_delta_push(&msg, None, None, None);
+        assert!(r1.is_some());
+        assert_eq!(r1.unwrap().msg_type, SyncMessageType::DeltaAck);
+        assert_eq!(session.mutations_processed, 1);
+
+        // Replay same mutation_id — dedup'd, returns ACK without re-processing.
+        let r2 = session.handle_delta_push(&msg, None, None, None);
+        assert!(r2.is_some());
+        assert_eq!(r2.unwrap().msg_type, SyncMessageType::DeltaAck);
+        // mutations_processed should NOT increment (dedup).
+        assert_eq!(session.mutations_processed, 1);
+
+        // Lower mutation_id — also dedup'd.
+        let msg_old = DeltaPushMsg {
+            collection: "docs".into(),
+            document_id: "d0".into(),
+            delta: delta.clone(),
+            peer_id: 42,
+            mutation_id: 3,
+            checksum: 0,
+        };
+        let r3 = session.handle_delta_push(&msg_old, None, None, None);
+        assert!(r3.is_some());
+        assert_eq!(r3.unwrap().msg_type, SyncMessageType::DeltaAck);
+        assert_eq!(session.mutations_processed, 1);
+
+        // Higher mutation_id — accepted.
+        let msg_new = DeltaPushMsg {
+            collection: "docs".into(),
+            document_id: "d2".into(),
+            delta,
+            peer_id: 42,
+            mutation_id: 6,
+            checksum: 0,
+        };
+        let r4 = session.handle_delta_push(&msg_new, None, None, None);
+        assert!(r4.is_some());
+        assert_eq!(r4.unwrap().msg_type, SyncMessageType::DeltaAck);
+        assert_eq!(session.mutations_processed, 2);
+    }
+
+    #[test]
+    fn crc32c_mismatch_rejects_delta() {
+        let mut session = make_authenticated_session();
+
+        let data = serde_json::json!({"key": "value"});
+        let delta = rmp_serde::to_vec_named(&data).unwrap();
+
+        // Valid checksum — accepted.
+        let valid_checksum = crc32c::crc32c(&delta);
+        let msg_ok = DeltaPushMsg {
+            collection: "docs".into(),
+            document_id: "d1".into(),
+            delta: delta.clone(),
+            peer_id: 1,
+            mutation_id: 1,
+            checksum: valid_checksum,
+        };
+        let r1 = session.handle_delta_push(&msg_ok, None, None, None);
+        assert!(r1.is_some());
+        assert_eq!(r1.unwrap().msg_type, SyncMessageType::DeltaAck);
+
+        // Bad checksum — rejected.
+        let msg_bad = DeltaPushMsg {
+            collection: "docs".into(),
+            document_id: "d2".into(),
+            delta,
+            peer_id: 1,
+            mutation_id: 2,
+            checksum: valid_checksum ^ 0xDEAD, // Corrupt the checksum.
+        };
+        let r2 = session.handle_delta_push(&msg_bad, None, None, None);
+        assert!(r2.is_some());
+        assert_eq!(r2.unwrap().msg_type, SyncMessageType::DeltaReject);
+        assert_eq!(session.mutations_rejected, 1);
     }
 }

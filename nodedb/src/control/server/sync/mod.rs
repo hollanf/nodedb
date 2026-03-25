@@ -5,4 +5,5 @@ pub mod rate_limit;
 pub mod security;
 pub mod session;
 pub mod shape;
+pub mod timeseries_handler;
 pub mod wire;

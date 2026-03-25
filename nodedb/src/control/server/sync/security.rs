@@ -304,6 +304,7 @@ mod tests {
             delta: rmp_serde::to_vec_named(data).unwrap(),
             peer_id: 1,
             mutation_id: 42,
+            checksum: 0,
         }
     }
 

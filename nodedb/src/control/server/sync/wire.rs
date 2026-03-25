@@ -7,8 +7,9 @@
 // ── Re-export all wire types from nodedb-types ──
 pub use nodedb_types::sync::wire::{
     DeltaAckMsg, DeltaPushMsg, DeltaRejectMsg, HandshakeAckMsg, HandshakeMsg, PingPongMsg,
-    ShapeDeltaMsg, ShapeSnapshotMsg, ShapeSubscribeMsg, ShapeUnsubscribeMsg, SyncFrame,
-    SyncMessageType, TimeseriesAckMsg, TimeseriesPushMsg, VectorClockSyncMsg,
+    ResyncReason, ResyncRequestMsg, ShapeDeltaMsg, ShapeSnapshotMsg, ShapeSubscribeMsg,
+    ShapeUnsubscribeMsg, SyncFrame, SyncMessageType, TimeseriesAckMsg, TimeseriesPushMsg,
+    VectorClockSyncMsg,
 };
 
 // ── Re-export CompensationHint (used by dlq.rs and session.rs) ──
@@ -74,7 +75,7 @@ mod tests {
     #[test]
     fn message_type_roundtrip() {
         for v in [
-            0x01, 0x02, 0x10, 0x11, 0x12, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40, 0x41, 0xFF,
+            0x01, 0x02, 0x10, 0x11, 0x12, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40, 0x41, 0x50, 0xFF,
         ] {
             let mt = SyncMessageType::from_u8(v).unwrap();
             assert_eq!(mt as u8, v);
