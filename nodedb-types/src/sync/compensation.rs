@@ -62,6 +62,10 @@ pub enum CompensationHint {
         /// Typed payload for the application to interpret.
         detail: String,
     },
+
+    /// Data integrity violation — CRC32C checksum mismatch on delta payload.
+    /// The client should re-send the delta.
+    IntegrityViolation,
 }
 
 impl CompensationHint {
@@ -74,6 +78,7 @@ impl CompensationHint {
             Self::RateLimited { .. } => "RATE_LIMITED",
             Self::SchemaViolation { .. } => "SCHEMA_VIOLATION",
             Self::Custom { .. } => "CUSTOM",
+            Self::IntegrityViolation => "INTEGRITY_VIOLATION",
         }
     }
 }
@@ -101,6 +106,7 @@ impl std::fmt::Display for CompensationHint {
             Self::Custom {
                 constraint, detail, ..
             } => write!(f, "CUSTOM({constraint}): {detail}"),
+            Self::IntegrityViolation => write!(f, "INTEGRITY_VIOLATION: CRC32C mismatch"),
         }
     }
 }

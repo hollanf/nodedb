@@ -40,6 +40,9 @@ pub enum SyncMessageType {
     TimeseriesPush = 0x40,
     /// Timeseries push acknowledgment (server → client, 0x41).
     TimeseriesAck = 0x41,
+    /// Re-sync request (bidirectional, 0x50).
+    /// Sent when sequence gaps or checksum failures are detected.
+    ResyncRequest = 0x50,
     PingPong = 0xFF,
 }
 
@@ -58,6 +61,7 @@ impl SyncMessageType {
             0x30 => Some(Self::VectorClockSync),
             0x40 => Some(Self::TimeseriesPush),
             0x41 => Some(Self::TimeseriesAck),
+            0x50 => Some(Self::ResyncRequest),
             0xFF => Some(Self::PingPong),
             _ => None,
         }
@@ -173,6 +177,10 @@ pub struct DeltaPushMsg {
     pub peer_id: u64,
     /// Per-mutation unique ID for dedup.
     pub mutation_id: u64,
+    /// CRC32C checksum of `delta` bytes for integrity verification.
+    /// Computed by sender, validated by receiver. 0 for legacy clients.
+    #[serde(default)]
+    pub checksum: u32,
 }
 
 /// Delta acknowledgment (server → client, 0x11).
@@ -245,6 +253,45 @@ pub struct VectorClockSyncMsg {
     pub clocks: HashMap<String, u64>,
     /// Sender's node/peer ID.
     pub sender_id: u64,
+}
+
+/// Re-sync request message (bidirectional, 0x50).
+///
+/// Sent when a receiver detects:
+/// - Sequence gap: missing `mutation_id`s in the delta stream
+/// - Checksum failure: CRC32C mismatch on a delta payload
+/// - State divergence: local state inconsistent with received deltas
+///
+/// On receiving a ResyncRequest, the sender should:
+/// 1. Re-send all deltas from `from_mutation_id` onwards, OR
+/// 2. Send a full snapshot if `from_mutation_id` is 0
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResyncRequestMsg {
+    /// Reason for requesting re-sync.
+    pub reason: ResyncReason,
+    /// Resume from this mutation ID (0 = full re-sync).
+    pub from_mutation_id: u64,
+    /// Collection scope (empty = all collections).
+    pub collection: String,
+}
+
+/// Reason for a re-sync request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ResyncReason {
+    /// Detected missing mutation IDs in the delta stream.
+    SequenceGap {
+        /// The expected next mutation ID.
+        expected: u64,
+        /// The mutation ID that was actually received.
+        received: u64,
+    },
+    /// CRC32C checksum mismatch on a delta payload.
+    ChecksumMismatch {
+        /// The mutation ID of the corrupted delta.
+        mutation_id: u64,
+    },
+    /// Corruption detected on cold start, need full re-sync.
+    CorruptedState,
 }
 
 /// Ping/Pong keepalive (0xFF).
@@ -353,7 +400,7 @@ mod tests {
     #[test]
     fn message_type_roundtrip() {
         for v in [
-            0x01, 0x02, 0x10, 0x11, 0x12, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40, 0x41, 0xFF,
+            0x01, 0x02, 0x10, 0x11, 0x12, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40, 0x41, 0x50, 0xFF,
         ] {
             let mt = SyncMessageType::from_u8(v).unwrap();
             assert_eq!(mt as u8, v);
