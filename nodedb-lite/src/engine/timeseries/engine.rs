@@ -209,6 +209,7 @@ impl TimeseriesEngine {
             state: PartitionState::Sealed,
             interval_ms: (max_ts - min_ts) as u64,
             last_flushed_wal_lsn: 0,
+            column_stats: std::collections::HashMap::new(),
         };
 
         let partition = FlushedPartition {

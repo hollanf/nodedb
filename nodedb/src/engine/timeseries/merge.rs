@@ -484,6 +484,7 @@ mod tests {
                 ("host".into(), ColumnType::Symbol),
             ],
             timestamp_idx: 0,
+            codecs: vec![nodedb_codec::ColumnCodec::Auto; 3],
         };
 
         // Write two partitions with different host values.

@@ -178,6 +178,7 @@ pub fn apply_schema_changes(
     }
 
     Ok(ColumnarSchema {
+        codecs: vec![nodedb_codec::ColumnCodec::Auto; columns.len()],
         columns,
         timestamp_idx,
     })
@@ -195,6 +196,7 @@ mod tests {
                 ("host".into(), ColumnType::Symbol),
             ],
             timestamp_idx: 0,
+            codecs: vec![nodedb_codec::ColumnCodec::Auto; 3],
         }
     }
 
@@ -207,6 +209,7 @@ mod tests {
                 ("mem".into(), ColumnType::Float64),
             ],
             timestamp_idx: 0,
+            codecs: vec![nodedb_codec::ColumnCodec::Auto; 4],
         }
     }
 
@@ -257,6 +260,7 @@ mod tests {
                 ("val".into(), ColumnType::Float64), // query expects f64
             ],
             timestamp_idx: 0,
+            codecs: vec![nodedb_codec::ColumnCodec::Auto; 2],
         };
         let partition = ColumnarSchema {
             columns: vec![
@@ -264,6 +268,7 @@ mod tests {
                 ("val".into(), ColumnType::Int64), // partition has i64
             ],
             timestamp_idx: 0,
+            codecs: vec![nodedb_codec::ColumnCodec::Auto; 2],
         };
         let mappings = build_column_mappings(&query, &partition);
         assert!(matches!(mappings[1], ColumnMapping::Widen { .. }));

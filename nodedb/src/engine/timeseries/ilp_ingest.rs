@@ -50,6 +50,7 @@ pub fn infer_schema(lines: &[IlpLine<'_>]) -> ColumnarSchema {
 
     ColumnarSchema {
         timestamp_idx: 0,
+        codecs: vec![nodedb_codec::ColumnCodec::Auto; columns.len()],
         columns,
     }
 }

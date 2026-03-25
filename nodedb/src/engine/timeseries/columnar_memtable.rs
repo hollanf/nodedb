@@ -36,6 +36,9 @@ pub struct ColumnarSchema {
     pub columns: Vec<(String, ColumnType)>,
     /// Index of the designated timestamp column.
     pub timestamp_idx: usize,
+    /// Per-column codec selection. When empty or shorter than `columns`,
+    /// missing entries default to `Auto`.
+    pub codecs: Vec<nodedb_codec::ColumnCodec>,
 }
 
 impl ColumnarSchema {
@@ -47,7 +50,19 @@ impl ColumnarSchema {
                 ("value".into(), ColumnType::Float64),
             ],
             timestamp_idx: 0,
+            codecs: vec![
+                nodedb_codec::ColumnCodec::Auto,
+                nodedb_codec::ColumnCodec::Auto,
+            ],
         }
+    }
+
+    /// Get the codec for column at index `i`. Returns `Auto` if not specified.
+    pub fn codec(&self, i: usize) -> nodedb_codec::ColumnCodec {
+        self.codecs
+            .get(i)
+            .copied()
+            .unwrap_or(nodedb_codec::ColumnCodec::Auto)
     }
 }
 
@@ -547,6 +562,7 @@ mod tests {
                 ("dc".into(), ColumnType::Symbol),
             ],
             timestamp_idx: 0,
+            codecs: vec![nodedb_codec::ColumnCodec::Auto; 4],
         };
         let mut mt = ColumnarMemtable::new(schema, default_config());
 
@@ -580,6 +596,7 @@ mod tests {
                 ("tag".into(), ColumnType::Symbol),
             ],
             timestamp_idx: 0,
+            codecs: vec![nodedb_codec::ColumnCodec::Auto; 3],
         };
         let config = ColumnarMemtableConfig {
             max_tag_cardinality: 5,
@@ -704,6 +721,7 @@ mod tests {
                 ("value".into(), ColumnType::Float64),
             ],
             timestamp_idx: 0,
+            codecs: vec![nodedb_codec::ColumnCodec::Auto; 2],
         };
         let mut mt = ColumnarMemtable::new(schema, default_config());
 

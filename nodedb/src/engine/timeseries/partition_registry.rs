@@ -150,6 +150,7 @@ impl PartitionRegistry {
                 state: PartitionState::Active,
                 interval_ms: self.current_interval.as_millis().unwrap_or(0),
                 last_flushed_wal_lsn: 0,
+                column_stats: std::collections::HashMap::new(),
             },
             dir_name,
         };
@@ -691,6 +692,7 @@ mod tests {
             state: PartitionState::Merged,
             interval_ms: 3 * day_ms as u64,
             last_flushed_wal_lsn: 100,
+            column_stats: std::collections::HashMap::new(),
         };
         reg.commit_merge(merged_meta, "ts-merged".into(), &starts);
 

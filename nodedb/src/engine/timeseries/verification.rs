@@ -238,6 +238,7 @@ mod tests {
                 ("cpu".into(), ColumnType::Float64),
             ],
             timestamp_idx: 0,
+            codecs: vec![nodedb_codec::ColumnCodec::Auto; 2],
         };
         let mut mt1 = ColumnarMemtable::new(schema_v1.clone(), test_memtable_config());
         for i in 0..10 {
@@ -258,6 +259,7 @@ mod tests {
                 ("mem".into(), ColumnType::Float64),
             ],
             timestamp_idx: 0,
+            codecs: vec![nodedb_codec::ColumnCodec::Auto; 3],
         };
         let mut mt2 = ColumnarMemtable::new(schema_v2.clone(), test_memtable_config());
         for i in 0..10 {
@@ -321,6 +323,7 @@ mod tests {
                 ("uuid_tag".into(), ColumnType::Symbol),
             ],
             timestamp_idx: 0,
+            codecs: vec![nodedb_codec::ColumnCodec::Auto; 3],
         };
         let config = ColumnarMemtableConfig {
             max_tag_cardinality: 100,
@@ -518,6 +521,7 @@ mod tests {
             state: PartitionState::Merged,
             interval_ms: 3 * 86_400_000,
             last_flushed_wal_lsn: 100,
+            column_stats: std::collections::HashMap::new(),
         };
         registry.commit_merge(
             merged_meta,

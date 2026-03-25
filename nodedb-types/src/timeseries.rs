@@ -352,6 +352,10 @@ pub struct PartitionMeta {
     /// WAL LSN at last successful flush to this partition.
     /// Used for crash recovery — replay WAL records with LSN > this value.
     pub last_flushed_wal_lsn: u64,
+    /// Per-column statistics (codec, min/max/sum/count/cardinality).
+    /// Keyed by column name. Populated at flush time. Empty for legacy partitions.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub column_stats: HashMap<String, nodedb_codec::ColumnStatistics>,
 }
 
 impl PartitionMeta {
@@ -833,6 +837,7 @@ mod tests {
             state: PartitionState::Sealed,
             interval_ms: 86_400_000,
             last_flushed_wal_lsn: 42,
+            column_stats: HashMap::new(),
         };
         assert!(meta.is_queryable());
         assert!(meta.overlaps(&TimeRange::new(1500, 2500)));
@@ -850,6 +855,7 @@ mod tests {
             state: PartitionState::Deleted,
             interval_ms: 0,
             last_flushed_wal_lsn: 0,
+            column_stats: HashMap::new(),
         };
         assert!(!meta.is_queryable());
     }

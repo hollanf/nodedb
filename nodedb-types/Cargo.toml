@@ -17,3 +17,4 @@ ulid = { workspace = true }
 nanoid = { workspace = true }
 rand = { workspace = true }
 rust_decimal = { workspace = true }
+nodedb-codec = { workspace = true }
