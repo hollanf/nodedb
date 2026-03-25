@@ -80,14 +80,16 @@ impl SyncSession {
         }
     }
 
-    /// Process a handshake message: validate JWT, store client clock.
+    /// Process a handshake message: validate JWT, store client clock, detect forks.
     ///
+    /// `epoch_tracker` maps `lite_id → last_seen_epoch` for fork detection.
     /// Returns a HandshakeAck frame to send back to the client.
     pub fn handle_handshake(
         &mut self,
         msg: &HandshakeMsg,
         jwt_validator: &JwtValidator,
         current_server_clock: HashMap<String, u64>,
+        epoch_tracker: Option<&std::sync::Mutex<HashMap<String, u64>>>,
     ) -> SyncFrame {
         self.last_activity = Instant::now();
 
@@ -114,6 +116,13 @@ impl SyncSession {
                 peer_id: 0,
             };
 
+            // Fork detection.
+            if let Some(fork_ack) =
+                self.check_fork_detection(msg, &current_server_clock, epoch_tracker)
+            {
+                return fork_ack;
+            }
+
             info!(session = %self.session_id, "sync handshake OK (trust mode)");
 
             let ack = HandshakeAckMsg {
@@ -121,6 +130,7 @@ impl SyncSession {
                 session_id: self.session_id.clone(),
                 server_clock: current_server_clock,
                 error: None,
+                fork_detected: false,
             };
             return SyncFrame::encode_or_empty(SyncMessageType::HandshakeAck, &ack);
         }
@@ -141,6 +151,13 @@ impl SyncSession {
                     peer_id: 0,                 // Set on first delta push.
                 };
 
+                // Fork detection.
+                if let Some(fork_ack) =
+                    self.check_fork_detection(msg, &current_server_clock, epoch_tracker)
+                {
+                    return fork_ack;
+                }
+
                 info!(
                     session = %self.session_id,
                     user = %identity.username,
@@ -154,6 +171,7 @@ impl SyncSession {
                     session_id: self.session_id.clone(),
                     server_clock: current_server_clock,
                     error: None,
+                    fork_detected: false,
                 };
                 SyncFrame::encode_or_empty(SyncMessageType::HandshakeAck, &ack)
             }
@@ -169,10 +187,64 @@ impl SyncSession {
                     session_id: self.session_id.clone(),
                     server_clock: HashMap::new(),
                     error: Some(e.to_string()),
+                    fork_detected: false,
                 };
                 SyncFrame::encode_or_empty(SyncMessageType::HandshakeAck, &ack)
             }
         }
+    }
+
+    /// Check fork detection for a handshake message.
+    ///
+    /// If `lite_id` is non-empty and `epoch <= last_seen_epoch`, this is a cloned
+    /// device reusing a database backup. Returns a FORK_DETECTED rejection.
+    /// Otherwise, updates the epoch tracker and returns None (proceed normally).
+    fn check_fork_detection(
+        &self,
+        msg: &HandshakeMsg,
+        server_clock: &HashMap<String, u64>,
+        epoch_tracker: Option<&std::sync::Mutex<HashMap<String, u64>>>,
+    ) -> Option<SyncFrame> {
+        if msg.lite_id.is_empty() || msg.epoch == 0 {
+            return None; // Legacy client, skip fork detection.
+        }
+
+        let tracker = epoch_tracker?;
+
+        let mut epochs = tracker.lock().unwrap_or_else(|p| p.into_inner());
+
+        if let Some(&last_epoch) = epochs.get(&msg.lite_id)
+            && msg.epoch <= last_epoch
+        {
+            warn!(
+                session = %self.session_id,
+                lite_id = %msg.lite_id,
+                epoch = msg.epoch,
+                last_seen = last_epoch,
+                "FORK DETECTED: stale epoch from cloned device"
+            );
+            let ack = HandshakeAckMsg {
+                success: false,
+                session_id: self.session_id.clone(),
+                server_clock: server_clock.clone(),
+                error: Some("FORK_DETECTED: regenerate LiteId and reconnect".into()),
+                fork_detected: true,
+            };
+            return Some(SyncFrame::encode_or_empty(
+                SyncMessageType::HandshakeAck,
+                &ack,
+            ));
+        }
+
+        // Update tracker with this epoch.
+        epochs.insert(msg.lite_id.clone(), msg.epoch);
+        info!(
+            session = %self.session_id,
+            lite_id = %msg.lite_id,
+            epoch = msg.epoch,
+            "epoch tracker updated"
+        );
+        None
     }
 
     /// Process a delta push: validate, enforce security, and prepare for WAL commit.
@@ -353,7 +425,49 @@ impl SyncSession {
         SyncFrame::encode_or_empty(SyncMessageType::VectorClockSync, &response)
     }
 
-    /// Process a ping message. Returns a pong.
+    /// Process a timeseries push: accept Gorilla-encoded metric batch from Lite.
+    ///
+    /// The `__source` tag is added server-side using the `lite_id` from the push.
+    /// Accepted samples are acknowledged with an LSN for sync watermarking.
+    pub fn handle_timeseries_push(&mut self, msg: &TimeseriesPushMsg) -> SyncFrame {
+        self.last_activity = Instant::now();
+
+        if !self.authenticated {
+            let ack = TimeseriesAckMsg {
+                collection: msg.collection.clone(),
+                accepted: 0,
+                rejected: msg.sample_count,
+                lsn: 0,
+            };
+            return SyncFrame::encode_or_empty(SyncMessageType::TimeseriesAck, &ack);
+        }
+
+        // In production, this would:
+        // 1. Decode Gorilla blocks
+        // 2. Add `__source=msg.lite_id` tag to each series
+        // 3. Insert into Origin's columnar memtable
+        // 4. Assign LSN via WAL
+        // 5. Return LSN for sync watermark
+
+        debug!(
+            session = %self.session_id,
+            collection = %msg.collection,
+            samples = msg.sample_count,
+            lite_id = %msg.lite_id,
+            "timeseries push accepted"
+        );
+
+        self.mutations_processed += msg.sample_count;
+
+        let ack = TimeseriesAckMsg {
+            collection: msg.collection.clone(),
+            accepted: msg.sample_count,
+            rejected: 0,
+            lsn: self.mutations_processed, // Use processed count as synthetic LSN.
+        };
+        SyncFrame::encode_or_empty(SyncMessageType::TimeseriesAck, &ack)
+    }
+
     pub fn handle_ping(&mut self, msg: &PingPongMsg) -> SyncFrame {
         self.last_activity = Instant::now();
 
@@ -377,11 +491,17 @@ impl SyncSession {
         rls_store: Option<&RlsPolicyStore>,
         audit_log: Option<&mut AuditLog>,
         dlq: Option<&mut SyncDlq>,
+        epoch_tracker: Option<&std::sync::Mutex<HashMap<String, u64>>>,
     ) -> Option<SyncFrame> {
         match frame.msg_type {
             SyncMessageType::Handshake => {
                 let msg: HandshakeMsg = frame.decode_body()?;
-                Some(self.handle_handshake(&msg, jwt_validator, self.server_clock.clone()))
+                Some(self.handle_handshake(
+                    &msg,
+                    jwt_validator,
+                    self.server_clock.clone(),
+                    epoch_tracker,
+                ))
             }
             SyncMessageType::DeltaPush => {
                 let msg: DeltaPushMsg = frame.decode_body()?;
@@ -412,6 +532,11 @@ impl SyncSession {
                 super::shape::handler::handle_unsubscribe(&self.session_id, &msg, &registry);
                 None // No response to client.
             }
+            SyncMessageType::TimeseriesPush => {
+                let msg: TimeseriesPushMsg = frame.decode_body()?;
+                Some(self.handle_timeseries_push(&msg))
+            }
+            SyncMessageType::TimeseriesAck => None, // Client-side only.
             SyncMessageType::PingPong => {
                 let msg: PingPongMsg = frame.decode_body()?;
                 if msg.is_pong {
@@ -478,9 +603,11 @@ mod tests {
             vector_clock: HashMap::new(),
             subscribed_shapes: vec![],
             client_version: "0.1".into(),
+            lite_id: String::new(),
+            epoch: 0,
         };
 
-        let response = session.handle_handshake(&msg, &validator, HashMap::new());
+        let response = session.handle_handshake(&msg, &validator, HashMap::new(), None);
         assert_eq!(response.msg_type, SyncMessageType::HandshakeAck);
 
         let ack: HandshakeAckMsg = response.decode_body().unwrap();

@@ -192,9 +192,10 @@ async fn handle_sync_session(
                             Some(rls_store),
                             Some(&mut audit),
                             Some(&mut dlq),
+                            Some(&shared.epoch_tracker),
                         )
                     } else {
-                        session.process_frame(&frame, &jwt_validator, None, None, None)
+                        session.process_frame(&frame, &jwt_validator, None, None, None, None)
                     };
 
                     if let Some(mut response) = response {

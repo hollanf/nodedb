@@ -113,6 +113,10 @@ pub struct SharedState {
     /// Served via the HTTP metrics endpoint in Prometheus format.
     pub system_metrics: Option<Arc<crate::control::metrics::SystemMetrics>>,
 
+    /// Fork detection: tracks `lite_id → last_seen_epoch` for sync handshake.
+    /// Prevents cloned devices from silently merging data.
+    pub epoch_tracker: Mutex<std::collections::HashMap<String, u64>>,
+
     /// Timeseries partition registries: keyed by "{tenant_id}:{collection_name}".
     /// Stores partition metadata for all timeseries collections.
     pub ts_partition_registries: Option<
@@ -157,6 +161,7 @@ impl SharedState {
             connections_rejected: AtomicU64::new(0),
             connections_accepted: AtomicU64::new(0),
             system_metrics: Some(Arc::new(crate::control::metrics::SystemMetrics::new())),
+            epoch_tracker: Mutex::new(std::collections::HashMap::new()),
             ts_partition_registries: Some(Mutex::new(std::collections::HashMap::new())),
         })
     }
@@ -221,6 +226,7 @@ impl SharedState {
             connections_rejected: AtomicU64::new(0),
             connections_accepted: AtomicU64::new(0),
             system_metrics: Some(Arc::new(crate::control::metrics::SystemMetrics::new())),
+            epoch_tracker: Mutex::new(std::collections::HashMap::new()),
             ts_partition_registries: Some(Mutex::new(std::collections::HashMap::new())),
         }))
     }
