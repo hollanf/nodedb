@@ -1,9 +1,11 @@
 pub mod coordinator;
 pub mod pagerank;
+pub mod pattern_match;
 pub mod types;
 pub mod wcc;
 
 pub use coordinator::BspCoordinator;
 pub use pagerank::ShardPageRankState;
+pub use pattern_match::{DistributedMatchCoordinator, PatternContinuation, ShardMatchResult};
 pub use types::{AlgoComplete, BoundaryContributions, SuperstepAck, SuperstepBarrier};
 pub use wcc::{ComponentMergeRequest, ShardWccState, WccRoundAck};
