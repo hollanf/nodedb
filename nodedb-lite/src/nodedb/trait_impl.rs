@@ -29,7 +29,7 @@ impl<S: StorageEngine> NodeDb for NodeDbLite<S> {
         collection: &str,
         query: &[f32],
         k: usize,
-        _filter: Option<&MetadataFilter>,
+        filter: Option<&MetadataFilter>,
     ) -> NodeDbResult<Vec<SearchResult>> {
         // Try to reload evicted collection from storage lazily.
         {
@@ -58,27 +58,53 @@ impl<S: StorageEngine> NodeDb for NodeDbLite<S> {
             return Ok(Vec::new());
         };
 
-        let raw_results = index.search(query, k, self.search_ef);
+        // Over-fetch by 3x when filtering to maintain recall after post-filter.
+        let fetch_k = if filter.is_some() { k * 3 } else { k };
+        let raw_results = index.search(query, fetch_k, self.search_ef);
 
         let id_map = self.vector_id_map.lock_or_recover();
+        let crdt = self.crdt.lock_or_recover();
 
-        Ok(raw_results
+        let results: Vec<SearchResult> = raw_results
             .into_iter()
             .filter(|r| !index.is_deleted(r.id))
-            .map(|r| {
+            .filter_map(|r| {
                 let composite_key = format!("{collection}:{}", r.id);
                 let doc_id = id_map
                     .get(&composite_key)
                     .map(|(id, _)| id.clone())
                     .unwrap_or_else(|| r.id.to_string());
-                SearchResult {
+
+                // Read CRDT document to populate metadata and evaluate filter.
+                let metadata = if let Some(loro_val) = crdt.read(collection, &doc_id) {
+                    let doc = loro_value_to_document(&doc_id, &loro_val);
+                    doc.fields
+                        .into_iter()
+                        .filter(|(k, _)| k != "embedding_dim")
+                        .collect::<HashMap<String, Value>>()
+                } else {
+                    HashMap::new()
+                };
+
+                // Apply metadata filter if provided.
+                if let Some(f) = filter {
+                    let json_doc = serde_json::to_value(&metadata).unwrap_or_default();
+                    if !nodedb_query::metadata_filter::matches_metadata_filter(&json_doc, f) {
+                        return None;
+                    }
+                }
+
+                Some(SearchResult {
                     id: doc_id,
                     node_id: None,
                     distance: r.distance,
-                    metadata: HashMap::new(),
-                }
+                    metadata,
+                })
             })
-            .collect())
+            .take(k) // Trim back to requested k after filtering.
+            .collect();
+
+        Ok(results)
     }
 
     async fn vector_insert(
@@ -159,36 +185,59 @@ impl<S: StorageEngine> NodeDb for NodeDbLite<S> {
     ) -> NodeDbResult<SubGraph> {
         let csr = self.csr.lock_or_recover();
 
-        let label_filter = edge_filter
-            .and_then(|f| f.labels.first())
-            .map(|s| s.as_str());
+        // Multi-label filter: use ALL labels from the filter, not just the first.
+        let label_strs: Vec<&str> = edge_filter
+            .map(|f| f.labels.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default();
 
-        let result = csr.traverse_bfs_with_depth(
+        let result = csr.traverse_bfs_with_depth_multi(
             &[start.as_str()],
-            label_filter,
+            &label_strs,
             Direction::Out,
             depth as usize,
         );
 
+        let crdt = self.crdt.lock_or_recover();
         let mut nodes = Vec::with_capacity(result.len());
         let mut edges = Vec::new();
 
         for (node_name, d) in &result {
+            // Populate node properties from CRDT if available.
+            let properties = if let Some(loro_val) = crdt.read("__nodes", node_name) {
+                let doc = loro_value_to_document(node_name, &loro_val);
+                doc.fields
+            } else {
+                HashMap::new()
+            };
+
             nodes.push(SubGraphNode {
                 id: NodeId::new(node_name.clone()),
                 depth: *d,
-                properties: HashMap::new(),
+                properties,
             });
 
-            let neighbors = csr.neighbors(node_name, label_filter, Direction::Out);
+            let neighbors = csr.neighbors_multi(node_name, &label_strs, Direction::Out);
             for (label, dst) in &neighbors {
                 if result.iter().any(|(n, _)| n == dst) {
+                    // Read edge properties from CRDT.
+                    let edge_id = EdgeId::from_components(node_name, dst, label);
+                    let edge_props = if let Some(loro_val) = crdt.read("__edges", edge_id.as_str())
+                    {
+                        let doc = loro_value_to_document(edge_id.as_str(), &loro_val);
+                        doc.fields
+                            .into_iter()
+                            .filter(|(k, _)| k != "src" && k != "dst" && k != "label")
+                            .collect()
+                    } else {
+                        HashMap::new()
+                    };
+
                     edges.push(SubGraphEdge {
-                        id: EdgeId::from_components(node_name, dst, label),
+                        id: edge_id,
                         from: NodeId::new(node_name.clone()),
                         to: NodeId::new(dst.clone()),
                         label: label.clone(),
-                        properties: HashMap::new(),
+                        properties: edge_props,
                     });
                 }
             }
@@ -202,35 +251,36 @@ impl<S: StorageEngine> NodeDb for NodeDbLite<S> {
         from: &NodeId,
         to: &NodeId,
         edge_type: &str,
-        _properties: Option<Document>,
+        properties: Option<Document>,
     ) -> NodeDbResult<EdgeId> {
         {
             let mut csr = self.csr.lock_or_recover();
             csr.add_edge(from.as_str(), edge_type, to.as_str());
         }
 
-        // ── Record in CRDT ──
+        // ── Record in CRDT (including properties) ──
+        let edge_id = EdgeId::from_components(from.as_str(), to.as_str(), edge_type);
         {
-            let edge_id = EdgeId::from_components(from.as_str(), to.as_str(), edge_type);
             let mut crdt = self.crdt.lock_or_recover();
-            crdt.upsert(
-                "__edges",
-                edge_id.as_str(),
-                &[
-                    ("src", LoroValue::String(from.as_str().into())),
-                    ("dst", LoroValue::String(to.as_str().into())),
-                    ("label", LoroValue::String(edge_type.into())),
-                ],
-            )
-            .map_err(NodeDbError::storage)?;
+            let mut fields: Vec<(&str, LoroValue)> = vec![
+                ("src", LoroValue::String(from.as_str().into())),
+                ("dst", LoroValue::String(to.as_str().into())),
+                ("label", LoroValue::String(edge_type.into())),
+            ];
+
+            // Store edge properties alongside the structural fields.
+            if let Some(ref props) = properties {
+                for (k, v) in &props.fields {
+                    fields.push((k.as_str(), value_to_loro(v)));
+                }
+            }
+
+            crdt.upsert("__edges", edge_id.as_str(), &fields)
+                .map_err(NodeDbError::storage)?;
         }
 
         self.update_memory_stats();
-        Ok(EdgeId::from_components(
-            from.as_str(),
-            to.as_str(),
-            edge_type,
-        ))
+        Ok(edge_id)
     }
 
     async fn graph_delete_edge(&self, edge_id: &EdgeId) -> NodeDbResult<()> {

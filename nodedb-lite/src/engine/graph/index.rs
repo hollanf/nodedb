@@ -150,16 +150,33 @@ impl CsrIndex {
         label_filter: Option<&str>,
         direction: Direction,
     ) -> Vec<(String, String)> {
+        match label_filter {
+            Some(l) => self.neighbors_multi(node, &[l], direction),
+            None => self.neighbors_multi(node, &[], direction),
+        }
+    }
+
+    /// Get neighbors with multi-label filter. Empty labels = all edges.
+    pub fn neighbors_multi(
+        &self,
+        node: &str,
+        label_filters: &[&str],
+        direction: Direction,
+    ) -> Vec<(String, String)> {
         let Some(&node_id) = self.node_to_id.get(node) else {
             return Vec::new();
         };
-        let label_id = label_filter.and_then(|l| self.label_to_id.get(l).copied());
+        let label_ids: Vec<u16> = label_filters
+            .iter()
+            .filter_map(|l| self.label_to_id.get(*l).copied())
+            .collect();
+        let match_label = |lid: u16| label_ids.is_empty() || label_ids.contains(&lid);
 
         let mut result = Vec::new();
 
         if matches!(direction, Direction::Out | Direction::Both) {
             for (lid, dst) in self.iter_out_edges(node_id) {
-                if label_id.is_none_or(|f| f == lid) {
+                if match_label(lid) {
                     result.push((
                         self.id_to_label[lid as usize].clone(),
                         self.id_to_node[dst as usize].clone(),
@@ -169,7 +186,7 @@ impl CsrIndex {
         }
         if matches!(direction, Direction::In | Direction::Both) {
             for (lid, src) in self.iter_in_edges(node_id) {
-                if label_id.is_none_or(|f| f == lid) {
+                if match_label(lid) {
                     result.push((
                         self.id_to_label[lid as usize].clone(),
                         self.id_to_node[src as usize].clone(),

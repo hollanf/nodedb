@@ -72,7 +72,23 @@ impl CsrIndex {
         direction: Direction,
         max_depth: usize,
     ) -> Vec<(String, u8)> {
-        let label_id = label_filter.and_then(|l| self.label_id(l));
+        let filters: Vec<&str> = label_filter.into_iter().collect();
+        self.traverse_bfs_with_depth_multi(start_nodes, &filters, direction, max_depth)
+    }
+
+    /// BFS traversal with multi-label filter. Empty labels = all edges.
+    pub fn traverse_bfs_with_depth_multi(
+        &self,
+        start_nodes: &[&str],
+        label_filters: &[&str],
+        direction: Direction,
+        max_depth: usize,
+    ) -> Vec<(String, u8)> {
+        let label_ids: Vec<u16> = label_filters
+            .iter()
+            .filter_map(|l| self.label_id(l))
+            .collect();
+        let match_label = |lid: u16| label_ids.is_empty() || label_ids.contains(&lid);
         let mut visited: HashMap<u32, u8> = HashMap::new();
         let mut queue: VecDeque<(u32, u8)> = VecDeque::new();
 
@@ -92,7 +108,7 @@ impl CsrIndex {
 
             if matches!(direction, Direction::Out | Direction::Both) {
                 for (lid, dst) in self.iter_out_edges(node_id) {
-                    if label_id.is_none_or(|f| f == lid)
+                    if match_label(lid)
                         && visited.len() < DEFAULT_MAX_VISITED
                         && !visited.contains_key(&dst)
                     {
@@ -103,7 +119,7 @@ impl CsrIndex {
             }
             if matches!(direction, Direction::In | Direction::Both) {
                 for (lid, src) in self.iter_in_edges(node_id) {
-                    if label_id.is_none_or(|f| f == lid)
+                    if match_label(lid)
                         && visited.len() < DEFAULT_MAX_VISITED
                         && !visited.contains_key(&src)
                     {
