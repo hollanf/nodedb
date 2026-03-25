@@ -18,6 +18,10 @@ pub(crate) const META_HNSW_COLLECTIONS: &[u8] = b"meta:hnsw_collections";
 pub(crate) const META_CSR: &[u8] = b"meta:csr_checkpoint";
 pub(crate) const META_CRDT_SNAPSHOT: &[u8] = b"crdt:snapshot";
 pub(crate) const META_CRDT_DELTAS: &[u8] = b"crdt:pending_deltas";
+/// Last flushed mutation_id — used for partial flush safety.
+/// On cold start, if pending deltas have mutation_ids that don't align
+/// with this watermark, we know the previous flush was interrupted.
+pub(crate) const META_LAST_FLUSHED_MID: &[u8] = b"meta:last_flushed_mid";
 
 /// NodeDB-Lite — the embedded edge database.
 ///
@@ -86,9 +90,40 @@ impl<S: StorageEngine> NodeDbLite<S> {
                 .map_err(|e| NodeDbError::storage(format!("CRDT init failed: {e}")))?,
         };
 
-        // Restore pending deltas.
-        if let Some(delta_bytes) = storage.get(Namespace::Crdt, META_CRDT_DELTAS).await? {
+        // Restore pending deltas — prefer incremental entries over legacy bulk blob.
+        let incremental_entries = storage.scan_prefix(Namespace::Crdt, b"delta:").await?;
+
+        if !incremental_entries.is_empty() {
+            // Use incremental entries (append-only format).
+            crdt.restore_pending_deltas_incremental(&incremental_entries);
+        } else if let Some(delta_bytes) = storage.get(Namespace::Crdt, META_CRDT_DELTAS).await? {
+            // Fall back to legacy bulk blob.
             crdt.restore_pending_deltas(&delta_bytes);
+        }
+
+        // Partial flush safety: check if the last-flushed mutation_id matches.
+        if crdt.pending_count() > 0
+            && let Some(last_flushed_bytes) =
+                storage.get(Namespace::Meta, META_LAST_FLUSHED_MID).await?
+            && last_flushed_bytes.len() == 8
+        {
+            let last_flushed = u64::from_le_bytes(last_flushed_bytes.try_into().unwrap_or([0; 8]));
+            let max_pending = crdt
+                .pending_deltas()
+                .iter()
+                .map(|d| d.mutation_id)
+                .max()
+                .unwrap_or(0);
+
+            if max_pending > 0 && last_flushed > 0 && max_pending != last_flushed {
+                tracing::warn!(
+                    last_flushed,
+                    max_pending,
+                    "partial flush detected — pending deltas may be inconsistent. \
+                     Clearing pending queue; CRDT state is authoritative."
+                );
+                crdt.clear_pending_deltas();
+            }
         }
 
         // ── Restore CSR (with CRC32C validation) ──
@@ -190,14 +225,37 @@ impl<S: StorageEngine> NodeDbLite<S> {
                 value: crate::storage::checksum::wrap(&snapshot),
             });
 
-            // Pending deltas are transient — not checksummed (they're re-exportable from Loro).
-            let deltas = crdt
+            // Write pending deltas individually (append-only persistence).
+            // Each delta is stored under `crdt:delta:{mutation_id:016x}`.
+            // Also write the legacy bulk blob for backward compatibility.
+            let pending = crdt.pending_deltas();
+            let max_mid = pending.iter().map(|d| d.mutation_id).max().unwrap_or(0);
+
+            for delta in pending {
+                let key = CrdtEngine::delta_storage_key(delta.mutation_id);
+                let value = CrdtEngine::serialize_delta(delta).map_err(NodeDbError::storage)?;
+                ops.push(WriteOp::Put {
+                    ns: Namespace::Crdt,
+                    key,
+                    value,
+                });
+            }
+
+            // Legacy bulk blob (for clients that haven't upgraded to incremental restore).
+            let deltas_bulk = crdt
                 .serialize_pending_deltas()
                 .map_err(NodeDbError::storage)?;
             ops.push(WriteOp::Put {
                 ns: Namespace::Crdt,
                 key: META_CRDT_DELTAS.to_vec(),
-                value: deltas,
+                value: deltas_bulk,
+            });
+
+            // Write the last-flushed mutation_id for partial flush safety.
+            ops.push(WriteOp::Put {
+                ns: Namespace::Meta,
+                key: META_LAST_FLUSHED_MID.to_vec(),
+                value: max_mid.to_le_bytes().to_vec(),
             });
         }
 

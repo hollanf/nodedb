@@ -2,6 +2,7 @@ mod batch;
 pub mod collection;
 pub(crate) mod convert;
 mod core;
+mod diagnostic;
 mod graph_rag;
 mod health;
 pub(crate) mod lock_ext;
@@ -10,6 +11,7 @@ mod trait_impl;
 
 pub use collection::{CollectionMeta, TransactionOp};
 pub use core::NodeDbLite;
+pub use diagnostic::DiagnosticDump;
 pub use health::{HealthStatus, OverallStatus};
 pub(crate) use lock_ext::LockExt;
 

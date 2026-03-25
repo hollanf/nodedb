@@ -286,6 +286,12 @@ impl CrdtEngine {
         self.pending_deltas.len()
     }
 
+    /// Clear all pending deltas (used for partial flush recovery).
+    /// The CRDT state is authoritative — pending deltas are regenerated on next mutation.
+    pub fn clear_pending_deltas(&mut self) {
+        self.pending_deltas.clear();
+    }
+
     /// Mark deltas as acknowledged by Origin (after DeltaAck received).
     ///
     /// Removes all pending deltas with `mutation_id <= acked_id`.
@@ -408,6 +414,42 @@ impl CrdtEngine {
                 tracing::warn!(error = %e, "failed to restore pending deltas, continuing with empty state");
             }
         }
+    }
+
+    /// Serialize a single pending delta to bytes (for append-only persistence).
+    pub fn serialize_delta(delta: &PendingDelta) -> Result<Vec<u8>, crate::error::LiteError> {
+        rmp_serde::to_vec_named(delta).map_err(|e| crate::error::LiteError::Serialization {
+            detail: format!("pending delta: {e}"),
+        })
+    }
+
+    /// Build the redb key for a single pending delta: `delta:{mutation_id:016x}`.
+    /// Zero-padded hex ensures lexicographic ordering matches numeric ordering.
+    pub fn delta_storage_key(mutation_id: u64) -> Vec<u8> {
+        format!("delta:{mutation_id:016x}").into_bytes()
+    }
+
+    /// Restore pending deltas from individual redb entries (append-only format).
+    ///
+    /// Each entry is stored under `Namespace::Crdt` with key `delta:{mutation_id:016x}`.
+    /// Falls back to legacy bulk restore if no individual entries found.
+    pub fn restore_pending_deltas_incremental(&mut self, entries: &[(Vec<u8>, Vec<u8>)]) {
+        let mut deltas = Vec::with_capacity(entries.len());
+        for (_key, value) in entries {
+            match rmp_serde::from_slice::<PendingDelta>(value) {
+                Ok(delta) => deltas.push(delta),
+                Err(e) => {
+                    tracing::warn!(error = %e, "skipping corrupted pending delta entry");
+                }
+            }
+        }
+        // Sort by mutation_id to ensure ordering.
+        deltas.sort_by_key(|d| d.mutation_id);
+
+        if let Some(max_id) = deltas.iter().map(|d| d.mutation_id).max() {
+            self.next_mutation_id.store(max_id + 1, Ordering::Relaxed);
+        }
+        self.pending_deltas = deltas;
     }
 
     /// Key for storing the Loro snapshot in `StorageEngine`.
