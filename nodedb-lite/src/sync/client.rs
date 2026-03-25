@@ -21,6 +21,7 @@ use nodedb_types::sync::wire::{
 
 use super::clock::VectorClock;
 use super::compensation::{CompensationEvent, CompensationRegistry};
+use super::flow_control::{FlowControlConfig, FlowController, SyncMetrics, SyncMetricsSnapshot};
 use super::shapes::ShapeManager;
 use crate::engine::crdt::engine::PendingDelta;
 
@@ -102,11 +103,24 @@ pub struct SyncClient {
     /// Pending re-sync request to send to Origin (set by gap detection,
     /// consumed by the delta push loop).
     pending_resync: Arc<Mutex<Option<ResyncRequestMsg>>>,
+    /// Flow controller: in-flight window, adaptive batch sizing, queue bounds.
+    flow: Arc<Mutex<FlowController>>,
+    /// Sync metrics: atomic counters for monitoring.
+    metrics: Arc<SyncMetrics>,
 }
 
 impl SyncClient {
     /// Create a new sync client (does not connect yet).
     pub fn new(config: SyncConfig, peer_id: u64) -> Self {
+        Self::with_flow_control(config, peer_id, FlowControlConfig::default())
+    }
+
+    /// Create a new sync client with custom flow control config.
+    pub fn with_flow_control(
+        config: SyncConfig,
+        peer_id: u64,
+        flow_config: FlowControlConfig,
+    ) -> Self {
         Self {
             config,
             state: Arc::new(Mutex::new(SyncState::Disconnected)),
@@ -120,6 +134,8 @@ impl SyncClient {
             last_seen_lsn: Arc::new(Mutex::new(std::collections::HashMap::new())),
             resync_requested: Arc::new(Mutex::new(false)),
             pending_resync: Arc::new(Mutex::new(None)),
+            flow: Arc::new(Mutex::new(FlowController::new(flow_config))),
+            metrics: Arc::new(SyncMetrics::new()),
         }
     }
 
@@ -202,12 +218,21 @@ impl SyncClient {
 
     /// Build DeltaPush messages from pending deltas.
     ///
-    /// Each message includes a CRC32C checksum of the delta payload for
-    /// integrity verification at Origin. Hardware-accelerated on x86_64/aarch64.
-    pub fn build_delta_pushes(&self, pending: &[PendingDelta]) -> Vec<DeltaPushMsg> {
+    /// Respects the flow control window: returns at most `next_batch_size()`
+    /// deltas. Each message includes a CRC32C checksum of the delta payload
+    /// for integrity verification at Origin.
+    pub async fn build_delta_pushes(&self, pending: &[PendingDelta]) -> Vec<DeltaPushMsg> {
+        let flow = self.flow.lock().await;
+        let batch_limit = flow.next_batch_size();
+        drop(flow);
+
+        if batch_limit == 0 {
+            return Vec::new();
+        }
+
         pending
             .iter()
-            .take(self.config.max_batch_size)
+            .take(batch_limit)
             .map(|delta| DeltaPushMsg {
                 collection: delta.collection.clone(),
                 document_id: delta.document_id.clone(),
@@ -219,30 +244,58 @@ impl SyncClient {
             .collect()
     }
 
+    /// Record that deltas were pushed (update flow control in-flight tracking).
+    pub async fn record_push(&self, mutation_ids: &[u64]) {
+        let mut flow = self.flow.lock().await;
+        flow.record_push(mutation_ids);
+        self.metrics.record_push(mutation_ids.len() as u64);
+    }
+
     /// Process a DeltaAck from Origin.
     pub async fn handle_delta_ack(&self, ack: &DeltaAckMsg) {
         let mut clock = self.clock.lock().await;
         // The Origin assigned an LSN — advance our view of Origin's state.
         clock.advance(0, ack.lsn); // peer 0 = Origin convention.
-        tracing::debug!(
-            mutation_id = ack.mutation_id,
-            lsn = ack.lsn,
-            "delta acknowledged"
-        );
+        drop(clock);
+
+        // Update flow controller: record RTT for adaptive batch sizing.
+        let mut flow = self.flow.lock().await;
+        if let Some(rtt_ms) = flow.record_ack(ack.mutation_id) {
+            tracing::debug!(
+                mutation_id = ack.mutation_id,
+                lsn = ack.lsn,
+                rtt_ms,
+                batch_size = flow.current_batch_size(),
+                "delta acknowledged"
+            );
+        } else {
+            tracing::debug!(
+                mutation_id = ack.mutation_id,
+                lsn = ack.lsn,
+                "delta acknowledged (no in-flight entry)"
+            );
+        }
     }
 
     /// Process a DeltaReject from Origin.
-    pub fn handle_delta_reject(&self, reject: &DeltaRejectMsg) {
+    pub async fn handle_delta_reject(&self, reject: &DeltaRejectMsg) {
         tracing::warn!(
             mutation_id = reject.mutation_id,
             reason = %reject.reason,
             "delta rejected by Origin"
         );
 
+        // Update flow controller: AIMD multiplicative decrease.
+        {
+            let mut flow = self.flow.lock().await;
+            flow.record_reject(reject.mutation_id);
+        }
+        self.metrics.record_reject();
+
         if let Some(hint) = &reject.compensation {
             self.compensation.dispatch(CompensationEvent {
                 mutation_id: reject.mutation_id,
-                collection: String::new(), // Filled by the caller from pending deltas.
+                collection: String::new(),
                 document_id: String::new(),
                 hint: hint.clone(),
             });
@@ -382,6 +435,49 @@ impl SyncClient {
     pub fn peer_id(&self) -> u64 {
         self.peer_id
     }
+
+    /// Access the flow controller.
+    pub fn flow(&self) -> &Arc<Mutex<FlowController>> {
+        &self.flow
+    }
+
+    /// Access the sync metrics.
+    pub fn metrics(&self) -> &Arc<SyncMetrics> {
+        &self.metrics
+    }
+
+    /// Update pending queue stats in the flow controller.
+    /// Called from the push loop after reading pending deltas.
+    pub async fn update_pending_stats(&self, count: usize, bytes: usize) {
+        let mut flow = self.flow.lock().await;
+        flow.update_pending(count, bytes);
+    }
+
+    /// Check if the pending queue is at capacity (flow control).
+    pub async fn is_queue_full(&self) -> bool {
+        let flow = self.flow.lock().await;
+        flow.is_queue_full()
+    }
+
+    /// Get a snapshot of sync metrics for monitoring/health.
+    pub async fn sync_metrics(&self) -> SyncMetricsSnapshot {
+        let state = *self.state.lock().await;
+        let state_str = match state {
+            SyncState::Disconnected => "disconnected",
+            SyncState::Connecting => "connecting",
+            SyncState::Connected => "connected",
+            SyncState::Reconnecting => "reconnecting",
+        };
+        let flow = self.flow.lock().await;
+        flow.snapshot(state_str, &self.metrics)
+    }
+
+    /// Reset flow controller on reconnect.
+    pub async fn reset_flow_control(&self) {
+        let mut flow = self.flow.lock().await;
+        flow.reset();
+        self.metrics.record_reconnect();
+    }
 }
 
 #[cfg(test)]
@@ -469,7 +565,7 @@ mod tests {
             },
         ];
 
-        let msgs = client.build_delta_pushes(&pending);
+        let msgs = client.build_delta_pushes(&pending).await;
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].peer_id, 42);
         assert_eq!(msgs[0].mutation_id, 1);
@@ -490,8 +586,8 @@ mod tests {
         assert_eq!(clock.get(0), 42); // peer 0 = Origin.
     }
 
-    #[test]
-    fn handle_delta_reject_dispatches_compensation() {
+    #[tokio::test]
+    async fn handle_delta_reject_dispatches_compensation() {
         let client = SyncClient::new(make_config(), 1);
 
         let count = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -500,16 +596,18 @@ mod tests {
             count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }));
 
-        client.handle_delta_reject(&DeltaRejectMsg {
-            mutation_id: 1,
-            reason: "unique violation".into(),
-            compensation: Some(
-                nodedb_types::sync::compensation::CompensationHint::UniqueViolation {
-                    field: "email".into(),
-                    conflicting_value: "a@b.com".into(),
-                },
-            ),
-        });
+        client
+            .handle_delta_reject(&DeltaRejectMsg {
+                mutation_id: 1,
+                reason: "unique violation".into(),
+                compensation: Some(
+                    nodedb_types::sync::compensation::CompensationHint::UniqueViolation {
+                        field: "email".into(),
+                        conflicting_value: "a@b.com".into(),
+                    },
+                ),
+            })
+            .await;
 
         assert_eq!(count.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
@@ -628,8 +726,71 @@ mod tests {
             document_id: "d1".into(),
             delta_bytes,
         }];
-        let msgs = client.build_delta_pushes(&pending);
+        let msgs = client.build_delta_pushes(&pending).await;
         assert_eq!(msgs[0].checksum, expected_crc);
         assert_ne!(msgs[0].checksum, 0);
+    }
+
+    #[tokio::test]
+    async fn flow_control_pauses_when_window_full() {
+        let client = SyncClient::with_flow_control(
+            make_config(),
+            1,
+            super::super::flow_control::FlowControlConfig {
+                max_in_flight: 2,
+                initial_batch_size: 10,
+                ..Default::default()
+            },
+        );
+        let pending = vec![
+            PendingDelta {
+                mutation_id: 1,
+                collection: "a".into(),
+                document_id: "d1".into(),
+                delta_bytes: vec![1],
+            },
+            PendingDelta {
+                mutation_id: 2,
+                collection: "a".into(),
+                document_id: "d2".into(),
+                delta_bytes: vec![2],
+            },
+            PendingDelta {
+                mutation_id: 3,
+                collection: "a".into(),
+                document_id: "d3".into(),
+                delta_bytes: vec![3],
+            },
+        ];
+
+        // First batch: window is 2, so only 2 deltas.
+        let msgs = client.build_delta_pushes(&pending).await;
+        assert_eq!(msgs.len(), 2);
+
+        // Record them as pushed.
+        client.record_push(&[1, 2]).await;
+
+        // Window is now full — should return 0.
+        let msgs = client.build_delta_pushes(&pending).await;
+        assert_eq!(msgs.len(), 0);
+
+        // ACK one — window opens by 1.
+        client
+            .handle_delta_ack(&DeltaAckMsg {
+                mutation_id: 1,
+                lsn: 10,
+            })
+            .await;
+        let msgs = client.build_delta_pushes(&pending).await;
+        assert_eq!(msgs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn sync_metrics_snapshot() {
+        let client = SyncClient::new(make_config(), 1);
+        let snap = client.sync_metrics().await;
+        assert_eq!(snap.state, "disconnected");
+        assert_eq!(snap.pending_count, 0);
+        assert_eq!(snap.deltas_pushed, 0);
     }
 }

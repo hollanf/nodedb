@@ -71,42 +71,50 @@ async fn compensation_handler_receives_typed_hint() {
     }));
 
     // Simulate different rejection types.
-    client.handle_delta_reject(&DeltaRejectMsg {
-        mutation_id: 1,
-        reason: "unique".into(),
-        compensation: Some(CompensationHint::UniqueViolation {
-            field: "email".into(),
-            conflicting_value: "a@b.com".into(),
-        }),
-    });
+    client
+        .handle_delta_reject(&DeltaRejectMsg {
+            mutation_id: 1,
+            reason: "unique".into(),
+            compensation: Some(CompensationHint::UniqueViolation {
+                field: "email".into(),
+                conflicting_value: "a@b.com".into(),
+            }),
+        })
+        .await;
     assert_eq!(count.load(Ordering::Relaxed), 1);
     assert_eq!(*last_code.lock().unwrap(), "UNIQUE_VIOLATION");
 
-    client.handle_delta_reject(&DeltaRejectMsg {
-        mutation_id: 2,
-        reason: "fk".into(),
-        compensation: Some(CompensationHint::ForeignKeyMissing {
-            referenced_id: "user-999".into(),
-        }),
-    });
+    client
+        .handle_delta_reject(&DeltaRejectMsg {
+            mutation_id: 2,
+            reason: "fk".into(),
+            compensation: Some(CompensationHint::ForeignKeyMissing {
+                referenced_id: "user-999".into(),
+            }),
+        })
+        .await;
     assert_eq!(count.load(Ordering::Relaxed), 2);
     assert_eq!(*last_code.lock().unwrap(), "FK_MISSING");
 
-    client.handle_delta_reject(&DeltaRejectMsg {
-        mutation_id: 3,
-        reason: "rls".into(),
-        compensation: Some(CompensationHint::PermissionDenied),
-    });
+    client
+        .handle_delta_reject(&DeltaRejectMsg {
+            mutation_id: 3,
+            reason: "rls".into(),
+            compensation: Some(CompensationHint::PermissionDenied),
+        })
+        .await;
     assert_eq!(count.load(Ordering::Relaxed), 3);
     assert_eq!(*last_code.lock().unwrap(), "PERMISSION_DENIED");
 
-    client.handle_delta_reject(&DeltaRejectMsg {
-        mutation_id: 4,
-        reason: "rate".into(),
-        compensation: Some(CompensationHint::RateLimited {
-            retry_after_ms: 5000,
-        }),
-    });
+    client
+        .handle_delta_reject(&DeltaRejectMsg {
+            mutation_id: 4,
+            reason: "rate".into(),
+            compensation: Some(CompensationHint::RateLimited {
+                retry_after_ms: 5000,
+            }),
+        })
+        .await;
     assert_eq!(count.load(Ordering::Relaxed), 4);
     assert_eq!(*last_code.lock().unwrap(), "RATE_LIMITED");
 }

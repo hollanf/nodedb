@@ -26,6 +26,13 @@ pub trait SyncDelegate: Send + Sync + 'static {
     fn acknowledge(&self, mutation_id: u64);
     /// Reject a specific delta (rollback optimistic state).
     fn reject(&self, mutation_id: u64);
+    /// Reject a delta with policy-aware resolution.
+    /// Consults the PolicyRegistry before deciding how to handle the rejection.
+    fn reject_with_policy(
+        &self,
+        mutation_id: u64,
+        hint: &nodedb_types::sync::compensation::CompensationHint,
+    );
     /// Import remote deltas from Origin into local CRDT state.
     fn import_remote(&self, data: &[u8]);
 }
@@ -73,8 +80,9 @@ async fn connect_and_run(
     client: &Arc<SyncClient>,
     delegate: &Arc<dyn SyncDelegate>,
 ) -> Result<(), LiteError> {
-    // Reset sequence tracking for a fresh connection.
+    // Reset state for a fresh connection.
     client.reset_sequence_tracking().await;
+    client.reset_flow_control().await;
 
     // ── Connect ──
     let (ws_stream, _response) = tokio_tungstenite::connect_async(&client.config().url)
@@ -225,8 +233,13 @@ async fn dispatch_frame(
         }
         SyncMessageType::DeltaReject => {
             if let Some(reject) = frame.decode_body::<nodedb_types::sync::wire::DeltaRejectMsg>() {
-                delegate.reject(reject.mutation_id);
-                client.handle_delta_reject(&reject);
+                // Use policy-aware rejection if a compensation hint is present.
+                if let Some(hint) = &reject.compensation {
+                    delegate.reject_with_policy(reject.mutation_id, hint);
+                } else {
+                    delegate.reject(reject.mutation_id);
+                }
+                client.handle_delta_reject(&reject).await;
             }
         }
         SyncMessageType::ShapeSnapshot => {
@@ -242,6 +255,7 @@ async fn dispatch_frame(
         }
         SyncMessageType::ShapeDelta => {
             if let Some(delta) = frame.decode_body::<nodedb_types::sync::wire::ShapeDeltaMsg>() {
+                client.metrics().record_received();
                 // Check for sequence gaps before applying.
                 if let Some(resync) = client.check_sequence_gap(&delta.shape_id, delta.lsn).await {
                     tracing::warn!(
@@ -320,7 +334,19 @@ async fn delta_push_loop<S>(
             continue;
         }
 
-        let msgs = client.build_delta_pushes(&pending);
+        // Update flow controller with current pending queue state.
+        let pending_bytes: usize = pending.iter().map(|d| d.delta_bytes.len()).sum();
+        client
+            .update_pending_stats(pending.len(), pending_bytes)
+            .await;
+
+        // Build batch respecting the flow control window.
+        let msgs = client.build_delta_pushes(&pending).await;
+        if msgs.is_empty() {
+            continue; // Flow control window is full — wait for ACKs.
+        }
+
+        let mutation_ids: Vec<u64> = msgs.iter().map(|m| m.mutation_id).collect();
         let mut sink_guard = sink.lock().await;
 
         for msg in &msgs {
@@ -333,6 +359,10 @@ async fn delta_push_loop<S>(
                 return; // Connection lost — let reconnect handle it.
             }
         }
+        drop(sink_guard);
+
+        // Record in-flight for RTT tracking.
+        client.record_push(&mutation_ids).await;
 
         tracing::debug!(count = msgs.len(), "pushed deltas to Origin");
     }
@@ -397,6 +427,15 @@ mod tests {
         }
 
         fn reject(&self, mutation_id: u64) {
+            self.rejected.lock().unwrap().push(mutation_id);
+        }
+
+        fn reject_with_policy(
+            &self,
+            mutation_id: u64,
+            _hint: &nodedb_types::sync::compensation::CompensationHint,
+        ) {
+            // In tests, just track the rejection.
             self.rejected.lock().unwrap().push(mutation_id);
         }
 
