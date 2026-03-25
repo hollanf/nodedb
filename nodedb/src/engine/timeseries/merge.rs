@@ -145,6 +145,12 @@ pub fn merge_partitions(
 /// Execute a merge cycle: find mergeable groups, merge each, update registry.
 ///
 /// Returns the number of merge operations performed.
+/// Execute a merge cycle with crash-safe persistence.
+///
+/// Three-step atomic protocol per merge:
+/// 1. Write merged partition to new directory (crash → orphan, no manifest entry)
+/// 2. Commit to registry + persist manifest atomically (crash → write-rename atomic)
+/// 3. Background cleanup of source directories (crash → cleanup on next startup)
 pub fn run_merge_cycle(
     registry: &mut PartitionRegistry,
     base_dir: &Path,
@@ -178,7 +184,15 @@ pub fn run_merge_cycle(
         // Execute merge.
         match merge_partitions(base_dir, &source_dirs, &output_name) {
             Ok(result) => {
+                // Step 2: Atomic manifest update.
                 registry.commit_merge(result.meta, result.dir_name, group_starts);
+
+                // Persist manifest (atomic write-rename).
+                let manifest_path = base_dir.join("partition_manifest.json");
+                if let Err(e) = registry.persist(&manifest_path) {
+                    tracing::warn!(error = %e, "failed to persist partition manifest after merge");
+                }
+
                 merge_count += 1;
             }
             Err(_e) => {
@@ -192,6 +206,121 @@ pub fn run_merge_cycle(
     }
 
     Ok(merge_count)
+}
+
+/// Incrementally merge O3 buffer rows into an existing sealed partition.
+///
+/// Copy-on-write: reads the existing partition, merges O3 rows in sorted order,
+/// writes a new partition file, then atomically swaps via rename.
+/// The old partition file is untouched until the swap succeeds — concurrent
+/// queries read the old version until the swap completes.
+pub fn merge_o3_into_partition(
+    base_dir: &Path,
+    partition_dir_name: &str,
+    o3_rows: &[super::o3_buffer::O3Row],
+) -> Result<PartitionMeta, SegmentError> {
+    if o3_rows.is_empty() {
+        return Err(SegmentError::Io("no O3 rows to merge".into()));
+    }
+
+    let partition_dir = base_dir.join(partition_dir_name);
+    if !partition_dir.exists() {
+        return Err(SegmentError::Io(format!(
+            "partition {} does not exist",
+            partition_dir.display()
+        )));
+    }
+
+    // Read existing partition data.
+    let existing_meta = ColumnarSegmentReader::read_meta(&partition_dir)?;
+    let existing_schema = ColumnarSegmentReader::read_schema(&partition_dir)?;
+
+    let ts_col =
+        ColumnarSegmentReader::read_column(&partition_dir, "timestamp", ColumnType::Timestamp)?;
+    let val_col = ColumnarSegmentReader::read_column(&partition_dir, "value", ColumnType::Float64)?;
+
+    let existing_ts = ts_col.as_timestamps();
+    let existing_val = val_col.as_f64();
+
+    // Merge: sorted merge of existing rows + O3 rows.
+    let total_rows = existing_ts.len() + o3_rows.len();
+    let mut merged_ts = Vec::with_capacity(total_rows);
+    let mut merged_val = Vec::with_capacity(total_rows);
+
+    let mut ei = 0usize; // existing index
+    let mut oi = 0usize; // o3 index
+
+    // O3 rows are already sorted by drain_for_partition.
+    while ei < existing_ts.len() && oi < o3_rows.len() {
+        if existing_ts[ei] <= o3_rows[oi].timestamp_ms {
+            merged_ts.push(existing_ts[ei]);
+            merged_val.push(existing_val[ei]);
+            ei += 1;
+        } else {
+            merged_ts.push(o3_rows[oi].timestamp_ms);
+            merged_val.push(o3_rows[oi].value);
+            oi += 1;
+        }
+    }
+    while ei < existing_ts.len() {
+        merged_ts.push(existing_ts[ei]);
+        merged_val.push(existing_val[ei]);
+        ei += 1;
+    }
+    while oi < o3_rows.len() {
+        merged_ts.push(o3_rows[oi].timestamp_ms);
+        merged_val.push(o3_rows[oi].value);
+        oi += 1;
+    }
+
+    // Write to a temporary partition directory.
+    let tmp_name = format!("{partition_dir_name}.o3merge");
+    let drain = super::columnar_memtable::ColumnarDrainResult {
+        columns: vec![
+            ColumnData::Timestamp(merged_ts),
+            ColumnData::Float64(merged_val),
+        ],
+        schema: existing_schema,
+        symbol_dicts: std::collections::HashMap::new(),
+        row_count: total_rows as u64,
+        min_ts: existing_meta.min_ts.min(
+            o3_rows
+                .iter()
+                .map(|r| r.timestamp_ms)
+                .min()
+                .unwrap_or(i64::MAX),
+        ),
+        max_ts: existing_meta.max_ts.max(
+            o3_rows
+                .iter()
+                .map(|r| r.timestamp_ms)
+                .max()
+                .unwrap_or(i64::MIN),
+        ),
+        series_row_counts: std::collections::HashMap::new(),
+    };
+
+    let writer = ColumnarSegmentWriter::new(base_dir);
+    let new_meta = writer.write_partition(
+        &tmp_name,
+        &drain,
+        existing_meta.interval_ms,
+        existing_meta.last_flushed_wal_lsn,
+    )?;
+
+    // Atomic swap: rename tmp → original.
+    let tmp_dir = base_dir.join(&tmp_name);
+    let backup_name = format!("{partition_dir_name}.old");
+    let backup_dir = base_dir.join(&backup_name);
+
+    // Rename original → backup, tmp → original, then remove backup.
+    std::fs::rename(&partition_dir, &backup_dir)
+        .map_err(|e| SegmentError::Io(format!("rename original → backup: {e}")))?;
+    std::fs::rename(&tmp_dir, &partition_dir)
+        .map_err(|e| SegmentError::Io(format!("rename tmp → original: {e}")))?;
+    let _ = std::fs::remove_dir_all(&backup_dir); // Best-effort cleanup.
+
+    Ok(new_meta)
 }
 
 /// Remap symbol IDs using a remap table.

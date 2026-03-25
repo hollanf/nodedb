@@ -404,6 +404,39 @@ pub fn describe_collection(
         }
     }
 
+    // Timeseries-specific info: show collection_type and config.
+    if coll.collection_type.is_timeseries() {
+        encoder
+            .encode_field(&"__collection_type")
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+        encoder
+            .encode_field(&"timeseries")
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+        encoder
+            .encode_field(&"false")
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+        rows.push(Ok(encoder.take_row()));
+
+        if let Some(config) = coll.get_timeseries_config() {
+            for (key, value) in config.as_object().into_iter().flatten() {
+                let val_str = match value {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                encoder
+                    .encode_field(&format!("__ts_{key}"))
+                    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+                encoder
+                    .encode_field(&val_str)
+                    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+                encoder
+                    .encode_field(&"config")
+                    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+                rows.push(Ok(encoder.take_row()));
+            }
+        }
+    }
+
     Ok(vec![Response::Query(QueryResponse::new(
         schema,
         stream::iter(rows),

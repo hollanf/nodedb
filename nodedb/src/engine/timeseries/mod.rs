@@ -1,3 +1,5 @@
+pub mod asof_join;
+pub mod bitmap_index;
 pub mod bucket;
 pub mod columnar_agg;
 pub mod columnar_memtable;

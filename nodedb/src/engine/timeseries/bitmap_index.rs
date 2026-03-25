@@ -19,7 +19,7 @@ pub struct Bitmap {
 impl Bitmap {
     /// Create a new bitmap with `len` bits, all cleared.
     pub fn new(len: usize) -> Self {
-        let words = (len + 63) / 64;
+        let words = len.div_ceil(64);
         Self {
             bits: vec![0u64; words],
             len,
@@ -75,13 +75,17 @@ impl Bitmap {
 
     /// Iterate over set bit positions.
     pub fn iter_ones(&self) -> impl Iterator<Item = u32> + '_ {
-        self.bits.iter().enumerate().flat_map(|(word_idx, &word)| {
-            let base = word_idx as u32 * 64;
-            (0..64u32)
-                .filter(move |bit| (word >> bit) & 1 == 1)
-                .map(move |bit| base + bit)
-                .filter(move |&pos| (pos as usize) < self.len)
-        })
+        let len = self.len;
+        self.bits
+            .iter()
+            .enumerate()
+            .flat_map(move |(word_idx, &word)| {
+                let base = word_idx as u32 * 64;
+                (0..64u32)
+                    .filter(move |bit| (word >> bit) & 1 == 1)
+                    .map(move |bit| base + bit)
+                    .filter(move |&pos| (pos as usize) < len)
+            })
     }
 
     /// Number of bits in the bitmap.
@@ -154,11 +158,7 @@ impl SymbolBitmapIndex {
     }
 
     /// Compound filter: AND a timestamp range bitmap with a symbol equality bitmap.
-    pub fn compound_filter(
-        &self,
-        symbol_id: u32,
-        timestamp_bitmap: &Bitmap,
-    ) -> Bitmap {
+    pub fn compound_filter(&self, symbol_id: u32, timestamp_bitmap: &Bitmap) -> Bitmap {
         match self.get(symbol_id) {
             Some(sym_bm) => sym_bm.and(timestamp_bitmap),
             None => Bitmap::new(self.row_count),

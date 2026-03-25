@@ -120,6 +120,11 @@ pub async fn dispatch(
             state, identity, &parts,
         ));
     }
+    if upper.starts_with("REWRITE PARTITIONS ") {
+        return Some(super::timeseries_ddl::rewrite_partitions(
+            state, identity, &parts,
+        ));
+    }
 
     // Pub/Sub: CREATE TOPIC, DROP TOPIC, SHOW TOPICS, PUBLISH TO, SUBSCRIBE TO.
     if upper.starts_with("CREATE TOPIC ") {
