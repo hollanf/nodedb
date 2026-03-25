@@ -41,7 +41,7 @@ class NodeDbLite private constructor(private var handle: Long) : Closeable {
         @JvmStatic private external fun nativeOpen(path: String, peerId: Long): Long
     }
 
-    // ── Lifecycle ────────────────────────────────────────────────────
+    // ── Lifecycle ───────────
 
     /**
      * Flush all in-memory state to disk.
@@ -64,7 +64,7 @@ class NodeDbLite private constructor(private var handle: Long) : Closeable {
         }
     }
 
-    // ── Vector Operations ────────────────────────────────────────────
+    // ── Vector Operations ───
 
     /**
      * Insert a vector with an ID into a collection.
@@ -99,7 +99,7 @@ class NodeDbLite private constructor(private var handle: Long) : Closeable {
         if (rc != 0) throw NodeDbException("vectorDelete failed: error $rc")
     }
 
-    // ── Graph Operations ─────────────────────────────────────────────
+    // ── Graph Operations ────
 
     /**
      * Insert a directed edge.
@@ -121,7 +121,7 @@ class NodeDbLite private constructor(private var handle: Long) : Closeable {
             ?: throw NodeDbException("graphTraverse failed")
     }
 
-    // ── Document Operations ──────────────────────────────────────────
+    // ── Document Operations ─
 
     /**
      * Get a document by ID.
@@ -153,7 +153,7 @@ class NodeDbLite private constructor(private var handle: Long) : Closeable {
         if (rc != 0) throw NodeDbException("documentDelete failed: error $rc")
     }
 
-    // ── Internal ─────────────────────────────────────────────────────
+    // ── Internal ────────────
 
     private fun checkOpen() {
         if (handle == 0L) throw IllegalStateException("NodeDbLite is closed")
@@ -163,7 +163,7 @@ class NodeDbLite private constructor(private var handle: Long) : Closeable {
         close()
     }
 
-    // ── JNI Native Methods ───────────────────────────────────────────
+    // ── JNI Native Methods ──
 
     private external fun nativeFlush(handle: Long): Int
     private external fun nativeClose(handle: Long)
