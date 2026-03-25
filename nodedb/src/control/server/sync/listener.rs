@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 
-use super::wire::{DeltaPushMsg, SyncMessageType};
+use super::wire::{DeltaPushMsg, SyncMessageType, TimeseriesPushMsg};
 
 use crate::control::security::jwt::JwtConfig;
 use crate::control::state::SharedState;
@@ -179,6 +179,36 @@ async fn handle_sync_session(
                             break;
                         }
                         continue;
+                    }
+
+                    // Handle TimeseriesPush directly (avoid double-decode in process_frame).
+                    if frame.msg_type == SyncMessageType::TimeseriesPush {
+                        if let Some(ts_msg) = frame.decode_body::<TimeseriesPushMsg>() {
+                            let (ack, ingest_data) = session.handle_timeseries_push(&ts_msg);
+                            // Dispatch to Data Plane if we have data and SharedState.
+                            if let (Some(ingest), Some(shared)) = (ingest_data, shared) {
+                                let tenant_id =
+                                    session.tenant_id.unwrap_or(crate::types::TenantId::new(0));
+                                let vshard =
+                                    crate::types::VShardId::from_collection(&ts_msg.collection);
+                                let plan =
+                                    crate::bridge::envelope::PhysicalPlan::TimeseriesIngest {
+                                        collection: ingest.collection,
+                                        payload: ingest.ilp_payload,
+                                        format: "ilp".to_string(),
+                                    };
+                                let _ =
+                                    crate::control::server::dispatch_utils::dispatch_to_data_plane(
+                                        shared, tenant_id, vshard, plan, 0,
+                                    )
+                                    .await;
+                            }
+                            let ack_bytes = ack.to_bytes();
+                            if ws.send(Message::Binary(ack_bytes.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        continue; // Skip process_frame for this message type.
                     }
 
                     // Wire RLS, audit, DLQ from SharedState.

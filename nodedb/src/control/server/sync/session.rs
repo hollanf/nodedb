@@ -20,6 +20,19 @@ use super::rate_limit::{RateLimitConfig, SyncRateLimiter};
 use super::security::{SyncRejectionReason, enforce_rls_on_delta, log_silent_rejection};
 use super::wire::*;
 
+/// Data extracted from a timeseries push for async Data Plane dispatch.
+#[derive(Debug)]
+pub struct TimeseriesIngestData {
+    /// Collection to ingest into.
+    pub collection: String,
+    /// ILP-format payload with `__source` tag injected.
+    pub ilp_payload: Vec<u8>,
+    /// Source Lite instance ID.
+    pub lite_id: String,
+    /// Number of decoded samples.
+    pub sample_count: u64,
+}
+
 /// State of a single sync session (one WebSocket connection).
 pub struct SyncSession {
     /// Unique session ID.
@@ -425,11 +438,16 @@ impl SyncSession {
         SyncFrame::encode_or_empty(SyncMessageType::VectorClockSync, &response)
     }
 
-    /// Process a timeseries push: accept Gorilla-encoded metric batch from Lite.
+    /// Process a timeseries push: decode Gorilla blocks, prepare for Data Plane ingest.
     ///
-    /// The `__source` tag is added server-side using the `lite_id` from the push.
-    /// Accepted samples are acknowledged with an LSN for sync watermarking.
-    pub fn handle_timeseries_push(&mut self, msg: &TimeseriesPushMsg) -> SyncFrame {
+    /// Returns `(ack_frame, ingest_payload)`. The caller (listener) must dispatch
+    /// `ingest_payload` to the Data Plane via `dispatch_to_data_plane` with a
+    /// `TimeseriesIngest` physical plan. The ACK is sent immediately (optimistic),
+    /// similar to how `DeltaPush` works.
+    pub fn handle_timeseries_push(
+        &mut self,
+        msg: &TimeseriesPushMsg,
+    ) -> (SyncFrame, Option<TimeseriesIngestData>) {
         self.last_activity = Instant::now();
 
         if !self.authenticated {
@@ -439,33 +457,76 @@ impl SyncSession {
                 rejected: msg.sample_count,
                 lsn: 0,
             };
-            return SyncFrame::encode_or_empty(SyncMessageType::TimeseriesAck, &ack);
+            return (
+                SyncFrame::encode_or_empty(SyncMessageType::TimeseriesAck, &ack),
+                None,
+            );
         }
 
-        // In production, this would:
-        // 1. Decode Gorilla blocks
-        // 2. Add `__source=msg.lite_id` tag to each series
-        // 3. Insert into Origin's columnar memtable
-        // 4. Assign LSN via WAL
-        // 5. Return LSN for sync watermark
+        // Decode Gorilla blocks to verify integrity.
+        let timestamps = nodedb_types::GorillaDecoder::new(&msg.ts_block).decode_all();
+        let values = nodedb_types::GorillaDecoder::new(&msg.val_block).decode_all();
+
+        let decoded_count = timestamps.len().min(values.len());
+        if decoded_count == 0 {
+            let ack = TimeseriesAckMsg {
+                collection: msg.collection.clone(),
+                accepted: 0,
+                rejected: msg.sample_count,
+                lsn: 0,
+            };
+            return (
+                SyncFrame::encode_or_empty(SyncMessageType::TimeseriesAck, &ack),
+                None,
+            );
+        }
+
+        self.mutations_processed += decoded_count as u64;
+
+        // Build ILP-format payload for Data Plane ingest.
+        // Each decoded sample becomes an ILP line with `__source` tag.
+        let mut ilp_lines = String::with_capacity(decoded_count * 80);
+        for i in 0..decoded_count {
+            let (ts, _) = timestamps[i];
+            let (_, val) = values[i];
+            // ILP format: measurement,__source=lite_id value=X timestamp_ns
+            ilp_lines.push_str(&msg.collection);
+            ilp_lines.push_str(",__source=");
+            ilp_lines.push_str(&msg.lite_id);
+            ilp_lines.push_str(" value=");
+            ilp_lines.push_str(&val.to_string());
+            ilp_lines.push(' ');
+            // Convert ms to ns for ILP.
+            ilp_lines.push_str(&(ts * 1_000_000).to_string());
+            ilp_lines.push('\n');
+        }
 
         debug!(
             session = %self.session_id,
             collection = %msg.collection,
-            samples = msg.sample_count,
+            decoded = decoded_count,
             lite_id = %msg.lite_id,
-            "timeseries push accepted"
+            "timeseries push decoded, dispatching to Data Plane"
         );
-
-        self.mutations_processed += msg.sample_count;
 
         let ack = TimeseriesAckMsg {
             collection: msg.collection.clone(),
-            accepted: msg.sample_count,
-            rejected: 0,
-            lsn: self.mutations_processed, // Use processed count as synthetic LSN.
+            accepted: decoded_count as u64,
+            rejected: msg.sample_count.saturating_sub(decoded_count as u64),
+            lsn: self.mutations_processed,
         };
-        SyncFrame::encode_or_empty(SyncMessageType::TimeseriesAck, &ack)
+
+        let ingest = TimeseriesIngestData {
+            collection: msg.collection.clone(),
+            ilp_payload: ilp_lines.into_bytes(),
+            lite_id: msg.lite_id.clone(),
+            sample_count: decoded_count as u64,
+        };
+
+        (
+            SyncFrame::encode_or_empty(SyncMessageType::TimeseriesAck, &ack),
+            Some(ingest),
+        )
     }
 
     pub fn handle_ping(&mut self, msg: &PingPongMsg) -> SyncFrame {
@@ -534,7 +595,12 @@ impl SyncSession {
             }
             SyncMessageType::TimeseriesPush => {
                 let msg: TimeseriesPushMsg = frame.decode_body()?;
-                Some(self.handle_timeseries_push(&msg))
+                let (ack, _ingest_data) = self.handle_timeseries_push(&msg);
+                // The caller (listener) is responsible for dispatching _ingest_data
+                // to the Data Plane via dispatch_to_data_plane(TimeseriesIngest).
+                // For now, the ingest data is available via handle_timeseries_push
+                // directly when the listener needs it.
+                Some(ack)
             }
             SyncMessageType::TimeseriesAck => None, // Client-side only.
             SyncMessageType::PingPong => {
