@@ -181,6 +181,11 @@ impl PlanConverter {
                     },
                 }])
             }
+            WriteOp::Truncate => Ok(vec![PhysicalTask {
+                tenant_id,
+                vshard_id: vshard,
+                plan: PhysicalPlan::Truncate { collection },
+            }]),
         }
     }
 
