@@ -22,21 +22,26 @@ use super::convert::{loro_value_to_document, value_to_loro};
 use crate::engine::graph::index::Direction;
 use crate::storage::engine::StorageEngine;
 
-#[async_trait]
-impl<S: StorageEngine> NodeDb for NodeDbLite<S> {
-    async fn vector_search(
+/// Internal fields to exclude from metadata by index type.
+const INTERNAL_FIELDS_BASE: &[&str] = &["embedding_dim"];
+const INTERNAL_FIELDS_NAMED: &[&str] = &["embedding_dim", "__field"];
+
+impl<S: StorageEngine> NodeDbLite<S> {
+    /// Shared vector search implementation used by both `vector_search` and `vector_search_field`.
+    async fn vector_search_internal(
         &self,
+        index_key: &str,
         collection: &str,
         query: &[f32],
         k: usize,
         filter: Option<&MetadataFilter>,
+        exclude_fields: &[&str],
     ) -> NodeDbResult<Vec<SearchResult>> {
-        // Try to reload evicted collection from storage lazily.
+        // Lazy-load from storage.
         {
-            let has_it = self.hnsw_indices.lock_or_recover().contains_key(collection);
-
+            let has_it = self.hnsw_indices.lock_or_recover().contains_key(index_key);
             if !has_it {
-                let key = format!("hnsw:{collection}");
+                let key = format!("hnsw:{index_key}");
                 if let Some(checkpoint) = self
                     .storage
                     .get(nodedb_types::Namespace::Vector, key.as_bytes())
@@ -44,17 +49,16 @@ impl<S: StorageEngine> NodeDb for NodeDbLite<S> {
                     && let Some(index) =
                         crate::engine::vector::graph::HnswIndex::from_checkpoint(&checkpoint)
                 {
-                    tracing::info!(collection, "lazy-loaded HNSW collection from storage");
+                    tracing::info!(index_key, "lazy-loaded HNSW collection from storage");
                     self.hnsw_indices
                         .lock_or_recover()
-                        .insert(collection.to_string(), index);
+                        .insert(index_key.to_string(), index);
                 }
             }
         }
 
         let indices = self.hnsw_indices.lock_or_recover();
-
-        let Some(index) = indices.get(collection) else {
+        let Some(index) = indices.get(index_key) else {
             return Ok(Vec::new());
         };
 
@@ -69,24 +73,22 @@ impl<S: StorageEngine> NodeDb for NodeDbLite<S> {
             .into_iter()
             .filter(|r| !index.is_deleted(r.id))
             .filter_map(|r| {
-                let composite_key = format!("{collection}:{}", r.id);
+                let composite_key = format!("{index_key}:{}", r.id);
                 let doc_id = id_map
                     .get(&composite_key)
                     .map(|(id, _)| id.clone())
                     .unwrap_or_else(|| r.id.to_string());
 
-                // Read CRDT document to populate metadata and evaluate filter.
                 let metadata = if let Some(loro_val) = crdt.read(collection, &doc_id) {
                     let doc = loro_value_to_document(&doc_id, &loro_val);
                     doc.fields
                         .into_iter()
-                        .filter(|(k, _)| k != "embedding_dim")
+                        .filter(|(k, _)| !exclude_fields.contains(&k.as_str()))
                         .collect::<HashMap<String, Value>>()
                 } else {
                     HashMap::new()
                 };
 
-                // Apply metadata filter if provided.
                 if let Some(f) = filter {
                     let json_doc = serde_json::to_value(&metadata).unwrap_or_default();
                     if !nodedb_query::metadata_filter::matches_metadata_filter(&json_doc, f) {
@@ -101,10 +103,31 @@ impl<S: StorageEngine> NodeDb for NodeDbLite<S> {
                     metadata,
                 })
             })
-            .take(k) // Trim back to requested k after filtering.
+            .take(k)
             .collect();
 
         Ok(results)
+    }
+}
+
+#[async_trait]
+impl<S: StorageEngine> NodeDb for NodeDbLite<S> {
+    async fn vector_search(
+        &self,
+        collection: &str,
+        query: &[f32],
+        k: usize,
+        filter: Option<&MetadataFilter>,
+    ) -> NodeDbResult<Vec<SearchResult>> {
+        self.vector_search_internal(
+            collection,
+            collection,
+            query,
+            k,
+            filter,
+            INTERNAL_FIELDS_BASE,
+        )
+        .await
     }
 
     async fn vector_insert(
@@ -329,6 +352,10 @@ impl<S: StorageEngine> NodeDb for NodeDbLite<S> {
 
         crdt.upsert(collection, &doc_id, &fields)
             .map_err(NodeDbError::storage)?;
+        drop(crdt); // Release lock before text indexing.
+
+        // Update text index incrementally.
+        self.index_document_text(collection, &doc_id, &doc.fields);
 
         Ok(())
     }
@@ -337,6 +364,10 @@ impl<S: StorageEngine> NodeDb for NodeDbLite<S> {
         let mut crdt = self.crdt.lock_or_recover();
 
         crdt.delete(collection, id).map_err(NodeDbError::storage)?;
+        drop(crdt);
+
+        // Remove from text index.
+        self.remove_document_text(collection, id);
 
         Ok(())
     }
@@ -346,5 +377,147 @@ impl<S: StorageEngine> NodeDb for NodeDbLite<S> {
             .execute_sql(query)
             .await
             .map_err(NodeDbError::storage)
+    }
+
+    // ─── Named Vector Fields ─────────────────────────────────────────
+
+    async fn vector_insert_field(
+        &self,
+        collection: &str,
+        field_name: &str,
+        id: &str,
+        embedding: &[f32],
+        metadata: Option<Document>,
+    ) -> NodeDbResult<()> {
+        // Key: "collection:field" for multi-field HNSW indexes.
+        let index_key = if field_name.is_empty() {
+            collection.to_string()
+        } else {
+            format!("{collection}:{field_name}")
+        };
+
+        let internal_id = {
+            let mut indices = self.hnsw_indices.lock_or_recover();
+            let index = Self::ensure_hnsw(&mut indices, &index_key, embedding.len());
+            let id_before = index.len() as u32;
+            index
+                .insert(embedding.to_vec())
+                .map_err(NodeDbError::bad_request)?;
+            id_before
+        };
+
+        {
+            let mut id_map = self.vector_id_map.lock_or_recover();
+            id_map.insert(
+                format!("{index_key}:{internal_id}"),
+                (id.to_string(), internal_id),
+            );
+        }
+
+        {
+            let mut crdt = self.crdt.lock_or_recover();
+            let mut fields = vec![
+                (
+                    "embedding_dim",
+                    loro::LoroValue::I64(embedding.len() as i64),
+                ),
+                ("__field", loro::LoroValue::String(field_name.into())),
+            ];
+            if let Some(meta) = &metadata {
+                for (k, v) in &meta.fields {
+                    fields.push((k.as_str(), value_to_loro(v)));
+                }
+            }
+            crdt.upsert(collection, id, &fields)
+                .map_err(NodeDbError::storage)?;
+        }
+
+        self.update_memory_stats();
+        Ok(())
+    }
+
+    async fn vector_search_field(
+        &self,
+        collection: &str,
+        field_name: &str,
+        query: &[f32],
+        k: usize,
+        filter: Option<&MetadataFilter>,
+    ) -> NodeDbResult<Vec<SearchResult>> {
+        let index_key = if field_name.is_empty() {
+            collection.to_string()
+        } else {
+            format!("{collection}:{field_name}")
+        };
+        self.vector_search_internal(
+            &index_key,
+            collection,
+            query,
+            k,
+            filter,
+            INTERNAL_FIELDS_NAMED,
+        )
+        .await
+    }
+
+    // ─── Graph Shortest Path ─────────────────────────────────────────
+
+    async fn graph_shortest_path(
+        &self,
+        from: &NodeId,
+        to: &NodeId,
+        max_depth: u8,
+        edge_filter: Option<&EdgeFilter>,
+    ) -> NodeDbResult<Option<Vec<NodeId>>> {
+        let csr = self.csr.lock_or_recover();
+        let label_filter = edge_filter
+            .and_then(|f| f.labels.first())
+            .map(|s| s.as_str());
+
+        let path = csr.shortest_path(from.as_str(), to.as_str(), label_filter, max_depth as usize);
+
+        Ok(path.map(|p| p.into_iter().map(NodeId::new).collect()))
+    }
+
+    // ─── Text Search ─────────────────────────────────────────────────
+
+    async fn text_search(
+        &self,
+        collection: &str,
+        query: &str,
+        top_k: usize,
+    ) -> NodeDbResult<Vec<SearchResult>> {
+        use nodedb_query::text_search::{Bm25Params, QueryMode};
+
+        // Use the persistent in-memory inverted index (updated on every document_put/delete).
+        let indices = self.text_indices.lock_or_recover();
+
+        let results = if let Some(idx) = indices.get(collection) {
+            idx.search(query, top_k, QueryMode::Or, Bm25Params::default())
+        } else {
+            // No documents indexed yet for this collection.
+            Vec::new()
+        };
+        drop(indices);
+
+        // Populate metadata from CRDT for each result.
+        let crdt = self.crdt.lock_or_recover();
+        Ok(results
+            .into_iter()
+            .map(|r| {
+                let metadata = if let Some(loro_val) = crdt.read(collection, &r.doc_id) {
+                    let doc = loro_value_to_document(&r.doc_id, &loro_val);
+                    doc.fields
+                } else {
+                    HashMap::new()
+                };
+                SearchResult {
+                    id: r.doc_id,
+                    node_id: None,
+                    distance: 1.0 - (r.score as f32 / 20.0).min(1.0),
+                    metadata,
+                }
+            })
+            .collect())
     }
 }

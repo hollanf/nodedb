@@ -40,6 +40,9 @@ pub struct NodeDbLite<S: StorageEngine> {
     pub(crate) vector_id_map: Mutex<HashMap<String, (String, u32)>>,
     /// SQL query engine (DataFusion over Loro documents).
     pub(crate) query_engine: crate::query::LiteQueryEngine,
+    /// Per-collection in-memory inverted index for full-text search.
+    /// Updated incrementally on `document_put` and `document_delete`.
+    pub(crate) text_indices: Mutex<HashMap<String, nodedb_query::text_search::InvertedIndex>>,
 }
 
 impl<S: StorageEngine> NodeDbLite<S> {
@@ -89,7 +92,7 @@ impl<S: StorageEngine> NodeDbLite<S> {
         let crdt = Arc::new(Mutex::new(crdt));
         let query_engine = crate::query::LiteQueryEngine::new(Arc::clone(&crdt));
 
-        Ok(Self {
+        let db = Self {
             storage,
             hnsw_indices: Mutex::new(hnsw_indices),
             csr: Mutex::new(csr),
@@ -98,7 +101,13 @@ impl<S: StorageEngine> NodeDbLite<S> {
             search_ef: 128,
             vector_id_map: Mutex::new(HashMap::new()),
             query_engine,
-        })
+            text_indices: Mutex::new(HashMap::new()),
+        };
+
+        // Rebuild text indices from CRDT state (cold start).
+        db.rebuild_text_indices();
+
+        Ok(db)
     }
 
     /// Restore HNSW indices from storage.
@@ -189,6 +198,83 @@ impl<S: StorageEngine> NodeDbLite<S> {
     }
 
     /// Get or create an HNSW index for a collection.
+    /// Rebuild all text indices from CRDT state.
+    ///
+    /// Called once on cold start after CRDT snapshot restore.
+    /// Scans all collections and indexes all string fields.
+    fn rebuild_text_indices(&self) {
+        let crdt = self.crdt.lock_or_recover();
+        let collections = crdt.collection_names();
+
+        let mut indices = self.text_indices.lock_or_recover();
+
+        for collection in &collections {
+            if collection.starts_with("__") {
+                continue;
+            }
+            let ids = crdt.list_ids(collection);
+            if ids.is_empty() {
+                continue;
+            }
+
+            let idx = indices.entry(collection.clone()).or_default();
+
+            for id in &ids {
+                if let Some(loro_val) = crdt.read(collection, id) {
+                    let doc = crate::nodedb::convert::loro_value_to_document(id, &loro_val);
+                    let text: String = doc
+                        .fields
+                        .values()
+                        .filter_map(|v| match v {
+                            nodedb_types::Value::String(s) => Some(s.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if !text.is_empty() {
+                        idx.index_document(id, &text);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Update the inverted text index after a document write.
+    ///
+    /// Called by `document_put` to keep the text index in sync.
+    /// Concatenates all string fields for full-text indexing.
+    pub(crate) fn index_document_text(
+        &self,
+        collection: &str,
+        doc_id: &str,
+        fields: &std::collections::HashMap<String, nodedb_types::Value>,
+    ) {
+        let text: String = fields
+            .values()
+            .filter_map(|v| match v {
+                nodedb_types::Value::String(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        if text.is_empty() {
+            return;
+        }
+
+        let mut indices = self.text_indices.lock_or_recover();
+        let idx = indices.entry(collection.to_string()).or_default();
+        idx.index_document(doc_id, &text);
+    }
+
+    /// Remove a document from the text index.
+    pub(crate) fn remove_document_text(&self, collection: &str, doc_id: &str) {
+        let mut indices = self.text_indices.lock_or_recover();
+        if let Some(idx) = indices.get_mut(collection) {
+            idx.remove_document(doc_id);
+        }
+    }
+
     pub(crate) fn ensure_hnsw<'a>(
         indices: &'a mut HashMap<String, HnswIndex>,
         collection: &str,
