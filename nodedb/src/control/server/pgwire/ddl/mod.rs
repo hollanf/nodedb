@@ -10,6 +10,7 @@ pub mod field_def;
 pub mod grant;
 pub mod graph_ops;
 pub mod inspect;
+pub mod match_ops;
 pub mod ownership;
 pub mod pubsub;
 pub mod rls;

@@ -32,6 +32,7 @@ impl NodeDbPgHandler {
                 | crate::bridge::envelope::PhysicalPlan::TextSearch { .. }
                 | crate::bridge::envelope::PhysicalPlan::HybridSearch { .. }
                 | crate::bridge::envelope::PhysicalPlan::GraphRagFusion { .. }
+                | crate::bridge::envelope::PhysicalPlan::GraphMatch { .. }
         ) {
             return crate::control::server::dispatch_utils::broadcast_to_all_cores(
                 &self.state,

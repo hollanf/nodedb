@@ -79,7 +79,8 @@ pub(super) fn extract_collection(plan: &PhysicalPlan) -> Option<&str> {
         | PhysicalPlan::CreateSnapshot
         | PhysicalPlan::Compact
         | PhysicalPlan::Checkpoint
-        | PhysicalPlan::GraphAlgo { .. } => None,
+        | PhysicalPlan::GraphAlgo { .. }
+        | PhysicalPlan::GraphMatch { .. } => None,
     }
 }
 
@@ -96,7 +97,8 @@ pub(super) fn describe_plan(plan: &PhysicalPlan) -> PlanKind {
         | PhysicalPlan::DocumentScan { .. }
         | PhysicalPlan::Aggregate { .. }
         | PhysicalPlan::HashJoin { .. }
-        | PhysicalPlan::GraphAlgo { .. } => PlanKind::MultiRow,
+        | PhysicalPlan::GraphAlgo { .. }
+        | PhysicalPlan::GraphMatch { .. } => PlanKind::MultiRow,
         _ => PlanKind::Execution,
     }
 }

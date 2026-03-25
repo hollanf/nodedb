@@ -387,6 +387,15 @@ pub enum PhysicalPlan {
         params: AlgoParams,
     },
 
+    /// Graph pattern matching (MATCH clause execution).
+    ///
+    /// Dispatched to the Data Plane. Executes Cypher-style pattern matching
+    /// on the CSR index and edge store. Returns JSON-serialized binding rows.
+    GraphMatch {
+        /// Serialized `MatchQuery` (MessagePack).
+        query: Vec<u8>,
+    },
+
     /// WAL append (write path).
     WalAppend { payload: Vec<u8> },
 

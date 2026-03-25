@@ -377,6 +377,16 @@ impl CsrIndex {
         self.ensure_node(name)
     }
 
+    /// Get the string label for a dense label index.
+    pub fn label_name(&self, label_id: u16) -> &str {
+        &self.id_to_label[label_id as usize]
+    }
+
+    /// Look up the dense label ID for a string label.
+    pub fn label_id(&self, name: &str) -> Option<u16> {
+        self.label_to_id.get(name).copied()
+    }
+
     // ── Internal helpers ──
 
     /// Build contiguous offset/target/label arrays from per-node edge lists.

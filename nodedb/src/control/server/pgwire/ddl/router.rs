@@ -297,6 +297,11 @@ pub async fn dispatch(
         return Some(super::graph_ops::algo(state, identity, &parts, sql).await);
     }
 
+    // Cypher-style MATCH pattern queries.
+    if upper.starts_with("MATCH ") || upper.starts_with("OPTIONAL MATCH ") {
+        return Some(super::match_ops::match_query(state, identity, sql).await);
+    }
+
     // COPY FROM file.
     if upper.starts_with("COPY ") && upper.contains(" FROM ") {
         return Some(super::bulk::copy_from(state, identity, &parts).await);

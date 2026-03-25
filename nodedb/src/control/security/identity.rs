@@ -205,8 +205,8 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
         // Transaction batch: requires write (contains writes).
         PhysicalPlan::TransactionBatch { .. } => Permission::Write,
 
-        // Graph algorithms: read-only computation on CSR.
-        PhysicalPlan::GraphAlgo { .. } => Permission::Read,
+        // Graph algorithms and pattern matching: read-only computation on CSR.
+        PhysicalPlan::GraphAlgo { .. } | PhysicalPlan::GraphMatch { .. } => Permission::Read,
 
         // System-level operations: require admin.
         PhysicalPlan::CreateSnapshot | PhysicalPlan::Compact | PhysicalPlan::Checkpoint => {

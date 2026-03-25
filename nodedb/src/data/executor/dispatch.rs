@@ -317,6 +317,8 @@ impl CoreLoop {
                 self.execute_graph_algo(task, algorithm, params)
             }
 
+            PhysicalPlan::GraphMatch { query } => self.execute_graph_match(task, query),
+
             PhysicalPlan::WalAppend { payload } => self.execute_wal_append(task, payload),
 
             PhysicalPlan::Cancel { target_request_id } => {
