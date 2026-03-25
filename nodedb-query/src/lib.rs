@@ -4,6 +4,7 @@ pub mod functions;
 pub mod json_ops;
 pub mod metadata_filter;
 pub mod scan_filter;
+pub mod simd_agg;
 pub mod text_search;
 pub mod window;
 
