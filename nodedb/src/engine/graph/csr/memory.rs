@@ -111,14 +111,22 @@ impl CsrIndex {
         let offsets = (self.out_offsets.len() + self.in_offsets.len()) * 4;
         let targets = (self.out_targets.len() + self.in_targets.len()) * 4;
         let labels = (self.out_labels.len() + self.in_labels.len()) * 2;
+        let weights = self.out_weights.as_ref().map_or(0, |w| w.len() * 8)
+            + self.in_weights.as_ref().map_or(0, |w| w.len() * 8);
         let buffer: usize = self
             .buffer_out
             .iter()
             .chain(self.buffer_in.iter())
             .map(|b| b.len() * 6) // (u16 + u32) per entry
             .sum();
+        let buffer_weights: usize = self
+            .buffer_out_weights
+            .iter()
+            .chain(self.buffer_in_weights.iter())
+            .map(|b| b.len() * 8)
+            .sum();
         let interning = self.id_to_node.iter().map(|s| s.len() + 24).sum::<usize>()
             + self.id_to_label.iter().map(|s| s.len() + 24).sum::<usize>();
-        offsets + targets + labels + buffer + interning
+        offsets + targets + labels + weights + buffer + buffer_weights + interning
     }
 }

@@ -43,7 +43,12 @@ impl CoreLoop {
 
         match self.edge_store.put_edge(src_id, label, dst_id, properties) {
             Ok(()) => {
-                self.csr.add_edge(src_id, label, dst_id);
+                let weight = crate::engine::graph::csr::extract_weight_from_properties(properties);
+                if weight != 1.0 {
+                    self.csr.add_edge_weighted(src_id, label, dst_id, weight);
+                } else {
+                    self.csr.add_edge(src_id, label, dst_id);
+                }
                 self.response_ok(task)
             }
             Err(e) => self.response_error(
