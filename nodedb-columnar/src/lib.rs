@@ -12,6 +12,8 @@
 //! [SegmentFooter: schema_hash, column metadata, block stats, CRC32C]
 //! ```
 
+pub mod compaction;
+pub mod delete_bitmap;
 pub mod error;
 pub mod format;
 pub mod memtable;
@@ -19,6 +21,8 @@ pub mod predicate;
 pub mod reader;
 pub mod writer;
 
+pub use compaction::compact_segments;
+pub use delete_bitmap::DeleteBitmap;
 pub use error::ColumnarError;
 pub use format::{
     BLOCK_SIZE, BlockStats, ColumnMeta, MAGIC, SegmentFooter, SegmentHeader, VERSION_MAJOR,

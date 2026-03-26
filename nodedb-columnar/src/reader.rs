@@ -12,6 +12,7 @@
 
 use nodedb_codec::ColumnCodec;
 
+use crate::delete_bitmap::DeleteBitmap;
 use crate::error::ColumnarError;
 use crate::format::{ColumnMeta, HEADER_SIZE, SegmentFooter, SegmentHeader};
 use crate::predicate::ScanPredicate;
@@ -94,69 +95,7 @@ impl<'a> SegmentReader<'a> {
         col_idx: usize,
         predicates: &[ScanPredicate],
     ) -> Result<DecodedColumn, ColumnarError> {
-        if col_idx >= self.footer.columns.len() {
-            return Err(ColumnarError::ColumnOutOfRange {
-                index: col_idx,
-                count: self.footer.columns.len(),
-            });
-        }
-
-        let col_meta = &self.footer.columns[col_idx];
-
-        // Find predicates that apply to this column.
-        let my_preds: Vec<&ScanPredicate> =
-            predicates.iter().filter(|p| p.col_idx == col_idx).collect();
-
-        // Navigate to this column's data in the segment.
-        let col_start = HEADER_SIZE + col_meta.offset as usize;
-        let mut cursor = col_start;
-
-        // Determine column type from codec + name heuristics.
-        let col_type = infer_column_type(col_meta);
-
-        // Decode each block.
-        let mut result = empty_decoded(&col_type);
-
-        for (block_idx, block_stat) in col_meta.block_stats.iter().enumerate() {
-            // Read block length.
-            if cursor + 4 > self.data.len() {
-                return Err(ColumnarError::TruncatedSegment {
-                    expected: cursor + 4,
-                    got: self.data.len(),
-                });
-            }
-            let block_len = u32::from_le_bytes([
-                self.data[cursor],
-                self.data[cursor + 1],
-                self.data[cursor + 2],
-                self.data[cursor + 3],
-            ]) as usize;
-            cursor += 4;
-
-            let block_data = &self.data[cursor..cursor + block_len];
-            cursor += block_len;
-
-            // Check if this block can be skipped via predicate pushdown.
-            let skip = my_preds.iter().any(|p| p.can_skip_block(block_stat));
-
-            if skip {
-                // Emit null-fill for this block to preserve row alignment.
-                append_null_fill(&mut result, block_stat.row_count as usize);
-                continue;
-            }
-
-            // Decode the block.
-            decode_block(
-                &mut result,
-                block_data,
-                &col_type,
-                col_meta.codec,
-                block_stat.row_count as usize,
-                block_idx,
-            )?;
-        }
-
-        Ok(result)
+        self.read_column_impl(col_idx, predicates, &DeleteBitmap::new())
     }
 
     /// Read multiple columns with shared predicate pushdown.
@@ -171,6 +110,112 @@ impl<'a> SegmentReader<'a> {
         col_indices
             .iter()
             .map(|&idx| self.read_column_filtered(idx, predicates))
+            .collect()
+    }
+
+    /// Read a column with both predicate pushdown and delete bitmap masking.
+    ///
+    /// Deleted rows have their validity set to false in the output.
+    /// Fully deleted blocks are skipped entirely (no decompression).
+    pub fn read_column_with_deletes(
+        &self,
+        col_idx: usize,
+        predicates: &[ScanPredicate],
+        deletes: &DeleteBitmap,
+    ) -> Result<DecodedColumn, ColumnarError> {
+        self.read_column_impl(col_idx, predicates, deletes)
+    }
+
+    /// Shared implementation for column reading with predicate pushdown and
+    /// optional delete bitmap masking.
+    fn read_column_impl(
+        &self,
+        col_idx: usize,
+        predicates: &[ScanPredicate],
+        deletes: &DeleteBitmap,
+    ) -> Result<DecodedColumn, ColumnarError> {
+        if col_idx >= self.footer.columns.len() {
+            return Err(ColumnarError::ColumnOutOfRange {
+                index: col_idx,
+                count: self.footer.columns.len(),
+            });
+        }
+
+        let col_meta = &self.footer.columns[col_idx];
+        let my_preds: Vec<&ScanPredicate> =
+            predicates.iter().filter(|p| p.col_idx == col_idx).collect();
+
+        let col_start = HEADER_SIZE + col_meta.offset as usize;
+        let mut cursor = col_start;
+        let col_type = infer_column_type(col_meta);
+        let mut result = empty_decoded(&col_type);
+        let mut global_row: u32 = 0;
+
+        for block_stat in &col_meta.block_stats {
+            let block_row_count = block_stat.row_count;
+
+            if cursor + 4 > self.data.len() {
+                return Err(ColumnarError::TruncatedSegment {
+                    expected: cursor + 4,
+                    got: self.data.len(),
+                });
+            }
+            let block_len = u32::from_le_bytes([
+                self.data[cursor],
+                self.data[cursor + 1],
+                self.data[cursor + 2],
+                self.data[cursor + 3],
+            ]) as usize;
+            cursor += 4;
+            let block_data = &self.data[cursor..cursor + block_len];
+            cursor += block_len;
+
+            // Skip via predicate pushdown.
+            let pred_skip = my_preds.iter().any(|p| p.can_skip_block(block_stat));
+
+            // Skip if entire block is deleted.
+            let delete_skip =
+                !deletes.is_empty() && deletes.is_block_fully_deleted(global_row, block_row_count);
+
+            if pred_skip || delete_skip {
+                append_null_fill(&mut result, block_row_count as usize);
+                global_row += block_row_count;
+                continue;
+            }
+
+            // Decode the block.
+            let pre_len = result_valid_len(&result);
+            decode_block(
+                &mut result,
+                block_data,
+                &col_type,
+                col_meta.codec,
+                block_row_count as usize,
+                0,
+            )?;
+
+            // Apply delete bitmap to the newly decoded rows.
+            if !deletes.is_empty() {
+                let valid_slice = result_valid_slice_mut(&mut result, pre_len);
+                deletes.apply_to_validity(valid_slice, global_row);
+            }
+
+            global_row += block_row_count;
+        }
+
+        Ok(result)
+    }
+
+    /// Read multiple columns with predicate pushdown and delete bitmap.
+    pub fn read_columns_with_deletes(
+        &self,
+        col_indices: &[usize],
+        predicates: &[ScanPredicate],
+        deletes: &DeleteBitmap,
+    ) -> Result<Vec<DecodedColumn>, ColumnarError> {
+        col_indices
+            .iter()
+            .map(|&idx| self.read_column_with_deletes(idx, predicates, deletes))
             .collect()
     }
 }
@@ -268,6 +313,28 @@ fn append_null_fill(result: &mut DecodedColumn, row_count: usize) {
             offsets.extend(std::iter::repeat_n(last, row_count));
             valid.extend(std::iter::repeat_n(false, row_count));
         }
+    }
+}
+
+/// Get the current length of the validity vector in a DecodedColumn.
+fn result_valid_len(result: &DecodedColumn) -> usize {
+    match result {
+        DecodedColumn::Int64 { valid, .. }
+        | DecodedColumn::Float64 { valid, .. }
+        | DecodedColumn::Timestamp { valid, .. }
+        | DecodedColumn::Bool { valid, .. }
+        | DecodedColumn::Binary { valid, .. } => valid.len(),
+    }
+}
+
+/// Get a mutable slice of the validity vector starting from `offset`.
+fn result_valid_slice_mut(result: &mut DecodedColumn, offset: usize) -> &mut [bool] {
+    match result {
+        DecodedColumn::Int64 { valid, .. }
+        | DecodedColumn::Float64 { valid, .. }
+        | DecodedColumn::Timestamp { valid, .. }
+        | DecodedColumn::Bool { valid, .. }
+        | DecodedColumn::Binary { valid, .. } => &mut valid[offset..],
     }
 }
 
