@@ -17,8 +17,11 @@ pub mod delete_bitmap;
 pub mod error;
 pub mod format;
 pub mod memtable;
+pub mod mutation;
+pub mod pk_index;
 pub mod predicate;
 pub mod reader;
+pub mod wal_record;
 pub mod writer;
 
 pub use compaction::compact_segments;
@@ -29,6 +32,8 @@ pub use format::{
     VERSION_MINOR,
 };
 pub use memtable::ColumnarMemtable;
+pub use mutation::MutationEngine;
+pub use pk_index::PkIndex;
 pub use predicate::ScanPredicate;
 pub use reader::SegmentReader;
 pub use writer::SegmentWriter;

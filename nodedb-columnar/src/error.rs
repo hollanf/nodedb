@@ -41,4 +41,10 @@ pub enum ColumnarError {
 
     #[error("null violation: column '{0}' is NOT NULL")]
     NullViolation(String),
+
+    #[error("duplicate primary key")]
+    DuplicatePrimaryKey,
+
+    #[error("primary key not found")]
+    PrimaryKeyNotFound,
 }
