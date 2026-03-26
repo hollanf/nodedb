@@ -1,3 +1,4 @@
+pub mod approx;
 pub mod collection;
 pub mod conversion;
 pub mod datetime;
@@ -17,6 +18,7 @@ pub mod timeseries;
 pub mod value;
 pub mod vector_distance;
 
+pub use approx::{HyperLogLog, SpaceSaving, TDigest};
 pub use collection::CollectionType;
 pub use datetime::{NdbDateTime, NdbDuration};
 pub use document::Document;
