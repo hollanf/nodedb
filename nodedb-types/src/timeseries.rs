@@ -591,6 +591,20 @@ pub struct TieredPartitionConfig {
     /// detected (rate > 10x normal for > 30s), this overrides memtable_max_memory_bytes.
     #[serde(default)]
     pub bulk_import_threshold_rows: u64,
+
+    // -- Partition size targets (Lite-C) --
+    /// Target partition size in bytes. 0 = use time-based partitioning.
+    /// When set, flush appends to the current partition until it reaches this size,
+    /// then seals and starts a new one. Prevents hundreds of tiny partitions from
+    /// slow-ingest Pattern C workloads (e.g., 10 rows/day).
+    #[serde(default)]
+    pub partition_size_target_bytes: u64,
+
+    // -- Compaction (Lite-C) --
+    /// Maximum number of partitions before compaction merges them.
+    /// 0 = no compaction trigger by count. Default: 20 for Lite.
+    #[serde(default)]
+    pub compaction_partition_threshold: u32,
 }
 
 /// Compression codec for archived (cold) partitions.
@@ -623,6 +637,8 @@ impl TieredPartitionConfig {
             retain_until_synced: false,
             battery_aware: false,
             bulk_import_threshold_rows: 0,
+            partition_size_target_bytes: 0,
+            compaction_partition_threshold: 0,
         }
     }
 
@@ -644,8 +660,10 @@ impl TieredPartitionConfig {
             sync_resolution_ms: 0,    // raw by default
             sync_interval_ms: 30_000, // 30s
             retain_until_synced: false,
-            battery_aware: false,                  // opt-in on mobile
-            bulk_import_threshold_rows: 1_000_000, // 1M rows for Lite bulk import
+            battery_aware: false,                       // opt-in on mobile
+            bulk_import_threshold_rows: 1_000_000,      // 1M rows for Lite bulk import
+            partition_size_target_bytes: 1_024 * 1_024, // 1MB target for Lite-C
+            compaction_partition_threshold: 20,         // merge when > 20 partitions
         }
     }
 

@@ -1,3 +1,4 @@
+mod compaction;
 pub(crate) mod core;
 mod flush;
 mod ingest;
@@ -6,6 +7,7 @@ mod retention;
 mod sync;
 mod wal;
 
+pub use compaction::{CompactionResult, MaintenanceResult};
 pub use core::TimeseriesEngine;
 pub use flush::{FlushResult, RedbEntry};
 pub use retention::UnsyncedDropWarning;
