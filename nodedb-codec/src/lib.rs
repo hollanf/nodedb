@@ -19,6 +19,7 @@
 
 pub mod alp;
 pub mod alp_rd;
+pub mod crdt_compress;
 pub mod delta;
 pub mod detect;
 pub mod double_delta;
@@ -31,8 +32,10 @@ pub mod pcodec;
 pub mod pipeline;
 pub mod rans;
 pub mod raw;
+pub mod spherical;
 pub mod zstd_codec;
 
+pub use crdt_compress::CrdtOp;
 pub use delta::{DeltaDecoder, DeltaEncoder};
 pub use detect::detect_codec;
 pub use double_delta::{DoubleDeltaDecoder, DoubleDeltaEncoder};
