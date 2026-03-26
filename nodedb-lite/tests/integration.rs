@@ -271,9 +271,12 @@ async fn benchmark_vector_search_1k() {
     let elapsed = start.elapsed();
     let per_query_us = elapsed.as_micros() / iterations as u128;
 
+    // In debug mode, HNSW search is significantly slower due to unoptimized
+    // distance math. Use a relaxed threshold for CI/debug builds.
+    let threshold = if cfg!(debug_assertions) { 10_000 } else { 1000 };
     assert!(
-        per_query_us < 1000,
-        "vector search took {per_query_us}us, target < 1000us"
+        per_query_us < threshold,
+        "vector search took {per_query_us}us, target < {threshold}us"
     );
 }
 
