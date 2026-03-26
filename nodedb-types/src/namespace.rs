@@ -34,6 +34,8 @@ pub enum Namespace {
     LoroState = 4,
     /// Spatial engine: R-tree checkpoints, geohash indexes.
     Spatial = 5,
+    /// Strict document engine: Binary Tuple rows keyed by PK.
+    Strict = 6,
 }
 
 impl Namespace {
@@ -46,6 +48,7 @@ impl Namespace {
             3 => Some(Self::Crdt),
             4 => Some(Self::LoroState),
             5 => Some(Self::Spatial),
+            6 => Some(Self::Strict),
             _ => None,
         }
     }
@@ -57,10 +60,10 @@ mod tests {
 
     #[test]
     fn namespace_roundtrip() {
-        for v in 0u8..=5 {
+        for v in 0u8..=6 {
             let ns = Namespace::from_u8(v).unwrap();
             assert_eq!(ns as u8, v);
         }
-        assert!(Namespace::from_u8(6).is_none());
+        assert!(Namespace::from_u8(7).is_none());
     }
 }
