@@ -14,9 +14,6 @@ use crate::types::{ReadConsistency, RequestId, TenantId, VShardId};
 /// Maximum frame size: 16 MiB.
 const MAX_FRAME_SIZE: u32 = 16 * 1024 * 1024;
 
-/// Default request deadline: 30 seconds.
-const DEFAULT_DEADLINE: Duration = Duration::from_secs(30);
-
 /// A client session on the Control Plane.
 ///
 /// Each accepted TCP connection gets its own `Session`. The session handles
@@ -387,7 +384,8 @@ impl Session {
             tenant_id,
             vshard_id,
             plan,
-            deadline: Instant::now() + DEFAULT_DEADLINE,
+            deadline: Instant::now()
+                + Duration::from_secs(self.state.tuning.network.default_deadline_secs),
             priority: Priority::Normal,
             trace_id: 0,
             consistency: ReadConsistency::Strong,
@@ -404,12 +402,15 @@ impl Session {
         };
 
         // Await response from Data Plane (routed back via the response poller).
-        let response = tokio::time::timeout(DEFAULT_DEADLINE, rx)
-            .await
-            .map_err(|_| crate::Error::DeadlineExceeded { request_id })?
-            .map_err(|_| crate::Error::Dispatch {
-                detail: "response channel closed".into(),
-            })?;
+        let response = tokio::time::timeout(
+            Duration::from_secs(self.state.tuning.network.default_deadline_secs),
+            rx,
+        )
+        .await
+        .map_err(|_| crate::Error::DeadlineExceeded { request_id })?
+        .map_err(|_| crate::Error::Dispatch {
+            detail: "response channel closed".into(),
+        })?;
 
         // Serialize response to JSON.
         let status_str = match response.status {

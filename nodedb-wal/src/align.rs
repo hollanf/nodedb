@@ -12,7 +12,8 @@ use crate::error::{Result, WalError};
 /// Default alignment for O_DIRECT I/O (4 KiB).
 ///
 /// This matches the typical NVMe logical block size and Linux page size.
-/// Can be overridden at runtime if the device reports a different alignment.
+/// Can be overridden at runtime via `WalWriterConfig::alignment`, which reads
+/// from `WalTuning::alignment`.
 pub const DEFAULT_ALIGNMENT: usize = 4096;
 
 /// An aligned byte buffer suitable for O_DIRECT I/O.

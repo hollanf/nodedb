@@ -19,8 +19,11 @@
 //! ```
 
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use tracing::info;
+
+use nodedb_types::config::tuning::ClusterTransportTuning;
 
 use crate::config::server::ClusterSettings;
 use crate::control::state::SharedState;
@@ -44,13 +47,17 @@ pub struct ClusterHandle {
 pub async fn init_cluster(
     config: &ClusterSettings,
     data_dir: &std::path::Path,
+    transport_tuning: &ClusterTransportTuning,
 ) -> crate::Result<ClusterHandle> {
-    // 1. Create QUIC transport.
+    // 1. Create QUIC transport, configured from ClusterTransportTuning.
     let transport = Arc::new(
-        nodedb_cluster::NexarTransport::new(config.node_id, config.listen).map_err(|e| {
-            crate::Error::Config {
-                detail: format!("cluster transport: {e}"),
-            }
+        nodedb_cluster::NexarTransport::with_tuning(
+            config.node_id,
+            config.listen,
+            transport_tuning,
+        )
+        .map_err(|e| crate::Error::Config {
+            detail: format!("cluster transport: {e}"),
         })?,
     );
 
@@ -110,6 +117,7 @@ pub fn start_raft(
     shared: Arc<SharedState>,
     data_dir: &std::path::Path,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    transport_tuning: &ClusterTransportTuning,
 ) -> crate::Result<()> {
     // Reconstruct MultiRaft from routing table.
     let routing = handle.routing.read().unwrap_or_else(|p| p.into_inner());
@@ -150,13 +158,18 @@ pub fn start_raft(
     ));
 
     // Create the Raft loop with real forwarder (handles ForwardRequest RPCs).
-    let raft_loop = Arc::new(nodedb_cluster::RaftLoop::with_forwarder(
-        multi_raft,
-        handle.transport.clone(),
-        handle.topology.clone(),
-        applier,
-        forwarder,
-    ));
+    // Override the tick interval from ClusterTransportTuning (default: 10ms).
+    let tick_interval = Duration::from_millis(transport_tuning.raft_tick_interval_ms);
+    let raft_loop = Arc::new(
+        nodedb_cluster::RaftLoop::with_forwarder(
+            multi_raft,
+            handle.transport.clone(),
+            handle.topology.clone(),
+            applier,
+            forwarder,
+        )
+        .with_tick_interval(tick_interval),
+    );
 
     // Start the Raft tick loop.
     let rl_run = raft_loop.clone();

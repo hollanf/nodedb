@@ -15,6 +15,7 @@ use nodedb_raft::message::{
     RequestVoteRequest, RequestVoteResponse,
 };
 use nodedb_raft::transport::RaftTransport;
+use nodedb_types::config::tuning::ClusterTransportTuning;
 use tracing::{debug, info, warn};
 
 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, RetryPolicy};
@@ -48,26 +49,72 @@ pub struct NexarTransport {
 
 impl NexarTransport {
     /// Create a new transport bound to the given address.
+    ///
+    /// Uses `ClusterTransportTuning::default()` for all QUIC and RPC settings.
+    /// Prefer [`NexarTransport::with_tuning`] in production to read values from
+    /// the server's `TuningConfig`.
     pub fn new(node_id: u64, listen_addr: SocketAddr) -> Result<Self> {
         Self::with_timeout(node_id, listen_addr, config::DEFAULT_RPC_TIMEOUT)
     }
 
     /// Create a new transport with a custom RPC timeout.
+    ///
+    /// Uses `ClusterTransportTuning::default()` for all QUIC settings (streams,
+    /// windows, keep-alive). Prefer [`NexarTransport::with_tuning`] in production.
     pub fn with_timeout(
         node_id: u64,
         listen_addr: SocketAddr,
         rpc_timeout: Duration,
     ) -> Result<Self> {
-        let server_config = config::make_raft_server_config()?;
+        let defaults = ClusterTransportTuning::default();
+        let server_config = config::make_raft_server_config(&defaults)?;
         let listener = nexar::TransportListener::bind_with_config(listen_addr, server_config)
             .map_err(|e| ClusterError::Transport {
                 detail: format!("bind {listen_addr}: {e}"),
             })?;
-        let client_config = config::make_raft_client_config()?;
+        let client_config = config::make_raft_client_config(&defaults)?;
 
         info!(
             node_id,
             addr = %listener.local_addr(),
+            "raft transport bound"
+        );
+
+        Ok(Self {
+            node_id,
+            listener,
+            client_config,
+            peers: RwLock::new(HashMap::new()),
+            peer_addrs: RwLock::new(HashMap::new()),
+            rpc_timeout,
+            circuit_breaker: CircuitBreaker::new(CircuitBreakerConfig::default()),
+            retry_policy: RetryPolicy::default(),
+        })
+    }
+
+    /// Create a new transport using values from `ClusterTransportTuning`.
+    ///
+    /// All QUIC parameters (streams, windows, keep-alive, idle timeout) and
+    /// the RPC timeout are read from `tuning`. Use this in production so that
+    /// operators can override defaults via the `[tuning.cluster_transport]`
+    /// section of `config.toml`.
+    pub fn with_tuning(
+        node_id: u64,
+        listen_addr: SocketAddr,
+        tuning: &ClusterTransportTuning,
+    ) -> Result<Self> {
+        let server_config = config::make_raft_server_config(tuning)?;
+        let listener = nexar::TransportListener::bind_with_config(listen_addr, server_config)
+            .map_err(|e| ClusterError::Transport {
+                detail: format!("bind {listen_addr}: {e}"),
+            })?;
+        let client_config = config::make_raft_client_config(tuning)?;
+        let rpc_timeout = Duration::from_secs(tuning.rpc_timeout_secs);
+
+        info!(
+            node_id,
+            addr = %listener.local_addr(),
+            rpc_timeout_secs = tuning.rpc_timeout_secs,
             "raft transport bound"
         );
 

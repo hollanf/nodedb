@@ -42,7 +42,7 @@ pub struct UringWriterConfig {
 impl Default for UringWriterConfig {
     fn default() -> Self {
         Self {
-            write_buffer_size: 256 * 1024,
+            write_buffer_size: crate::writer::DEFAULT_WRITE_BUFFER_SIZE,
             alignment: DEFAULT_ALIGNMENT,
             ring_depth: 64,
             use_direct_io: true,

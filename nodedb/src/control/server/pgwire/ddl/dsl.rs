@@ -20,8 +20,6 @@ use crate::control::state::SharedState;
 
 use super::super::types::{sqlstate_error, text_field};
 
-const DSL_DEADLINE: Duration = Duration::from_secs(30);
-
 // ── SEARCH USING VECTOR ─────────────────────────────────────────────
 
 /// SEARCH <collection> USING VECTOR(ARRAY[...], <k>)
@@ -91,10 +89,15 @@ pub async fn search_vector(
         field_name: String::new(),
     };
 
-    let payload =
-        super::sync_dispatch::dispatch_async(state, tenant_id, collection, plan, DSL_DEADLINE)
-            .await
-            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+    let payload = super::sync_dispatch::dispatch_async(
+        state,
+        tenant_id,
+        collection,
+        plan,
+        Duration::from_secs(state.tuning.network.default_deadline_secs),
+    )
+    .await
+    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
 
     let schema = Arc::new(vec![text_field("result")]);
     let text = crate::data::executor::response_codec::decode_payload_to_json(&payload);
@@ -175,10 +178,15 @@ pub async fn search_fusion(
         options: crate::engine::graph::traversal_options::GraphTraversalOptions::default(),
     };
 
-    let payload =
-        super::sync_dispatch::dispatch_async(state, tenant_id, collection, plan, DSL_DEADLINE)
-            .await
-            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+    let payload = super::sync_dispatch::dispatch_async(
+        state,
+        tenant_id,
+        collection,
+        plan,
+        Duration::from_secs(state.tuning.network.default_deadline_secs),
+    )
+    .await
+    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
 
     let schema = Arc::new(vec![text_field("result")]);
     let text = crate::data::executor::response_codec::decode_payload_to_json(&payload);
@@ -343,7 +351,7 @@ pub async fn crdt_merge(
         tenant_id,
         collection,
         source_plan,
-        DSL_DEADLINE,
+        Duration::from_secs(state.tuning.network.default_deadline_secs),
     )
     .await
     .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
@@ -363,9 +371,15 @@ pub async fn crdt_merge(
         mutation_id: 0,
     };
 
-    super::sync_dispatch::dispatch_async(state, tenant_id, collection, apply_plan, DSL_DEADLINE)
-        .await
-        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+    super::sync_dispatch::dispatch_async(
+        state,
+        tenant_id,
+        collection,
+        apply_plan,
+        Duration::from_secs(state.tuning.network.default_deadline_secs),
+    )
+    .await
+    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
 
     state.audit_record(
         crate::control::security::audit::AuditEvent::AdminAction,

@@ -9,9 +9,6 @@ use crate::types::{Lsn, ReadConsistency};
 
 use super::core::NodeDbPgHandler;
 
-/// Default request deadline: 30 seconds.
-const DEFAULT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
-
 impl NodeDbPgHandler {
     /// Dispatch a single physical task and wait for the response.
     ///
@@ -78,14 +75,17 @@ impl NodeDbPgHandler {
 
         let rx = tracker.register(group_id, log_index);
 
-        let result = tokio::time::timeout(DEFAULT_DEADLINE, rx)
-            .await
-            .map_err(|_| crate::Error::Dispatch {
-                detail: format!("raft commit timeout for group {group_id} index {log_index}"),
-            })?
-            .map_err(|_| crate::Error::Dispatch {
-                detail: "propose waiter channel closed".into(),
-            })?;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(self.state.tuning.network.default_deadline_secs),
+            rx,
+        )
+        .await
+        .map_err(|_| crate::Error::Dispatch {
+            detail: format!("raft commit timeout for group {group_id} index {log_index}"),
+        })?
+        .map_err(|_| crate::Error::Dispatch {
+            detail: "propose waiter channel closed".into(),
+        })?;
 
         match result {
             Ok(payload) => Ok(Response {
@@ -150,7 +150,8 @@ impl NodeDbPgHandler {
             tenant_id,
             vshard_id,
             plan,
-            deadline: Instant::now() + DEFAULT_DEADLINE,
+            deadline: Instant::now()
+                + std::time::Duration::from_secs(self.state.tuning.network.default_deadline_secs),
             priority: Priority::Normal,
             trace_id: 0,
             consistency: ReadConsistency::Strong,
@@ -164,11 +165,14 @@ impl NodeDbPgHandler {
             Err(poisoned) => poisoned.into_inner().dispatch(request)?,
         };
 
-        tokio::time::timeout(DEFAULT_DEADLINE, rx)
-            .await
-            .map_err(|_| crate::Error::DeadlineExceeded { request_id })?
-            .map_err(|_| crate::Error::Dispatch {
-                detail: "response channel closed".into(),
-            })
+        tokio::time::timeout(
+            std::time::Duration::from_secs(self.state.tuning.network.default_deadline_secs),
+            rx,
+        )
+        .await
+        .map_err(|_| crate::Error::DeadlineExceeded { request_id })?
+        .map_err(|_| crate::Error::Dispatch {
+            detail: "response channel closed".into(),
+        })
     }
 }

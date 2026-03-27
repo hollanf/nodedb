@@ -101,9 +101,13 @@ impl CoreLoop {
             "graph hop"
         );
         let refs: Vec<&str> = start_nodes.iter().map(String::as_str).collect();
-        let result = self
-            .csr
-            .traverse_bfs(&refs, edge_label.as_deref(), direction, depth);
+        let result = self.csr.traverse_bfs(
+            &refs,
+            edge_label.as_deref(),
+            direction,
+            depth,
+            self.graph_tuning.max_visited,
+        );
         match super::super::response_codec::encode(&result) {
             Ok(payload) => self.response_with_payload(task, payload),
             Err(e) => {
@@ -161,10 +165,13 @@ impl CoreLoop {
         max_depth: usize,
     ) -> Response {
         debug!(core = self.core_id, %src, %dst, ?edge_label, max_depth, "graph path");
-        match self
-            .csr
-            .shortest_path(src, dst, edge_label.as_deref(), max_depth)
-        {
+        match self.csr.shortest_path(
+            src,
+            dst,
+            edge_label.as_deref(),
+            max_depth,
+            self.graph_tuning.max_visited,
+        ) {
             Some(path) => match super::super::response_codec::encode(&path) {
                 Ok(payload) => self.response_with_payload(task, payload),
                 Err(e) => {
@@ -196,7 +203,12 @@ impl CoreLoop {
             "graph subgraph"
         );
         let refs: Vec<&str> = start_nodes.iter().map(String::as_str).collect();
-        let edges = self.csr.subgraph(&refs, edge_label.as_deref(), depth);
+        let edges = self.csr.subgraph(
+            &refs,
+            edge_label.as_deref(),
+            depth,
+            self.graph_tuning.max_visited,
+        );
         let result: Vec<_> = edges
             .iter()
             .map(|(s, l, d)| super::super::response_codec::SubgraphEdge {

@@ -6,7 +6,7 @@
 //! - A build queue for pending HNSW constructions
 //!
 //! Inserts land in the growing segment (O(1) append). When it reaches
-//! `SEAL_THRESHOLD` vectors, it's sealed: vectors are frozen and HNSW
+//! `DEFAULT_SEAL_THRESHOLD` vectors (configurable), it's sealed: vectors are frozen and HNSW
 //! construction is dispatched to a background thread. The growing segment
 //! is replaced with a fresh empty one. Queries probe all segments and
 //! merge results by distance.
@@ -18,9 +18,10 @@ use super::mmap_segment::MmapVectorSegment;
 use super::quantize::sq8::Sq8Codec;
 use crate::storage::tier::StorageTier;
 
-/// Threshold for sealing the growing segment.
+/// Default threshold for sealing the growing segment.
 /// 64K vectors × 768 dims × 4 bytes = ~192 MiB per segment.
-pub const SEAL_THRESHOLD: usize = 65_536;
+/// Sourced from `VectorTuning::seal_threshold` at runtime.
+pub const DEFAULT_SEAL_THRESHOLD: usize = 65_536;
 
 /// Request to build an HNSW index from sealed vectors (sent to builder thread).
 pub struct BuildRequest {
@@ -100,11 +101,21 @@ pub struct VectorCollection {
     /// Mapping from internal vector ID → user-facing document ID.
     /// Populated when vectors are inserted with an associated document ID.
     pub doc_id_map: std::collections::HashMap<u32, String>,
+    /// Number of vectors in the growing segment before sealing.
+    /// Set from `VectorTuning::seal_threshold` at construction time.
+    pub(super) seal_threshold: usize,
 }
 
 impl VectorCollection {
-    /// Create an empty collection.
+    /// Create an empty collection with the default seal threshold.
     pub fn new(dim: usize, params: HnswParams) -> Self {
+        Self::with_seal_threshold(dim, params, DEFAULT_SEAL_THRESHOLD)
+    }
+
+    /// Create an empty collection with an explicit seal threshold.
+    ///
+    /// Use this when constructing from `VectorTuning::seal_threshold`.
+    pub fn with_seal_threshold(dim: usize, params: HnswParams, seal_threshold: usize) -> Self {
         Self {
             growing: FlatIndex::new(dim, params.metric),
             growing_base_id: 0,
@@ -119,12 +130,13 @@ impl VectorCollection {
             mmap_fallback_count: 0,
             mmap_segment_count: 0,
             doc_id_map: std::collections::HashMap::new(),
+            seal_threshold,
         }
     }
 
     /// Create with a specific RNG-like seed (for deterministic testing).
     pub fn with_seed(dim: usize, params: HnswParams, _seed: u64) -> Self {
-        Self::new(dim, params)
+        Self::with_seal_threshold(dim, params, DEFAULT_SEAL_THRESHOLD)
     }
 
     /// Insert a vector. Returns the global vector ID.
@@ -332,7 +344,7 @@ impl VectorCollection {
 
     /// Check if the growing segment should be sealed.
     pub fn needs_seal(&self) -> bool {
-        self.growing.len() >= SEAL_THRESHOLD
+        self.growing.len() >= self.seal_threshold
     }
 
     /// Seal the growing segment and return a build request for the builder thread.
@@ -529,13 +541,13 @@ mod tests {
     fn seal_moves_to_building() {
         let mut coll = VectorCollection::new(2, HnswParams::default());
         // Insert enough to trigger seal threshold check.
-        for i in 0..SEAL_THRESHOLD {
+        for i in 0..DEFAULT_SEAL_THRESHOLD {
             coll.insert(vec![i as f32, 0.0]);
         }
         assert!(coll.needs_seal());
 
         let req = coll.seal("test_key").unwrap();
-        assert_eq!(req.vectors.len(), SEAL_THRESHOLD);
+        assert_eq!(req.vectors.len(), DEFAULT_SEAL_THRESHOLD);
         assert_eq!(coll.building.len(), 1);
         assert_eq!(coll.growing.len(), 0);
 

@@ -82,8 +82,12 @@ async fn main() -> anyhow::Result<()> {
     // Open WAL (with optional encryption at rest).
     let wal_segment_target = config.checkpoint.wal_segment_target_bytes();
     let wal = {
-        let mut mgr =
-            WalManager::open_with_segment_size(&config.wal_dir(), false, wal_segment_target)?;
+        let mut mgr = WalManager::open_with_tuning(
+            &config.wal_dir(),
+            false,
+            wal_segment_target,
+            &config.tuning.wal,
+        )?;
         if let Some(ref enc) = config.encryption {
             let key = nodedb_wal::crypto::WalEncryptionKey::from_file(&enc.key_path)
                 .map_err(nodedb::Error::Wal)?;
@@ -117,6 +121,7 @@ async fn main() -> anyhow::Result<()> {
     let compaction_cfg = nodedb::data::runtime::CoreCompactionConfig {
         interval: config.checkpoint.compaction_interval(),
         tombstone_threshold: config.checkpoint.compaction_tombstone_threshold,
+        query: config.tuning.query.clone(),
     };
     let mut core_handles = Vec::with_capacity(num_cores);
     let mut notifiers = Vec::with_capacity(num_cores);
@@ -146,7 +151,12 @@ async fn main() -> anyhow::Result<()> {
         cluster_cfg
             .validate()
             .map_err(|e| anyhow::anyhow!("cluster config: {e}"))?;
-        let handle = nodedb::control::cluster::init_cluster(cluster_cfg, &config.data_dir).await?;
+        let handle = nodedb::control::cluster::init_cluster(
+            cluster_cfg,
+            &config.data_dir,
+            &config.tuning.cluster_transport,
+        )
+        .await?;
         Some(handle)
     } else {
         None
@@ -158,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&wal),
         &config.catalog_path(),
         &config.auth,
+        config.tuning.clone(),
     )?;
 
     // Initialise cold storage (L2 tiering) if configured.
@@ -212,6 +223,7 @@ async fn main() -> anyhow::Result<()> {
             Arc::clone(&shared),
             &config.data_dir,
             shutdown_rx.clone(),
+            &config.tuning.cluster_transport,
         )?;
     }
 

@@ -12,9 +12,6 @@ use super::super::types::{error_to_sqlstate, response_status_to_sqlstate};
 use super::core::NodeDbPgHandler;
 use super::plan::{PlanKind, describe_plan, extract_collection, payload_to_response};
 
-/// Default request deadline: 30 seconds.
-const DEFAULT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
-
 impl NodeDbPgHandler {
     /// Plan and dispatch SQL after quota and DDL checks have passed.
     ///
@@ -190,7 +187,10 @@ impl NodeDbPgHandler {
             nodedb_cluster::rpc_codec::ForwardRequest {
                 sql: sql.to_owned(),
                 tenant_id: tenant_id.as_u32(),
-                deadline_remaining_ms: DEFAULT_DEADLINE.as_millis() as u64,
+                deadline_remaining_ms: std::time::Duration::from_secs(
+                    self.state.tuning.network.default_deadline_secs,
+                )
+                .as_millis() as u64,
                 trace_id: 0,
             },
         );

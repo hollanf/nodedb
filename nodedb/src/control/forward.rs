@@ -16,9 +16,6 @@ use crate::control::planner::context::QueryContext;
 use crate::control::state::SharedState;
 use crate::types::{ReadConsistency, RequestId, TenantId};
 
-/// Default deadline for forwarded requests.
-const FORWARD_DEADLINE: Duration = Duration::from_secs(30);
-
 /// Executes forwarded SQL queries on the local Data Plane.
 pub struct LocalForwarder {
     state: Arc<SharedState>,
@@ -47,7 +44,9 @@ impl RequestForwarder for LocalForwarder {
         let tenant_id = TenantId::new(req.tenant_id);
 
         // Use the remaining deadline from the request, capped at our local max.
-        let deadline = Duration::from_millis(req.deadline_remaining_ms).min(FORWARD_DEADLINE);
+        let deadline = Duration::from_millis(req.deadline_remaining_ms).min(Duration::from_secs(
+            self.state.tuning.network.default_deadline_secs,
+        ));
 
         // Plan the SQL locally.
         let tasks = match self.query_ctx.plan_sql(&req.sql, tenant_id).await {

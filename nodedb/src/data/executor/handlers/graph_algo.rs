@@ -44,7 +44,12 @@ impl CoreLoop {
             GraphAlgorithm::LabelPropagation => {
                 algo::label_propagation::run(&self.csr, params).to_json()
             }
-            GraphAlgorithm::Lcc => algo::lcc::run(&self.csr).to_json(),
+            GraphAlgorithm::Lcc => algo::lcc::run(
+                &self.csr,
+                self.graph_tuning.lcc_high_degree_threshold,
+                self.graph_tuning.lcc_sample_pairs,
+            )
+            .to_json(),
             GraphAlgorithm::Sssp => {
                 algo::sssp::run(&self.csr, params).and_then(|batch| batch.to_json())
             }

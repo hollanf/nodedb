@@ -7,11 +7,6 @@ use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::vector::collection::VectorCollection;
 
-/// Over-fetch multiplier when bitmap filtering is active.
-/// Compensates for post-filter result reduction; 3x is effective
-/// for typical filter densities (10-50% pass rate).
-const BITMAP_OVER_FETCH_FACTOR: usize = 3;
-
 /// Build a search hit from raw search result data.
 fn build_search_hit(
     id: u32,
@@ -131,7 +126,7 @@ impl CoreLoop {
             return self.response_with_payload(task, b"[]".to_vec());
         }
         let fetch_k = if filter_bitmap.is_some() {
-            top_k * BITMAP_OVER_FETCH_FACTOR
+            top_k * self.query_tuning.bitmap_over_fetch_factor
         } else {
             top_k
         };

@@ -38,6 +38,10 @@ use nodedb_types::timeseries::{FlushedSeries, IngestResult, LogEntry, MetricSamp
 
 use super::memtable::{MemtableConfig, TimeseriesMemtable};
 
+/// Default total timeseries memory budget (100 MiB, covers both memtables).
+/// Sourced from `TimeseriesToning::total_budget_bytes` at runtime.
+pub(super) const DEFAULT_TOTAL_BUDGET_BYTES: usize = 100 * 1024 * 1024;
+
 /// Configuration for the timeseries manager.
 #[derive(Debug, Clone)]
 pub struct TimeseriesManagerConfig {
@@ -54,7 +58,7 @@ pub struct TimeseriesManagerConfig {
 impl Default for TimeseriesManagerConfig {
     fn default() -> Self {
         Self {
-            total_memory_budget: 100 * 1024 * 1024, // 100 MiB
+            total_memory_budget: DEFAULT_TOTAL_BUDGET_BYTES,
             max_series: 500_000,
             bucket_config: BucketConfig::default(),
             active_budget_fraction: 0.6,

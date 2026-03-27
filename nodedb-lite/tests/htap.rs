@@ -191,10 +191,12 @@ async fn auto_routing_for_analytical_queries() {
     }
 
     // Flush the columnar materialized view so it has segments to scan.
-    {
+    tokio::task::block_in_place(|| {
         let mut columnar = db.columnar_engine().lock().unwrap();
-        columnar.flush_collection("sales_analytics").await.unwrap();
-    }
+        tokio::runtime::Handle::current()
+            .block_on(columnar.flush_collection("sales_analytics"))
+            .unwrap();
+    });
 
     // An analytical query (GROUP BY) should work.
     // The HTAP routing detects GROUP BY and routes to the columnar view.

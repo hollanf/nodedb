@@ -622,7 +622,7 @@ mod tests {
 
         let csr = CsrIndex::rebuild_from(&store).unwrap();
         assert_eq!(csr.node_count(), 3);
-        let mut result = csr.traverse_bfs(&["x"], Some("REL"), Direction::Out, 3);
+        let mut result = csr.traverse_bfs(&["x"], Some("REL"), Direction::Out, 3, 100_000);
         result.sort();
         assert_eq!(result, vec!["x", "y", "z"]);
     }

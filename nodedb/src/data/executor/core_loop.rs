@@ -153,6 +153,14 @@ pub struct CoreLoop {
     /// Populated via RegisterDocumentCollection plans.
     pub(in crate::data::executor) doc_configs:
         HashMap<String, crate::engine::document::store::CollectionConfig>,
+
+    /// Query execution tuning parameters (sort run size, stream chunk size, etc.).
+    /// Set at core spawn time from config; never changed at runtime.
+    pub(in crate::data::executor) query_tuning: nodedb_types::config::tuning::QueryTuning,
+
+    /// Graph engine tuning parameters (max_visited, max_depth, LCC thresholds).
+    /// Set at core spawn time from config; never changed at runtime.
+    pub(in crate::data::executor) graph_tuning: nodedb_types::config::tuning::GraphTuning,
 }
 
 impl CoreLoop {
@@ -223,6 +231,8 @@ impl CoreLoop {
             },
             segment_compaction_config: crate::storage::compaction::CompactionConfig::default(),
             doc_configs: HashMap::new(),
+            query_tuning: nodedb_types::config::tuning::QueryTuning::default(),
+            graph_tuning: nodedb_types::config::tuning::GraphTuning::default(),
         })
     }
 
@@ -252,6 +262,11 @@ impl CoreLoop {
         config: crate::storage::compaction::CompactionConfig,
     ) {
         self.segment_compaction_config = config;
+    }
+
+    /// Set query execution tuning parameters (called after open, before event loop).
+    pub fn set_query_tuning(&mut self, tuning: nodedb_types::config::tuning::QueryTuning) {
+        self.query_tuning = tuning;
     }
 
     /// Apply secondary index extraction for a document.

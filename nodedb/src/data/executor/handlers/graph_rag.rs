@@ -21,13 +21,6 @@ use crate::engine::graph::edge_store::Direction;
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
 
-/// Maximum bytes a single GraphRAG BFS expansion may allocate for
-/// intermediate node tracking.
-const BFS_MEMORY_BUDGET_BYTES: usize = 256 * 1024;
-
-/// Estimated per-node memory cost in the BFS working set.
-const BFS_BYTES_PER_NODE: usize = 192;
-
 impl CoreLoop {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::data::executor) fn execute_graph_rag_fusion(
@@ -182,7 +175,8 @@ impl CoreLoop {
         max_depth: usize,
         max_visited: usize,
     ) -> (Vec<String>, HashMap<String, usize>, bool) {
-        let budget_node_limit = BFS_MEMORY_BUDGET_BYTES / BFS_BYTES_PER_NODE;
+        let budget_node_limit =
+            self.query_tuning.bfs_memory_budget_bytes / self.query_tuning.bfs_bytes_per_node;
         let effective_limit = max_visited.min(budget_node_limit);
 
         let mut visited: HashSet<String> = HashSet::with_capacity(effective_limit.min(1024));

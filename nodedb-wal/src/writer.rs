@@ -31,7 +31,10 @@ use crate::record::{HEADER_SIZE, WalRecord};
 ///
 /// This is the batch size for group commit. Records accumulate here until
 /// the buffer is full or `sync()` is called.
-const DEFAULT_WRITE_BUFFER_SIZE: usize = 256 * 1024;
+///
+/// Matches `WalTuning::write_buffer_size` default. Override via
+/// `WalWriterConfig::write_buffer_size` at construction time.
+pub const DEFAULT_WRITE_BUFFER_SIZE: usize = 256 * 1024;
 
 /// Configuration for the WAL writer.
 #[derive(Debug, Clone)]

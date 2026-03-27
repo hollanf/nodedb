@@ -12,11 +12,6 @@ use crate::bridge::scan_filter::{ScanFilter, compare_json_values};
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
 
-/// Maximum rows to sort in memory per run. If the filtered result set
-/// exceeds this, it is split into sorted runs written to temp files,
-/// then k-way merged. 100K rows x ~1 KiB avg = ~100 MiB RAM per run.
-const SORT_RUN_SIZE: usize = 100_000;
-
 impl CoreLoop {
     pub(in crate::data::executor) fn execute_document_batch_insert(
         &mut self,
@@ -164,7 +159,7 @@ impl CoreLoop {
             Ok(filtered) => {
                 let sorted = if sort_keys.is_empty() {
                     filtered
-                } else if filtered.len() <= SORT_RUN_SIZE {
+                } else if filtered.len() <= self.query_tuning.sort_run_size {
                     let mut v = filtered;
                     sort_rows(&mut v, sort_keys);
                     v
@@ -254,11 +249,11 @@ impl CoreLoop {
                     })
                     .collect();
 
-                // Stream results in chunks of STREAM_CHUNK_SIZE rows.
+                // Stream results in chunks of `stream_chunk_size` rows.
                 // Each chunk is sent as a partial response except the last.
-                const STREAM_CHUNK_SIZE: usize = 1000;
+                let stream_chunk_size = self.query_tuning.stream_chunk_size;
 
-                if result.len() <= STREAM_CHUNK_SIZE {
+                if result.len() <= stream_chunk_size {
                     // Small result: send as single response (no streaming overhead).
                     match super::super::response_codec::encode(&result) {
                         Ok(payload) => self.response_with_payload(task, payload),
@@ -271,7 +266,7 @@ impl CoreLoop {
                     }
                 } else {
                     // Large result: stream in chunks via partial responses.
-                    let chunks: Vec<_> = result.chunks(STREAM_CHUNK_SIZE).collect();
+                    let chunks: Vec<_> = result.chunks(stream_chunk_size).collect();
                     let last_idx = chunks.len().saturating_sub(1);
                     for (i, chunk) in chunks.iter().enumerate() {
                         let is_last = i == last_idx;
@@ -458,7 +453,7 @@ impl CoreLoop {
         let total_rows = rows.len();
 
         let mut run_files = Vec::new();
-        for chunk in rows.chunks(SORT_RUN_SIZE) {
+        for chunk in rows.chunks(self.query_tuning.sort_run_size) {
             let mut run: Vec<(String, Vec<u8>)> = chunk.to_vec();
             sort_rows(&mut run, sort_keys);
 

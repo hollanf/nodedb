@@ -33,10 +33,6 @@ use crate::control::change_stream::ChangeEvent;
 use crate::control::state::SharedState;
 use crate::types::TenantId;
 
-/// Maximum tracked WS sessions for reconnection replay.
-/// Oldest sessions (by LSN) are evicted when this limit is exceeded.
-const MAX_WS_SESSIONS: usize = 10_000;
-
 /// WebSocket upgrade handler.
 pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws_connection(socket, state))
@@ -126,7 +122,7 @@ fn save_ws_session(shared: &SharedState, session_id: &str) {
         .unwrap_or_else(|p| p.into_inner());
 
     // Evict oldest sessions (by LSN) if at capacity.
-    while sessions.len() >= MAX_WS_SESSIONS {
+    while sessions.len() >= shared.tuning.network.max_ws_sessions {
         if let Some(oldest_key) = sessions
             .iter()
             .min_by_key(|(_, lsn)| **lsn)

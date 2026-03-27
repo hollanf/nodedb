@@ -3,9 +3,7 @@
 use std::collections::HashMap;
 
 use super::fuzzy;
-use super::inverted::{
-    BM25_B, BM25_K1, DOC_LENGTHS, InvertedIndex, POSTINGS, Posting, QueryMode, TextSearchResult,
-};
+use super::inverted::{DOC_LENGTHS, InvertedIndex, POSTINGS, Posting, QueryMode, TextSearchResult};
 use super::text_analyzer;
 
 impl InvertedIndex {
@@ -90,8 +88,9 @@ impl InvertedIndex {
                     .unwrap_or(1) as f32;
 
                 let tf = posting.term_freq as f32;
-                let tf_norm = (tf * (BM25_K1 + 1.0))
-                    / (tf + BM25_K1 * (1.0 - BM25_B + BM25_B * doc_len / avg_doc_len));
+                let tf_norm = (tf * (self.bm25_k1 + 1.0))
+                    / (tf
+                        + self.bm25_k1 * (1.0 - self.bm25_b + self.bm25_b * doc_len / avg_doc_len));
                 let mut score = idf * tf_norm;
 
                 if is_fuzzy {

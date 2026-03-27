@@ -66,6 +66,10 @@ struct SeriesMeta {
 
 // ── Configuration ──────────────────────────────────────────────────
 
+/// Default per-memtable memory budget (64 MiB).
+/// Sourced from `TimeseriesToning::memtable_budget_bytes` at runtime.
+pub(super) const DEFAULT_MEMTABLE_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+
 /// Configuration for the timeseries memtable.
 #[derive(Debug, Clone)]
 pub struct MemtableConfig {
@@ -80,7 +84,7 @@ pub struct MemtableConfig {
 impl Default for MemtableConfig {
     fn default() -> Self {
         Self {
-            max_memory_bytes: 64 * 1024 * 1024,
+            max_memory_bytes: DEFAULT_MEMTABLE_BUDGET_BYTES,
             max_series: 500_000,
             hard_memory_limit: 80 * 1024 * 1024,
         }

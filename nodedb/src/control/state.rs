@@ -3,6 +3,8 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use tracing::warn;
 
+use nodedb_types::config::TuningConfig;
+
 use crate::bridge::dispatch::Dispatcher;
 use crate::control::request_tracker::RequestTracker;
 use crate::control::security::apikey::ApiKeyStore;
@@ -134,6 +136,10 @@ pub struct SharedState {
     /// Rolling upgrade version tracking (cluster mode only).
     /// Tracks each node's wire format version for N-1 compatibility checks.
     pub cluster_version_state: Mutex<crate::control::rolling_upgrade::ClusterVersionState>,
+
+    /// Performance tuning configuration (deadlines, query limits, engine
+    /// knobs, etc.). Immutable after startup — set once from `ServerConfig`.
+    pub tuning: TuningConfig,
 }
 
 impl SharedState {
@@ -174,6 +180,7 @@ impl SharedState {
             cluster_version_state: Mutex::new(
                 crate::control::rolling_upgrade::ClusterVersionState::new(),
             ),
+            tuning: TuningConfig::default(),
         })
     }
 
@@ -183,6 +190,7 @@ impl SharedState {
         wal: Arc<WalManager>,
         catalog_path: &std::path::Path,
         auth_config: &crate::config::auth::AuthConfig,
+        tuning: TuningConfig,
     ) -> crate::Result<Arc<Self>> {
         let mut credentials = CredentialStore::open(catalog_path)?;
         credentials.set_lockout_policy(
@@ -243,6 +251,7 @@ impl SharedState {
             cluster_version_state: Mutex::new(
                 crate::control::rolling_upgrade::ClusterVersionState::new(),
             ),
+            tuning,
         }))
     }
 

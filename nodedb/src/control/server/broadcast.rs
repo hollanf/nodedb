@@ -10,9 +10,6 @@ use crate::types::{Lsn, ReadConsistency, RequestId, TenantId, VShardId};
 
 static BROADCAST_COUNTER: AtomicU64 = AtomicU64::new(2_000_000);
 
-/// Default request deadline.
-const DEFAULT_DEADLINE: Duration = Duration::from_secs(30);
-
 /// Broadcast a physical plan to ALL Data Plane cores and merge responses.
 ///
 /// Used for scans (DocumentScan, Aggregate, etc.) where data is distributed
@@ -38,7 +35,8 @@ pub async fn broadcast_to_all_cores(
             tenant_id,
             vshard_id,
             plan: plan.clone(),
-            deadline: Instant::now() + DEFAULT_DEADLINE,
+            deadline: Instant::now()
+                + Duration::from_secs(shared.tuning.network.default_deadline_secs),
             priority: Priority::Normal,
             trace_id,
             consistency: ReadConsistency::Strong,
@@ -63,14 +61,17 @@ pub async fn broadcast_to_all_cores(
     let mut first = true;
 
     for rx in receivers {
-        let resp = tokio::time::timeout(DEFAULT_DEADLINE, rx)
-            .await
-            .map_err(|_| crate::Error::Dispatch {
-                detail: "broadcast timeout".into(),
-            })?
-            .map_err(|_| crate::Error::Dispatch {
-                detail: "broadcast channel closed".into(),
-            })?;
+        let resp = tokio::time::timeout(
+            Duration::from_secs(shared.tuning.network.default_deadline_secs),
+            rx,
+        )
+        .await
+        .map_err(|_| crate::Error::Dispatch {
+            detail: "broadcast timeout".into(),
+        })?
+        .map_err(|_| crate::Error::Dispatch {
+            detail: "broadcast channel closed".into(),
+        })?;
 
         if resp.status == crate::bridge::envelope::Status::Error {
             if let Some(ref ec) = resp.error_code {

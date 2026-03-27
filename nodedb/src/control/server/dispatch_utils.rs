@@ -27,9 +27,6 @@ fn current_timestamp_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Default request deadline.
-const DEFAULT_DEADLINE: Duration = Duration::from_secs(30);
-
 /// Dispatch a physical plan to the Data Plane and await the response.
 ///
 /// Creates a request envelope, registers with the tracker for correlation,
@@ -54,7 +51,7 @@ pub async fn dispatch_to_data_plane(
         tenant_id,
         vshard_id,
         plan,
-        deadline: Instant::now() + DEFAULT_DEADLINE,
+        deadline: Instant::now() + Duration::from_secs(shared.tuning.network.default_deadline_secs),
         priority: Priority::Normal,
         trace_id,
         consistency: ReadConsistency::Strong,
@@ -73,33 +70,36 @@ pub async fn dispatch_to_data_plane(
     // The mpsc channel is unbounded but safe: Data Plane sends at most
     // ceil(rows / STREAM_CHUNK_SIZE) partial messages, typically <100 chunks
     // for even large scans. The timeout bounds total wait time.
-    let response = tokio::time::timeout(DEFAULT_DEADLINE, async {
-        let mut combined_payload: Vec<u8> = Vec::new();
-        let mut final_response: Option<Response> = None;
+    let response = tokio::time::timeout(
+        Duration::from_secs(shared.tuning.network.default_deadline_secs),
+        async {
+            let mut combined_payload: Vec<u8> = Vec::new();
+            let mut final_response: Option<Response> = None;
 
-        while let Some(resp) = rx.recv().await {
-            if resp.partial {
-                // Partial chunk: accumulate payload.
-                combined_payload.extend_from_slice(&resp.payload);
-            } else {
-                // Final response.
-                if combined_payload.is_empty() {
-                    // Non-streaming: return directly.
-                    final_response = Some(resp);
-                } else {
-                    // Streaming: append final payload and return combined.
+            while let Some(resp) = rx.recv().await {
+                if resp.partial {
+                    // Partial chunk: accumulate payload.
                     combined_payload.extend_from_slice(&resp.payload);
-                    final_response = Some(Response {
-                        payload: Payload::from_vec(combined_payload),
-                        ..resp
-                    });
+                } else {
+                    // Final response.
+                    if combined_payload.is_empty() {
+                        // Non-streaming: return directly.
+                        final_response = Some(resp);
+                    } else {
+                        // Streaming: append final payload and return combined.
+                        combined_payload.extend_from_slice(&resp.payload);
+                        final_response = Some(Response {
+                            payload: Payload::from_vec(combined_payload),
+                            ..resp
+                        });
+                    }
+                    break;
                 }
-                break;
             }
-        }
 
-        final_response.ok_or(())
-    })
+            final_response.ok_or(())
+        },
+    )
     .await
     .map_err(|_| crate::Error::DeadlineExceeded { request_id })?
     .map_err(|_| crate::Error::Dispatch {

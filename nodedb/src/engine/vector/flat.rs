@@ -2,7 +2,7 @@
 //!
 //! Simple linear scan over all stored vectors. No graph overhead, exact
 //! results. Automatically used when a collection has fewer than
-//! `FLAT_INDEX_THRESHOLD` vectors (default 10K). Also serves as the
+//! `DEFAULT_FLAT_INDEX_THRESHOLD` vectors (default 10K). Also serves as the
 //! search method for growing segments before HNSW construction.
 //!
 //! Complexity: O(N × D) per query where N = vectors, D = dimensions.
@@ -12,8 +12,9 @@
 use super::distance::{DistanceMetric, distance};
 use super::hnsw::SearchResult;
 
-/// Collections below this vector count use flat index instead of HNSW.
-pub const FLAT_INDEX_THRESHOLD: usize = 10_000;
+/// Default threshold below which collections use flat index instead of HNSW.
+/// Sourced from `VectorTuning::flat_index_threshold` at runtime.
+pub const DEFAULT_FLAT_INDEX_THRESHOLD: usize = 10_000;
 
 /// Flat vector index: append-only buffer with brute-force search.
 pub struct FlatIndex {

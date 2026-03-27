@@ -48,7 +48,7 @@ impl Default for BucketConfig {
             l1_flush_interval: Duration::from_secs(3600),
             l2_compaction_interval: Duration::from_secs(86400),
             log_compression_level: 3,
-            max_segment_bytes: 64 * 1024 * 1024,
+            max_segment_bytes: super::memtable::DEFAULT_MEMTABLE_BUDGET_BYTES,
             flush_rate_limit_bytes_per_sec: 0,
         }
     }
@@ -545,6 +545,9 @@ mod tests {
         assert_eq!(cfg.l1_flush_interval, Duration::from_secs(3600));
         assert_eq!(cfg.l2_compaction_interval, Duration::from_secs(86400));
         assert_eq!(cfg.log_compression_level, 3);
-        assert_eq!(cfg.max_segment_bytes, 64 * 1024 * 1024);
+        assert_eq!(
+            cfg.max_segment_bytes,
+            crate::engine::timeseries::memtable::DEFAULT_MEMTABLE_BUDGET_BYTES
+        );
     }
 }

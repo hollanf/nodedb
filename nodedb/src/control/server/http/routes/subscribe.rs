@@ -17,12 +17,6 @@ use tracing::debug;
 use crate::control::change_stream::ChangeEvent;
 use crate::types::TenantId;
 
-/// Maximum events buffered per subscription before dropping oldest.
-pub const SUBSCRIPTION_BUFFER_SIZE: usize = 1024;
-
-/// Maximum idle time before a subscription is considered stale.
-pub const SUBSCRIPTION_IDLE_TIMEOUT_SECS: u64 = 300; // 5 minutes.
-
 /// Client subscription request.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubscriptionRequest {

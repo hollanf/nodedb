@@ -146,6 +146,8 @@ pub struct CoreCompactionConfig {
     pub interval: std::time::Duration,
     /// Tombstone ratio threshold for auto-compaction.
     pub tombstone_threshold: f64,
+    /// Query execution tuning parameters.
+    pub query: nodedb_types::config::tuning::QueryTuning,
 }
 
 impl Default for CoreCompactionConfig {
@@ -153,6 +155,7 @@ impl Default for CoreCompactionConfig {
         Self {
             interval: std::time::Duration::from_secs(600),
             tombstone_threshold: 0.2,
+            query: nodedb_types::config::tuning::QueryTuning::default(),
         }
     }
 }
@@ -190,6 +193,9 @@ pub fn spawn_core(
                 compaction_config.interval,
                 compaction_config.tombstone_threshold,
             );
+
+            // 2c. Apply query tuning config.
+            core.set_query_tuning(compaction_config.query);
 
             // 3. Load vector checkpoints (fast recovery).
             core.load_vector_checkpoints();

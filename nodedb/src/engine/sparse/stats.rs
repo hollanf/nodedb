@@ -33,9 +33,12 @@ pub struct ColumnStats {
     pub hll_registers: Vec<u8>,
 }
 
-/// Number of HLL registers. 256 = 2^8, giving ~6.5% standard error.
-const HLL_M: usize = 256;
-const HLL_P: u32 = 8; // log2(HLL_M)
+/// Default number of HLL registers. 256 = 2^8, giving ~6.5% standard error.
+/// Sourced from `SparseTuning::hll_registers` at runtime.
+pub(crate) const DEFAULT_HLL_M: usize = 256;
+/// Default HLL precision bits (log2 of `DEFAULT_HLL_M`).
+/// Sourced from `SparseTuning::hll_precision` at runtime.
+pub(crate) const DEFAULT_HLL_P: u32 = 8;
 
 impl ColumnStats {
     /// Create empty statistics for a new column.
@@ -47,7 +50,7 @@ impl ColumnStats {
             distinct_count: 0,
             min_value: None,
             max_value: None,
-            hll_registers: vec![0u8; HLL_M],
+            hll_registers: vec![0u8; DEFAULT_HLL_M],
         }
     }
 
@@ -82,10 +85,10 @@ impl ColumnStats {
 
                 // Update HyperLogLog for cardinality estimation.
                 let hash = Self::hash_value(&val_str);
-                let register_idx = (hash as usize) & (HLL_M - 1);
-                let remaining = hash >> HLL_P;
+                let register_idx = (hash as usize) & (DEFAULT_HLL_M - 1);
+                let remaining = hash >> DEFAULT_HLL_P;
                 let leading_zeros = if remaining == 0 {
-                    (64 - HLL_P) as u8
+                    (64 - DEFAULT_HLL_P) as u8
                 } else {
                     remaining.trailing_zeros() as u8 + 1
                 };
@@ -101,7 +104,7 @@ impl ColumnStats {
 
     /// HyperLogLog cardinality estimate.
     fn hll_estimate(&self) -> u64 {
-        let m = HLL_M as f64;
+        let m = self.hll_registers.len() as f64;
         // Alpha constant for m=256.
         let alpha = 0.7213 / (1.0 + 1.079 / m);
         let raw: f64 = alpha * m * m

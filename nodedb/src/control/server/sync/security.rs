@@ -35,9 +35,6 @@ use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::security::jwt::{JwtConfig, JwtError, JwtValidator};
 use crate::control::security::rls::RlsPolicyStore;
 
-/// How far before `exp` we advise the client to refresh (seconds).
-const TOKEN_REFRESH_WINDOW_SECS: u64 = 300; // 5 minutes before expiry.
-
 /// Result of JWT validation on WebSocket upgrade.
 #[derive(Debug)]
 pub enum UpgradeAuthResult {
@@ -79,7 +76,12 @@ pub fn validate_upgrade_token(token: &str, config: &JwtConfig) -> UpgradeAuthRes
 ///
 /// Returns `Some(remaining_secs)` if the token should be refreshed,
 /// `None` if still healthy.
-pub fn check_token_refresh_needed(token: &str, config: &JwtConfig) -> Option<u64> {
+pub fn check_token_refresh_needed(
+    token: &str,
+    config: &JwtConfig,
+    shared: &crate::control::state::SharedState,
+) -> Option<u64> {
+    let token_refresh_window_secs = shared.tuning.network.token_refresh_window_secs;
     // Re-validate to check if still valid.
     let validator = JwtValidator::new(config.clone());
     match validator.validate(token) {
@@ -90,7 +92,7 @@ pub fn check_token_refresh_needed(token: &str, config: &JwtConfig) -> Option<u64
             }
             let now = now_epoch_secs();
             let remaining = exp.saturating_sub(now);
-            if remaining <= TOKEN_REFRESH_WINDOW_SECS {
+            if remaining <= token_refresh_window_secs {
                 Some(remaining)
             } else {
                 None

@@ -23,9 +23,15 @@ use std::sync::atomic::{AtomicU32, Ordering};
 /// Default slab page size: 64 KiB.
 /// Most response payloads fit in one page. Oversized payloads
 /// fall back to `Arc<[u8]>`.
+///
+/// Matches `BridgeTuning::slab_page_size` default. Override by passing
+/// `config.tuning.bridge.slab_page_size` to `SlabPool::new()`.
 pub const DEFAULT_PAGE_SIZE: usize = 64 * 1024;
 
 /// Default number of pages per core.
+///
+/// Matches `BridgeTuning::slab_pool_size` default. Override by passing
+/// `config.tuning.bridge.slab_pool_size` to `SlabPool::new()`.
 pub const DEFAULT_POOL_SIZE: usize = 256;
 
 /// A handle to a slab-allocated buffer.

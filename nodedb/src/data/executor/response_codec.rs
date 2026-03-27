@@ -117,11 +117,6 @@ pub fn encode_as_arrow_ipc(
     Some(buf)
 }
 
-/// Maximum rows per Arrow batch to prevent OOM.
-pub const ARROW_BATCH_MAX_ROWS: usize = 65_536;
-/// Maximum bytes per Arrow batch.
-pub const ARROW_BATCH_MAX_BYTES: usize = 8 * 1024 * 1024; // 8 MiB
-
 fn infer_type(v: &serde_json::Value) -> DataType {
     match v {
         serde_json::Value::Number(n) if n.is_i64() => DataType::Int64,

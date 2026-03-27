@@ -20,8 +20,8 @@ const GSI_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("gsi.entrie
 /// GSI metadata: key = "{tenant}:{collection}:{index_name}" → MessagePack GsiMeta.
 const GSI_META: TableDefinition<&str, &[u8]> = TableDefinition::new("gsi.meta");
 
-/// Maximum GSIs per collection.
-pub const MAX_GSIS_PER_COLLECTION: usize = 4;
+/// Default maximum GSIs per collection. Sourced from `SparseTuning::max_gsis_per_collection`.
+pub const DEFAULT_MAX_GSIS_PER_COLLECTION: usize = 4;
 
 /// A single GSI entry pointing to the document's primary location.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -49,6 +49,8 @@ pub struct GsiMeta {
 /// GSI store backed by redb.
 pub struct GsiStore {
     db: Arc<Database>,
+    /// Maximum GSIs per collection. Set from `SparseTuning::max_gsis_per_collection`.
+    max_gsis: usize,
 }
 
 impl GsiStore {
@@ -66,7 +68,10 @@ impl GsiStore {
             engine: "gsi".into(),
             detail: format!("commit: {e}"),
         })?;
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            max_gsis: DEFAULT_MAX_GSIS_PER_COLLECTION,
+        })
     }
 
     /// Declare a new GSI on a collection field.
@@ -82,11 +87,12 @@ impl GsiStore {
     ) -> crate::Result<()> {
         // Check limit.
         let existing = self.list_indexes(tenant_id, collection)?;
-        if existing.len() >= MAX_GSIS_PER_COLLECTION {
+        if existing.len() >= self.max_gsis {
             return Err(crate::Error::Storage {
                 engine: "gsi".into(),
                 detail: format!(
-                    "collection '{collection}' already has {MAX_GSIS_PER_COLLECTION} GSIs (max)"
+                    "collection '{collection}' already has {} GSIs (max)",
+                    self.max_gsis
                 ),
             });
         }
@@ -338,12 +344,12 @@ mod tests {
     #[test]
     fn max_gsi_limit() {
         let (store, _dir) = open_store();
-        for i in 0..MAX_GSIS_PER_COLLECTION {
+        for i in 0..DEFAULT_MAX_GSIS_PER_COLLECTION {
             store
                 .create_index(1, "t", &format!("idx{i}"), &format!("f{i}"), vec![])
                 .unwrap();
         }
-        // 5th should fail.
+        // One over the limit should fail.
         let result = store.create_index(1, "t", "idx_extra", "f_extra", vec![]);
         assert!(result.is_err());
     }

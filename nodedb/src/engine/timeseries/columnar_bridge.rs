@@ -265,7 +265,7 @@ mod tests {
 
     fn default_config() -> ColumnarMemtableConfig {
         ColumnarMemtableConfig {
-            max_memory_bytes: 64 * 1024 * 1024,
+            max_memory_bytes: crate::engine::timeseries::memtable::DEFAULT_MEMTABLE_BUDGET_BYTES,
             hard_memory_limit: 80 * 1024 * 1024,
             max_tag_cardinality: 100_000,
         }

@@ -25,6 +25,10 @@ use crate::topology::ClusterTopology;
 use crate::transport::{NexarTransport, RaftRpcHandler};
 
 /// Default tick interval (10ms — fast enough for sub-second elections).
+///
+/// Matches `ClusterTransportTuning::raft_tick_interval_ms` default. Override
+/// at startup by calling `.with_tick_interval()` on the `RaftLoop`, passing
+/// `Duration::from_millis(config.tuning.cluster_transport.raft_tick_interval_ms)`.
 const DEFAULT_TICK_INTERVAL: Duration = Duration::from_millis(10);
 
 /// Callback for applying committed Raft log entries to the state machine.
@@ -357,6 +361,7 @@ impl<A: CommitApplier, F: RequestForwarder> RaftRpcHandler for RaftLoop<A, F> {
 mod tests {
     use super::*;
     use crate::routing::RoutingTable;
+    use nodedb_types::config::tuning::ClusterTransportTuning;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Instant;
 
@@ -468,14 +473,20 @@ mod tests {
         }
 
         // Nodes 2 and 3: normal timeouts (won't start election).
+        // Use the tuning config defaults so these values stay in sync with
+        // ClusterTransportTuning::election_timeout_{min,max}_secs.
+        let transport_tuning = ClusterTransportTuning::default();
+        let election_timeout_min = Duration::from_secs(transport_tuning.election_timeout_min_secs);
+        let election_timeout_max = Duration::from_secs(transport_tuning.election_timeout_max_secs);
+
         let dir2 = tempfile::tempdir().unwrap();
         let mut mr2 = MultiRaft::new(2, rt.clone(), dir2.path().to_path_buf())
-            .with_election_timeout(Duration::from_secs(60), Duration::from_secs(120));
+            .with_election_timeout(election_timeout_min, election_timeout_max);
         mr2.add_group(0, vec![1, 3]).unwrap();
 
         let dir3 = tempfile::tempdir().unwrap();
         let mut mr3 = MultiRaft::new(3, rt.clone(), dir3.path().to_path_buf())
-            .with_election_timeout(Duration::from_secs(60), Duration::from_secs(120));
+            .with_election_timeout(election_timeout_min, election_timeout_max);
         mr3.add_group(0, vec![1, 2]).unwrap();
 
         let a1 = CountingApplier::new();

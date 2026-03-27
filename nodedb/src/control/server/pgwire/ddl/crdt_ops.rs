@@ -16,9 +16,6 @@ use crate::control::state::SharedState;
 
 use super::super::types::{hex_decode, sqlstate_error, text_field};
 
-/// Default deadline for CRDT operations.
-const CRDT_DEADLINE: Duration = Duration::from_secs(30);
-
 /// Parse function arguments from SQL like `SELECT func('arg1', 'arg2')`.
 fn parse_function_args(sql: &str) -> Vec<String> {
     // Find content between first '(' and last ')'.
@@ -67,10 +64,15 @@ pub async fn crdt_state(
     };
 
     // Synchronous dispatch via the blocking bridge.
-    let result =
-        super::sync_dispatch::dispatch_async(state, tenant_id, collection, plan, CRDT_DEADLINE)
-            .await
-            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+    let result = super::sync_dispatch::dispatch_async(
+        state,
+        tenant_id,
+        collection,
+        plan,
+        Duration::from_secs(state.tuning.network.default_deadline_secs),
+    )
+    .await
+    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
 
     let schema = Arc::new(vec![text_field("crdt_state")]);
     let mut encoder = DataRowEncoder::new(schema.clone());
@@ -127,9 +129,15 @@ pub async fn crdt_apply(
         mutation_id: 0,
     };
 
-    super::sync_dispatch::dispatch_async(state, tenant_id, collection, plan, CRDT_DEADLINE)
-        .await
-        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+    super::sync_dispatch::dispatch_async(
+        state,
+        tenant_id,
+        collection,
+        plan,
+        Duration::from_secs(state.tuning.network.default_deadline_secs),
+    )
+    .await
+    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
 
     let schema = Arc::new(vec![text_field("result")]);
     let mut encoder = DataRowEncoder::new(schema.clone());

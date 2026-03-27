@@ -3,25 +3,9 @@
 //! Simulates crashes by dropping the NodeDbLite instance and reopening
 //! from the same storage. Verifies that data is consistent after recovery.
 
-use std::sync::Arc;
-
 use nodedb_client::NodeDb;
 use nodedb_lite::{NodeDbLite, RedbStorage};
 use nodedb_types::value::Value;
-
-async fn open_db_shared(storage: Arc<RedbStorage>) -> NodeDbLite<RedbStorage> {
-    // RedbStorage is behind Arc — open_with_budget takes ownership, but we
-    // need shared access for crash simulation. Use a fresh open each time.
-    // For in-memory redb, the data persists within the same RedbStorage instance.
-    NodeDbLite::open(
-        // We can't clone RedbStorage, so we open fresh with the same Arc.
-        // This simulates a restart reading from the same underlying redb file.
-        RedbStorage::open_in_memory().unwrap(),
-        1,
-    )
-    .await
-    .unwrap()
-}
 
 async fn open_db() -> NodeDbLite<RedbStorage> {
     let storage = RedbStorage::open_in_memory().unwrap();
@@ -119,10 +103,12 @@ async fn columnar_insert_and_flush() {
     }
 
     // Flush memtable to segment.
-    {
+    tokio::task::block_in_place(|| {
         let mut columnar = db.columnar_engine().lock().unwrap();
-        columnar.flush_collection("metrics").await.unwrap();
-    }
+        tokio::runtime::Handle::current()
+            .block_on(columnar.flush_collection("metrics"))
+            .unwrap();
+    });
 
     // Verify row count after flush.
     let columnar = db.columnar_engine().lock().unwrap();
@@ -156,10 +142,12 @@ async fn columnar_delete_bitmap_persists() {
         .unwrap();
     }
 
-    {
+    tokio::task::block_in_place(|| {
         let mut columnar = db.columnar_engine().lock().unwrap();
-        columnar.flush_collection("items").await.unwrap();
-    }
+        tokio::runtime::Handle::current()
+            .block_on(columnar.flush_collection("items"))
+            .unwrap();
+    });
 
     // Delete a row — marks in delete bitmap.
     {
@@ -201,10 +189,12 @@ async fn compaction_produces_valid_segment() {
         .unwrap();
     }
 
-    {
+    tokio::task::block_in_place(|| {
         let mut columnar = db.columnar_engine().lock().unwrap();
-        columnar.flush_collection("orders").await.unwrap();
-    }
+        tokio::runtime::Handle::current()
+            .block_on(columnar.flush_collection("orders"))
+            .unwrap();
+    });
 
     // Delete 50% of rows to trigger compaction threshold.
     {
@@ -215,11 +205,13 @@ async fn compaction_produces_valid_segment() {
     }
 
     // Run compaction.
-    {
+    let compacted = tokio::task::block_in_place(|| {
         let mut columnar = db.columnar_engine().lock().unwrap();
-        let compacted = columnar.try_compact_collection("orders").await.unwrap();
-        assert!(compacted);
-    }
+        tokio::runtime::Handle::current()
+            .block_on(columnar.try_compact_collection("orders"))
+            .unwrap()
+    });
+    assert!(compacted);
 
     // Verify the compacted segment has the right number of live rows.
     let columnar = db.columnar_engine().lock().unwrap();

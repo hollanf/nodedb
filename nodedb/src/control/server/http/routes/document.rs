@@ -28,9 +28,6 @@ pub(super) fn extract_request_id(headers: &HeaderMap) -> u64 {
         })
 }
 
-/// Default request deadline for HTTP API operations.
-const HTTP_DEADLINE: Duration = Duration::from_secs(30);
-
 /// Compute vShard ID from collection name.
 fn collection_vshard(collection: &str) -> VShardId {
     VShardId::from_collection(collection)
@@ -67,7 +64,8 @@ pub(super) async fn dispatch_plan_with_trace(
         tenant_id,
         vshard_id,
         plan,
-        deadline: Instant::now() + HTTP_DEADLINE,
+        deadline: Instant::now()
+            + Duration::from_secs(state.shared.tuning.network.default_deadline_secs),
         priority: Priority::Normal,
         trace_id,
         consistency: ReadConsistency::Strong,
@@ -86,10 +84,13 @@ pub(super) async fn dispatch_plan_with_trace(
             .map_err(|e| ApiError::Internal(e.to_string()))?,
     };
 
-    let resp = tokio::time::timeout(HTTP_DEADLINE, rx)
-        .await
-        .map_err(|_| ApiError::Internal("request timed out".into()))?
-        .map_err(|_| ApiError::Internal("response channel closed".into()))?;
+    let resp = tokio::time::timeout(
+        Duration::from_secs(state.shared.tuning.network.default_deadline_secs),
+        rx,
+    )
+    .await
+    .map_err(|_| ApiError::Internal("request timed out".into()))?
+    .map_err(|_| ApiError::Internal("response channel closed".into()))?;
 
     if resp.status != Status::Ok {
         let detail = if let Some(ref code) = resp.error_code {

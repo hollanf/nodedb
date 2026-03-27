@@ -47,10 +47,12 @@ async fn concurrent_columnar_scan_and_delete() {
     }
 
     // Flush to create a segment.
-    {
+    tokio::task::block_in_place(|| {
         let mut columnar = db.columnar_engine().lock().unwrap();
-        columnar.flush_collection("products").await.unwrap();
-    }
+        tokio::runtime::Handle::current()
+            .block_on(columnar.flush_collection("products"))
+            .unwrap();
+    });
 
     // Spawn concurrent delete and scan operations.
     let db_del = Arc::clone(&db);
@@ -70,7 +72,7 @@ async fn concurrent_columnar_scan_and_delete() {
         let columnar = db_scan.columnar_engine().lock().unwrap();
         let count = columnar.row_count("products");
         // Count should be between 40 (all deletes done) and 50 (no deletes yet).
-        assert!(count >= 40 && count <= 50, "unexpected count: {count}");
+        assert!((40..=50).contains(&count), "unexpected count: {count}");
     });
 
     delete_task.await.unwrap();
@@ -103,10 +105,12 @@ async fn concurrent_scan_and_compaction() {
         .unwrap();
     }
 
-    {
+    tokio::task::block_in_place(|| {
         let mut columnar = db.columnar_engine().lock().unwrap();
-        columnar.flush_collection("logs").await.unwrap();
-    }
+        tokio::runtime::Handle::current()
+            .block_on(columnar.flush_collection("logs"))
+            .unwrap();
+    });
 
     // Delete enough rows to trigger compaction (>20%).
     {
@@ -133,7 +137,7 @@ async fn concurrent_scan_and_compaction() {
         let columnar = db_scan.columnar_engine().lock().unwrap();
         let count = columnar.row_count("logs");
         // After compaction: 20 rows. Before: 30 (with 10 deleted).
-        assert!(count >= 20 && count <= 30, "unexpected count: {count}");
+        assert!((20..=30).contains(&count), "unexpected count: {count}");
     });
 
     compact_task.await.unwrap();

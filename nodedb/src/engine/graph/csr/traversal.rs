@@ -12,16 +12,22 @@ use super::index::CsrIndex;
 
 /// Default cap on visited nodes during BFS traversals.
 /// Prevents supernode fan-out explosion from consuming unbounded memory.
-const DEFAULT_MAX_VISITED: usize = 100_000;
+/// Sourced from `GraphTuning::max_visited` at runtime.
+pub const DEFAULT_MAX_VISITED: usize = 100_000;
 
 impl CsrIndex {
     /// BFS traversal. Returns all reachable node IDs within max_depth hops.
+    ///
+    /// `max_visited` caps the visited set to prevent supernode fan-out explosion.
+    /// Pass `DEFAULT_MAX_VISITED` when no override is needed, or a value from
+    /// `GraphTuning::max_visited` when sourcing from config.
     pub fn traverse_bfs(
         &self,
         start_nodes: &[&str],
         label_filter: Option<&str>,
         direction: Direction,
         max_depth: usize,
+        max_visited: usize,
     ) -> Vec<String> {
         let label_id = label_filter.and_then(|l| self.label_to_id.get(l).copied());
         let mut visited: HashSet<u32> = HashSet::new();
@@ -36,7 +42,7 @@ impl CsrIndex {
         }
 
         while let Some((node_id, depth)) = queue.pop_front() {
-            if depth >= max_depth || visited.len() >= DEFAULT_MAX_VISITED {
+            if depth >= max_depth || visited.len() >= max_visited {
                 continue;
             }
 
@@ -46,7 +52,7 @@ impl CsrIndex {
             if matches!(direction, Direction::Out | Direction::Both) {
                 for (lid, dst) in self.iter_out_edges(node_id) {
                     if label_id.is_none_or(|f| f == lid)
-                        && visited.len() < DEFAULT_MAX_VISITED
+                        && visited.len() < max_visited
                         && visited.insert(dst)
                     {
                         self.prefetch_node(dst); // Predictive prefetch.
@@ -57,7 +63,7 @@ impl CsrIndex {
             if matches!(direction, Direction::In | Direction::Both) {
                 for (lid, src) in self.iter_in_edges(node_id) {
                     if label_id.is_none_or(|f| f == lid)
-                        && visited.len() < DEFAULT_MAX_VISITED
+                        && visited.len() < max_visited
                         && visited.insert(src)
                     {
                         self.prefetch_node(src); // Predictive prefetch.
@@ -74,12 +80,15 @@ impl CsrIndex {
     }
 
     /// Shortest path via bidirectional BFS.
+    ///
+    /// `max_visited` caps total visited nodes (forward + backward frontiers combined).
     pub fn shortest_path(
         &self,
         src: &str,
         dst: &str,
         label_filter: Option<&str>,
         max_depth: usize,
+        max_visited: usize,
     ) -> Option<Vec<String>> {
         let src_id = *self.node_to_id.get(src)?;
         let dst_id = *self.node_to_id.get(dst)?;
@@ -97,7 +106,7 @@ impl CsrIndex {
         let mut bwd_frontier: Vec<u32> = vec![dst_id];
 
         for _depth in 0..max_depth {
-            if fwd_parent.len() + bwd_parent.len() >= DEFAULT_MAX_VISITED {
+            if fwd_parent.len() + bwd_parent.len() >= max_visited {
                 break;
             }
 
@@ -179,11 +188,14 @@ impl CsrIndex {
     }
 
     /// Materialize a subgraph as edge tuples within max_depth.
+    ///
+    /// `max_visited` caps visited nodes to prevent supernode explosion.
     pub fn subgraph(
         &self,
         start_nodes: &[&str],
         label_filter: Option<&str>,
         max_depth: usize,
+        max_visited: usize,
     ) -> Vec<(String, String, String)> {
         let label_id = label_filter.and_then(|l| self.label_to_id.get(l).copied());
         let mut visited: HashSet<u32> = HashSet::new();
@@ -199,7 +211,7 @@ impl CsrIndex {
         }
 
         while let Some((node_id, depth)) = queue.pop_front() {
-            if depth >= max_depth || visited.len() >= DEFAULT_MAX_VISITED {
+            if depth >= max_depth || visited.len() >= max_visited {
                 continue;
             }
             self.record_access(node_id);
@@ -210,7 +222,7 @@ impl CsrIndex {
                         self.id_to_label[lid as usize].clone(),
                         self.id_to_node[dst as usize].clone(),
                     ));
-                    if visited.len() < DEFAULT_MAX_VISITED && visited.insert(dst) {
+                    if visited.len() < max_visited && visited.insert(dst) {
                         queue.push_back((dst, depth + 1));
                     }
                 }
@@ -237,7 +249,13 @@ mod tests {
     #[test]
     fn bfs_traversal() {
         let csr = make_csr();
-        let mut result = csr.traverse_bfs(&["a"], Some("KNOWS"), Direction::Out, 2);
+        let mut result = csr.traverse_bfs(
+            &["a"],
+            Some("KNOWS"),
+            Direction::Out,
+            2,
+            DEFAULT_MAX_VISITED,
+        );
         result.sort();
         assert_eq!(result, vec!["a", "b", "c"]);
     }
@@ -245,7 +263,7 @@ mod tests {
     #[test]
     fn bfs_all_labels() {
         let csr = make_csr();
-        let mut result = csr.traverse_bfs(&["a"], None, Direction::Out, 1);
+        let mut result = csr.traverse_bfs(&["a"], None, Direction::Out, 1, DEFAULT_MAX_VISITED);
         result.sort();
         assert_eq!(result, vec!["a", "b", "e"]);
     }
@@ -256,7 +274,7 @@ mod tests {
         csr.add_edge("a", "L", "b");
         csr.add_edge("b", "L", "c");
         csr.add_edge("c", "L", "a");
-        let mut result = csr.traverse_bfs(&["a"], None, Direction::Out, 10);
+        let mut result = csr.traverse_bfs(&["a"], None, Direction::Out, 10, DEFAULT_MAX_VISITED);
         result.sort();
         assert_eq!(result, vec!["a", "b", "c"]);
     }
@@ -264,35 +282,39 @@ mod tests {
     #[test]
     fn shortest_path_direct() {
         let csr = make_csr();
-        let path = csr.shortest_path("a", "c", Some("KNOWS"), 5).unwrap();
+        let path = csr
+            .shortest_path("a", "c", Some("KNOWS"), 5, DEFAULT_MAX_VISITED)
+            .unwrap();
         assert_eq!(path, vec!["a", "b", "c"]);
     }
 
     #[test]
     fn shortest_path_same_node() {
         let csr = make_csr();
-        let path = csr.shortest_path("a", "a", None, 5).unwrap();
+        let path = csr
+            .shortest_path("a", "a", None, 5, DEFAULT_MAX_VISITED)
+            .unwrap();
         assert_eq!(path, vec!["a"]);
     }
 
     #[test]
     fn shortest_path_unreachable() {
         let csr = make_csr();
-        let path = csr.shortest_path("d", "a", Some("KNOWS"), 5);
+        let path = csr.shortest_path("d", "a", Some("KNOWS"), 5, DEFAULT_MAX_VISITED);
         assert!(path.is_none());
     }
 
     #[test]
     fn shortest_path_depth_limit() {
         let csr = make_csr();
-        let path = csr.shortest_path("a", "d", Some("KNOWS"), 1);
+        let path = csr.shortest_path("a", "d", Some("KNOWS"), 1, DEFAULT_MAX_VISITED);
         assert!(path.is_none());
     }
 
     #[test]
     fn subgraph_materialization() {
         let csr = make_csr();
-        let edges = csr.subgraph(&["a"], None, 2);
+        let edges = csr.subgraph(&["a"], None, 2, DEFAULT_MAX_VISITED);
         assert_eq!(edges.len(), 3);
         assert!(edges.contains(&("a".into(), "KNOWS".into(), "b".into())));
         assert!(edges.contains(&("a".into(), "WORKS".into(), "e".into())));

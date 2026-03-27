@@ -163,6 +163,7 @@ impl VectorCollection {
             mmap_fallback_count: 0,
             mmap_segment_count: 0,
             doc_id_map: std::collections::HashMap::new(),
+            seal_threshold: super::collection::DEFAULT_SEAL_THRESHOLD,
         })
     }
 }

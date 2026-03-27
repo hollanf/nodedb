@@ -21,19 +21,22 @@ use super::result::AlgoResultBatch;
 use crate::engine::graph::algo::GraphAlgorithm;
 use crate::engine::graph::csr::CsrIndex;
 
-/// Maximum neighbor count before switching to sampling approximation.
-/// Below this threshold, exact pairwise triangle counting is used.
-/// Above it, random sampling avoids O(k²) cost on high-degree hubs.
-const HIGH_DEGREE_THRESHOLD: usize = 2_000;
+/// Default maximum neighbor count before switching to sampling approximation.
+/// Sourced from `GraphTuning::lcc_high_degree_threshold` at runtime.
+pub const DEFAULT_HIGH_DEGREE_THRESHOLD: usize = 2_000;
 
-/// Number of neighbor pairs to sample for high-degree approximation.
-const SAMPLE_PAIRS: usize = 10_000;
+/// Default number of neighbor pairs to sample for high-degree approximation.
+/// Sourced from `GraphTuning::lcc_sample_pairs` at runtime.
+pub const DEFAULT_SAMPLE_PAIRS: usize = 10_000;
 
 /// Run Local Clustering Coefficient on the CSR index.
 ///
 /// Treats graph as undirected for neighbor collection (both out + in neighbors).
 /// Returns `(node_id, coefficient)` rows.
-pub fn run(csr: &CsrIndex) -> AlgoResultBatch {
+///
+/// `high_degree_threshold` and `sample_pairs` are sourced from
+/// `GraphTuning::lcc_high_degree_threshold` and `GraphTuning::lcc_sample_pairs`.
+pub fn run(csr: &CsrIndex, high_degree_threshold: usize, sample_pairs: usize) -> AlgoResultBatch {
     let n = csr.node_count();
     if n == 0 {
         return AlgoResultBatch::new(GraphAlgorithm::Lcc);
@@ -43,7 +46,7 @@ pub fn run(csr: &CsrIndex) -> AlgoResultBatch {
 
     for node in 0..n {
         let node_id = node as u32;
-        let coeff = compute_lcc(csr, node_id);
+        let coeff = compute_lcc(csr, node_id, high_degree_threshold, sample_pairs);
         batch.push_node_f64(csr.node_name(node as u32).to_string(), coeff);
     }
 
@@ -51,7 +54,12 @@ pub fn run(csr: &CsrIndex) -> AlgoResultBatch {
 }
 
 /// Compute LCC for a single node.
-fn compute_lcc(csr: &CsrIndex, node: u32) -> f64 {
+fn compute_lcc(
+    csr: &CsrIndex,
+    node: u32,
+    high_degree_threshold: usize,
+    sample_pairs: usize,
+) -> f64 {
     // Collect undirected neighbor set (deduped).
     let mut neighbor_set: HashSet<u32> = HashSet::new();
     for (_lid, dst) in csr.iter_out_edges(node) {
@@ -73,9 +81,9 @@ fn compute_lcc(csr: &CsrIndex, node: u32) -> f64 {
     let neighbors: Vec<u32> = neighbor_set.into_iter().collect();
     let possible_pairs = k * (k - 1) / 2;
 
-    let triangles = if k > HIGH_DEGREE_THRESHOLD {
+    let triangles = if k > high_degree_threshold {
         // Approximate: sample random pairs.
-        count_triangles_sampled(csr, &neighbors, possible_pairs)
+        count_triangles_sampled(csr, &neighbors, possible_pairs, sample_pairs)
     } else {
         // Exact: check all pairs.
         count_triangles_exact(csr, &neighbors)
@@ -117,10 +125,15 @@ fn count_triangles_exact(csr: &CsrIndex, neighbors: &[u32]) -> usize {
 }
 
 /// Count triangles via sampling for high-degree nodes (approximation).
-fn count_triangles_sampled(csr: &CsrIndex, neighbors: &[u32], total_pairs: usize) -> usize {
+fn count_triangles_sampled(
+    csr: &CsrIndex,
+    neighbors: &[u32],
+    total_pairs: usize,
+    sample_pairs: usize,
+) -> usize {
     let neighbor_set: HashSet<u32> = neighbors.iter().copied().collect();
     let n = neighbors.len();
-    let samples = SAMPLE_PAIRS.min(total_pairs);
+    let samples = sample_pairs.min(total_pairs);
     let mut found = 0usize;
 
     // Deterministic sampling via LCG.
@@ -185,7 +198,7 @@ mod tests {
         csr.add_edge("a", "L", "c");
         csr.compact();
 
-        let batch = run(&csr);
+        let batch = run(&csr, DEFAULT_HIGH_DEGREE_THRESHOLD, DEFAULT_SAMPLE_PAIRS);
         assert_eq!(batch.len(), 3);
 
         let json = batch.to_json().unwrap();
@@ -211,7 +224,7 @@ mod tests {
         csr.add_edge("a", "L", "d");
         csr.compact();
 
-        let batch = run(&csr);
+        let batch = run(&csr, DEFAULT_HIGH_DEGREE_THRESHOLD, DEFAULT_SAMPLE_PAIRS);
         let json = batch.to_json().unwrap();
         let rows: Vec<serde_json::Value> = serde_json::from_slice(&json).unwrap();
         for row in &rows {
@@ -232,7 +245,7 @@ mod tests {
         csr.add_edge("b", "L", "c");
         csr.compact();
 
-        let batch = run(&csr);
+        let batch = run(&csr, DEFAULT_HIGH_DEGREE_THRESHOLD, DEFAULT_SAMPLE_PAIRS);
         let json = batch.to_json().unwrap();
         let rows: Vec<serde_json::Value> = serde_json::from_slice(&json).unwrap();
         let map: std::collections::HashMap<&str, f64> = rows
@@ -253,7 +266,7 @@ mod tests {
     #[test]
     fn lcc_empty_graph() {
         let csr = CsrIndex::new();
-        let batch = run(&csr);
+        let batch = run(&csr, DEFAULT_HIGH_DEGREE_THRESHOLD, DEFAULT_SAMPLE_PAIRS);
         assert!(batch.is_empty());
     }
 
@@ -263,7 +276,7 @@ mod tests {
         csr.add_node("lonely");
         csr.compact();
 
-        let batch = run(&csr);
+        let batch = run(&csr, DEFAULT_HIGH_DEGREE_THRESHOLD, DEFAULT_SAMPLE_PAIRS);
         assert_eq!(batch.len(), 1);
         let json = batch.to_json().unwrap();
         let rows: Vec<serde_json::Value> = serde_json::from_slice(&json).unwrap();
@@ -282,7 +295,7 @@ mod tests {
         csr.add_edge("c", "L", "d");
         csr.compact();
 
-        let batch = run(&csr);
+        let batch = run(&csr, DEFAULT_HIGH_DEGREE_THRESHOLD, DEFAULT_SAMPLE_PAIRS);
         let json = batch.to_json().unwrap();
         let rows: Vec<serde_json::Value> = serde_json::from_slice(&json).unwrap();
         let map: std::collections::HashMap<&str, f64> = rows

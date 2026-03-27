@@ -381,7 +381,14 @@ fn audit_flush_persists_to_catalog() {
 
     let auth_config = nodedb::config::auth::AuthConfig::default();
     let (dispatcher, _sides) = Dispatcher::new(1, 64);
-    let state = SharedState::open(dispatcher, wal, &catalog_path, &auth_config).unwrap();
+    let state = SharedState::open(
+        dispatcher,
+        wal,
+        &catalog_path,
+        &auth_config,
+        nodedb_types::config::TuningConfig::default(),
+    )
+    .unwrap();
 
     // Record some audit events.
     state.audit_record(AuditEvent::AuthSuccess, None, "test", "user logged in");
@@ -416,7 +423,14 @@ fn audit_sequence_survives_restart() {
     {
         let wal = Arc::new(nodedb::wal::WalManager::open_for_testing(&wal_path).unwrap());
         let (dispatcher, _sides) = Dispatcher::new(1, 64);
-        let state = SharedState::open(dispatcher, wal, &catalog_path, &auth_config).unwrap();
+        let state = SharedState::open(
+            dispatcher,
+            wal,
+            &catalog_path,
+            &auth_config,
+            nodedb_types::config::TuningConfig::default(),
+        )
+        .unwrap();
 
         state.audit_record(AuditEvent::AuthSuccess, None, "src", "event1");
         state.audit_record(AuditEvent::AuthSuccess, None, "src", "event2");
@@ -427,7 +441,14 @@ fn audit_sequence_survives_restart() {
     {
         let wal = Arc::new(nodedb::wal::WalManager::open_for_testing(&wal_path).unwrap());
         let (dispatcher, _sides) = Dispatcher::new(1, 64);
-        let state = SharedState::open(dispatcher, wal, &catalog_path, &auth_config).unwrap();
+        let state = SharedState::open(
+            dispatcher,
+            wal,
+            &catalog_path,
+            &auth_config,
+            nodedb_types::config::TuningConfig::default(),
+        )
+        .unwrap();
 
         state.audit_record(AuditEvent::AdminAction, None, "src", "event3");
         state.flush_audit_log();

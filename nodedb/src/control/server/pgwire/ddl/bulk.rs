@@ -16,8 +16,6 @@ use crate::control::state::SharedState;
 use super::super::types::sqlstate_error;
 use super::user::extract_quoted_string;
 
-const COPY_DEADLINE: Duration = Duration::from_secs(120);
-
 /// COPY <collection> FROM '<path>' [WITH (FORMAT csv|json|ndjson)]
 pub async fn copy_from(
     state: &SharedState,
@@ -98,7 +96,7 @@ pub async fn copy_from(
                     tenant_id,
                     collection,
                     plan,
-                    COPY_DEADLINE,
+                    Duration::from_secs(state.tuning.network.copy_deadline_secs),
                 )
                 .await
                 .is_ok()
@@ -168,7 +166,7 @@ pub async fn copy_from(
                     tenant_id,
                     collection,
                     plan,
-                    COPY_DEADLINE,
+                    Duration::from_secs(state.tuning.network.copy_deadline_secs),
                 )
                 .await
                 .is_ok()

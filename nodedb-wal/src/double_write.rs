@@ -31,6 +31,11 @@ use crate::record::{HEADER_SIZE, RecordHeader, WAL_MAGIC, WalRecord};
 
 /// Maximum number of records kept in the double-write buffer.
 /// Only the most recent records matter — torn writes affect the tail.
+///
+/// This is a compile-time constant used in slot offset arithmetic. It cannot
+/// be made runtime-configurable without storing capacity in the struct and
+/// adjusting all offset calculations accordingly. The value matches the
+/// `WalTuning::dwb_capacity` default (64).
 const DWB_CAPACITY: usize = 64;
 
 /// On-disk header: [magic: 4B][count: 4B][write_pos: 4B] = 12 bytes.

@@ -3,6 +3,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use nodedb_types::config::tuning::ClusterTransportTuning;
+
 use crate::error::{ClusterError, Result};
 
 /// ALPN protocol identifier for NodeDB Raft RPCs.
@@ -12,25 +14,31 @@ pub const ALPN_NODEDB_RAFT: &[u8] = b"nodedb-raft/1";
 pub const SNI_HOSTNAME: &str = "nodedb";
 
 /// Default RPC timeout.
+///
+/// Matches `ClusterTransportTuning::rpc_timeout_secs` default. Override by
+/// constructing `NexarTransport::with_tuning()` with a custom `ClusterTransportTuning`.
 pub const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Transport config tuned for Raft RPCs in a datacenter.
-pub fn raft_transport_config() -> quinn::TransportConfig {
+///
+/// All values are read from `tuning`. Pass `&ClusterTransportTuning::default()`
+/// to get the same behaviour as the previous hardcoded defaults.
+pub fn raft_transport_config(tuning: &ClusterTransportTuning) -> quinn::TransportConfig {
     let mut config = quinn::TransportConfig::default();
     // Raft RPCs use bidi streams: one per request-response pair.
-    config.max_concurrent_bidi_streams(quinn::VarInt::from_u32(256));
+    config.max_concurrent_bidi_streams(quinn::VarInt::from_u32(tuning.quic_max_bi_streams));
     // Also allow uni streams for future migration/snapshot streaming.
-    config.max_concurrent_uni_streams(quinn::VarInt::from_u32(256));
+    config.max_concurrent_uni_streams(quinn::VarInt::from_u32(tuning.quic_max_uni_streams));
     // Datacenter tuning: generous windows, low RTT estimate.
-    config.receive_window(quinn::VarInt::from_u32(16 * 1024 * 1024));
-    config.send_window(16 * 1024 * 1024);
-    config.stream_receive_window(quinn::VarInt::from_u32(4 * 1024 * 1024));
+    config.receive_window(quinn::VarInt::from_u32(tuning.quic_receive_window));
+    config.send_window(u64::from(tuning.quic_send_window));
+    config.stream_receive_window(quinn::VarInt::from_u32(tuning.quic_stream_receive_window));
     config.initial_rtt(Duration::from_micros(100));
-    config.keep_alive_interval(Some(Duration::from_secs(5)));
+    config.keep_alive_interval(Some(Duration::from_secs(tuning.quic_keep_alive_secs)));
     config.max_idle_timeout(Some(
-        Duration::from_secs(30)
+        Duration::from_secs(tuning.quic_idle_timeout_secs)
             .try_into()
-            .expect("30s fits IdleTimeout"),
+            .expect("idle timeout fits IdleTimeout"),
     ));
     config
 }
@@ -38,7 +46,7 @@ pub fn raft_transport_config() -> quinn::TransportConfig {
 /// Build a QUIC server config with self-signed TLS (dev/bootstrap mode).
 ///
 /// Production clusters use mTLS via [`nexar::transport::tls::ClusterCa`].
-pub fn make_raft_server_config() -> Result<quinn::ServerConfig> {
+pub fn make_raft_server_config(tuning: &ClusterTransportTuning) -> Result<quinn::ServerConfig> {
     let (cert, key) = nexar::transport::tls::generate_self_signed_cert().map_err(|e| {
         ClusterError::Transport {
             detail: format!("generate cert: {e}"),
@@ -65,14 +73,14 @@ pub fn make_raft_server_config() -> Result<quinn::ServerConfig> {
         })?;
 
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_crypto));
-    server_config.transport_config(Arc::new(raft_transport_config()));
+    server_config.transport_config(Arc::new(raft_transport_config(tuning)));
     Ok(server_config)
 }
 
 /// Build a QUIC client config that skips server verification (dev/bootstrap mode).
 ///
 /// Production clusters use mTLS via [`nexar::transport::tls::make_client_config_mtls`].
-pub fn make_raft_client_config() -> Result<quinn::ClientConfig> {
+pub fn make_raft_client_config(tuning: &ClusterTransportTuning) -> Result<quinn::ClientConfig> {
     let provider = rustls::crypto::ring::default_provider();
     let mut tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(provider))
         .with_safe_default_protocol_versions()
@@ -91,7 +99,7 @@ pub fn make_raft_client_config() -> Result<quinn::ClientConfig> {
         })?;
 
     let mut client_config = quinn::ClientConfig::new(Arc::new(quic_crypto));
-    client_config.transport_config(Arc::new(raft_transport_config()));
+    client_config.transport_config(Arc::new(raft_transport_config(tuning)));
     Ok(client_config)
 }
 
@@ -108,7 +116,10 @@ pub struct TlsCredentials {
 /// Build a QUIC server config with mutual TLS (production mode).
 ///
 /// Requires connecting clients to present a certificate signed by the cluster CA.
-pub fn make_raft_server_config_mtls(creds: &TlsCredentials) -> Result<quinn::ServerConfig> {
+pub fn make_raft_server_config_mtls(
+    creds: &TlsCredentials,
+    tuning: &ClusterTransportTuning,
+) -> Result<quinn::ServerConfig> {
     let mut root_store = rustls::RootCertStore::empty();
     root_store
         .add(creds.ca_cert.clone())
@@ -149,14 +160,17 @@ pub fn make_raft_server_config_mtls(creds: &TlsCredentials) -> Result<quinn::Ser
         })?;
 
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_crypto));
-    server_config.transport_config(Arc::new(raft_transport_config()));
+    server_config.transport_config(Arc::new(raft_transport_config(tuning)));
     Ok(server_config)
 }
 
 /// Build a QUIC client config with mutual TLS (production mode).
 ///
 /// Verifies server cert and presents client cert, both signed by cluster CA.
-pub fn make_raft_client_config_mtls(creds: &TlsCredentials) -> Result<quinn::ClientConfig> {
+pub fn make_raft_client_config_mtls(
+    creds: &TlsCredentials,
+    tuning: &ClusterTransportTuning,
+) -> Result<quinn::ClientConfig> {
     let mut root_store = rustls::RootCertStore::empty();
     root_store
         .add(creds.ca_cert.clone())
@@ -184,7 +198,7 @@ pub fn make_raft_client_config_mtls(creds: &TlsCredentials) -> Result<quinn::Cli
         })?;
 
     let mut client_config = quinn::ClientConfig::new(Arc::new(quic_crypto));
-    client_config.transport_config(Arc::new(raft_transport_config()));
+    client_config.transport_config(Arc::new(raft_transport_config(tuning)));
     Ok(client_config)
 }
 

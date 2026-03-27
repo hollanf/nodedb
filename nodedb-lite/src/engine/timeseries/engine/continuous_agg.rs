@@ -243,7 +243,7 @@ mod tests {
         mgr.register(make_def("cpu_1m", "cpu", 60_000));
 
         // Use a base timestamp aligned to 60s boundary for predictable buckets.
-        let base = 1_700_000_040_000 - (1_700_000_040_000 % 60_000); // aligned
+        let base = 1_700_000_040_000_i64; // already aligned to 60s
         let ts: Vec<i64> = (0..120).map(|i| base + i * 1000).collect();
         let vals: Vec<f64> = (0..120).map(|i| 50.0 + i as f64).collect();
 

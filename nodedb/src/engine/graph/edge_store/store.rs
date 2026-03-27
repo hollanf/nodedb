@@ -440,21 +440,21 @@ mod tests {
 
         // 1 hop from a: {a, b}
         let mut result = store
-            .traverse_bfs(&["a"], Some("NEXT"), Direction::Out, 1)
+            .traverse_bfs(&["a"], Some("NEXT"), Direction::Out, 1, 10, 100_000)
             .unwrap();
         result.sort();
         assert_eq!(result, vec!["a", "b"]);
 
         // 2 hops from a: {a, b, c}
         let mut result = store
-            .traverse_bfs(&["a"], Some("NEXT"), Direction::Out, 2)
+            .traverse_bfs(&["a"], Some("NEXT"), Direction::Out, 2, 10, 100_000)
             .unwrap();
         result.sort();
         assert_eq!(result, vec!["a", "b", "c"]);
 
         // 3 hops: all nodes
         let mut result = store
-            .traverse_bfs(&["a"], Some("NEXT"), Direction::Out, 3)
+            .traverse_bfs(&["a"], Some("NEXT"), Direction::Out, 3, 10, 100_000)
             .unwrap();
         result.sort();
         assert_eq!(result, vec!["a", "b", "c", "d"]);
@@ -468,7 +468,7 @@ mod tests {
         store.put_edge("c", "L", "a", b"").unwrap(); // cycle
 
         let mut result = store
-            .traverse_bfs(&["a"], Some("L"), Direction::Out, 5)
+            .traverse_bfs(&["a"], Some("L"), Direction::Out, 5, 10, 100_000)
             .unwrap();
         result.sort();
         assert_eq!(result, vec!["a", "b", "c"]); // no infinite loop
@@ -482,7 +482,7 @@ mod tests {
 
         // Both directions from a: reaches b (outbound) and c (inbound)
         let mut result = store
-            .traverse_bfs(&["a"], Some("L"), Direction::Both, 1)
+            .traverse_bfs(&["a"], Some("L"), Direction::Both, 1, 10, 100_000)
             .unwrap();
         result.sort();
         assert_eq!(result, vec!["a", "b", "c"]);
@@ -495,7 +495,7 @@ mod tests {
         store.put_edge("c", "L", "d", b"").unwrap();
 
         let mut result = store
-            .traverse_bfs(&["a", "c"], Some("L"), Direction::Out, 1)
+            .traverse_bfs(&["a", "c"], Some("L"), Direction::Out, 1, 10, 100_000)
             .unwrap();
         result.sort();
         assert_eq!(result, vec!["a", "b", "c", "d"]);
@@ -505,7 +505,7 @@ mod tests {
     fn isolated_node_traversal() {
         let (store, _dir) = make_store();
         let result = store
-            .traverse_bfs(&["lonely"], None, Direction::Out, 5)
+            .traverse_bfs(&["lonely"], None, Direction::Out, 5, 10, 100_000)
             .unwrap();
         assert_eq!(result, vec!["lonely"]);
     }

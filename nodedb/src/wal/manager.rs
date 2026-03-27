@@ -3,6 +3,7 @@ use std::sync::Mutex;
 
 use tracing::info;
 
+use nodedb_types::config::tuning::WalTuning;
 use nodedb_wal::WalRecord;
 use nodedb_wal::record::RecordType;
 use nodedb_wal::segmented::{SegmentedWal, SegmentedWalConfig};
@@ -131,13 +132,45 @@ impl WalManager {
         use_direct_io: bool,
         segment_target_size: u64,
     ) -> crate::Result<Self> {
-        // Determine the WAL directory.
-        // If `path` is a file (legacy WAL), migrate it to a directory.
-        // If `path` is a directory or doesn't exist, use it directly.
+        Self::open_internal(
+            path,
+            segment_target_size,
+            WalWriterConfig {
+                use_direct_io,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Open with explicit segment target size and WAL tuning from `TuningConfig`.
+    ///
+    /// Uses `tuning.write_buffer_size` and `tuning.alignment` from [`WalTuning`]
+    /// to configure the underlying `WalWriterConfig`, instead of the hardcoded
+    /// defaults. `segment_target_size` of 0 uses the default (64 MiB).
+    pub fn open_with_tuning(
+        path: &Path,
+        use_direct_io: bool,
+        segment_target_size: u64,
+        tuning: &WalTuning,
+    ) -> crate::Result<Self> {
+        Self::open_internal(
+            path,
+            segment_target_size,
+            WalWriterConfig {
+                write_buffer_size: tuning.write_buffer_size,
+                alignment: tuning.alignment,
+                use_direct_io,
+            },
+        )
+    }
+
+    /// Shared WAL open logic: migrate legacy path, resolve segment size, open.
+    fn open_internal(
+        path: &Path,
+        segment_target_size: u64,
+        writer_config: WalWriterConfig,
+    ) -> crate::Result<Self> {
         let wal_dir = if path.is_file() {
-            // Legacy single-file WAL detected. Migrate to segmented format.
-            // Use path's parent + "wal_segments" as the new directory,
-            // or just append "_segments" to the legacy path.
             let dir = path.with_extension("d");
             nodedb_wal::segment::migrate_legacy_wal(path, &dir).map_err(crate::Error::Wal)?;
             dir
@@ -154,10 +187,7 @@ impl WalManager {
         let config = SegmentedWalConfig {
             wal_dir: wal_dir.clone(),
             segment_target_size: effective_target,
-            writer_config: WalWriterConfig {
-                use_direct_io,
-                ..Default::default()
-            },
+            writer_config,
         };
 
         let wal = SegmentedWal::open(config).map_err(crate::Error::Wal)?;

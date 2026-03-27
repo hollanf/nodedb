@@ -119,9 +119,8 @@ impl CoreLoop {
         }
 
         // Aggregates must scan all matching documents for correct results.
-        // Cap at 10M to prevent OOM on unbounded collections.
-        const AGGREGATE_SCAN_CAP: usize = 10_000_000;
-        let scan_limit = AGGREGATE_SCAN_CAP;
+        // Cap at aggregate_scan_cap to prevent OOM on unbounded collections.
+        let scan_limit = self.query_tuning.aggregate_scan_cap;
         match self.sparse.scan_documents(tid, collection, scan_limit) {
             Ok(docs) => {
                 let filter_predicates: Vec<ScanFilter> = if filters.is_empty() {

@@ -4,6 +4,11 @@ use super::store::{
     Direction, EDGES, Edge, EdgeStore, REVERSE_EDGES, edge_key, parse_edge_key, redb_err,
 };
 
+/// Default maximum BFS traversal depth. Sourced from `GraphTuning::max_depth`.
+pub const DEFAULT_MAX_ALLOWED_DEPTH: usize = 10;
+/// Default maximum visited nodes during BFS. Sourced from `GraphTuning::max_visited`.
+pub const DEFAULT_MAX_VISITED: usize = 100_000;
+
 impl EdgeStore {
     /// Get all outbound neighbors of a node, optionally filtered by edge label.
     ///
@@ -103,22 +108,26 @@ impl EdgeStore {
     /// Returns all node IDs reachable within `max_depth` hops via edges matching
     /// the optional label filter. Traversal direction is configurable.
     ///
-    /// Bounded depth prevents fan-out explosion.
-    /// `max_depth` is capped at 10 to prevent unbounded memory growth.
+    /// `max_allowed_depth` caps the depth to prevent unbounded memory growth.
+    /// Pass `GraphTuning::max_depth` (default 10) from config, or
+    /// `DEFAULT_MAX_ALLOWED_DEPTH` when no override is needed.
+    ///
+    /// `max_visited` caps the visited set to prevent supernode fan-out explosion.
+    /// Pass `GraphTuning::max_visited` (default 100_000) from config, or
+    /// `DEFAULT_MAX_VISITED` when no override is needed.
     pub fn traverse_bfs(
         &self,
         start_nodes: &[&str],
         label_filter: Option<&str>,
         direction: Direction,
         max_depth: usize,
+        max_allowed_depth: usize,
+        max_visited: usize,
     ) -> crate::Result<Vec<String>> {
-        const MAX_ALLOWED_DEPTH: usize = 10;
-        const MAX_VISITED: usize = 100_000;
-
-        if max_depth > MAX_ALLOWED_DEPTH {
+        if max_depth > max_allowed_depth {
             return Err(crate::Error::BadRequest {
                 detail: format!(
-                    "traverse_bfs: depth {max_depth} exceeds maximum {MAX_ALLOWED_DEPTH}"
+                    "traverse_bfs: depth {max_depth} exceeds maximum {max_allowed_depth}"
                 ),
             });
         }
@@ -134,13 +143,13 @@ impl EdgeStore {
         }
 
         while let Some((node, depth)) = queue.pop_front() {
-            if depth >= max_depth || visited.len() >= MAX_VISITED {
+            if depth >= max_depth || visited.len() >= max_visited {
                 continue;
             }
 
             let edges = self.neighbors(&node, label_filter, direction)?;
             for edge in edges {
-                if visited.len() >= MAX_VISITED {
+                if visited.len() >= max_visited {
                     break;
                 }
                 let neighbor = if edge.src_id == node {

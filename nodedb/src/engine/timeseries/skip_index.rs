@@ -16,8 +16,9 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Block size for skip indexes (aligned with sparse index).
-pub const BLOCK_SIZE: usize = 1024;
+/// Default block size for skip indexes (aligned with sparse index).
+/// Sourced from `TimeseriesToning::block_size` at runtime.
+pub const DEFAULT_BLOCK_SIZE: usize = 1024;
 
 // ---------------------------------------------------------------------------
 // MinMax skip index

@@ -23,9 +23,9 @@ pub(super) const DOC_LENGTHS: TableDefinition<&str, &[u8]> =
 /// Index metadata: key = name, value = MessagePack bytes.
 const INDEX_META: TableDefinition<&str, &[u8]> = TableDefinition::new("text.meta");
 
-/// BM25 parameters.
-pub(super) const BM25_K1: f32 = 1.2;
-pub(super) const BM25_B: f32 = 0.75;
+/// Default BM25 parameters. Sourced from `SparseTuning::bm25_k1` / `bm25_b` at runtime.
+pub(super) const DEFAULT_BM25_K1: f32 = 1.2;
+pub(super) const DEFAULT_BM25_B: f32 = 0.75;
 
 /// A single posting entry for a term in a document.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -65,6 +65,10 @@ pub struct MatchOffset {
 /// Full-text inverted index backed by redb.
 pub struct InvertedIndex {
     db: Arc<Database>,
+    /// BM25 term saturation parameter. Set from `SparseTuning::bm25_k1`.
+    pub(super) bm25_k1: f32,
+    /// BM25 length normalization parameter. Set from `SparseTuning::bm25_b`.
+    pub(super) bm25_b: f32,
 }
 
 impl InvertedIndex {
@@ -99,7 +103,11 @@ impl InvertedIndex {
             detail: format!("commit init: {e}"),
         })?;
 
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            bm25_k1: DEFAULT_BM25_K1,
+            bm25_b: DEFAULT_BM25_B,
+        })
     }
 
     /// Access the underlying database (for sub-modules).

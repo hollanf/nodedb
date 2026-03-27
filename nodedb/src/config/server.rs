@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use nodedb_types::config::TuningConfig;
 use serde::{Deserialize, Serialize};
 
 /// Top-level server configuration.
@@ -74,6 +75,12 @@ pub struct ServerConfig {
     /// When present, old L1 segments are promoted to S3-compatible cold storage.
     #[serde(default)]
     pub cold_storage: Option<ColdStorageSettings>,
+
+    /// Performance tuning knobs for engines, query execution, WAL, bridge,
+    /// network, and cluster transport. All fields have sensible defaults;
+    /// override selectively via the `[tuning]` TOML section.
+    #[serde(default)]
+    pub tuning: TuningConfig,
 }
 
 /// Distributed cluster configuration.
@@ -400,6 +407,7 @@ impl Default for ServerConfig {
             ilp_listen: None,
             cluster: None,
             cold_storage: None,
+            tuning: TuningConfig::default(),
         }
     }
 }
