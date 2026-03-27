@@ -176,6 +176,36 @@ pub fn start_raft(
         }
     });
 
+    // Register this node's wire version in the rolling upgrade tracker.
+    // Other nodes' versions are reported via topology updates and heartbeats.
+    {
+        // Recover from poisoned mutex: cluster version state is non-critical
+        // metadata that shouldn't prevent node startup if a prior thread panicked.
+        let mut vs = shared
+            .cluster_version_state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        vs.report_version(handle.node_id, crate::version::WIRE_FORMAT_VERSION);
+
+        // Seed from current topology: assume all existing nodes run the same version
+        // until they report otherwise via heartbeat.
+        if let Ok(topo) = handle.topology.read() {
+            for node in topo.active_nodes() {
+                if node.node_id != handle.node_id {
+                    vs.report_version(node.node_id, crate::version::WIRE_FORMAT_VERSION);
+                }
+            }
+        }
+        let compat = crate::control::rolling_upgrade::should_compat_mode(&vs);
+        info!(
+            node_id = handle.node_id,
+            nodes = vs.node_count,
+            mixed = vs.is_mixed_version(),
+            compat_mode = compat,
+            "cluster version state initialized"
+        );
+    }
+
     info!(node_id = handle.node_id, "raft loop and RPC server started");
 
     Ok(())

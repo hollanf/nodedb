@@ -18,7 +18,7 @@
 //! 3. After all nodes upgraded, send `ACTIVATE_FEATURES` via metadata group
 //! 4. New features become available cluster-wide
 
-use crate::version::{MIN_WIRE_FORMAT_VERSION, WIRE_FORMAT_VERSION};
+use crate::version::WIRE_FORMAT_VERSION;
 
 /// Cluster-wide version state.
 #[derive(Debug, Clone)]
@@ -123,21 +123,11 @@ impl Default for ClusterVersionState {
 /// Accepts messages from the same version or one version behind (N-1).
 /// Rejects messages that are too new (upgrade this node) or too old.
 pub fn accept_message(remote_version: u16) -> crate::Result<()> {
-    if remote_version > WIRE_FORMAT_VERSION {
-        return Err(crate::Error::VersionCompat {
-            detail: format!(
-                "message version {remote_version} > local {WIRE_FORMAT_VERSION}: upgrade this node"
-            ),
-        });
-    }
-    if remote_version < MIN_WIRE_FORMAT_VERSION {
-        return Err(crate::Error::VersionCompat {
-            detail: format!(
-                "message version {remote_version} < minimum {MIN_WIRE_FORMAT_VERSION}: remote node too old"
-            ),
-        });
-    }
-    if WIRE_FORMAT_VERSION - remote_version > 1 {
+    // Core compatibility check (rejects too-new and too-old).
+    crate::version::check_wire_compatibility(remote_version)?;
+
+    // Additional rolling-upgrade constraint: N-2 spread not supported.
+    if WIRE_FORMAT_VERSION.saturating_sub(remote_version) > 1 {
         return Err(crate::Error::VersionCompat {
             detail: format!(
                 "message version {remote_version} is more than one generation behind {WIRE_FORMAT_VERSION}: N-2 not supported"

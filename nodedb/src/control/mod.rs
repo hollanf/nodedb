@@ -24,5 +24,6 @@ pub mod wal_replication;
 pub use event_trigger::spawn_event_trigger_processor;
 pub use forward::LocalForwarder;
 pub use request_tracker::RequestTracker;
+pub use rolling_upgrade::ClusterVersionState;
 pub use state::SharedState;
 pub use wal_replication::{DistributedApplier, ProposeTracker, create_distributed_applier};

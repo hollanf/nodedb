@@ -130,6 +130,10 @@ pub struct SharedState {
 
     /// L2 cold storage client (None when cold tiering is not configured).
     pub cold_storage: Option<Arc<crate::storage::cold::ColdStorage>>,
+
+    /// Rolling upgrade version tracking (cluster mode only).
+    /// Tracks each node's wire format version for N-1 compatibility checks.
+    pub cluster_version_state: Mutex<crate::control::rolling_upgrade::ClusterVersionState>,
 }
 
 impl SharedState {
@@ -167,6 +171,9 @@ impl SharedState {
             epoch_tracker: Mutex::new(std::collections::HashMap::new()),
             ts_partition_registries: Some(Mutex::new(std::collections::HashMap::new())),
             cold_storage: None,
+            cluster_version_state: Mutex::new(
+                crate::control::rolling_upgrade::ClusterVersionState::new(),
+            ),
         })
     }
 
@@ -233,6 +240,9 @@ impl SharedState {
             epoch_tracker: Mutex::new(std::collections::HashMap::new()),
             ts_partition_registries: Some(Mutex::new(std::collections::HashMap::new())),
             cold_storage: None,
+            cluster_version_state: Mutex::new(
+                crate::control::rolling_upgrade::ClusterVersionState::new(),
+            ),
         }))
     }
 
