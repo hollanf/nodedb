@@ -570,6 +570,125 @@ impl<S: StorageEngine> NodeDbLite<S> {
         &self.columnar
     }
 
+    // -- Indexed CRUD for strict/columnar collections --
+
+    /// Insert a row into a strict collection and update secondary indexes.
+    ///
+    /// Combines `StrictEngine.insert()` with `index_row()` for geometry,
+    /// vector, and text columns.
+    pub async fn strict_insert(
+        &self,
+        collection: &str,
+        values: &[nodedb_types::value::Value],
+    ) -> NodeDbResult<()> {
+        let schema = {
+            let strict = self.strict.lock_or_recover();
+            strict
+                .schema(collection)
+                .ok_or_else(|| {
+                    NodeDbError::storage(format!("strict collection '{collection}' not found"))
+                })?
+                .clone()
+        };
+
+        // Insert into storage.
+        {
+            let strict = self.strict.lock_or_recover();
+            strict
+                .insert(collection, values)
+                .await
+                .map_err(NodeDbError::storage)?;
+        }
+
+        // Build a row_id string from the PK value for index keying.
+        let row_id = pk_to_string(&schema.columns, values);
+
+        // Update secondary indexes.
+        crate::engine::index_integration::index_row(
+            collection,
+            &row_id,
+            &schema.columns,
+            values,
+            &self.hnsw_indices,
+            &self.spatial,
+            &self.text_indices,
+        );
+
+        Ok(())
+    }
+
+    /// Delete a row from a strict collection and clean up text indexes.
+    pub async fn strict_delete(
+        &self,
+        collection: &str,
+        pk: &nodedb_types::value::Value,
+    ) -> NodeDbResult<bool> {
+        let schema = {
+            let strict = self.strict.lock_or_recover();
+            strict
+                .schema(collection)
+                .ok_or_else(|| {
+                    NodeDbError::storage(format!("strict collection '{collection}' not found"))
+                })?
+                .clone()
+        };
+
+        let row_id = format!("{pk:?}");
+
+        // Remove text index entries before deleting the row.
+        crate::engine::index_integration::deindex_row_text(
+            collection,
+            &row_id,
+            &schema.columns,
+            &self.text_indices,
+        );
+
+        let strict = self.strict.lock_or_recover();
+        strict
+            .delete(collection, pk)
+            .await
+            .map_err(NodeDbError::storage)
+    }
+
+    /// Insert a row into a columnar collection and update secondary indexes.
+    pub fn columnar_insert(
+        &self,
+        collection: &str,
+        values: &[nodedb_types::value::Value],
+    ) -> NodeDbResult<()> {
+        let schema = {
+            let columnar = self.columnar.lock_or_recover();
+            columnar
+                .schema(collection)
+                .ok_or_else(|| {
+                    NodeDbError::storage(format!("columnar collection '{collection}' not found"))
+                })?
+                .clone()
+        };
+
+        // Insert into memtable.
+        {
+            let mut columnar = self.columnar.lock_or_recover();
+            columnar
+                .insert(collection, values)
+                .map_err(NodeDbError::storage)?;
+        }
+
+        let row_id = pk_to_string(&schema.columns, values);
+
+        crate::engine::index_integration::index_row(
+            collection,
+            &row_id,
+            &schema.columns,
+            values,
+            &self.hnsw_indices,
+            &self.spatial,
+            &self.text_indices,
+        );
+
+        Ok(())
+    }
+
     /// Access pending CRDT deltas (for sync client).
     pub fn pending_crdt_deltas(
         &self,
@@ -623,4 +742,26 @@ impl<S: StorageEngine> NodeDbLite<S> {
     pub fn peer_id(&self) -> u64 {
         self.crdt.lock().map(|c| c.peer_id()).unwrap_or(0)
     }
+}
+
+/// Build a string row ID from PK column values (for index keying).
+fn pk_to_string(
+    columns: &[nodedb_types::columnar::ColumnDef],
+    values: &[nodedb_types::value::Value],
+) -> String {
+    use nodedb_types::value::Value;
+    let mut parts = Vec::new();
+    for (i, col) in columns.iter().enumerate() {
+        if col.primary_key {
+            if let Some(val) = values.get(i) {
+                match val {
+                    Value::Integer(n) => parts.push(n.to_string()),
+                    Value::String(s) => parts.push(s.clone()),
+                    Value::Uuid(s) => parts.push(s.clone()),
+                    other => parts.push(format!("{other:?}")),
+                }
+            }
+        }
+    }
+    parts.join(":")
 }
