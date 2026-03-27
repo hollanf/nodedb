@@ -1,3 +1,5 @@
+pub mod config;
+
 pub mod approx;
 pub mod bbox;
 pub mod collection;
@@ -27,6 +29,7 @@ pub use collection::CollectionType;
 pub use columnar::{
     ColumnDef, ColumnType, ColumnarProfile, ColumnarSchema, DocumentMode, SchemaError, StrictSchema,
 };
+pub use config::TuningConfig;
 pub use datetime::{NdbDateTime, NdbDuration};
 pub use document::Document;
 pub use error::NodeDbError;
