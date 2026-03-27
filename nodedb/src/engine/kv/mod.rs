@@ -1,7 +1,9 @@
 pub mod engine;
 pub mod entry;
 pub mod expiry_wheel;
+mod hash_helpers;
 pub mod hash_table;
+pub mod scan;
 
 pub use engine::KvEngine;
 

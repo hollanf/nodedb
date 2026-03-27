@@ -9,47 +9,10 @@
 //!   migrates entries progressively (a few per PUT) to avoid stalling the reactor.
 //! - Lazy expiry fallback: GET checks expiry and returns None for expired keys.
 
-use std::hash::{BuildHasher, Hasher};
-
-use super::entry::{KvEntry, KvValue, NO_EXPIRY, OverflowPool};
-
-/// Default hasher: FxHash-style fast non-cryptographic hash.
-/// Good distribution for typical KV keys (strings, UUIDs, integers).
-#[derive(Clone)]
-struct FxBuildHasher;
-
-impl BuildHasher for FxBuildHasher {
-    type Hasher = FxHasher;
-    fn build_hasher(&self) -> FxHasher {
-        FxHasher { hash: 0 }
-    }
-}
-
-struct FxHasher {
-    hash: u64,
-}
-
-const FX_SEED: u64 = 0x517c_c1b7_2722_0a95;
-
-impl Hasher for FxHasher {
-    fn finish(&self) -> u64 {
-        self.hash
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.hash = self.hash.rotate_left(5) ^ (b as u64).wrapping_mul(FX_SEED);
-        }
-    }
-}
-
-/// Compute the hash for a key using the FxHash algorithm.
-fn hash_key(key: &[u8]) -> u64 {
-    let hasher_builder = FxBuildHasher;
-    let mut h = hasher_builder.build_hasher();
-    h.write(key);
-    h.finish()
-}
+use super::entry::{KvEntry, NO_EXPIRY, OverflowPool};
+use super::hash_helpers::{
+    extract_value_from, free_value_from, hash_key, read_value_from, store_value_in,
+};
 
 /// Metadata about a KV entry, returned by [`KvHashTable::get_entry_meta`].
 ///
@@ -136,6 +99,31 @@ impl KvHashTable {
     /// Whether an incremental rehash is in progress.
     pub fn is_rehashing(&self) -> bool {
         self.rehash_source.is_some()
+    }
+
+    /// Capacity (number of slots) of the primary table.
+    pub(super) fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Number of slots in the rehash source (0 if not rehashing).
+    pub(super) fn rehash_source_len(&self) -> usize {
+        self.rehash_source.as_ref().map(|s| s.len()).unwrap_or(0)
+    }
+
+    /// Access a slot in the primary table by index.
+    pub(super) fn primary_slot(&self, idx: usize) -> Option<&KvEntry> {
+        self.slots[idx].as_ref()
+    }
+
+    /// Access a slot in the rehash source by index.
+    pub(super) fn rehash_slot(&self, idx: usize) -> Option<&KvEntry> {
+        self.rehash_source.as_ref().and_then(|s| s[idx].as_ref())
+    }
+
+    /// Read value bytes from an entry, resolving overflow from the pool.
+    pub(super) fn read_value<'a>(&'a self, entry: &'a KvEntry) -> &'a [u8] {
+        read_value_from(entry, &self.overflow)
     }
 
     /// Get a value by key. Returns None if not found or expired.
@@ -256,7 +244,7 @@ impl KvHashTable {
         let h = hash_key(key);
 
         // Try primary table.
-        if let Some(idx) = self.probe_find_index(&self.slots, h, key) {
+        if let Some(idx) = Self::probe_find_index_static(&self.slots, h, key) {
             let entry = self.slots[idx].take().unwrap();
             free_value_from(&entry.value, &mut self.overflow);
             Self::repair_after_delete_static(&mut self.slots, idx);
@@ -285,7 +273,7 @@ impl KvHashTable {
     pub fn reap_expired(&mut self, key: &[u8], expected_expire_ms: u64) -> bool {
         let h = hash_key(key);
 
-        if let Some(idx) = self.probe_find_index(&self.slots, h, key)
+        if let Some(idx) = Self::probe_find_index_static(&self.slots, h, key)
             && self.slots[idx].as_ref().unwrap().expire_at_ms == expected_expire_ms
         {
             let entry = self.slots[idx].take().unwrap();
@@ -313,7 +301,7 @@ impl KvHashTable {
     pub fn set_expire(&mut self, key: &[u8], expire_at_ms: u64) -> bool {
         let h = hash_key(key);
 
-        if let Some(idx) = self.probe_find_index(&self.slots, h, key) {
+        if let Some(idx) = Self::probe_find_index_static(&self.slots, h, key) {
             self.slots[idx].as_mut().unwrap().expire_at_ms = expire_at_ms;
             return true;
         }
@@ -392,11 +380,6 @@ impl KvHashTable {
         }
     }
 
-    /// Find the slot index of an entry by key. Returns the index.
-    fn probe_find_index(&self, slots: &[Option<KvEntry>], hash: u64, key: &[u8]) -> Option<usize> {
-        Self::probe_find_index_static(slots, hash, key)
-    }
-
     fn probe_find_index_static(slots: &[Option<KvEntry>], hash: u64, key: &[u8]) -> Option<usize> {
         let cap = slots.len();
         let mut idx = (hash as usize) & (cap - 1);
@@ -470,8 +453,6 @@ impl KvHashTable {
         }
     }
 
-    // Value storage is handled by free functions to avoid borrow conflicts.
-
     // -----------------------------------------------------------------------
     // Internal: incremental rehash
     // -----------------------------------------------------------------------
@@ -514,43 +495,6 @@ impl KvHashTable {
             self.rehash_source = None;
             self.rehash_cursor = 0;
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Free functions for value storage (avoids borrow conflicts in methods).
-// ---------------------------------------------------------------------------
-
-/// Read value bytes from a KvEntry, resolving overflow from the pool.
-fn read_value_from<'a>(entry: &'a KvEntry, overflow: &'a OverflowPool) -> &'a [u8] {
-    match &entry.value {
-        KvValue::Inline(data) => data,
-        KvValue::Overflow { index, len } => overflow.get(*index, *len),
-    }
-}
-
-/// Extract a copy of the value bytes.
-fn extract_value_from(value: &KvValue, overflow: &OverflowPool) -> Vec<u8> {
-    match value {
-        KvValue::Inline(data) => data.clone(),
-        KvValue::Overflow { index, len } => overflow.get(*index, *len).to_vec(),
-    }
-}
-
-/// Store a value, choosing inline or overflow based on the threshold.
-fn store_value_in(overflow: &mut OverflowPool, value: &[u8], inline_threshold: usize) -> KvValue {
-    if value.len() <= inline_threshold {
-        KvValue::Inline(value.to_vec())
-    } else {
-        let (index, len) = overflow.alloc(value);
-        KvValue::Overflow { index, len }
-    }
-}
-
-/// Free overflow storage if the value is an overflow entry.
-fn free_value_from(value: &KvValue, overflow: &mut OverflowPool) {
-    if let KvValue::Overflow { index, len } = value {
-        overflow.free(*index, *len);
     }
 }
 

@@ -2,16 +2,13 @@ use datafusion::logical_expr::{FetchType, LogicalPlan};
 use datafusion::prelude::*;
 
 use crate::bridge::envelope::PhysicalPlan;
-use crate::bridge::physical_plan::{DocumentOp, QueryOp, TextOp, TimeseriesOp, VectorOp};
+use crate::bridge::physical_plan::{DocumentOp, KvOp, QueryOp, TextOp, TimeseriesOp};
 use crate::control::planner::physical::PhysicalTask;
 use crate::control::security::credential::CredentialStore;
 use crate::types::{TenantId, VShardId};
 
 use super::extract::{expr_to_scan_filters, expr_to_usize, try_range_scan_from_predicate};
-use super::search::{
-    extract_table_name, try_extract_hybrid_search, try_extract_text_match_predicate,
-    try_extract_text_search, try_extract_vector_search,
-};
+use super::search::try_extract_text_match_predicate;
 use super::sql_expr_convert::try_convert_projection;
 
 /// Converts DataFusion logical plans into NodeDB physical tasks.
@@ -47,6 +44,17 @@ impl PlanConverter {
             && let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), collection)
         {
             return coll.collection_type.is_timeseries();
+        }
+        false
+    }
+
+    /// Check if a collection is a KV collection.
+    pub(super) fn is_kv(&self, tenant_id: TenantId, collection: &str) -> bool {
+        if let Some(ref creds) = self.credentials
+            && let Some(catalog) = creds.catalog()
+            && let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), collection)
+        {
+            return coll.collection_type.is_kv();
         }
         false
     }
@@ -132,6 +140,30 @@ impl PlanConverter {
                 if let LogicalPlan::TableScan(scan) = filter.input.as_ref() {
                     let collection = scan.table_name.to_string().to_lowercase();
                     let vshard = VShardId::from_collection(&collection);
+
+                    // KV routing: emit KvScan with filters for KV collections.
+                    if self.is_kv(tenant_id, &collection) {
+                        let filters = expr_to_scan_filters(&filter.predicate);
+                        let filter_bytes =
+                            rmp_serde::to_vec_named(&filters).map_err(|e| {
+                                crate::Error::Serialization {
+                                    format: "msgpack".into(),
+                                    detail: format!("kv filter serialization: {e}"),
+                                }
+                            })?;
+                        let limit = scan.fetch.unwrap_or(1000);
+                        return Ok(vec![PhysicalTask {
+                            tenant_id,
+                            vshard_id: vshard,
+                            plan: PhysicalPlan::Kv(KvOp::Scan {
+                                collection,
+                                cursor: Vec::new(),
+                                count: limit,
+                                filters: filter_bytes,
+                                match_pattern: None,
+                            }),
+                        }]);
+                    }
 
                     if let Some(task) = self.try_point_get(
                         &collection,
@@ -224,7 +256,7 @@ impl PlanConverter {
                 if self.is_timeseries(tenant_id, &collection) {
                     let limit = scan.fetch.unwrap_or(10_000);
                     let (time_range, filter_bytes) =
-                        extract_timeseries_filters(&scan.filters)?;
+                        super::converter_helpers::extract_timeseries_filters(&scan.filters)?;
                     return Ok(vec![PhysicalTask {
                         tenant_id,
                         vshard_id: vshard,
@@ -235,6 +267,22 @@ impl PlanConverter {
                             limit,
                             filters: filter_bytes,
                             bucket_interval_ms: 0,
+                        }),
+                    }]);
+                }
+
+                // KV routing: if collection is KV, emit KvScan.
+                if self.is_kv(tenant_id, &collection) {
+                    let limit = scan.fetch.unwrap_or(1000);
+                    return Ok(vec![PhysicalTask {
+                        tenant_id,
+                        vshard_id: vshard,
+                        plan: PhysicalPlan::Kv(KvOp::Scan {
+                            collection,
+                            cursor: Vec::new(),
+                            count: limit,
+                            filters: Vec::new(),
+                            match_pattern: None,
                         }),
                     }]);
                 }
@@ -316,202 +364,10 @@ impl PlanConverter {
 
             LogicalPlan::SubqueryAlias(alias) => self.convert(&alias.input, tenant_id),
 
-            LogicalPlan::Sort(sort) => {
-                // Check for vector_distance() function in sort expression.
-                // Pattern: ORDER BY vector_distance(embedding, ARRAY[...]) LIMIT k
-                {
-                    if let Some((collection, query_vector, top_k)) =
-                        try_extract_vector_search(&sort.expr, &sort.input, sort.fetch)?
-                    {
-                        let vshard = VShardId::from_collection(&collection);
-                        return Ok(vec![PhysicalTask {
-                            tenant_id,
-                            vshard_id: vshard,
-                            plan: PhysicalPlan::Vector(VectorOp::Search {
-                                collection,
-                                query_vector: std::sync::Arc::from(query_vector.as_slice()),
-                                top_k,
-                                ef_search: 0,
-                                filter_bitmap: None,
-                                field_name: String::new(),
-                            }),
-                        }]);
-                    }
-                }
-
-                // Check for bm25_score() in sort expression → TextSearch.
-                if let Some((collection, query_text, top_k)) =
-                    try_extract_text_search(&sort.expr, &sort.input, sort.fetch)
-                {
-                    let vshard = VShardId::from_collection(&collection);
-                    return Ok(vec![PhysicalTask {
-                        tenant_id,
-                        vshard_id: vshard,
-                        plan: PhysicalPlan::Text(TextOp::Search {
-                            collection,
-                            query: query_text,
-                            top_k,
-                            fuzzy: true,
-                        }),
-                    }]);
-                }
-
-                // Check for rrf_score(vector_distance(...), bm25_score(...), k1, k2) → HybridSearch.
-                if let Some((collection, query_vector, query_text, top_k, vector_k, text_k)) =
-                    try_extract_hybrid_search(&sort.expr, &sort.input, sort.fetch)?
-                {
-                    let vshard = VShardId::from_collection(&collection);
-                    // Convert per-source k-constants to a vector_weight:
-                    // higher vector_k relative to text_k = more weight on text (inverse).
-                    // weight = text_k / (vector_k + text_k) so equal k → 0.5.
-                    let vector_weight = (text_k / (vector_k + text_k).max(0.001)) as f32;
-                    return Ok(vec![PhysicalTask {
-                        tenant_id,
-                        vshard_id: vshard,
-                        plan: PhysicalPlan::Text(TextOp::HybridSearch {
-                            collection,
-                            query_vector: std::sync::Arc::from(query_vector.as_slice()),
-                            query_text,
-                            top_k,
-                            ef_search: 0,
-                            fuzzy: true,
-                            vector_weight,
-                            filter_bitmap: None,
-                        }),
-                    }]);
-                }
-
-                // Index-ordered scan optimization:
-                // If sorting by a single ASC field on a plain TableScan with a LIMIT
-                // (no OFFSET), use RangeScan — results come back in index order,
-                // eliminating the sort. Only works for ASC because B-tree indexes
-                // are ascending. DESC or OFFSET queries fall through to DocumentScan.
-                if sort.expr.len() == 1
-                    && sort.expr[0].asc
-                    && let Expr::Column(col) = &sort.expr[0].expr
-                {
-                    let sort_field = &col.name;
-                    if sort_field != "id"
-                        && sort_field != "document_id"
-                        && let Some(collection) = extract_table_name(&sort.input)
-                    {
-                        let limit = sort.fetch.unwrap_or(1000);
-                        let vshard = VShardId::from_collection(&collection);
-                        return Ok(vec![PhysicalTask {
-                            tenant_id,
-                            vshard_id: vshard,
-                            plan: PhysicalPlan::Document(DocumentOp::RangeScan {
-                                collection,
-                                field: sort_field.clone(),
-                                lower: None,
-                                upper: None,
-                                limit,
-                            }),
-                        }]);
-                    }
-                }
-
-                let mut tasks = self.convert(&sort.input, tenant_id)?;
-
-                // Extract all sort expressions as (field, ascending) pairs.
-                let mut extracted_keys = Vec::new();
-                for sort_expr in &sort.expr {
-                    if let Expr::Column(col) = &sort_expr.expr {
-                        extracted_keys.push((col.name.clone(), sort_expr.asc));
-                    }
-                }
-                if !extracted_keys.is_empty() {
-                    for task in &mut tasks {
-                        if let PhysicalPlan::Document(DocumentOp::Scan { sort_keys, .. }) =
-                            &mut task.plan
-                        {
-                            *sort_keys = extracted_keys.clone();
-                        }
-                    }
-                }
-
-                // Propagate sort's fetch as additional limit.
-                if let Some(fetch) = sort.fetch {
-                    for task in &mut tasks {
-                        if let PhysicalPlan::Document(DocumentOp::Scan { limit, .. }) =
-                            &mut task.plan
-                        {
-                            *limit = fetch;
-                        }
-                    }
-                }
-
-                Ok(tasks)
-            }
+            LogicalPlan::Sort(sort) => self.convert_sort(sort, tenant_id),
 
             LogicalPlan::Aggregate(agg) => {
-                // Extract collection from input (TableScan).
-                let collection =
-                    extract_table_name(&agg.input).ok_or_else(|| crate::Error::PlanError {
-                        detail: "GROUP BY requires a table scan input".into(),
-                    })?;
-                let vshard = VShardId::from_collection(&collection);
-
-                // Extract GROUP BY fields (all group expressions).
-                let group_by: Vec<String> = agg
-                    .group_expr
-                    .iter()
-                    .filter_map(|e| {
-                        if let Expr::Column(col) = e {
-                            Some(col.name.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                // Extract aggregate functions.
-                let mut aggregates = Vec::new();
-                for expr in &agg.aggr_expr {
-                    if let Expr::AggregateFunction(func) = expr {
-                        let mut op = func.func.name().to_lowercase();
-                        let field = func
-                            .params
-                            .args
-                            .first()
-                            .map(|a| match a {
-                                Expr::Column(col) => col.name.clone(),
-                                Expr::Literal(..) => "*".into(),
-                                _ => format!("{a}"),
-                            })
-                            .unwrap_or_else(|| "*".into());
-
-                        // Handle DISTINCT modifier: COUNT(DISTINCT col) → "count_distinct".
-                        if func.params.distinct {
-                            op = format!("{op}_distinct");
-                        }
-
-                        aggregates.push((op, field));
-                    }
-                }
-
-                // Extract filters from input if it's a Filter plan.
-                let filter_bytes = if let LogicalPlan::Filter(filter) = agg.input.as_ref() {
-                    let filters = expr_to_scan_filters(&filter.predicate);
-                    rmp_serde::to_vec_named(&filters).unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-
-                Ok(vec![PhysicalTask {
-                    tenant_id,
-                    vshard_id: vshard,
-                    plan: PhysicalPlan::Query(QueryOp::Aggregate {
-                        collection,
-                        group_by,
-                        aggregates,
-                        filters: filter_bytes,
-                        having: Vec::new(),
-                        limit: 10000,
-                        sub_group_by: Vec::new(),
-                        sub_aggregates: Vec::new(),
-                    }),
-                }])
+                super::converter_helpers::convert_aggregate(agg, tenant_id)
             }
 
             LogicalPlan::Dml(dml) => self.convert_dml(dml, tenant_id),
@@ -582,79 +438,6 @@ impl PlanConverter {
                 detail: format!("unsupported logical plan type: {}", plan.display()),
             }),
         }
-    }
-}
-
-/// Extract time-range predicates from filter expressions for timeseries routing.
-///
-/// Looks for patterns like `timestamp >= X AND timestamp <= Y` and extracts
-/// the range bounds. Non-timestamp filters are serialized as generic filters.
-/// Returns `((min_ts, max_ts), filter_bytes)`.
-fn extract_timeseries_filters(filters: &[Expr]) -> crate::Result<((i64, i64), Vec<u8>)> {
-    let mut min_ts = 0i64;
-    let mut max_ts = i64::MAX;
-    let mut remaining = Vec::new();
-
-    for f in filters {
-        if let Some((bound, is_lower)) = try_extract_timestamp_bound(f) {
-            if is_lower {
-                min_ts = min_ts.max(bound);
-            } else {
-                max_ts = max_ts.min(bound);
-            }
-        } else {
-            remaining.extend(expr_to_scan_filters(f));
-        }
-    }
-
-    let filter_bytes = if remaining.is_empty() {
-        Vec::new()
-    } else {
-        rmp_serde::to_vec_named(&remaining).map_err(|e| crate::Error::Serialization {
-            format: "msgpack".into(),
-            detail: format!("ts filter serialization: {e}"),
-        })?
-    };
-
-    Ok(((min_ts, max_ts), filter_bytes))
-}
-
-/// Try to extract a timestamp bound from a comparison expression.
-///
-/// Returns `Some((bound_value_ms, is_lower_bound))` if the expression
-/// is `timestamp >= X` or `timestamp <= X` (or `>`, `<`).
-fn try_extract_timestamp_bound(expr: &Expr) -> Option<(i64, bool)> {
-    match expr {
-        Expr::BinaryExpr(bin) => {
-            // Check if left side is a column named "timestamp" or "ts".
-            let col_name = match bin.left.as_ref() {
-                Expr::Column(col) => col.name.to_lowercase(),
-                _ => return None,
-            };
-            if col_name != "timestamp" && col_name != "ts" && col_name != "time" {
-                return None;
-            }
-
-            // Extract literal value.
-            let val = match bin.right.as_ref() {
-                Expr::Literal(datafusion::scalar::ScalarValue::Int64(Some(v)), _) => *v,
-                Expr::Literal(datafusion::scalar::ScalarValue::Float64(Some(v)), _) => *v as i64,
-                _ => return None,
-            };
-
-            match bin.op {
-                datafusion::logical_expr::Operator::GtEq
-                | datafusion::logical_expr::Operator::Gt => {
-                    Some((val, true)) // lower bound
-                }
-                datafusion::logical_expr::Operator::LtEq
-                | datafusion::logical_expr::Operator::Lt => {
-                    Some((val, false)) // upper bound
-                }
-                _ => None,
-            }
-        }
-        _ => None,
     }
 }
 

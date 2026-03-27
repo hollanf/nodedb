@@ -1,6 +1,7 @@
 pub mod catalog;
 pub mod context;
 pub mod converter;
+mod converter_helpers;
 mod dml;
 pub mod expr_convert;
 mod extract;
