@@ -225,14 +225,18 @@ impl<'a> DocumentEngine<'a> {
 }
 
 /// Strip the leading `$.` or `$` prefix from a JSON path expression.
-fn normalize_path(path: &str) -> &str {
+pub(crate) fn normalize_path(path: &str) -> &str {
     path.strip_prefix("$.")
         .or_else(|| path.strip_prefix('$'))
         .unwrap_or(path)
 }
 
 /// Extract scalar values at a JSON path for secondary indexing.
-fn extract_index_values(doc: &serde_json::Value, path: &str, is_array: bool) -> Vec<String> {
+pub(crate) fn extract_index_values(
+    doc: &serde_json::Value,
+    path: &str,
+    is_array: bool,
+) -> Vec<String> {
     let path = normalize_path(path);
     let target = navigate_json(doc, path);
 
@@ -313,7 +317,7 @@ fn rmpv_scalar_to_string(val: &rmpv::Value) -> Option<String> {
 }
 
 /// Convert serde_json::Value to rmpv::Value for MessagePack serialization.
-fn json_to_msgpack(val: &serde_json::Value) -> rmpv::Value {
+pub(crate) fn json_to_msgpack(val: &serde_json::Value) -> rmpv::Value {
     match val {
         serde_json::Value::Null => rmpv::Value::Nil,
         serde_json::Value::Bool(b) => rmpv::Value::Boolean(*b),

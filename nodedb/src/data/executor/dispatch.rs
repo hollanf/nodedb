@@ -479,6 +479,28 @@ impl CoreLoop {
                     &[],
                 )
             }
+
+            PhysicalPlan::RegisterDocumentCollection {
+                collection,
+                index_paths,
+                crdt_enabled,
+            } => self.execute_register_document_collection(
+                task,
+                tid,
+                collection,
+                index_paths,
+                *crdt_enabled,
+            ),
+
+            PhysicalPlan::DocumentIndexLookup {
+                collection,
+                path,
+                value,
+            } => self.execute_document_index_lookup(task, tid, collection, path, value),
+
+            PhysicalPlan::DropDocumentIndex { collection, field } => {
+                self.execute_drop_document_index(task, tid, collection, field)
+            }
         }
     }
 }

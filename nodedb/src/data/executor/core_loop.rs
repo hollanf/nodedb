@@ -147,6 +147,12 @@ pub struct CoreLoop {
     /// L1 segment compaction config for the storage layer.
     pub(in crate::data::executor) segment_compaction_config:
         crate::storage::compaction::CompactionConfig,
+
+    /// Per-collection document index configurations.
+    /// Maps "{tenant_id}:{collection}" → CollectionConfig.
+    /// Populated via RegisterDocumentCollection plans.
+    pub(in crate::data::executor) doc_configs:
+        HashMap<String, crate::engine::document::store::CollectionConfig>,
 }
 
 impl CoreLoop {
@@ -216,6 +222,7 @@ impl CoreLoop {
                 coord
             },
             segment_compaction_config: crate::storage::compaction::CompactionConfig::default(),
+            doc_configs: HashMap::new(),
         })
     }
 
@@ -245,6 +252,41 @@ impl CoreLoop {
         config: crate::storage::compaction::CompactionConfig,
     ) {
         self.segment_compaction_config = config;
+    }
+
+    /// Apply secondary index extraction for a document.
+    ///
+    /// Shared by `execute_document_batch_insert` and `execute_point_put`.
+    pub(in crate::data::executor) fn apply_secondary_indexes(
+        &mut self,
+        tid: u32,
+        collection: &str,
+        doc: &serde_json::Value,
+        doc_id: &str,
+        index_paths: &[crate::engine::document::store::IndexPath],
+    ) {
+        for index_path in index_paths {
+            let values = crate::engine::document::store::extract_index_values(
+                doc,
+                &index_path.path,
+                index_path.is_array,
+            );
+            for v in values {
+                if let Err(e) = self
+                    .sparse
+                    .index_put(tid, collection, &index_path.path, &v, doc_id)
+                {
+                    tracing::warn!(
+                        core = self.core_id,
+                        %collection,
+                        doc_id = %doc_id,
+                        path = %index_path.path,
+                        error = %e,
+                        "secondary index extraction failed"
+                    );
+                }
+            }
+        }
     }
 
     pub fn core_id(&self) -> usize {

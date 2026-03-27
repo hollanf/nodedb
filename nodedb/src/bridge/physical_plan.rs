@@ -595,4 +595,39 @@ pub enum PhysicalPlan {
         /// Payload format: "ilp" for InfluxDB Line Protocol, "samples" for structured.
         format: String,
     },
+
+    /// Register document collection with secondary index paths (DDL).
+    ///
+    /// Stores the collection configuration in the Data Plane's per-core
+    /// `doc_configs` map. Subsequent PointPut and DocumentBatchInsert operations
+    /// for this collection will extract secondary index values automatically.
+    RegisterDocumentCollection {
+        collection: String,
+        /// Secondary index path expressions (e.g., `"$.email"`, `"$.tags[]"`).
+        index_paths: Vec<String>,
+        /// Whether this collection uses CRDT-backed storage (Loro).
+        crdt_enabled: bool,
+    },
+
+    /// Lookup documents by secondary index value.
+    ///
+    /// Returns a JSON array of document IDs where `path = value` in the
+    /// given collection. Delegates to the INDEXES redb table via range scan.
+    DocumentIndexLookup {
+        collection: String,
+        /// Index path expression (e.g., `"$.email"`).
+        path: String,
+        /// Scalar value to match (e.g., `"alice@example.com"`).
+        value: String,
+    },
+
+    /// Drop all secondary index entries for a field across the entire collection.
+    ///
+    /// Used by `ALTER COLLECTION DROP INDEX <field>`. Returns the number of
+    /// index entries removed as a `{"removed": N}` JSON payload.
+    DropDocumentIndex {
+        collection: String,
+        /// The indexed field path (e.g., `"$.email"`).
+        field: String,
+    },
 }

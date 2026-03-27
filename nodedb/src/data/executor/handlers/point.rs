@@ -256,6 +256,17 @@ impl CoreLoop {
 
         self.doc_cache.put(tid, collection, document_id, &stored);
 
+        // Secondary index extraction: if this collection has registered index paths,
+        // extract values from the incoming document and store them in the INDEXES
+        // redb B-Tree for range-scan-based lookups.
+        let config_key = format!("{tid}:{collection}");
+        if let Some(config) = self.doc_configs.get(&config_key)
+            && let Some(doc) = super::super::doc_format::decode_document(value)
+        {
+            let paths = config.index_paths.clone();
+            self.apply_secondary_indexes(tid, collection, &doc, document_id, &paths);
+        }
+
         Ok(())
     }
 

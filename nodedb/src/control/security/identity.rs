@@ -189,6 +189,13 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
         | PhysicalPlan::Truncate { .. }
         | PhysicalPlan::TimeseriesIngest { .. } => Permission::Write,
 
+        // Document index lookup is a read operation.
+        PhysicalPlan::DocumentIndexLookup { .. } => Permission::Read,
+
+        // RegisterDocumentCollection and DropDocumentIndex are DDL operations.
+        PhysicalPlan::RegisterDocumentCollection { .. }
+        | PhysicalPlan::DropDocumentIndex { .. } => Permission::Alter,
+
         // EstimateCount is a read operation.
         PhysicalPlan::EstimateCount { .. } => Permission::Read,
 
