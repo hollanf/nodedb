@@ -355,6 +355,8 @@ impl<S: StorageEngine> ColumnarEngine<S> {
     /// Delete a row by PK.
     ///
     /// Rejects deletion on timeseries collections (append-only constraint).
+    /// Marks the row in the segment's delete bitmap. Compaction is triggered
+    /// separately via `try_compact_collection` when the delete ratio exceeds 20%.
     pub fn delete(&mut self, collection: &str, pk: &Value) -> Result<bool, LiteError> {
         let state = self.get_state_mut(collection)?;
 
@@ -481,6 +483,117 @@ impl<S: StorageEngine> ColumnarEngine<S> {
             self.flush_collection(&name).await?;
         }
         Ok(())
+    }
+
+    // -- Compaction --
+
+    /// Check if any segments need compaction and run it.
+    ///
+    /// Compaction is triggered when a segment's delete ratio exceeds 20%.
+    /// The old segment is replaced with a compacted one (deleted rows removed).
+    pub async fn try_compact_collection(&mut self, collection: &str) -> Result<bool, LiteError> {
+        let state = self
+            .collections
+            .get(collection)
+            .ok_or(LiteError::BadRequest {
+                detail: format!("columnar collection '{collection}' does not exist"),
+            })?;
+
+        // Find segments needing compaction.
+        let mut to_compact = Vec::new();
+        for seg_meta in &state.segments {
+            if let Some(bitmap) = state.mutation.delete_bitmap(seg_meta.segment_id)
+                && bitmap.should_compact(seg_meta.row_count, 0.2)
+            {
+                to_compact.push(seg_meta.segment_id);
+            }
+        }
+
+        if to_compact.is_empty() {
+            return Ok(false);
+        }
+
+        let schema = state.mutation.schema().clone();
+        let profile_tag = match &state.profile {
+            ColumnarProfile::Plain => 0,
+            ColumnarProfile::Timeseries { .. } => 1,
+            ColumnarProfile::Spatial { .. } => 2,
+        };
+
+        // Compact each segment that exceeds the threshold.
+        for seg_id in &to_compact {
+            let seg_key = format!("{collection}:seg:{seg_id}");
+            let seg_bytes = match self
+                .storage
+                .get(Namespace::Columnar, seg_key.as_bytes())
+                .await?
+            {
+                Some(b) => b,
+                None => continue,
+            };
+
+            let empty_bitmap = DeleteBitmap::new();
+            let bitmap = self
+                .collections
+                .get(collection)
+                .and_then(|s| s.mutation.delete_bitmap(*seg_id))
+                .unwrap_or(&empty_bitmap);
+
+            let result = nodedb_columnar::compaction::compact_segment(
+                &seg_bytes,
+                bitmap,
+                &schema,
+                profile_tag,
+            )
+            .map_err(columnar_err_to_lite)?;
+
+            if let Some(new_seg_bytes) = result.segment {
+                // Write compacted segment under the same key (atomic replace).
+                self.storage
+                    .put(Namespace::Columnar, seg_key.as_bytes(), &new_seg_bytes)
+                    .await?;
+
+                // Update row count in metadata.
+                if let Some(state) = self.collections.get_mut(collection)
+                    && let Some(meta) = state.segments.iter_mut().find(|m| m.segment_id == *seg_id)
+                {
+                    meta.row_count = result.live_rows as u64;
+                }
+
+                // Clear the delete bitmap for this segment.
+                let del_key = format!("{collection}:del:{seg_id}");
+                self.storage
+                    .delete(Namespace::Columnar, del_key.as_bytes())
+                    .await?;
+            } else {
+                // All rows deleted — remove segment entirely.
+                self.storage
+                    .delete(Namespace::Columnar, seg_key.as_bytes())
+                    .await?;
+                let del_key = format!("{collection}:del:{seg_id}");
+                self.storage
+                    .delete(Namespace::Columnar, del_key.as_bytes())
+                    .await?;
+
+                if let Some(state) = self.collections.get_mut(collection) {
+                    state.segments.retain(|m| m.segment_id != *seg_id);
+                }
+            }
+        }
+
+        // Persist updated metadata.
+        if let Some(state) = self.collections.get(collection) {
+            let meta_key = format!("{collection}:meta");
+            let meta_bytes =
+                rmp_serde::to_vec_named(&state.segments).map_err(|e| LiteError::Serialization {
+                    detail: e.to_string(),
+                })?;
+            self.storage
+                .put(Namespace::Columnar, meta_key.as_bytes(), &meta_bytes)
+                .await?;
+        }
+
+        Ok(true)
     }
 
     // -- Read path --
