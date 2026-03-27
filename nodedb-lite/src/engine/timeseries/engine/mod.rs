@@ -1,4 +1,5 @@
 mod compaction;
+pub mod continuous_agg;
 pub(crate) mod core;
 mod flush;
 mod ingest;
@@ -9,6 +10,7 @@ mod sync;
 mod wal;
 
 pub use compaction::{CompactionResult, MaintenanceResult};
+pub use continuous_agg::LiteContinuousAggManager;
 pub use core::TimeseriesEngine;
 pub use flush::{FlushResult, RedbEntry};
 pub use lifecycle::{
