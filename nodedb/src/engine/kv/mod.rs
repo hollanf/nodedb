@@ -1,6 +1,17 @@
-//! KV engine — hash-indexed O(1) point lookups with typed value fields.
-//!
-//! This module will contain the per-core hash table, incremental rehash,
-//! expiry wheel, slab allocator, and secondary index maintenance.
-//! Currently a placeholder for the engine module registration;
-//! implementation follows in subsequent batches.
+pub mod engine;
+pub mod entry;
+pub mod expiry_wheel;
+pub mod hash_table;
+
+pub use engine::KvEngine;
+
+/// Get current wall-clock time in milliseconds since Unix epoch.
+///
+/// Used by KV engine handlers and the core loop for TTL calculations.
+/// Returns 0 on clock failure (extremely rare, only on broken systems).
+pub fn current_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}

@@ -161,6 +161,9 @@ pub struct CoreLoop {
     /// Graph engine tuning parameters (max_visited, max_depth, LCC thresholds).
     /// Set at core spawn time from config; never changed at runtime.
     pub(in crate::data::executor) graph_tuning: nodedb_types::config::tuning::GraphTuning,
+
+    /// Per-core KV engine: hash tables + expiry wheel. `!Send`.
+    pub(in crate::data::executor) kv_engine: crate::engine::kv::KvEngine,
 }
 
 impl CoreLoop {
@@ -235,6 +238,10 @@ impl CoreLoop {
             doc_configs: HashMap::new(),
             query_tuning: nodedb_types::config::tuning::QueryTuning::default(),
             graph_tuning: nodedb_types::config::tuning::GraphTuning::default(),
+            kv_engine: crate::engine::kv::KvEngine::from_tuning(
+                crate::engine::kv::current_ms(),
+                &nodedb_types::config::tuning::KvTuning::default(),
+            ),
         })
     }
 

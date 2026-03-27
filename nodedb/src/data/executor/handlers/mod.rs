@@ -8,6 +8,7 @@ pub mod graph_algo;
 pub mod graph_match;
 pub mod graph_rag;
 pub mod join;
+pub mod kv;
 pub mod point;
 pub mod text_search;
 pub mod timeseries;

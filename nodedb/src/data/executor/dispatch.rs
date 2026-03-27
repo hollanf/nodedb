@@ -510,12 +510,7 @@ impl CoreLoop {
                 self.execute_drop_document_index(task, tid, collection, field)
             }
 
-            PhysicalPlan::Kv(_) => self.response_error(
-                task,
-                ErrorCode::Internal {
-                    detail: "KV engine not yet implemented".into(),
-                },
-            ),
+            PhysicalPlan::Kv(kv_op) => self.execute_kv(task, tid, kv_op),
         }
     }
 }
