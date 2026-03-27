@@ -70,7 +70,7 @@ impl SegmentWriter {
             let col_start = buf.len() as u64;
 
             // Select codec for this column type.
-            let codec = select_codec(&col_def.column_type);
+            let codec = select_codec_for_profile(&col_def.column_type, self.profile_tag);
 
             // Encode blocks.
             let block_stats =
@@ -106,6 +106,23 @@ impl SegmentWriter {
 
         Ok(buf)
     }
+}
+
+/// Select the best codec for a column type, with profile-aware overrides.
+///
+/// For timeseries profiles (tag=1), Float64 metric columns use Gorilla XOR
+/// encoding when the data is monotonic/slowly-changing. For other profiles,
+/// the standard auto-detection pipeline applies.
+pub fn select_codec_for_profile(col_type: &ColumnType, profile_tag: u8) -> ColumnCodec {
+    // Timeseries profile: prefer Gorilla for Float64 metrics.
+    if profile_tag == PROFILE_TIMESERIES && matches!(col_type, ColumnType::Float64) {
+        return ColumnCodec::Gorilla;
+    }
+    // Timeseries profile: delta-of-delta for timestamps.
+    if profile_tag == PROFILE_TIMESERIES && matches!(col_type, ColumnType::Timestamp) {
+        return ColumnCodec::DeltaFastLanesLz4;
+    }
+    select_codec(col_type)
 }
 
 /// Select the best codec for a column type using nodedb-codec's auto-detection.
