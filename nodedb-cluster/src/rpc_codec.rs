@@ -19,13 +19,11 @@
 //! - `crc32c`: CRC32C over the rkyv payload bytes only.
 
 use crate::error::{ClusterError, Result};
+use crate::wire::WIRE_VERSION;
 use nodedb_raft::message::{
     AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
     RequestVoteRequest, RequestVoteResponse,
 };
-
-/// Current wire protocol version.
-const WIRE_VERSION: u8 = 1;
 
 /// Header size in bytes: version(1) + rpc_type(1) + payload_len(4) + crc32c(4).
 pub const HEADER_SIZE: usize = 10;
@@ -210,7 +208,8 @@ pub fn encode(rpc: &RaftRpc) -> Result<Vec<u8>> {
     let crc = crc32c::crc32c(&payload);
 
     let mut frame = Vec::with_capacity(HEADER_SIZE + payload.len());
-    frame.push(WIRE_VERSION);
+    // Version field is 1 byte on the wire (see header diagram); narrowing cast is intentional.
+    frame.push(WIRE_VERSION as u8);
     frame.push(rpc.rpc_type());
     frame.extend_from_slice(&payload_len.to_le_bytes());
     frame.extend_from_slice(&crc.to_le_bytes());
@@ -228,7 +227,7 @@ pub fn decode(data: &[u8]) -> Result<RaftRpc> {
     }
 
     let version = data[0];
-    if version != WIRE_VERSION {
+    if version != WIRE_VERSION as u8 {
         return Err(ClusterError::Codec {
             detail: format!("unsupported wire version: {version}, expected {WIRE_VERSION}"),
         });
@@ -722,7 +721,7 @@ mod tests {
     fn payload_too_large_rejected() {
         // Craft a header claiming a massive payload.
         let mut frame = vec![0u8; HEADER_SIZE];
-        frame[0] = WIRE_VERSION;
+        frame[0] = WIRE_VERSION as u8;
         frame[1] = RPC_APPEND_ENTRIES_REQ;
         let huge: u32 = MAX_PAYLOAD_SIZE + 1;
         frame[2..6].copy_from_slice(&huge.to_le_bytes());

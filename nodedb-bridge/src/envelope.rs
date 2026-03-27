@@ -83,25 +83,11 @@ pub enum Status {
     Cancelled,
     /// Deadline expired before completion.
     DeadlineExceeded,
-    /// Execution failed with a deterministic error code.
-    Error(ErrorCode),
-}
-
-/// Deterministic error codes for cross-plane communication.
-/// These must be stable across versions for client compatibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u16)]
-pub enum ErrorCode {
-    /// Generic internal error.
-    Internal = 1,
-    /// Requested vShard is not owned by this node.
-    VShardNotLocal = 2,
-    /// Tenant quota exceeded.
-    QuotaExceeded = 3,
-    /// Constraint violation (UNIQUE, FK) at commit.
-    ConstraintViolation = 4,
-    /// Engine memory budget exhausted.
-    MemoryBudgetExhausted = 5,
-    /// I/O error on the Data Plane.
-    IoError = 6,
+    /// Execution failed with a deterministic numeric error code.
+    ///
+    /// The value is the numeric representation of the domain-level error code
+    /// (see `nodedb::bridge::envelope::ErrorCode` in the main crate for the
+    /// authoritative mapping). The bridge layer stays code-free to avoid
+    /// duplicating rich error variant logic across crates.
+    Error(u16),
 }
