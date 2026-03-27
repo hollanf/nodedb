@@ -242,10 +242,7 @@ mod tests {
         assert!(!contains_msgpack(&data, "$.missing", "1"));
     }
 
-    #[test]
-    fn msgpack_invalid_data() {
-        assert!(!contains_msgpack(&[0xff, 0xfe], "$.tags", "x"));
-    }
+    super::super::nav::test_util::assert_invalid_msgpack!(contains_msgpack, "$.tags", "x");
 
     #[test]
     fn json_compat_contains() {
@@ -266,38 +263,17 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn udf_batch_binary() {
-        use datafusion::arrow::datatypes::{DataType, Field};
-        use datafusion::logical_expr::ScalarFunctionArgs;
-
-        let udf = DocArrayContains::new();
-        let doc1 = to_msgpack(&serde_json::json!({"tags": ["a", "b"]}));
-        let doc2 = to_msgpack(&serde_json::json!({"tags": ["c"]}));
-
-        let docs = ColumnarValue::Array(Arc::new(BinaryArray::from(vec![
-            doc1.as_slice(),
-            doc2.as_slice(),
-        ])));
-        let paths =
-            ColumnarValue::Scalar(datafusion::common::ScalarValue::Utf8(Some("$.tags".into())));
-        let values = ColumnarValue::Scalar(datafusion::common::ScalarValue::Utf8(Some("a".into())));
-
-        let args = ScalarFunctionArgs {
-            args: vec![docs, paths, values],
-            arg_fields: vec![],
-            number_rows: 2,
-            return_field: Arc::new(Field::new("", DataType::Boolean, false)),
-            config_options: Arc::new(datafusion::config::ConfigOptions::new()),
-        };
-        let result = udf.invoke_with_args(args).unwrap();
-        match result {
-            ColumnarValue::Array(arr) => {
-                let arr = arr.as_any().downcast_ref::<BooleanArray>().unwrap();
-                assert!(arr.value(0));
-                assert!(!arr.value(1));
-            }
-            _ => panic!("expected array"),
+    super::super::nav::test_util::generate_udf_batch_test_3arg!(
+        DocArrayContains,
+        DataType::Boolean,
+        BooleanArray,
+        serde_json::json!({"tags": ["a", "b"]}),
+        serde_json::json!({"tags": ["c"]}),
+        "$.tags",
+        "a",
+        |arr| {
+            assert!(arr.value(0));
+            assert!(!arr.value(1));
         }
-    }
+    );
 }

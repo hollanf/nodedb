@@ -97,6 +97,124 @@ pub(crate) fn expand_to_array(col: &ColumnarValue, num_rows: usize) -> DfResult<
 
 #[cfg(test)]
 pub(crate) mod test_util {
+    /// Test that invalid msgpack data returns a graceful result (not a panic).
+    ///
+    /// Two variants:
+    /// - Bool-returning: `assert_invalid_msgpack!(fn_name, path, extra_args...)`
+    ///   e.g., `assert_invalid_msgpack!(contains_msgpack, "$.tags", "x")`
+    /// - Option-returning: `assert_invalid_msgpack!(option fn_name, path)`
+    ///   e.g., `assert_invalid_msgpack!(option extract_msgpack, "$.foo")`
+    macro_rules! assert_invalid_msgpack {
+        ($fn:ident, $path:expr $(, $arg:expr)*) => {
+            #[test]
+            fn msgpack_invalid_data() {
+                assert!(!$fn(&[0xff, 0xfe], $path $(, $arg)*));
+            }
+        };
+        (option $fn:ident, $path:expr) => {
+            #[test]
+            fn msgpack_invalid_data() {
+                assert_eq!($fn(&[0xff, 0xfe], $path), None);
+            }
+        };
+    }
+    pub(crate) use assert_invalid_msgpack;
+
+    /// Generate a `udf_batch_binary` test for a 2-arg UDF (Binary doc + Utf8 path → result).
+    ///
+    /// The `$arr` binding in the closure receives the downcast result array.
+    /// Usage: `generate_udf_batch_test_2arg!(UdfType, ReturnDataType, ArrayType, |arr| { ... })`
+    macro_rules! generate_udf_batch_test_2arg {
+        ($udf_type:ty, $return_dtype:expr, $return_arrow:ty, |$arr:ident| $assertions:block) => {
+            #[test]
+            fn udf_batch_binary() {
+                use std::sync::Arc;
+                use datafusion::arrow::array::BinaryArray;
+                use datafusion::arrow::datatypes::{DataType, Field};
+                use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl};
+                use super::super::nav::test_util::to_msgpack;
+
+                let udf = <$udf_type>::new();
+                let doc1 = to_msgpack(&serde_json::json!({"a": 1}));
+                let doc2 = to_msgpack(&serde_json::json!({"b": 2}));
+
+                let docs = ColumnarValue::Array(Arc::new(BinaryArray::from(vec![
+                    doc1.as_slice(),
+                    doc2.as_slice(),
+                ])));
+                let paths = ColumnarValue::Scalar(
+                    datafusion::common::ScalarValue::Utf8(Some("$.a".into())),
+                );
+
+                let args = ScalarFunctionArgs {
+                    args: vec![docs, paths],
+                    arg_fields: vec![],
+                    number_rows: 2,
+                    return_field: Arc::new(Field::new("", $return_dtype, false)),
+                    config_options: Arc::new(datafusion::config::ConfigOptions::new()),
+                };
+                let result = udf.invoke_with_args(args).unwrap();
+                match result {
+                    ColumnarValue::Array(arr) => {
+                        let $arr = arr.as_any().downcast_ref::<$return_arrow>().unwrap();
+                        $assertions
+                    }
+                    _ => panic!("expected array"),
+                }
+            }
+        };
+    }
+    pub(crate) use generate_udf_batch_test_2arg;
+
+    /// Generate a `udf_batch_binary` test for a 3-arg UDF (Binary doc + Utf8 path + Utf8 value → result).
+    ///
+    /// The `$arr` binding in the closure receives the downcast result array.
+    /// Usage: `generate_udf_batch_test_3arg!(UdfType, ReturnDataType, ArrayType, json1, json2, path, value, |arr| { ... })`
+    macro_rules! generate_udf_batch_test_3arg {
+        ($udf_type:ty, $return_dtype:expr, $return_arrow:ty, $json1:expr, $json2:expr, $path:expr, $value:expr, |$arr:ident| $assertions:block) => {
+            #[test]
+            fn udf_batch_binary() {
+                use super::super::nav::test_util::to_msgpack;
+                use datafusion::arrow::array::BinaryArray;
+                use datafusion::arrow::datatypes::{DataType, Field};
+                use datafusion::logical_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl};
+                use std::sync::Arc;
+
+                let udf = <$udf_type>::new();
+                let doc1 = to_msgpack(&$json1);
+                let doc2 = to_msgpack(&$json2);
+
+                let docs = ColumnarValue::Array(Arc::new(BinaryArray::from(vec![
+                    doc1.as_slice(),
+                    doc2.as_slice(),
+                ])));
+                let paths = ColumnarValue::Scalar(datafusion::common::ScalarValue::Utf8(Some(
+                    $path.into(),
+                )));
+                let values = ColumnarValue::Scalar(datafusion::common::ScalarValue::Utf8(Some(
+                    $value.into(),
+                )));
+
+                let args = ScalarFunctionArgs {
+                    args: vec![docs, paths, values],
+                    arg_fields: vec![],
+                    number_rows: 2,
+                    return_field: Arc::new(Field::new("", $return_dtype, false)),
+                    config_options: Arc::new(datafusion::config::ConfigOptions::new()),
+                };
+                let result = udf.invoke_with_args(args).unwrap();
+                match result {
+                    ColumnarValue::Array(arr) => {
+                        let $arr = arr.as_any().downcast_ref::<$return_arrow>().unwrap();
+                        $assertions
+                    }
+                    _ => panic!("expected array"),
+                }
+            }
+        };
+    }
+    pub(crate) use generate_udf_batch_test_3arg;
+
     /// Convert a `serde_json::Value` to MessagePack bytes.
     pub fn to_msgpack(val: &serde_json::Value) -> Vec<u8> {
         let rmpv_val = json_to_rmpv(val);

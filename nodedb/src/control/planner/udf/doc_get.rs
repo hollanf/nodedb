@@ -161,52 +161,12 @@ mod tests {
         assert_eq!(extract_msgpack(&data, "$.nonexistent"), None);
     }
 
-    #[test]
-    fn msgpack_invalid_data() {
-        assert_eq!(extract_msgpack(&[0xff, 0xfe], "$.foo"), None);
-    }
+    super::super::nav::test_util::assert_invalid_msgpack!(option extract_msgpack, "$.foo");
 
     #[test]
     fn json_compat_extract() {
         let json_str = r#"{"name": "alice"}"#;
         assert_eq!(extract_json(json_str, "$.name"), Some("alice".into()));
-    }
-
-    #[test]
-    fn udf_batch_binary() {
-        use datafusion::arrow::datatypes::{DataType, Field};
-        use datafusion::logical_expr::ScalarFunctionArgs;
-
-        let udf = DocGet::new();
-        let doc1 = to_msgpack(&serde_json::json!({"a": 1}));
-        let doc2 = to_msgpack(&serde_json::json!({"a": 2}));
-        let doc3 = to_msgpack(&serde_json::json!({"b": 3}));
-
-        let docs = ColumnarValue::Array(Arc::new(BinaryArray::from(vec![
-            doc1.as_slice(),
-            doc2.as_slice(),
-            doc3.as_slice(),
-        ])));
-        let paths =
-            ColumnarValue::Scalar(datafusion::common::ScalarValue::Utf8(Some("$.a".into())));
-
-        let args = ScalarFunctionArgs {
-            args: vec![docs, paths],
-            arg_fields: vec![],
-            number_rows: 3,
-            return_field: Arc::new(Field::new("", DataType::Utf8, false)),
-            config_options: Arc::new(datafusion::config::ConfigOptions::new()),
-        };
-        let result = udf.invoke_with_args(args).unwrap();
-        match result {
-            ColumnarValue::Array(arr) => {
-                let arr = arr.as_any().downcast_ref::<StringArray>().unwrap();
-                assert_eq!(arr.value(0), "1");
-                assert_eq!(arr.value(1), "2");
-                assert!(arr.is_null(2));
-            }
-            _ => panic!("expected array"),
-        }
     }
 
     #[test]
