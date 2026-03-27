@@ -35,6 +35,10 @@ pub mod raw;
 pub mod spherical;
 pub mod zstd_codec;
 
+/// Number of values to sample for codec auto-detection and exponent selection.
+/// Used by ALP, ALP-RD, and the codec detector.
+pub const CODEC_SAMPLE_SIZE: usize = 1024;
+
 pub use crdt_compress::CrdtOp;
 pub use delta::{DeltaDecoder, DeltaEncoder};
 pub use detect::detect_codec;

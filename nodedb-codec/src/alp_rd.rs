@@ -27,8 +27,7 @@
 
 use crate::error::CodecError;
 
-/// Sample size for determining the optimal cut position.
-const SAMPLE_SIZE: usize = 1024;
+use crate::CODEC_SAMPLE_SIZE;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -231,7 +230,7 @@ pub fn decode(data: &[u8]) -> Result<Vec<f64>, CodecError> {
 /// Tries cut positions from 44 to 56 bits (typical for f64) and picks
 /// the one that produces the fewest unique front values.
 fn find_best_cut(values: &[f64]) -> u8 {
-    let sample_end = values.len().min(SAMPLE_SIZE);
+    let sample_end = values.len().min(CODEC_SAMPLE_SIZE);
     let sample = &values[..sample_end];
     let bits: Vec<u64> = sample.iter().map(|v| v.to_bits()).collect();
 

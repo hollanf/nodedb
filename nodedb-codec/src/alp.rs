@@ -74,8 +74,7 @@ const INV_POW10: [f64; 19] = [
     0.000_000_000_000_000_001,
 ];
 
-/// Sample size for exponent selection.
-const SAMPLE_SIZE: usize = 1024;
+use crate::CODEC_SAMPLE_SIZE;
 
 // ---------------------------------------------------------------------------
 // Public encode / decode API
@@ -253,7 +252,7 @@ pub fn alp_encodability(values: &[f64]) -> f64 {
         return 1.0;
     }
 
-    let sample_end = values.len().min(SAMPLE_SIZE);
+    let sample_end = values.len().min(CODEC_SAMPLE_SIZE);
     let sample = &values[..sample_end];
     let params = find_best_params(sample);
     let factor = POW10[params.encode_exp as usize];
@@ -334,7 +333,7 @@ struct AlpParams {
 
 /// Find the best ALP parameters by trying all exponents and both decode modes.
 fn find_best_params(values: &[f64]) -> AlpParams {
-    let sample_end = values.len().min(SAMPLE_SIZE);
+    let sample_end = values.len().min(CODEC_SAMPLE_SIZE);
     let sample = &values[..sample_end];
 
     let mut best = AlpParams {

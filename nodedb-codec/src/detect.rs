@@ -13,8 +13,7 @@
 
 use crate::{ColumnCodec, ColumnTypeHint};
 
-/// Maximum number of values to sample for codec detection.
-const SAMPLE_SIZE: usize = 1024;
+use crate::CODEC_SAMPLE_SIZE;
 
 /// Minimum partition size to use cascading codecs.
 /// Below this, FastLanes block overhead dominates — use legacy codecs.
@@ -58,7 +57,7 @@ pub fn detect_i64_codec(values: &[i64]) -> ColumnCodec {
     }
 
     // Small partitions → legacy codecs. Analyze data to pick best one.
-    let sample_end = values.len().min(SAMPLE_SIZE);
+    let sample_end = values.len().min(CODEC_SAMPLE_SIZE);
     let sample = &values[..sample_end];
 
     let mut zero_dod_count = 0usize;
