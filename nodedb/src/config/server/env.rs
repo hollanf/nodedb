@@ -56,6 +56,8 @@ pub fn parse_memory_size(s: &str) -> Result<usize, String> {
 /// - `NODEDB_NODE_ID`      — overrides `config.cluster.node_id` (parse as u64)
 /// - `NODEDB_SEED_NODES`   — overrides `config.cluster.seed_nodes`
 ///   (comma-separated `SocketAddr` list)
+/// - `NODEDB_RESP_LISTEN`  — overrides `config.resp_listen` (e.g., `127.0.0.1:6381`)
+/// - `NODEDB_ILP_LISTEN`   — overrides `config.ilp_listen` (e.g., `127.0.0.1:8086`)
 ///
 /// `NODEDB_CONFIG` (config file path) is handled upstream in `main.rs`
 /// before this function is called, so it is not processed here.
@@ -148,6 +150,46 @@ pub fn apply_env_overrides(config: &mut ServerConfig) {
                     failed_entry = %bad_entry,
                     "ignoring malformed environment variable \
                      (failed to parse '{bad_entry}' as SocketAddr), using config value"
+                );
+            }
+        }
+    }
+
+    if let Ok(val) = std::env::var("NODEDB_RESP_LISTEN") {
+        match val.parse::<std::net::SocketAddr>() {
+            Ok(addr) => {
+                tracing::info!(
+                    env_var = "NODEDB_RESP_LISTEN",
+                    value = %val,
+                    "environment variable override applied"
+                );
+                config.resp_listen = Some(addr);
+            }
+            Err(_) => {
+                tracing::warn!(
+                    env_var = "NODEDB_RESP_LISTEN",
+                    value = %val,
+                    "ignoring malformed environment variable (expected SocketAddr), using config value"
+                );
+            }
+        }
+    }
+
+    if let Ok(val) = std::env::var("NODEDB_ILP_LISTEN") {
+        match val.parse::<std::net::SocketAddr>() {
+            Ok(addr) => {
+                tracing::info!(
+                    env_var = "NODEDB_ILP_LISTEN",
+                    value = %val,
+                    "environment variable override applied"
+                );
+                config.ilp_listen = Some(addr);
+            }
+            Err(_) => {
+                tracing::warn!(
+                    env_var = "NODEDB_ILP_LISTEN",
+                    value = %val,
+                    "ignoring malformed environment variable (expected SocketAddr), using config value"
                 );
             }
         }
