@@ -87,12 +87,12 @@ pub fn create_rls_policy(
         .position(|p| p.to_uppercase() == "USING")
         .ok_or_else(|| sqlstate_error("42601", "missing USING clause"))?;
 
-    // Find where the predicate ends (before RESTRICTIVE or TENANT keywords).
+    // Find where the predicate ends (before RESTRICTIVE, ON, or TENANT keywords).
     let pred_end = parts[using_idx + 1..]
         .iter()
         .position(|p| {
             let upper = p.to_uppercase();
-            upper == "RESTRICTIVE" || upper == "TENANT"
+            upper == "RESTRICTIVE" || upper == "TENANT" || upper == "ON"
         })
         .map(|i| using_idx + 1 + i)
         .unwrap_or(parts.len());
@@ -164,6 +164,28 @@ pub fn create_rls_policy(
         (predicate, None)
     };
 
+    // Parse ON DENY clause (optional).
+    let on_deny = {
+        let deny_parts: Vec<&str> = parts[pred_end..]
+            .iter()
+            .copied()
+            .skip_while(|p| p.to_uppercase() != "ON")
+            .skip(1) // skip "ON"
+            .take_while(|p| {
+                let u = p.to_uppercase();
+                u != "RESTRICTIVE" && u != "TENANT"
+            })
+            .collect();
+
+        // Check if these are actually ON DENY parts (first should be "DENY").
+        if deny_parts.first().map(|s| s.to_uppercase()) == Some("DENY".into()) {
+            crate::control::security::deny::parse_on_deny(&deny_parts[1..])
+                .map_err(|e| sqlstate_error("42601", &e))?
+        } else {
+            crate::control::security::deny::DenyMode::default()
+        }
+    };
+
     let policy = RlsPolicy {
         name: name.to_string(),
         collection: collection.to_string(),
@@ -172,6 +194,7 @@ pub fn create_rls_policy(
         predicate,
         compiled_predicate,
         mode,
+        on_deny,
         enabled: true,
         created_by: identity.username.clone(),
         created_at: std::time::SystemTime::now()

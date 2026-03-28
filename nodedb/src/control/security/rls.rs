@@ -48,6 +48,11 @@ pub struct RlsPolicy {
     /// Policy combination mode: permissive (OR) or restrictive (AND).
     #[serde(default)]
     pub mode: PolicyMode,
+    /// What happens when this policy denies access.
+    /// `Silent` (default) = row filtered, no error.
+    /// `Error(...)` = structured error returned to client.
+    #[serde(default)]
+    pub on_deny: super::deny::DenyMode,
     /// Whether this policy is enabled.
     pub enabled: bool,
     /// Creator username (for audit).
@@ -79,6 +84,11 @@ impl Default for RlsPolicyStore {
     }
 }
 
+/// Build the lookup key for the policy map: `"{tenant_id}:{collection}"`.
+fn policy_key(tenant_id: u32, collection: &str) -> String {
+    format!("{tenant_id}:{collection}")
+}
+
 impl RlsPolicyStore {
     pub fn new() -> Self {
         Self {
@@ -86,10 +96,20 @@ impl RlsPolicyStore {
         }
     }
 
+    /// Acquire a read lock, recovering from RwLock poisoning.
+    fn lock_read(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, Vec<RlsPolicy>>> {
+        self.policies.read().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Acquire a write lock, recovering from RwLock poisoning.
+    fn lock_write(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<String, Vec<RlsPolicy>>> {
+        self.policies.write().unwrap_or_else(|p| p.into_inner())
+    }
+
     /// Create or replace an RLS policy.
     pub fn create_policy(&self, policy: RlsPolicy) -> crate::Result<()> {
-        let key = format!("{}:{}", policy.tenant_id, policy.collection);
-        let mut policies = self.policies.write().unwrap_or_else(|p| p.into_inner());
+        let key = policy_key(policy.tenant_id, &policy.collection);
+        let mut policies = self.lock_write();
         let list = policies.entry(key).or_default();
 
         // Replace existing policy with same name, or add new.
@@ -103,8 +123,8 @@ impl RlsPolicyStore {
 
     /// Drop an RLS policy.
     pub fn drop_policy(&self, tenant_id: u32, collection: &str, policy_name: &str) -> bool {
-        let key = format!("{tenant_id}:{collection}");
-        let mut policies = self.policies.write().unwrap_or_else(|p| p.into_inner());
+        let key = policy_key(tenant_id, collection);
+        let mut policies = self.lock_write();
         if let Some(list) = policies.get_mut(&key) {
             let before = list.len();
             list.retain(|p| p.name != policy_name);
@@ -119,8 +139,8 @@ impl RlsPolicyStore {
     /// These predicates must be injected into DocumentScan filters
     /// before execution on the Data Plane.
     pub fn read_policies(&self, tenant_id: u32, collection: &str) -> Vec<RlsPolicy> {
-        let key = format!("{tenant_id}:{collection}");
-        let policies = self.policies.read().unwrap_or_else(|p| p.into_inner());
+        let key = policy_key(tenant_id, collection);
+        let policies = self.lock_read();
         policies
             .get(&key)
             .map(|list| {
@@ -139,8 +159,8 @@ impl RlsPolicyStore {
     /// These predicates must be checked before WAL append for
     /// INSERT/UPDATE/DELETE operations.
     pub fn write_policies(&self, tenant_id: u32, collection: &str) -> Vec<RlsPolicy> {
-        let key = format!("{tenant_id}:{collection}");
-        let policies = self.policies.read().unwrap_or_else(|p| p.into_inner());
+        let key = policy_key(tenant_id, collection);
+        let policies = self.lock_read();
         policies
             .get(&key)
             .map(|list| {
@@ -411,15 +431,15 @@ impl RlsPolicyStore {
 
     /// Get all policies for a tenant+collection.
     pub fn all_policies(&self, tenant_id: u32, collection: &str) -> Vec<RlsPolicy> {
-        let key = format!("{tenant_id}:{collection}");
-        let policies = self.policies.read().unwrap_or_else(|p| p.into_inner());
+        let key = policy_key(tenant_id, collection);
+        let policies = self.lock_read();
         policies.get(&key).cloned().unwrap_or_default()
     }
 
     /// Get all policies for a tenant across all collections.
     pub fn all_policies_for_tenant(&self, tenant_id: u32) -> Vec<RlsPolicy> {
         let prefix = format!("{tenant_id}:");
-        let policies = self.policies.read().unwrap_or_else(|p| p.into_inner());
+        let policies = self.lock_read();
         policies
             .iter()
             .filter(|(key, _)| key.starts_with(&prefix))
@@ -485,6 +505,7 @@ mod tests {
             predicate: Vec::new(),
             compiled_predicate: None,
             mode: PolicyMode::default(),
+            on_deny: Default::default(),
             enabled: true,
             created_by: "admin".into(),
             created_at: now,

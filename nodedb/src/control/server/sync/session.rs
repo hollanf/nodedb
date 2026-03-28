@@ -832,6 +832,7 @@ mod tests {
                 predicate,
                 compiled_predicate: None,
                 mode: crate::control::security::predicate::PolicyMode::default(),
+                on_deny: Default::default(),
                 enabled: true,
                 created_by: "admin".into(),
                 created_at: 0,

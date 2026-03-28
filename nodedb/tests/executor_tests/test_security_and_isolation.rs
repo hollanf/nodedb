@@ -74,6 +74,7 @@ fn security_rls_policy_enforcement() {
             predicate,
             compiled_predicate: None,
             mode: nodedb::control::security::predicate::PolicyMode::default(),
+            on_deny: Default::default(),
             enabled: true,
             created_by: "admin".into(),
             created_at: 0,
