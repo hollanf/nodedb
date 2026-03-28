@@ -8,6 +8,7 @@ use tracing::{debug, warn};
 use crate::config::auth::{JwtAuthConfig, JwtProviderConfig};
 use crate::control::security::identity::{AuthMethod, AuthenticatedIdentity, Role};
 use crate::control::security::jwt::{JwtClaims, JwtError};
+use crate::control::security::util::base64_url_decode;
 use crate::types::TenantId;
 
 use super::cache::JwksCache;
@@ -97,7 +98,7 @@ impl JwksRegistry {
         }
 
         // 2. Decode payload (unverified, for issuer routing).
-        let payload_bytes = base64_url_decode(parts[1])?;
+        let payload_bytes = base64_url_decode(parts[1]).ok_or(JwtError::DecodingError)?;
         let claims: JwtClaims =
             serde_json::from_slice(&payload_bytes).map_err(|_| JwtError::InvalidClaims)?;
 
@@ -127,7 +128,7 @@ impl JwksRegistry {
 
         // 5. Verify signature.
         let signing_input = format!("{}.{}", parts[0], parts[1]);
-        let signature = base64_url_decode(parts[2])?;
+        let signature = base64_url_decode(parts[2]).ok_or(JwtError::DecodingError)?;
 
         if !verify_signature(&key, signing_input.as_bytes(), &signature) {
             return Err(JwtError::InvalidSignature);
@@ -193,7 +194,7 @@ impl JwksRegistry {
         if parts.len() != 3 {
             return Err(JwtError::MalformedToken);
         }
-        let payload_bytes = base64_url_decode(parts[1])?;
+        let payload_bytes = base64_url_decode(parts[1]).ok_or(JwtError::DecodingError)?;
         serde_json::from_slice(&payload_bytes).map_err(|_| JwtError::InvalidClaims)
     }
 
@@ -259,19 +260,6 @@ struct JwtHeader {
 }
 
 fn decode_jwt_header(encoded: &str) -> Result<JwtHeader, JwtError> {
-    let bytes = base64_url_decode(encoded)?;
+    let bytes = base64_url_decode(encoded).ok_or(JwtError::DecodingError)?;
     serde_json::from_slice(&bytes).map_err(|_| JwtError::InvalidClaims)
-}
-
-fn base64_url_decode(input: &str) -> Result<Vec<u8>, JwtError> {
-    let padded = match input.len() % 4 {
-        2 => format!("{input}=="),
-        3 => format!("{input}="),
-        _ => input.to_string(),
-    };
-    let standard = padded.replace('-', "+").replace('_', "/");
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD
-        .decode(&standard)
-        .map_err(|_| JwtError::DecodingError)
 }

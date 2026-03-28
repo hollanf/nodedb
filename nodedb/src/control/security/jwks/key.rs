@@ -3,7 +3,7 @@
 //! Parses JWKS JSON responses into `VerificationKey` values that can
 //! verify JWT signatures. Supports RSA (RS256) and EC (ES256, ES384).
 
-use base64::Engine;
+use crate::control::security::util::base64_url_decode;
 
 /// A parsed verification key extracted from a JWK.
 #[derive(Debug, Clone)]
@@ -226,13 +226,6 @@ fn verify_ec_p384(sec1_point: &[u8], message: &[u8], signature: &[u8]) -> bool {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
-
-/// Base64url decode (no padding).
-fn base64_url_decode(input: &str) -> Option<Vec<u8>> {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(input)
-        .ok()
-}
 
 /// Encode a byte slice as a DER INTEGER.
 fn to_der_integer(bytes: &[u8]) -> Vec<u8> {

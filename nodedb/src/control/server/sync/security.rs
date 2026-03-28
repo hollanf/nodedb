@@ -34,6 +34,7 @@ use crate::control::security::audit::{AuditEvent, AuditLog};
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::security::jwt::{JwtConfig, JwtError, JwtValidator};
 use crate::control::security::rls::RlsPolicyStore;
+use crate::control::security::util::base64_url_decode;
 
 /// Result of JWT validation on WebSocket upgrade.
 #[derive(Debug)]
@@ -109,7 +110,7 @@ fn extract_exp_from_token(token: &str) -> Option<u64> {
     if parts.len() != 3 {
         return None;
     }
-    let payload = base64_url_decode_silent(parts[1])?;
+    let payload = base64_url_decode(parts[1])?;
     let claims: serde_json::Value = serde_json::from_slice(&payload).ok()?;
     claims.get("exp")?.as_u64()
 }
@@ -266,20 +267,6 @@ fn now_epoch_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-
-/// Base64url decode without error propagation (returns None on failure).
-fn base64_url_decode_silent(input: &str) -> Option<Vec<u8>> {
-    let padded = match input.len() % 4 {
-        2 => format!("{input}=="),
-        3 => format!("{input}="),
-        _ => input.to_string(),
-    };
-    let standard = padded.replace('-', "+").replace('_', "/");
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD
-        .decode(&standard)
-        .ok()
 }
 
 #[cfg(test)]

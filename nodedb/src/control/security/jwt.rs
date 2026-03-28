@@ -16,6 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tracing::debug;
 
+use crate::control::security::util::base64_url_decode;
 use crate::types::TenantId;
 
 use super::identity::{AuthMethod, AuthenticatedIdentity, Role};
@@ -123,18 +124,18 @@ impl JwtValidator {
         }
 
         // Decode header to determine algorithm.
-        let header_bytes = base64_url_decode(parts[0])?;
+        let header_bytes = base64_url_decode(parts[0]).ok_or(JwtError::DecodingError)?;
         let header: JwtHeader =
             serde_json::from_slice(&header_bytes).map_err(|_| JwtError::InvalidClaims)?;
 
         // Decode payload (middle part). We verify signature separately.
-        let payload_bytes = base64_url_decode(parts[1])?;
+        let payload_bytes = base64_url_decode(parts[1]).ok_or(JwtError::DecodingError)?;
         let claims: JwtClaims =
             serde_json::from_slice(&payload_bytes).map_err(|_| JwtError::InvalidClaims)?;
 
         // Verify signature based on algorithm declared in header.
         let signing_input = format!("{}.{}", parts[0], parts[1]);
-        let signature_bytes = base64_url_decode(parts[2])?;
+        let signature_bytes = base64_url_decode(parts[2]).ok_or(JwtError::DecodingError)?;
 
         match header.alg.as_str() {
             "HS256" => {
@@ -245,22 +246,6 @@ pub enum JwtError {
     DecodingError,
     #[error("JWT algorithm not supported or not configured")]
     UnsupportedAlgorithm,
-}
-
-/// Base64url decode (no padding).
-fn base64_url_decode(input: &str) -> Result<Vec<u8>, JwtError> {
-    // Add padding if needed.
-    let padded = match input.len() % 4 {
-        2 => format!("{input}=="),
-        3 => format!("{input}="),
-        _ => input.to_string(),
-    };
-    // Replace URL-safe chars with standard base64.
-    let standard = padded.replace('-', "+").replace('_', "/");
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD
-        .decode(&standard)
-        .map_err(|_| JwtError::DecodingError)
 }
 
 /// Verify HMAC-SHA256 signature.
