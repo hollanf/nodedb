@@ -312,6 +312,7 @@ impl PlanConverter {
                         plan: PhysicalPlan::Document(DocumentOp::PointGet {
                             collection: collection.to_string(),
                             document_id: doc_id,
+                            rls_filters: Vec::new(),
                         }),
                     }));
                 }

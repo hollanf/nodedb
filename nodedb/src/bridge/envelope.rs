@@ -234,6 +234,7 @@ mod tests {
             plan: PhysicalPlan::Document(DocumentOp::PointGet {
                 collection: "users".into(),
                 document_id: "doc-1".into(),
+                rls_filters: Vec::new(),
             }),
             deadline: Instant::now() + Duration::from_secs(5),
             priority: Priority::Normal,

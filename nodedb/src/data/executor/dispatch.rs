@@ -17,19 +17,17 @@ impl CoreLoop {
             PhysicalPlan::Document(DocumentOp::PointGet {
                 collection,
                 document_id,
+                rls_filters: _,
             }) => self.execute_point_get(task, tid, collection, document_id),
-
             PhysicalPlan::Document(DocumentOp::PointPut {
                 collection,
                 document_id,
                 value,
             }) => self.execute_point_put(task, tid, collection, document_id, value),
-
             PhysicalPlan::Document(DocumentOp::PointDelete {
                 collection,
                 document_id,
             }) => self.execute_point_delete(task, tid, collection, document_id),
-
             PhysicalPlan::Document(DocumentOp::PointUpdate {
                 collection,
                 document_id,
@@ -64,6 +62,7 @@ impl CoreLoop {
                 top_k,
                 ef_search,
                 filter_bitmap,
+                rls_filters: _,
             }) => self.execute_vector_multi_search(
                 super::handlers::vector_search::VectorMultiSearchParams {
                     task,
@@ -88,6 +87,7 @@ impl CoreLoop {
                 ef_search,
                 filter_bitmap,
                 field_name,
+                rls_filters: _,
             }) => self.execute_vector_search(super::handlers::vector_search::VectorSearchParams {
                 task,
                 tid,
@@ -207,12 +207,14 @@ impl CoreLoop {
                 direction,
                 depth,
                 options: _,
+                rls_filters: _,
             }) => self.execute_graph_hop(task, start_nodes, edge_label, *direction, *depth),
 
             PhysicalPlan::Graph(GraphOp::Neighbors {
                 node_id,
                 edge_label,
                 direction,
+                rls_filters: _,
             }) => self.execute_graph_neighbors(task, node_id, edge_label, *direction),
 
             PhysicalPlan::Graph(GraphOp::Path {
@@ -221,6 +223,7 @@ impl CoreLoop {
                 edge_label,
                 max_depth,
                 options: _,
+                rls_filters: _,
             }) => self.execute_graph_path(task, src, dst, edge_label, *max_depth),
 
             PhysicalPlan::Graph(GraphOp::Subgraph {
@@ -228,6 +231,7 @@ impl CoreLoop {
                 edge_label,
                 depth,
                 options: _,
+                rls_filters: _,
             }) => self.execute_graph_subgraph(task, start_nodes, edge_label, *depth),
 
             PhysicalPlan::Graph(GraphOp::RagFusion {
@@ -293,6 +297,7 @@ impl CoreLoop {
                 query,
                 top_k,
                 fuzzy,
+                rls_filters: _,
             }) => self.execute_text_search(task, tid, collection, query, *top_k, *fuzzy),
 
             PhysicalPlan::Text(TextOp::HybridSearch {
@@ -304,6 +309,7 @@ impl CoreLoop {
                 fuzzy,
                 vector_weight,
                 filter_bitmap,
+                rls_filters: _,
             }) => self.execute_hybrid_search(
                 task,
                 tid,

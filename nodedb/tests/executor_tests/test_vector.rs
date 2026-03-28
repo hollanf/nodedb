@@ -46,6 +46,7 @@ fn vector_insert_and_search() {
             ef_search: 0,
             filter_bitmap: None,
             field_name: String::new(),
+            rls_filters: Vec::new(),
         }),
     );
 
@@ -68,6 +69,7 @@ fn vector_search_no_index_returns_not_found() {
             ef_search: 0,
             filter_bitmap: None,
             field_name: String::new(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp.status, Status::Error);

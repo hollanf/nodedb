@@ -38,6 +38,7 @@ fn security_tenant_isolation() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "secrets".into(),
             document_id: "s1".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp.status, Status::Ok);
@@ -71,6 +72,8 @@ fn security_rls_policy_enforcement() {
             tenant_id: 1,
             policy_type: PolicyType::Write,
             predicate,
+            compiled_predicate: None,
+            mode: nodedb::control::security::predicate::PolicyMode::default(),
             enabled: true,
             created_by: "admin".into(),
             created_at: 0,
@@ -141,6 +144,7 @@ fn linearizability_read_after_write() {
             PhysicalPlan::Document(DocumentOp::PointGet {
                 collection: "linear".into(),
                 document_id: doc_id.clone(),
+                rls_filters: Vec::new(),
             }),
         );
         assert_eq!(
@@ -183,6 +187,7 @@ fn linearizability_delete_visibility() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "linear".into(),
             document_id: "del1".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp.error_code, Some(ErrorCode::NotFound));
@@ -227,6 +232,7 @@ fn wal_replay_deterministic() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "replay".into(),
             document_id: "d1".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(d1.status, Status::Ok);
@@ -244,6 +250,7 @@ fn wal_replay_deterministic() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "replay".into(),
             document_id: "d2".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(d2.status, Status::Ok);
@@ -255,6 +262,7 @@ fn wal_replay_deterministic() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "replay".into(),
             document_id: "d3".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(d3.status, Status::Ok);
@@ -322,6 +330,7 @@ fn mixed_engine_isolation_no_cross_eviction() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "mixed".into(),
             document_id: "doc_25".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(doc.status, Status::Ok, "sparse engine should be intact");
@@ -338,6 +347,7 @@ fn mixed_engine_isolation_no_cross_eviction() {
             ef_search: 0,
             filter_bitmap: None,
             field_name: String::new(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(
@@ -355,6 +365,7 @@ fn mixed_engine_isolation_no_cross_eviction() {
             node_id: "doc_25".into(),
             edge_label: Some("NEXT".into()),
             direction: nodedb::engine::graph::edge_store::Direction::Out,
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(

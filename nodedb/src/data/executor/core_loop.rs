@@ -385,16 +385,11 @@ impl CoreLoop {
     }
 
     /// Process the next pending task and send the response back via SPSC.
-    ///
-    /// Returns `true` if a task was processed, `false` if the queue was empty.
     pub fn poll_one(&mut self) -> bool {
         let Some(mut task) = self.task_queue.pop_front() else {
             return false;
         };
 
-        // Idempotency key deduplication: if this request carries a key
-        // that was already processed, return a cached Ok/Error without
-        // re-executing. Prevents duplicate writes from retries.
         if let Some(key) = task.request.idempotency_key
             && let Some(&succeeded) = self.idempotency_cache.get(&key)
         {
@@ -430,10 +425,8 @@ impl CoreLoop {
             resp
         };
 
-        // Record idempotency key result for future dedup.
         if let Some(key) = task.request.idempotency_key {
             let succeeded = response.status == Status::Ok;
-            // Evict oldest entry (FIFO) if cache grows too large (16K entries).
             if self.idempotency_cache.len() >= 16_384
                 && let Some(oldest_key) = self.idempotency_order.pop_front()
             {
@@ -443,8 +436,6 @@ impl CoreLoop {
             self.idempotency_order.push_back(key);
         }
 
-        // Cap deleted_nodes to prevent unbounded memory growth.
-        // Old entries are safe to evict — cascade delete already cleaned edges.
         if self.deleted_nodes.len() > 100_000 {
             self.deleted_nodes.clear();
         }
@@ -453,35 +444,23 @@ impl CoreLoop {
             .response_tx
             .try_push(BridgeResponse { inner: response })
         {
-            warn!(
-                core = self.core_id,
-                error = %e,
-                "failed to send response — response queue full"
-            );
+            warn!(core = self.core_id, error = %e, "failed to send response — response queue full");
         }
 
         true
     }
 
     /// Run one iteration of the event loop: drain requests, process tasks.
-    ///
-    /// Tries to batch consecutive PointPut writes into a single redb
-    /// transaction before falling back to one-at-a-time processing.
-    /// This amortizes fsync cost across N concurrent writes per core.
-    ///
-    /// Returns the number of tasks processed.
     pub fn tick(&mut self) -> usize {
         self.poll_build_completions();
         self.drain_requests();
         let mut processed = 0;
         while !self.task_queue.is_empty() {
-            // Try to batch consecutive PointPuts into one transaction.
             let batched = self.poll_write_batch();
             if batched > 0 {
                 processed += batched;
                 continue;
             }
-            // Not a batchable write — process individually.
             if self.poll_one() {
                 processed += 1;
             } else {
@@ -519,7 +498,6 @@ impl CoreLoop {
         }
     }
 
-    /// Build a partial (streaming) response with payload.
     pub(in crate::data::executor) fn response_partial(
         &self,
         task: &ExecutionTask,
@@ -552,11 +530,6 @@ impl CoreLoop {
         }
     }
 
-    /// Build a tenant-scoped vector index key.
-    ///
-    /// When `field_name` is non-empty, the key incorporates it to support
-    /// multiple named vector fields per collection. An empty `field_name`
-    /// produces the backward-compatible `{tenant_id}:{collection}` key.
     pub(in crate::data::executor) fn vector_index_key(
         tenant_id: u32,
         collection: &str,
@@ -569,7 +542,6 @@ impl CoreLoop {
         }
     }
 
-    /// Get or create a CRDT engine for the given tenant.
     pub(in crate::data::executor) fn get_crdt_engine(
         &mut self,
         tenant_id: TenantId,
@@ -652,6 +624,7 @@ pub(crate) mod tests {
                     ..make_request(PhysicalPlan::Document(DocumentOp::PointGet {
                         collection: "x".into(),
                         document_id: "y".into(),
+                        rls_filters: Vec::new(),
                     }))
                 },
             })
@@ -672,6 +645,7 @@ pub(crate) mod tests {
                 inner: make_request(PhysicalPlan::Document(DocumentOp::PointGet {
                     collection: "x".into(),
                     document_id: "y".into(),
+                    rls_filters: Vec::new(),
                 })),
             })
             .unwrap();
@@ -691,6 +665,7 @@ pub(crate) mod tests {
                     ..make_request(PhysicalPlan::Document(DocumentOp::PointGet {
                         collection: "x".into(),
                         document_id: "y".into(),
+                        rls_filters: Vec::new(),
                     }))
                 },
             })

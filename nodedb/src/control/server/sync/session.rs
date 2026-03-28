@@ -830,6 +830,8 @@ mod tests {
                 tenant_id: 1,
                 policy_type: PolicyType::Write,
                 predicate,
+                compiled_predicate: None,
+                mode: crate::control::security::predicate::PolicyMode::default(),
                 enabled: true,
                 created_by: "admin".into(),
                 created_at: 0,

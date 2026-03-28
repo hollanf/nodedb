@@ -35,6 +35,7 @@ fn edge_put_and_graph_neighbors() {
             node_id: "alice".into(),
             edge_label: Some("KNOWS".into()),
             direction: Direction::Out,
+            rls_filters: Vec::new(),
         }),
     );
     let json = payload_json(&payload);
@@ -70,6 +71,7 @@ fn graph_hop_traversal() {
             direction: Direction::Out,
             depth: 2,
             options: Default::default(),
+            rls_filters: Vec::new(),
         }),
     );
     let nodes: Vec<String> = serde_json::from_value(payload_value(&payload)).unwrap();
@@ -106,6 +108,7 @@ fn graph_path_and_subgraph() {
             edge_label: Some("L".into()),
             max_depth: 5,
             options: Default::default(),
+            rls_filters: Vec::new(),
         }),
     );
     let path: Vec<String> = serde_json::from_value(payload_value(&payload)).unwrap();
@@ -120,6 +123,7 @@ fn graph_path_and_subgraph() {
             edge_label: None,
             depth: 2,
             options: Default::default(),
+            rls_filters: Vec::new(),
         }),
     );
     let edges: Vec<serde_json::Value> = serde_json::from_value(payload_value(&payload)).unwrap();
@@ -161,6 +165,7 @@ fn edge_delete_updates_csr() {
             node_id: "x".into(),
             edge_label: None,
             direction: Direction::Out,
+            rls_filters: Vec::new(),
         }),
     );
     let neighbors: Vec<serde_json::Value> =

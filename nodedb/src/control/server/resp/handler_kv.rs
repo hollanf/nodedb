@@ -21,6 +21,7 @@ pub(super) async fn handle_get(
     let plan = PhysicalPlan::Kv(KvOp::Get {
         collection: session.collection.clone(),
         key: key.to_vec(),
+        rls_filters: Vec::new(),
     });
 
     match dispatch_kv(state, session, plan).await {
@@ -89,6 +90,7 @@ pub(super) async fn handle_set(
         let check = PhysicalPlan::Kv(KvOp::Get {
             collection: session.collection.clone(),
             key: key.clone(),
+            rls_filters: Vec::new(),
         });
         match dispatch_kv(state, session, check).await {
             Ok(resp) => {
@@ -155,6 +157,7 @@ pub(super) async fn handle_exists(
         let plan = PhysicalPlan::Kv(KvOp::Get {
             collection: session.collection.clone(),
             key: key.clone(),
+            rls_filters: Vec::new(),
         });
         if let Ok(resp) = dispatch_kv(state, session, plan).await
             && resp.status == Status::Ok

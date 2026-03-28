@@ -88,6 +88,7 @@ pub async fn vector_search(
         ef_search: 0,
         filter_bitmap: None,
         field_name: String::new(),
+        rls_filters: Vec::new(),
     });
 
     state.shared.tenant_request_start(identity.tenant_id);

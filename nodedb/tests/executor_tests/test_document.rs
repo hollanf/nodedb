@@ -15,6 +15,7 @@ fn point_get_not_found() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "users".into(),
             document_id: "nonexistent".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp.status, Status::Error);
@@ -43,6 +44,7 @@ fn point_put_and_get() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "docs".into(),
             document_id: "d1".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp.status, Status::Ok);
@@ -82,6 +84,7 @@ fn point_delete_removes() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "docs".into(),
             document_id: "d1".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp.error_code, Some(ErrorCode::NotFound));

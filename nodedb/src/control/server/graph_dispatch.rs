@@ -84,6 +84,7 @@ pub async fn cross_core_bfs_with_options(
                 node_id: node.clone(),
                 edge_label: edge_label.clone(),
                 direction,
+                rls_filters: Vec::new(),
             });
 
             let resp = super::broadcast::broadcast_to_all_cores(shared, tenant_id, plan, 0).await?;

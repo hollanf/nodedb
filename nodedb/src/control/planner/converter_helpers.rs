@@ -40,6 +40,7 @@ impl PlanConverter {
                     ef_search: 0,
                     filter_bitmap: None,
                     field_name: String::new(),
+                    rls_filters: Vec::new(),
                 }),
             }]);
         }
@@ -57,6 +58,7 @@ impl PlanConverter {
                     query: query_text,
                     top_k,
                     fuzzy: true,
+                    rls_filters: Vec::new(),
                 }),
             }]);
         }
@@ -79,6 +81,7 @@ impl PlanConverter {
                     fuzzy: true,
                     vector_weight,
                     filter_bitmap: None,
+                    rls_filters: Vec::new(),
                 }),
             }]);
         }

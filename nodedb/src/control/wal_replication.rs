@@ -586,6 +586,7 @@ mod tests {
         let plan = PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "c".into(),
             document_id: "d".into(),
+            rls_filters: Vec::new(),
         });
         assert!(to_replicated_entry(tenant, vshard, &plan).is_none());
     }

@@ -55,6 +55,7 @@ fn graph_traversal_bounded_under_adversarial_queries() {
             direction: Direction::Out,
             depth: 1,
             options: Default::default(),
+            rls_filters: Vec::new(),
         }),
     );
     let hop1_nodes: Vec<String> = serde_json::from_value(payload_value(&hop1)).unwrap();
@@ -76,6 +77,7 @@ fn graph_traversal_bounded_under_adversarial_queries() {
             direction: Direction::Out,
             depth: 0,
             options: Default::default(),
+            rls_filters: Vec::new(),
         }),
     );
     let hop0_nodes: Vec<String> = serde_json::from_value(payload_value(&hop0)).unwrap();
@@ -93,6 +95,7 @@ fn graph_traversal_bounded_under_adversarial_queries() {
             direction: Direction::Out,
             depth: 5,
             options: Default::default(),
+            rls_filters: Vec::new(),
         }),
     );
     let chain_nodes: Vec<String> = serde_json::from_value(payload_value(&chain)).unwrap();
@@ -115,6 +118,7 @@ fn graph_traversal_bounded_under_adversarial_queries() {
             edge_label: Some("NEXT".into()),
             max_depth: 3,
             options: Default::default(),
+            rls_filters: Vec::new(),
         }),
     );
     // c0→c50 is 50 hops, depth limit 3 should fail.
@@ -134,6 +138,7 @@ fn graph_traversal_bounded_under_adversarial_queries() {
             edge_label: Some("NEXT".into()),
             depth: 3,
             options: Default::default(),
+            rls_filters: Vec::new(),
         }),
     );
     let edges: Vec<serde_json::Value> = serde_json::from_value(payload_value(&subgraph)).unwrap();

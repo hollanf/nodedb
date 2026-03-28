@@ -131,6 +131,7 @@ impl PlanConverter {
                             query: query_text,
                             top_k: 1000,
                             fuzzy: true,
+                            rls_filters: Vec::new(),
                         }),
                     }]);
                 }
@@ -156,6 +157,7 @@ impl PlanConverter {
                                 plan: PhysicalPlan::Kv(KvOp::Get {
                                     collection,
                                     key: key_bytes,
+                                    rls_filters: Vec::new(),
                                 }),
                             }]);
                         }
@@ -285,6 +287,7 @@ impl PlanConverter {
                             limit,
                             filters: filter_bytes,
                             bucket_interval_ms: 0,
+                            rls_filters: Vec::new(),
                         }),
                     }]);
                 }
@@ -459,11 +462,8 @@ impl PlanConverter {
     }
 }
 
-/// Extract a key value from a simple equality predicate: `col = literal`.
-///
-/// Used for KV PK point-get optimization. Returns the literal value as bytes
-/// if the predicate is a single `column = literal` equality. Returns None
-/// for complex predicates (AND, OR, range, etc.) — those fall through to scan.
+/// Extract key bytes from `col = literal` for KV point-get optimization.
+/// Returns None for complex predicates — those fall through to scan.
 fn extract_equality_key(expr: &Expr) -> Option<Vec<u8>> {
     use datafusion::logical_expr::Operator;
 

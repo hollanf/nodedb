@@ -38,6 +38,7 @@ fn transaction_batch_commits_atomically() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "docs".into(),
             document_id: "d1".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(r1.status, Status::Ok);
@@ -49,6 +50,7 @@ fn transaction_batch_commits_atomically() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "docs".into(),
             document_id: "d2".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(r2.status, Status::Ok);
@@ -133,6 +135,7 @@ fn transaction_batch_rollback_on_failure() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "docs".into(),
             document_id: "d1".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(r.status, Status::Ok);

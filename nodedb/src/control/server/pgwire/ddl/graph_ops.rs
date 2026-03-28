@@ -141,6 +141,7 @@ pub async fn neighbors(
         node_id: node,
         edge_label: label,
         direction: dir,
+        rls_filters: Vec::new(),
     });
 
     // Broadcast to all cores — edges may be distributed across cores.

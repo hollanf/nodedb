@@ -137,6 +137,7 @@ async fn handle_ttl(
     let plan = PhysicalPlan::Kv(KvOp::Get {
         collection: session.collection.clone(),
         key: key.to_vec(),
+        rls_filters: Vec::new(),
     });
 
     match dispatch_kv(state, session, plan).await {

@@ -35,6 +35,7 @@ fn kv_protocol_command_sequence() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "default".into(),
             key: b"key1".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(payload, b"value1");
@@ -60,6 +61,7 @@ fn kv_protocol_command_sequence() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "default".into(),
             key: b"key1".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(payload, b"value2");
@@ -72,6 +74,7 @@ fn kv_protocol_command_sequence() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "default".into(),
             key: b"key1".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp.status, Status::Ok);
@@ -97,6 +100,7 @@ fn kv_protocol_command_sequence() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "default".into(),
             key: b"key1".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp.status, Status::Error);
@@ -197,6 +201,7 @@ fn kv_and_vector_coexist() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "users".into(),
             key: b"user:3".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(payload, b"data:3");
@@ -213,6 +218,7 @@ fn kv_and_vector_coexist() {
             ef_search: 0,
             filter_bitmap: None,
             field_name: String::new(),
+            rls_filters: Vec::new(),
         }),
     );
 }
@@ -246,6 +252,7 @@ fn ttl_expiry_produces_expired_key_info() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "sessions".into(),
             key: b"s1".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp.status, Status::Ok);
@@ -278,6 +285,7 @@ fn ttl_expiry_produces_expired_key_info() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "sessions".into(),
             key: b"persistent".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(payload, b"forever");
@@ -398,6 +406,7 @@ fn kv_truncate_clears_all() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "ephemeral".into(),
             key: b"k0".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp.status, Status::Error);
@@ -513,6 +522,7 @@ fn kv_mass_expiry_respects_reap_budget() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "mass_expire".into(),
             key: b"survivor".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(payload, b"alive");
@@ -529,6 +539,7 @@ fn kv_mass_expiry_respects_reap_budget() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "mass_expire".into(),
             key: b"survivor".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(payload, b"alive");

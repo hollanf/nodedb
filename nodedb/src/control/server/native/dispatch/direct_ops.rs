@@ -57,6 +57,7 @@ fn build_plan(op: OpCode, fields: &TextFields, collection: &str) -> crate::Resul
             Ok(PhysicalPlan::Document(DocumentOp::PointGet {
                 collection: collection.to_string(),
                 document_id,
+                rls_filters: Vec::new(),
             }))
         }
         OpCode::PointPut => {
@@ -103,6 +104,7 @@ fn build_plan(op: OpCode, fields: &TextFields, collection: &str) -> crate::Resul
                 ef_search: 0,
                 filter_bitmap: None,
                 field_name: String::new(),
+                rls_filters: Vec::new(),
             }))
         }
         OpCode::RangeScan => {
@@ -217,6 +219,7 @@ fn build_plan(op: OpCode, fields: &TextFields, collection: &str) -> crate::Resul
                 edge_label: fields.edge_label.clone(),
                 direction,
                 options: Default::default(),
+                rls_filters: Vec::new(),
             }))
         }
         OpCode::GraphNeighbors => {
@@ -231,6 +234,7 @@ fn build_plan(op: OpCode, fields: &TextFields, collection: &str) -> crate::Resul
                 node_id: start.clone(),
                 edge_label: fields.edge_label.clone(),
                 direction,
+                rls_filters: Vec::new(),
             }))
         }
         OpCode::GraphPath => {
@@ -253,6 +257,7 @@ fn build_plan(op: OpCode, fields: &TextFields, collection: &str) -> crate::Resul
                 max_depth,
                 edge_label: fields.edge_label.clone(),
                 options: Default::default(),
+                rls_filters: Vec::new(),
             }))
         }
         OpCode::GraphSubgraph => {
@@ -268,6 +273,7 @@ fn build_plan(op: OpCode, fields: &TextFields, collection: &str) -> crate::Resul
                 depth,
                 edge_label: fields.edge_label.clone(),
                 options: Default::default(),
+                rls_filters: Vec::new(),
             }))
         }
         OpCode::EdgePut => {
@@ -340,6 +346,7 @@ fn build_plan(op: OpCode, fields: &TextFields, collection: &str) -> crate::Resul
                 query: query_text.clone(),
                 top_k,
                 fuzzy: false,
+                rls_filters: Vec::new(),
             }))
         }
         OpCode::HybridSearch => {
@@ -368,6 +375,7 @@ fn build_plan(op: OpCode, fields: &TextFields, collection: &str) -> crate::Resul
                 fuzzy: false,
                 vector_weight,
                 filter_bitmap: None,
+                rls_filters: Vec::new(),
             }))
         }
         _ => Err(crate::Error::BadRequest {

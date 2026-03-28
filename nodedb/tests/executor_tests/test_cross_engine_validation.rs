@@ -88,6 +88,7 @@ fn cross_model_query_vector_graph_relational() {
             ef_search: 0,
             filter_bitmap: None,
             field_name: String::new(),
+            rls_filters: Vec::new(),
         }),
     );
     let vector_json = payload_json(&vector_payload);
@@ -107,6 +108,7 @@ fn cross_model_query_vector_graph_relational() {
             direction: Direction::Out,
             depth: 3,
             options: Default::default(),
+            rls_filters: Vec::new(),
         }),
     );
     let graph_nodes: Vec<String> = serde_json::from_value(payload_value(&graph_payload)).unwrap();
@@ -236,6 +238,7 @@ fn rrf_fusion_mathematically_correct() {
             fuzzy: true,
             vector_weight: 0.5,
             filter_bitmap: None,
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp_equal.status, Status::Ok);
@@ -256,6 +259,7 @@ fn rrf_fusion_mathematically_correct() {
             fuzzy: true,
             vector_weight: 0.9,
             filter_bitmap: None,
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp_vec_heavy.status, Status::Ok);
@@ -318,6 +322,7 @@ fn document_indexes_consistent_after_simulated_crash() {
             query: "database".into(),
             top_k: 10,
             fuzzy: true,
+            rls_filters: Vec::new(),
         }),
     );
     let text_json = payload_json(&text_payload);
@@ -347,6 +352,7 @@ fn document_indexes_consistent_after_simulated_crash() {
             query: "database".into(),
             top_k: 10,
             fuzzy: true,
+            rls_filters: Vec::new(),
         }),
     );
     let text_after_json = payload_json(&text_after);
@@ -365,6 +371,7 @@ fn document_indexes_consistent_after_simulated_crash() {
             query: "vector search".into(),
             top_k: 10,
             fuzzy: true,
+            rls_filters: Vec::new(),
         }),
     );
     let text_a2_json = payload_json(&text_a2);
@@ -381,6 +388,7 @@ fn document_indexes_consistent_after_simulated_crash() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "articles".into(),
             document_id: "a1".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(get_a1.error_code, Some(ErrorCode::NotFound));
@@ -392,6 +400,7 @@ fn document_indexes_consistent_after_simulated_crash() {
         PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "articles".into(),
             document_id: "a2".into(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(get_a2.status, Status::Ok);

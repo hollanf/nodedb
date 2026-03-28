@@ -34,6 +34,7 @@ fn kv_put_get_delete() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "cache".into(),
             key: b"key1".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(payload, b"value1");
@@ -59,6 +60,7 @@ fn kv_put_get_delete() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "cache".into(),
             key: b"key1".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(resp.status, Status::Error);
@@ -100,6 +102,7 @@ fn kv_overwrite_returns_ok() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "c".into(),
             key: b"k".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(payload, b"v2");
@@ -274,6 +277,7 @@ fn kv_expire_and_persist() {
         PhysicalPlan::Kv(KvOp::Get {
             collection: "c".into(),
             key: b"k".to_vec(),
+            rls_filters: Vec::new(),
         }),
     );
     assert_eq!(payload, b"v");
@@ -423,6 +427,7 @@ fn kv_tenant_isolation() {
         ..make_request(PhysicalPlan::Kv(KvOp::Get {
             collection: "shared".into(),
             key: b"k".to_vec(),
+            rls_filters: Vec::new(),
         }))
     };
     tx.try_push(nodedb::bridge::dispatch::BridgeRequest { inner: req })

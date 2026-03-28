@@ -252,6 +252,7 @@ impl Session {
                 PhysicalPlan::Document(DocumentOp::PointGet {
                     collection,
                     document_id,
+                    rls_filters: Vec::new(),
                 })
             }
             "vector_search" => {
@@ -271,6 +272,7 @@ impl Session {
                     ef_search: 0,
                     filter_bitmap: None,
                     field_name: String::new(),
+                    rls_filters: Vec::new(),
                 })
             }
             "range_scan" => {

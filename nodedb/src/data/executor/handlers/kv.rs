@@ -17,7 +17,11 @@ impl CoreLoop {
         op: &KvOp,
     ) -> Response {
         match op {
-            KvOp::Get { collection, key } => self.execute_kv_get(task, tid, collection, key),
+            KvOp::Get {
+                collection,
+                key,
+                rls_filters: _,
+            } => self.execute_kv_get(task, tid, collection, key),
             KvOp::Put {
                 collection,
                 key,

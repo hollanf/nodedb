@@ -184,6 +184,7 @@ pub async fn get_document(
     let plan = PhysicalPlan::Document(DocumentOp::PointGet {
         collection: collection.clone(),
         document_id: document_id.clone(),
+        rls_filters: Vec::new(),
     });
 
     state.shared.tenant_request_start(identity.tenant_id);

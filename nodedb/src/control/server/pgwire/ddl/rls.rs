@@ -1,11 +1,21 @@
 //! RLS policy management DDL commands.
 //!
+//! Supports both legacy static predicates and rich `$auth.*` predicates:
+//!
+//! ```sql
+//! -- Legacy (static):
 //! CREATE RLS POLICY <name> ON <collection> FOR <read|write|all>
 //!     USING (<field> <op> <value>) [TENANT <id>]
+//!
+//! -- Rich (with $auth session variables, set ops, composites):
+//! CREATE RLS POLICY <name> ON <collection> FOR <read|write|all>
+//!     USING (user_id = $auth.id OR $auth.roles CONTAINS 'admin')
+//!     [RESTRICTIVE] [TENANT <id>]
 //!
 //! DROP RLS POLICY <name> ON <collection> [TENANT <id>]
 //!
 //! SHOW RLS POLICIES [ON <collection>] [TENANT <id>]
+//! ```
 
 use std::sync::Arc;
 
@@ -14,13 +24,23 @@ use pgwire::api::results::{DataRowEncoder, QueryResponse, Response, Tag};
 use pgwire::error::PgWireResult;
 
 use crate::control::security::identity::AuthenticatedIdentity;
+use crate::control::security::predicate::PolicyMode;
+use crate::control::security::predicate_parser::{parse_predicate, validate_auth_refs};
 use crate::control::security::rls::{PolicyType, RlsPolicy};
 use crate::control::state::SharedState;
 
 use super::super::types::{sqlstate_error, text_field};
 
 /// CREATE RLS POLICY <name> ON <collection> FOR <read|write|all>
-///     USING (<field> <op> <value>) [TENANT <id>]
+///     USING (<predicate_expression>) [RESTRICTIVE] [TENANT <id>]
+///
+/// The predicate expression supports:
+/// - Simple comparisons: `user_id = $auth.id`, `status = 'active'`
+/// - Set operations: `$auth.roles CONTAINS 'admin'`, `groups INTERSECTS $auth.groups`
+/// - Composites: `(user_id = $auth.id) OR ($auth.roles CONTAINS 'admin')`
+/// - Negation: `NOT status = 'deleted'`
+///
+/// `RESTRICTIVE` keyword makes the policy AND-combined (default is OR-combined/permissive).
 pub fn create_rls_policy(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
@@ -39,18 +59,15 @@ pub fn create_rls_policy(
     }
 
     // Parse: CREATE RLS POLICY <name> ON <collection> FOR <type> USING (<predicate>)
-    // Minimum: CREATE RLS POLICY name ON coll FOR write USING (field eq value)
     if parts.len() < 9 {
         return Err(sqlstate_error(
             "42601",
-            "syntax: CREATE RLS POLICY <name> ON <collection> FOR <read|write|all> USING (<field> <op> <value>)",
+            "syntax: CREATE RLS POLICY <name> ON <collection> FOR <read|write|all> USING (<predicate>)",
         ));
     }
 
     let name = parts[3];
-    // parts[4] should be "ON"
     let collection = parts[5];
-    // parts[6] should be "FOR"
     let policy_type_str = parts[7].to_uppercase();
     let policy_type = match policy_type_str.as_str() {
         "READ" => PolicyType::Read,
@@ -64,39 +81,36 @@ pub fn create_rls_policy(
         }
     };
 
-    // Parse USING clause — everything after "USING" joined and stripped of parens.
+    // Parse USING clause — everything after "USING" up to RESTRICTIVE/TENANT.
     let using_idx = parts
         .iter()
         .position(|p| p.to_uppercase() == "USING")
         .ok_or_else(|| sqlstate_error("42601", "missing USING clause"))?;
 
-    let predicate_parts: Vec<&str> = parts[using_idx + 1..].to_vec();
-    let predicate_str = predicate_parts
+    // Find where the predicate ends (before RESTRICTIVE or TENANT keywords).
+    let pred_end = parts[using_idx + 1..]
+        .iter()
+        .position(|p| {
+            let upper = p.to_uppercase();
+            upper == "RESTRICTIVE" || upper == "TENANT"
+        })
+        .map(|i| using_idx + 1 + i)
+        .unwrap_or(parts.len());
+
+    let predicate_str = parts[using_idx + 1..pred_end]
         .join(" ")
-        .trim_matches(|c| c == '(' || c == ')')
+        .trim_matches(|c: char| c == '(' || c == ')')
         .to_string();
 
-    // Parse simple predicate: "<field> <op> <value>"
-    let pred_parts: Vec<&str> = predicate_str.split_whitespace().collect();
-    if pred_parts.len() < 3 {
-        return Err(sqlstate_error(
-            "42601",
-            "USING predicate must be: (<field> <op> <value>)",
-        ));
-    }
-
-    let field = pred_parts[0];
-    let op = pred_parts[1];
-    let value_str = pred_parts[2..].join(" ").trim_matches('\'').to_string();
-
-    let filter = crate::bridge::scan_filter::ScanFilter {
-        field: field.to_string(),
-        op: op.to_string(),
-        value: serde_json::json!(value_str),
-        clauses: Vec::new(),
+    // Check for RESTRICTIVE keyword.
+    let is_restrictive = parts[pred_end..]
+        .iter()
+        .any(|p| p.to_uppercase() == "RESTRICTIVE");
+    let mode = if is_restrictive {
+        PolicyMode::Restrictive
+    } else {
+        PolicyMode::Permissive
     };
-    let predicate = rmp_serde::to_vec_named(&vec![filter])
-        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
 
     // Determine tenant — from TENANT clause or identity.
     let tenant_id = parts
@@ -106,12 +120,58 @@ pub fn create_rls_policy(
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(identity.tenant_id.as_u32());
 
+    // Try parsing as rich predicate (with $auth.* support).
+    // If it contains $auth references, CONTAINS, INTERSECTS, AND, OR — use compiled path.
+    let has_rich_syntax = predicate_str.contains("$auth")
+        || predicate_str.to_uppercase().contains("CONTAINS")
+        || predicate_str.to_uppercase().contains("INTERSECTS")
+        || predicate_str.to_uppercase().contains(" AND ")
+        || predicate_str.to_uppercase().contains(" OR ")
+        || predicate_str.to_uppercase().contains("NOT ");
+
+    let (predicate, compiled_predicate) = if has_rich_syntax {
+        // Rich predicate: parse into compiled AST.
+        let compiled = parse_predicate(&predicate_str)
+            .map_err(|e| sqlstate_error("42601", &format!("predicate parse error: {e}")))?;
+
+        // Validate all $auth references are known fields.
+        validate_auth_refs(&compiled).map_err(|e| sqlstate_error("42601", &e))?;
+
+        (Vec::new(), Some(compiled))
+    } else {
+        // Legacy simple predicate: <field> <op> <value>
+        let pred_parts: Vec<&str> = predicate_str.split_whitespace().collect();
+        if pred_parts.len() < 3 {
+            return Err(sqlstate_error(
+                "42601",
+                "USING predicate must be: (<field> <op> <value>) or a rich expression with $auth.*",
+            ));
+        }
+
+        let field = pred_parts[0];
+        let op = pred_parts[1];
+        let value_str = pred_parts[2..].join(" ").trim_matches('\'').to_string();
+
+        let filter = crate::bridge::scan_filter::ScanFilter {
+            field: field.to_string(),
+            op: op.to_string(),
+            value: serde_json::json!(value_str),
+            clauses: Vec::new(),
+        };
+        let predicate = rmp_serde::to_vec_named(&vec![filter])
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+
+        (predicate, None)
+    };
+
     let policy = RlsPolicy {
         name: name.to_string(),
         collection: collection.to_string(),
         tenant_id,
         policy_type,
         predicate,
+        compiled_predicate,
+        mode,
         enabled: true,
         created_by: identity.username.clone(),
         created_at: std::time::SystemTime::now()
@@ -125,11 +185,12 @@ pub fn create_rls_policy(
         .create_policy(policy)
         .map_err(|e| sqlstate_error("23505", &e.to_string()))?;
 
+    let mode_str = if is_restrictive { " RESTRICTIVE" } else { "" };
     state.audit_record(
         crate::control::security::audit::AuditEvent::AdminAction,
         Some(identity.tenant_id),
         &identity.username,
-        &format!("RLS policy '{name}' created on '{collection}' for {policy_type_str}"),
+        &format!("RLS policy '{name}' created on '{collection}' for {policy_type_str}{mode_str}"),
     );
 
     Ok(vec![Response::Execution(Tag::new("CREATE RLS POLICY"))])
@@ -212,6 +273,8 @@ pub fn show_rls_policies(
         text_field("name"),
         text_field("collection"),
         text_field("type"),
+        text_field("mode"),
+        text_field("has_auth_refs"),
         text_field("enabled"),
         text_field("created_by"),
     ]);
@@ -223,6 +286,8 @@ pub fn show_rls_policies(
             let _ = enc.encode_field(&p.name);
             let _ = enc.encode_field(&p.collection);
             let _ = enc.encode_field(&format!("{:?}", p.policy_type));
+            let _ = enc.encode_field(&format!("{:?}", p.mode));
+            let _ = enc.encode_field(&p.compiled_predicate.is_some().to_string());
             let _ = enc.encode_field(&p.enabled.to_string());
             let _ = enc.encode_field(&p.created_by);
             Ok(enc.take_row())

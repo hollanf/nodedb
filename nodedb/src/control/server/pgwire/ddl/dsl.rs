@@ -88,6 +88,7 @@ pub async fn search_vector(
         ef_search: 0,
         filter_bitmap,
         field_name: String::new(),
+        rls_filters: Vec::new(),
     });
 
     let payload = super::sync_dispatch::dispatch_async(
