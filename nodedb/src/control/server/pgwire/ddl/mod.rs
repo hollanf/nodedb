@@ -1,4 +1,5 @@
 pub mod apikey;
+pub mod auth_key_ddl;
 pub mod auth_user_ddl;
 pub mod backup;
 pub mod blacklist_ddl;
@@ -11,6 +12,7 @@ pub mod dsl;
 pub mod field_def;
 pub mod grant;
 pub mod graph_ops;
+pub mod impersonation_ddl;
 pub mod inspect;
 pub mod kv;
 pub mod match_ops;

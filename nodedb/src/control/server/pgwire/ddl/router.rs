@@ -249,6 +249,46 @@ pub async fn dispatch(
     if upper.starts_with("RENEW SCOPE ") {
         return Some(super::scope_ddl::renew_scope(state, identity, &parts));
     }
+    // Auth-scoped API keys.
+    if upper.starts_with("CREATE AUTH KEY ") {
+        return Some(super::auth_key_ddl::create_auth_key(
+            state, identity, &parts,
+        ));
+    }
+    if upper.starts_with("ROTATE AUTH KEY ") {
+        return Some(super::auth_key_ddl::rotate_auth_key(
+            state, identity, &parts,
+        ));
+    }
+    if upper.starts_with("LIST AUTH KEYS") {
+        return Some(super::auth_key_ddl::list_auth_keys(state, identity, &parts));
+    }
+
+    // Impersonation & delegation.
+    if upper.starts_with("IMPERSONATE AUTH USER ") {
+        return Some(super::impersonation_ddl::impersonate(
+            state, identity, &parts,
+        ));
+    }
+    if upper.starts_with("STOP IMPERSONATION") {
+        return Some(super::impersonation_ddl::stop_impersonation(
+            state, identity, &parts,
+        ));
+    }
+    if upper.starts_with("DELEGATE AUTH USER ") {
+        return Some(super::impersonation_ddl::delegate(state, identity, &parts));
+    }
+    if upper.starts_with("REVOKE DELEGATION ") {
+        return Some(super::impersonation_ddl::revoke_delegation(
+            state, identity, &parts,
+        ));
+    }
+    if upper.starts_with("SHOW DELEGATIONS") {
+        return Some(super::impersonation_ddl::show_delegations(
+            state, identity, &parts,
+        ));
+    }
+
     // Session management.
     if upper.starts_with("SHOW SESSIONS") {
         return Some(super::session_ddl::show_sessions(state, identity, &parts));

@@ -85,6 +85,10 @@ pub struct SharedState {
     pub usage_store: std::sync::Arc<crate::control::security::metering::store::UsageStore>,
     /// Quota manager (enforcement against scope quotas).
     pub quota_manager: crate::control::security::metering::quota::QuotaManager,
+    /// Auth-scoped API keys (nda_ format, bound to auth_users).
+    pub auth_api_keys: crate::control::security::auth_apikey::AuthApiKeyStore,
+    /// Impersonation & delegation store.
+    pub impersonation: crate::control::security::impersonation::ImpersonationStore,
 
     /// JWKS registry for multi-provider JWT validation (None = JWT disabled).
     pub jwks_registry:
@@ -216,6 +220,8 @@ impl SharedState {
                 crate::control::security::metering::store::UsageStore::default(),
             ),
             quota_manager: crate::control::security::metering::quota::QuotaManager::new(),
+            auth_api_keys: crate::control::security::auth_apikey::AuthApiKeyStore::new(),
+            impersonation: crate::control::security::impersonation::ImpersonationStore::default(),
             jwks_registry: None,
             sync_dlq: Mutex::new(SyncDlq::new(DlqConfig::default())),
             audit_retention_days: 0,
@@ -307,6 +313,8 @@ impl SharedState {
                 crate::control::security::metering::store::UsageStore::default(),
             ),
             quota_manager: crate::control::security::metering::quota::QuotaManager::new(),
+            auth_api_keys: crate::control::security::auth_apikey::AuthApiKeyStore::new(),
+            impersonation: crate::control::security::impersonation::ImpersonationStore::default(),
             jwks_registry: None,
             sync_dlq: Mutex::new(SyncDlq::new(DlqConfig::default())),
             audit_retention_days: auth_config.audit_retention_days,

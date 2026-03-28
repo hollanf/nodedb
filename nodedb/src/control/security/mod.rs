@@ -1,5 +1,6 @@
 pub mod apikey;
 pub mod audit;
+pub mod auth_apikey;
 pub mod auth_context;
 pub mod blacklist;
 pub mod catalog;
@@ -9,6 +10,7 @@ pub mod deny;
 pub mod encryption;
 pub mod escalation;
 pub mod identity;
+pub mod impersonation;
 pub mod jit;
 pub mod jwks;
 pub mod jwt;
