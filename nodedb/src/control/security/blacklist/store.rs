@@ -73,6 +73,10 @@ pub struct BlacklistStore {
     entries: RwLock<HashMap<String, BlacklistEntry>>,
     /// Optional catalog for persistence.
     catalog: Option<SystemCatalog>,
+    /// JWT claim-based blocking: status values that deny access.
+    blocked_statuses: Vec<String>,
+    /// JWT claim name for status (e.g., "account_status").
+    status_claim: Option<String>,
 }
 
 impl BlacklistStore {
@@ -81,21 +85,61 @@ impl BlacklistStore {
         Self {
             entries: RwLock::new(HashMap::new()),
             catalog: None,
+            blocked_statuses: Vec::new(),
+            status_claim: None,
         }
     }
 
-    /// Open a persistent store, loading entries from redb.
-    pub fn open(catalog: SystemCatalog) -> crate::Result<Self> {
+    /// Configure JWT claim-based blocking.
+    pub fn set_claim_blocking(
+        &mut self,
+        status_claim: Option<String>,
+        blocked_statuses: Vec<String>,
+    ) {
+        self.status_claim = status_claim;
+        self.blocked_statuses = blocked_statuses;
+    }
+
+    /// Check if a JWT status claim value is blocked.
+    /// Returns `Some(status_value)` if blocked, `None` if allowed.
+    pub fn check_jwt_status(
+        &self,
+        auth_ctx: &super::super::auth_context::AuthContext,
+    ) -> Option<String> {
+        let claim = self.status_claim.as_deref()?;
+        if self.blocked_statuses.is_empty() {
+            return None;
+        }
+        // Check metadata first (custom claims land there).
+        let val = auth_ctx.metadata.get(claim).cloned().or_else(|| {
+            if claim == "status" {
+                Some(auth_ctx.status.to_string())
+            } else {
+                None
+            }
+        })?;
+        if self.blocked_statuses.contains(&val) {
+            Some(val)
+        } else {
+            None
+        }
+    }
+
+    /// Load blacklist entries from a catalog (borrows, does not own).
+    ///
+    /// Called during `SharedState::open()` after the credential store's
+    /// catalog is available. Populates the in-memory cache from redb.
+    pub fn load_from(&self, catalog: &SystemCatalog) -> crate::Result<()> {
         let stored = catalog.load_all_blacklist_entries()?;
-        let mut entries = HashMap::with_capacity(stored.len());
         let mut expired_keys = Vec::new();
+        let mut loaded = Vec::new();
 
         for s in &stored {
             let entry = BlacklistEntry::from_stored(s);
             if entry.is_expired() {
                 expired_keys.push(s.key.clone());
             } else {
-                entries.insert(entry.key.clone(), entry);
+                loaded.push(entry);
             }
         }
 
@@ -104,18 +148,19 @@ impl BlacklistStore {
             let _ = catalog.delete_blacklist_entry(key);
         }
 
-        if !entries.is_empty() {
+        if !loaded.is_empty() {
+            let mut entries = self.entries.write().unwrap_or_else(|p| p.into_inner());
+            for entry in &loaded {
+                entries.insert(entry.key.clone(), entry.clone());
+            }
             info!(
-                active = entries.len(),
+                active = loaded.len(),
                 expired_cleaned = expired_keys.len(),
                 "blacklist loaded from catalog"
             );
         }
 
-        Ok(Self {
-            entries: RwLock::new(entries),
-            catalog: Some(catalog),
-        })
+        Ok(())
     }
 
     /// Check if a user ID is blacklisted. Returns the entry if blocked.

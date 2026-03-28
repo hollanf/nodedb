@@ -197,7 +197,9 @@ fn parse_atom(tokens: &[String], pos: &mut usize) -> Result<RlsPredicate, Predic
     if *pos >= tokens.len() {
         // Standalone value — treat as boolean (truthy).
         return match left_value {
-            PredicateValue::AuthRef(_) | PredicateValue::Field(_) => Ok(RlsPredicate::Compare {
+            PredicateValue::AuthRef(_)
+            | PredicateValue::Field(_)
+            | PredicateValue::AuthFunc { .. } => Ok(RlsPredicate::Compare {
                 field: match &left_value {
                     PredicateValue::Field(f) => f.clone(),
                     _ => String::new(),
@@ -255,14 +257,12 @@ fn parse_atom(tokens: &[String], pos: &mut usize) -> Result<RlsPredicate, Predic
                         value: left_value,
                     })
                 }
-                // Both are auth refs or literals → evaluate at plan time.
-                (PredicateValue::AuthRef(_), _) | (PredicateValue::Literal(_), _) => {
-                    Ok(RlsPredicate::Compare {
-                        field: String::new(), // sentinel: plan-time only
-                        op: compare_op,
-                        value: right_value,
-                    })
-                }
+                // Auth refs, literals, or functions → evaluate at plan time.
+                _ => Ok(RlsPredicate::Compare {
+                    field: String::new(), // sentinel: plan-time only
+                    op: compare_op,
+                    value: right_value,
+                }),
             }
         }
     }
@@ -395,18 +395,35 @@ pub fn validate_auth_refs(predicate: &RlsPredicate) -> Result<(), String> {
     }
 
     fn check_value(val: &PredicateValue, known: &[&str]) -> Result<(), String> {
-        if let PredicateValue::AuthRef(field) = val {
-            let base = field.split('.').next().unwrap_or(field);
-            // Allow metadata.* sub-fields
-            if base == "metadata" {
-                return Ok(());
+        match val {
+            PredicateValue::AuthRef(field) => {
+                let base = field.split('.').next().unwrap_or(field);
+                // Allow metadata.* sub-fields
+                if base == "metadata" {
+                    return Ok(());
+                }
+                if !known.contains(&base) {
+                    return Err(format!(
+                        "unknown $auth field: '{field}'. Valid fields: {}",
+                        known.join(", ")
+                    ));
+                }
             }
-            if !known.contains(&base) {
-                return Err(format!(
-                    "unknown $auth field: '{field}'. Valid fields: {}",
-                    known.join(", ")
-                ));
+            PredicateValue::AuthFunc { func, .. } => {
+                const KNOWN_FUNCS: &[&str] = &[
+                    "scope_status",
+                    "scope_expires_at",
+                    "quota_remaining",
+                    "quota_pct",
+                ];
+                if !KNOWN_FUNCS.contains(&func.as_str()) {
+                    return Err(format!(
+                        "unknown $auth function: '{func}'. Valid functions: {}",
+                        KNOWN_FUNCS.join(", ")
+                    ));
+                }
             }
+            _ => {}
         }
         Ok(())
     }

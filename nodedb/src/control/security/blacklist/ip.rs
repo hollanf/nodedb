@@ -7,7 +7,6 @@ use std::net::IpAddr;
 
 /// A parsed CIDR range for IP blacklist matching.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct CidrRange {
     /// Network address.
     network: IpAddr,
@@ -50,6 +49,11 @@ impl CidrRange {
                 mask: u128::MAX,
             })
         }
+    }
+
+    /// The prefix length (e.g., 24 for /24).
+    pub fn prefix_len(&self) -> u8 {
+        self.prefix_len
     }
 
     /// Check if an IP address falls within this CIDR range.

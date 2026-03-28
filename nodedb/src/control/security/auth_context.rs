@@ -136,7 +136,7 @@ impl AuthContext {
             .and_then(|s| s.parse::<AuthStatus>().ok())
             .unwrap_or(AuthStatus::Active);
 
-        let metadata = claims
+        let mut metadata: HashMap<String, String> = claims
             .extra
             .get("metadata")
             .and_then(|v| v.as_object())
@@ -146,6 +146,19 @@ impl AuthContext {
                     .collect()
             })
             .unwrap_or_default();
+
+        // Parse scope_expires claim: { "pro:all": 1735689600, "basic": 0 }
+        if let Some(scope_expires) = claims
+            .extra
+            .get("scope_expires")
+            .and_then(|v| v.as_object())
+        {
+            for (scope_name, ts) in scope_expires {
+                if let Some(ts_val) = ts.as_u64() {
+                    metadata.insert(format!("scope_expires_at.{scope_name}"), ts_val.to_string());
+                }
+            }
+        }
 
         Self {
             id: if claims.user_id != 0 {

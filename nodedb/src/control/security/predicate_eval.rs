@@ -46,6 +46,7 @@ pub fn substitute_to_scan_filters(
             let resolved = match value {
                 PredicateValue::Literal(v) => v.clone(),
                 PredicateValue::AuthRef(auth_field) => auth.resolve_variable(auth_field)?,
+                PredicateValue::AuthFunc { .. } => value.resolve(auth)?,
                 PredicateValue::Field(_) => {
                     // Field-to-field comparison not supported in ScanFilter.
                     return None;
@@ -136,13 +137,12 @@ pub fn combine_policies(
     let mut combined = Vec::new();
 
     // Permissive: OR-combine. If no permissive policies exist, default allow.
-    if !permissive.is_empty() {
-        if permissive.len() == 1 {
-            combined.extend(substitute_to_scan_filters(permissive[0], auth)?);
-        } else {
-            let or_pred = RlsPredicate::Or(permissive.into_iter().cloned().collect());
-            combined.extend(substitute_to_scan_filters(&or_pred, auth)?);
-        }
+    if permissive.len() == 1 {
+        combined.extend(substitute_to_scan_filters(permissive[0], auth)?);
+    } else if permissive.len() > 1 {
+        let or_children: Vec<RlsPredicate> = permissive.iter().map(|p| (*p).clone()).collect();
+        let or_pred = RlsPredicate::Or(or_children);
+        combined.extend(substitute_to_scan_filters(&or_pred, auth)?);
     }
 
     // Restrictive: AND-combine (each becomes additional filters).
@@ -187,9 +187,44 @@ fn substitute_contains(
             }
         }
 
+        // $auth.scope_status('pro:all') CONTAINS 'active' → resolved at plan time.
+        (PredicateValue::AuthFunc { .. }, PredicateValue::Literal(lit)) => {
+            let auth_val = set.resolve(auth)?;
+            if let Some(arr) = auth_val.as_array() {
+                if arr.contains(lit) {
+                    Some(vec![ScanFilter {
+                        field: String::new(),
+                        op: "match_all".into(),
+                        value: serde_json::Value::Null,
+                        clauses: Vec::new(),
+                    }])
+                } else {
+                    Some(vec![ScanFilter {
+                        field: "__rls_deny__".into(),
+                        op: "is_not_null".into(),
+                        value: serde_json::Value::Null,
+                        clauses: Vec::new(),
+                    }])
+                }
+            } else {
+                None // Expected array, got scalar → deny
+            }
+        }
+
         // doc_field CONTAINS $auth.id → field "contains" resolved_value.
         (PredicateValue::Field(doc_field), PredicateValue::AuthRef(auth_field)) => {
             let auth_val = auth.resolve_variable(auth_field)?;
+            Some(vec![ScanFilter {
+                field: doc_field.clone(),
+                op: "contains".into(),
+                value: auth_val,
+                clauses: Vec::new(),
+            }])
+        }
+
+        // doc_field CONTAINS $auth.scope_status('pro:all') → field "contains" resolved_value.
+        (PredicateValue::Field(doc_field), PredicateValue::AuthFunc { .. }) => {
+            let auth_val = element.resolve(auth)?;
             Some(vec![ScanFilter {
                 field: doc_field.clone(),
                 op: "contains".into(),
@@ -230,10 +265,60 @@ fn substitute_intersects(
             }])
         }
 
+        // doc_field INTERSECTS $auth.scope_status('pro:all') → "any_in" operator.
+        (PredicateValue::Field(doc_field), PredicateValue::AuthFunc { .. }) => {
+            let auth_val = right.resolve(auth)?;
+            Some(vec![ScanFilter {
+                field: doc_field.clone(),
+                op: "any_in".into(),
+                value: auth_val,
+                clauses: Vec::new(),
+            }])
+        }
+        (PredicateValue::AuthFunc { .. }, PredicateValue::Field(doc_field)) => {
+            let auth_val = left.resolve(auth)?;
+            Some(vec![ScanFilter {
+                field: doc_field.clone(),
+                op: "any_in".into(),
+                value: auth_val,
+                clauses: Vec::new(),
+            }])
+        }
+
         // $auth.groups INTERSECTS $auth.allowed → plan-time evaluation.
         (PredicateValue::AuthRef(left_field), PredicateValue::AuthRef(right_field)) => {
             let left_val = auth.resolve_variable(left_field)?;
             let right_val = auth.resolve_variable(right_field)?;
+            let intersects = if let (Some(l), Some(r)) = (left_val.as_array(), right_val.as_array())
+            {
+                l.iter().any(|v| r.contains(v))
+            } else {
+                false
+            };
+
+            if intersects {
+                Some(vec![ScanFilter {
+                    field: String::new(),
+                    op: "match_all".into(),
+                    value: serde_json::Value::Null,
+                    clauses: Vec::new(),
+                }])
+            } else {
+                Some(vec![ScanFilter {
+                    field: "__rls_deny__".into(),
+                    op: "is_not_null".into(),
+                    value: serde_json::Value::Null,
+                    clauses: Vec::new(),
+                }])
+            }
+        }
+
+        // AuthFunc on either or both sides → plan-time evaluation via resolve().
+        (PredicateValue::AuthFunc { .. }, PredicateValue::AuthFunc { .. })
+        | (PredicateValue::AuthRef(_), PredicateValue::AuthFunc { .. })
+        | (PredicateValue::AuthFunc { .. }, PredicateValue::AuthRef(_)) => {
+            let left_val = left.resolve(auth)?;
+            let right_val = right.resolve(auth)?;
             let intersects = if let (Some(l), Some(r)) = (left_val.as_array(), right_val.as_array())
             {
                 l.iter().any(|v| r.contains(v))

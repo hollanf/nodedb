@@ -152,12 +152,15 @@ pub enum PredicateValue {
     /// A session variable reference: `$auth.id`, `$auth.roles`, etc.
     /// Resolved at plan time via `AuthContext::resolve_variable()`.
     AuthRef(String),
+    /// A session function call: `$auth.scope_status('pro:all')`, `$auth.scope_expires_at('pro:all')`.
+    /// Resolved at plan time via the scope grant store.
+    AuthFunc { func: String, args: Vec<String> },
 }
 
 impl PredicateValue {
-    /// Check if this is an `$auth.*` reference.
+    /// Check if this is an `$auth.*` reference or function.
     pub fn is_auth_ref(&self) -> bool {
-        matches!(self, Self::AuthRef(_))
+        matches!(self, Self::AuthRef(_) | Self::AuthFunc { .. })
     }
 
     /// Resolve this value using the given `AuthContext`.
@@ -165,13 +168,21 @@ impl PredicateValue {
     /// - `Literal`: returned as-is.
     /// - `Field`: returned as-is (resolved at scan time by Data Plane).
     /// - `AuthRef`: resolved via `AuthContext::resolve_variable()`.
+    /// - `AuthFunc`: resolved via `AuthContext` metadata (pre-computed).
     ///
-    /// Returns `None` if an `AuthRef` cannot be resolved (missing field).
+    /// Returns `None` if an `AuthRef`/`AuthFunc` cannot be resolved.
     pub fn resolve(&self, auth: &AuthContext) -> Option<serde_json::Value> {
         match self {
             Self::Literal(v) => Some(v.clone()),
-            Self::Field(_) => None, // Fields are not resolved here
+            Self::Field(_) => None,
             Self::AuthRef(field) => auth.resolve_variable(field),
+            Self::AuthFunc { func, args } => {
+                // Functions are resolved via pre-computed metadata keys.
+                // e.g., scope_status('pro:all') → metadata["scope_status.pro:all"]
+                let arg = args.first().map(|s| s.as_str()).unwrap_or("");
+                let key = format!("{func}.{arg}");
+                auth.resolve_variable(&format!("metadata.{key}"))
+            }
         }
     }
 }
