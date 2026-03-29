@@ -8,7 +8,6 @@ pub mod metrics;
 #[cfg(feature = "promql")]
 pub mod promql;
 pub mod query;
-pub mod search;
 pub mod status;
 pub mod subscribe;
 pub mod ws_rpc;
