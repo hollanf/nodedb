@@ -7,22 +7,26 @@ use clap::{Parser, ValueEnum};
 use crate::config::CliConfig;
 
 #[derive(Parser)]
-#[command(name = "ndb", about = "NodeDB terminal client", version)]
+#[command(name = "ndb", about = "NodeDB terminal client", version, disable_help_flag = true)]
 pub struct CliArgs {
     /// Server host.
-    #[arg(long, default_value = "127.0.0.1")]
+    #[arg(short = 'h', long, default_value = "127.0.0.1")]
     pub host: String,
+
+    /// Print help information.
+    #[arg(long, action = clap::ArgAction::Help)]
+    pub help: Option<bool>,
 
     /// Server port (native protocol).
     #[arg(short, long, default_value_t = 6433)]
     pub port: u16,
 
     /// Username.
-    #[arg(short = 'U', long, default_value = "admin")]
+    #[arg(short = 'u', long, default_value = "admin")]
     pub user: String,
 
     /// Password. If flag given without value, prompts interactively.
-    #[arg(short = 'W', long, num_args = 0..=1, default_missing_value = "")]
+    #[arg(short = 'w', long, num_args = 0..=1, default_missing_value = "")]
     pub password: Option<String>,
 
     /// Execute a single SQL command and exit.
