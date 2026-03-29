@@ -172,12 +172,15 @@ impl TopicRegistry {
     }
 
     /// Publish a message to a topic.
+    ///
+    /// Returns `(sequence_number, receivers)` where `receivers` is the count of
+    /// broadcast subscribers + consumer groups that received the message.
     pub fn publish(
         &self,
         topic_name: &str,
         payload: String,
         publisher: &str,
-    ) -> Result<u64, TopicError> {
+    ) -> Result<(u64, usize), TopicError> {
         let topics = super::lock_utils::read_or_recover(self.topics.read(), "topics");
         let topic_mutex = topics
             .get(topic_name)
@@ -217,13 +220,18 @@ impl TopicRegistry {
             topic.subscribers.remove(&sub_id);
         }
 
+        // Count live broadcast subscribers (after removing dead ones).
+        let broadcast_count = topic.subscribers.len();
+
         // Deliver to consumer groups (one member per group, round-robin).
+        let group_count = topic.consumer_groups.len();
         for group in topic.consumer_groups.values_mut() {
             group.deliver(&msg);
         }
 
-        debug!(topic = topic_name, seq, "message published");
-        Ok(seq)
+        let receivers = broadcast_count + group_count;
+        debug!(topic = topic_name, seq, receivers, "message published");
+        Ok((seq, receivers))
     }
 
     /// Subscribe to a topic. Returns (subscription_id, receiver, backlog).
@@ -354,11 +362,15 @@ mod tests {
         assert!(registry.create_topic("orders").is_ok());
         assert!(registry.create_topic("orders").is_err()); // duplicate
 
-        let seq = registry.publish("orders", "order-1".into(), "admin");
-        assert_eq!(seq.unwrap(), 1);
+        let (seq, _receivers) = registry
+            .publish("orders", "order-1".into(), "admin")
+            .unwrap();
+        assert_eq!(seq, 1);
 
-        let seq = registry.publish("orders", "order-2".into(), "admin");
-        assert_eq!(seq.unwrap(), 2);
+        let (seq, _receivers) = registry
+            .publish("orders", "order-2".into(), "admin")
+            .unwrap();
+        assert_eq!(seq, 2);
     }
 
     #[test]

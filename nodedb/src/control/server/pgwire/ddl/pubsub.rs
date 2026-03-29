@@ -103,7 +103,7 @@ pub fn publish_to(
         return Err(sqlstate_error("42601", "PUBLISH TO requires a payload"));
     }
 
-    let seq = state
+    let (seq, _receivers) = state
         .topic_registry
         .publish(&topic_name, payload, &identity.username)
         .map_err(|e| sqlstate_error("42P01", &e.to_string()))?;

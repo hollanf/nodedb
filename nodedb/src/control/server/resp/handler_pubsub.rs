@@ -138,12 +138,7 @@ pub async fn handle_publish(
         .topic_registry
         .publish(channel, message.to_string(), "resp_client")
     {
-        Ok(_seq) => {
-            // Redis PUBLISH returns the number of subscribers that received the message.
-            // We return 1 as a conservative estimate (the topic registry doesn't track
-            // the exact delivery count).
-            RespValue::integer(1)
-        }
+        Ok((_seq, receivers)) => RespValue::integer(receivers as i64),
         Err(e) => RespValue::err(format!("ERR publish failed: {e}")),
     }
 }

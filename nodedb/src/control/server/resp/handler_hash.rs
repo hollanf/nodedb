@@ -107,7 +107,11 @@ pub(super) async fn handle_hset(
     });
 
     match dispatch_kv_write(state, session, plan).await {
-        Ok(resp) if resp.status == Status::Ok => RespValue::integer(cmd.argc() as i64 / 2),
+        Ok(resp) if resp.status == Status::Ok => {
+            let added =
+                super::handler::parse_json_field_i64(&resp.payload, "fields_added").unwrap_or(0);
+            RespValue::integer(added)
+        }
         Ok(_) => RespValue::integer(0),
         Err(e) => RespValue::err(format!("ERR {e}")),
     }
