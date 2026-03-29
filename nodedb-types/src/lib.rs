@@ -25,7 +25,7 @@ pub mod timeseries;
 pub mod value;
 pub mod vector_distance;
 
-pub use approx::{HyperLogLog, SpaceSaving, TDigest};
+pub use approx::{CountMinSketch, HyperLogLog, SpaceSaving, TDigest};
 pub use bbox::{BoundingBox, geometry_bbox};
 pub use collection::CollectionType;
 pub use columnar::{

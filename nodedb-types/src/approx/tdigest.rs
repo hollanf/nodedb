@@ -12,6 +12,7 @@ struct Centroid {
 /// Maintains a sorted set of centroids that approximate the data distribution.
 /// Accurate at the extremes (p1, p99) and reasonable in the middle.
 /// Mergeable across partitions and shards.
+#[derive(Debug)]
 pub struct TDigest {
     centroids: Vec<Centroid>,
     max_centroids: usize,
@@ -71,6 +72,25 @@ impl TDigest {
 
     pub fn count(&self) -> u64 {
         self.total_count
+    }
+
+    /// Add a pre-aggregated centroid (for merge/deserialization).
+    pub fn add_centroid(&mut self, mean: f64, count: u64) {
+        self.centroids.push(Centroid { mean, count });
+        self.total_count += count;
+        if self.centroids.len() > self.max_centroids * 2 {
+            self.compress();
+        }
+    }
+
+    /// Access centroids as (mean, count) pairs for serialization.
+    pub fn centroids(&self) -> Vec<(f64, u64)> {
+        self.centroids.iter().map(|c| (c.mean, c.count)).collect()
+    }
+
+    /// Approximate memory usage in bytes.
+    pub fn memory_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.centroids.capacity() * std::mem::size_of::<Centroid>()
     }
 
     fn compress(&mut self) {

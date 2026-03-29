@@ -116,7 +116,14 @@ pub fn refresh_from_drain(
         match materialized.get_mut(&key) {
             Some(partial) => partial.merge_sample(ts, val),
             None => {
-                materialized.insert(key, PartialAggregate::new(bucket, group_key, ts, val));
+                let mut partial = PartialAggregate::new(bucket, group_key, ts, val);
+                // Initialize sketches for any approximate aggregate expressions.
+                for expr in &def.aggregates {
+                    if expr.function.uses_sketch() {
+                        partial.ensure_sketch(&expr.function);
+                    }
+                }
+                materialized.insert(key, partial);
             }
         }
     }

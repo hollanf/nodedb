@@ -7,6 +7,7 @@ use std::collections::HashMap;
 /// Tracks the K most frequent items with bounded memory. Items not in
 /// the top K are approximated — their counts may be over-estimated by
 /// at most the minimum count in the structure.
+#[derive(Debug)]
 pub struct SpaceSaving {
     items: HashMap<u64, (u64, u64)>,
     max_items: usize,

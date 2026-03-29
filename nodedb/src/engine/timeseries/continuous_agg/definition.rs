@@ -37,7 +37,7 @@ pub struct AggregateExpr {
 }
 
 /// Supported aggregate functions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AggFunction {
     Sum,
     Count,
@@ -46,6 +46,12 @@ pub enum AggFunction {
     Avg,
     First,
     Last,
+    /// Approximate count distinct via HyperLogLog.
+    CountDistinct,
+    /// Approximate percentile via TDigest. Inner value is the quantile (0.0–1.0).
+    Percentile(f64),
+    /// Approximate top-K heavy hitters via SpaceSaving. Inner value is K.
+    TopK(usize),
 }
 
 impl AggFunction {
@@ -58,7 +64,18 @@ impl AggFunction {
             Self::Avg => "avg",
             Self::First => "first",
             Self::Last => "last",
+            Self::CountDistinct => "count_distinct",
+            Self::Percentile(_) => "percentile",
+            Self::TopK(_) => "topk",
         }
+    }
+
+    /// Whether this function requires sketch state in PartialAggregate.
+    pub fn uses_sketch(&self) -> bool {
+        matches!(
+            self,
+            Self::CountDistinct | Self::Percentile(_) | Self::TopK(_)
+        )
     }
 }
 

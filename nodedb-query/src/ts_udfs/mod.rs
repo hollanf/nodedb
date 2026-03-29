@@ -4,6 +4,7 @@
 //! [`register_timeseries_udfs`] once per `SessionContext`.
 
 mod aggregate;
+pub mod approx;
 mod helpers;
 mod window_basic;
 mod window_rate;
@@ -13,6 +14,7 @@ use datafusion::execution::context::SessionContext;
 use datafusion::logical_expr::{AggregateUDF, WindowUDF};
 
 pub use aggregate::{TsCorrelateUdaf, TsPercentileUdaf, TsStddevUdaf};
+pub use approx::{ApproxCountDistinctUdaf, ApproxCountUdaf, ApproxPercentileUdaf, ApproxTopkUdaf};
 pub use window_basic::{TsDeltaUdwf, TsInterpolateUdwf, TsLagUdwf, TsLeadUdwf, TsRankUdwf};
 pub use window_rate::{TsDerivativeUdwf, TsRateUdwf};
 pub use window_smooth::{TsEmaUdwf, TsMovingAvgUdwf};
@@ -34,6 +36,12 @@ pub fn register_timeseries_udfs(ctx: &SessionContext) {
     ctx.register_udaf(AggregateUDF::new_from_impl(TsPercentileUdaf::new()));
     ctx.register_udaf(AggregateUDF::new_from_impl(TsStddevUdaf::new()));
     ctx.register_udaf(AggregateUDF::new_from_impl(TsCorrelateUdaf::new()));
+
+    // Approximate aggregate functions (4).
+    ctx.register_udaf(AggregateUDF::new_from_impl(ApproxCountDistinctUdaf::new()));
+    ctx.register_udaf(AggregateUDF::new_from_impl(ApproxPercentileUdaf::new()));
+    ctx.register_udaf(AggregateUDF::new_from_impl(ApproxTopkUdaf::new()));
+    ctx.register_udaf(AggregateUDF::new_from_impl(ApproxCountUdaf::new()));
 }
 
 #[cfg(test)]
@@ -61,5 +69,11 @@ mod tests {
         assert!(ctx.udaf("ts_percentile").is_ok());
         assert!(ctx.udaf("ts_stddev").is_ok());
         assert!(ctx.udaf("ts_correlate").is_ok());
+
+        // Approximate aggregate functions.
+        assert!(ctx.udaf("approx_count_distinct").is_ok());
+        assert!(ctx.udaf("approx_percentile").is_ok());
+        assert!(ctx.udaf("approx_topk").is_ok());
+        assert!(ctx.udaf("approx_count").is_ok());
     }
 }

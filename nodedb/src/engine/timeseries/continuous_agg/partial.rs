@@ -1,14 +1,13 @@
 //! Partial aggregate state for incremental merging.
 //!
 //! Stores enough state per (bucket, group_key) to merge incrementally:
-//! count, sum, min, max, first/last timestamps and values.
-
-use serde::{Deserialize, Serialize};
+//! count, sum, min, max, first/last timestamps and values, plus optional
+//! sketch state for approximate aggregations.
 
 use super::definition::AggFunction;
+use nodedb_types::approx::{HyperLogLog, SpaceSaving, TDigest};
 
 /// Partial aggregate state for a single (bucket, group_key) combination.
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartialAggregate {
     pub bucket_ts: i64,
     /// Symbol IDs for GROUP BY columns.
@@ -21,6 +20,11 @@ pub struct PartialAggregate {
     pub first_val: f64,
     pub last_ts: i64,
     pub last_val: f64,
+
+    // ── Sketch state (lazily initialized only when needed) ──
+    pub hll: Option<HyperLogLog>,
+    pub tdigest: Option<TDigest>,
+    pub topk: Option<SpaceSaving>,
 }
 
 impl PartialAggregate {
@@ -37,6 +41,25 @@ impl PartialAggregate {
             first_val: val,
             last_ts: ts,
             last_val: val,
+            hll: None,
+            tdigest: None,
+            topk: None,
+        }
+    }
+
+    /// Ensure sketch state is initialized for the given function.
+    pub fn ensure_sketch(&mut self, function: &AggFunction) {
+        match function {
+            AggFunction::CountDistinct if self.hll.is_none() => {
+                self.hll = Some(HyperLogLog::new());
+            }
+            AggFunction::Percentile(_) if self.tdigest.is_none() => {
+                self.tdigest = Some(TDigest::new());
+            }
+            AggFunction::TopK(k) if self.topk.is_none() => {
+                self.topk = Some(SpaceSaving::new(*k));
+            }
+            _ => {}
         }
     }
 
@@ -58,6 +81,17 @@ impl PartialAggregate {
             self.last_ts = ts;
             self.last_val = val;
         }
+
+        // Feed into active sketches.
+        if let Some(hll) = &mut self.hll {
+            hll.add(val.to_bits());
+        }
+        if let Some(td) = &mut self.tdigest {
+            td.add(val);
+        }
+        if let Some(ss) = &mut self.topk {
+            ss.add(val.to_bits());
+        }
     }
 
     /// Merge another partial aggregate (for cross-shard or incremental merge).
@@ -78,10 +112,28 @@ impl PartialAggregate {
             self.last_ts = other.last_ts;
             self.last_val = other.last_val;
         }
+
+        // Merge sketch state.
+        if let Some(other_hll) = &other.hll {
+            self.hll
+                .get_or_insert_with(HyperLogLog::new)
+                .merge(other_hll);
+        }
+        if let Some(other_td) = &other.tdigest {
+            self.tdigest
+                .get_or_insert_with(TDigest::new)
+                .merge(other_td);
+        }
+        if let Some(other_ss) = &other.topk {
+            let k = other_ss.top_k().len().max(10);
+            self.topk
+                .get_or_insert_with(|| SpaceSaving::new(k))
+                .merge(other_ss);
+        }
     }
 
     /// Compute a final aggregate value from the partial state.
-    pub fn finalize(&self, function: AggFunction) -> f64 {
+    pub fn finalize(&self, function: &AggFunction) -> f64 {
         match function {
             AggFunction::Sum => self.sum,
             AggFunction::Count => self.count as f64,
@@ -96,6 +148,14 @@ impl PartialAggregate {
             }
             AggFunction::First => self.first_val,
             AggFunction::Last => self.last_val,
+            AggFunction::CountDistinct => self.hll.as_ref().map_or(0.0, |h| h.estimate()),
+            AggFunction::Percentile(q) => {
+                self.tdigest.as_ref().map_or(f64::NAN, |td| td.quantile(*q))
+            }
+            AggFunction::TopK(_) => {
+                // TopK returns structured data; finalize as count of tracked items.
+                self.topk.as_ref().map_or(0.0, |ss| ss.top_k().len() as f64)
+            }
         }
     }
 }
@@ -108,8 +168,8 @@ mod tests {
     fn single_sample() {
         let pa = PartialAggregate::new(0, vec![], 100, 42.0);
         assert_eq!(pa.count, 1);
-        assert_eq!(pa.finalize(AggFunction::Sum), 42.0);
-        assert_eq!(pa.finalize(AggFunction::Avg), 42.0);
+        assert_eq!(pa.finalize(&AggFunction::Sum), 42.0);
+        assert_eq!(pa.finalize(&AggFunction::Avg), 42.0);
     }
 
     #[test]
@@ -118,13 +178,35 @@ mod tests {
         pa.merge_sample(200, 20.0);
         pa.merge_sample(300, 30.0);
 
-        assert_eq!(pa.finalize(AggFunction::Count), 3.0);
-        assert_eq!(pa.finalize(AggFunction::Sum), 60.0);
-        assert_eq!(pa.finalize(AggFunction::Min), 10.0);
-        assert_eq!(pa.finalize(AggFunction::Max), 30.0);
-        assert!((pa.finalize(AggFunction::Avg) - 20.0).abs() < f64::EPSILON);
-        assert_eq!(pa.finalize(AggFunction::First), 10.0);
-        assert_eq!(pa.finalize(AggFunction::Last), 30.0);
+        assert_eq!(pa.finalize(&AggFunction::Count), 3.0);
+        assert_eq!(pa.finalize(&AggFunction::Sum), 60.0);
+        assert_eq!(pa.finalize(&AggFunction::Min), 10.0);
+        assert_eq!(pa.finalize(&AggFunction::Max), 30.0);
+        assert!((pa.finalize(&AggFunction::Avg) - 20.0).abs() < f64::EPSILON);
+        assert_eq!(pa.finalize(&AggFunction::First), 10.0);
+        assert_eq!(pa.finalize(&AggFunction::Last), 30.0);
+    }
+
+    #[test]
+    fn sketch_count_distinct() {
+        let mut pa = PartialAggregate::new(0, vec![], 100, 1.0);
+        pa.ensure_sketch(&AggFunction::CountDistinct);
+        for i in 1..100 {
+            pa.merge_sample(100 + i, i as f64);
+        }
+        let est = pa.finalize(&AggFunction::CountDistinct);
+        assert!(est > 80.0 && est < 120.0, "expected ~100, got {est}");
+    }
+
+    #[test]
+    fn sketch_percentile() {
+        let mut pa = PartialAggregate::new(0, vec![], 0, 0.0);
+        pa.ensure_sketch(&AggFunction::Percentile(0.5));
+        for i in 1..1000 {
+            pa.merge_sample(i, i as f64);
+        }
+        let p50 = pa.finalize(&AggFunction::Percentile(0.5));
+        assert!(p50 > 400.0 && p50 < 600.0, "expected ~500, got {p50}");
     }
 
     #[test]
