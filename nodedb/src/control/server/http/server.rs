@@ -28,6 +28,15 @@ fn build_router(state: AppState) -> Router {
         .route("/query", post(routes::query::query))
         .route("/status", get(routes::status::status))
         .route(
+            "/api/auth/exchange-key",
+            post(routes::auth_key::exchange_key),
+        )
+        .route(
+            "/api/auth/session",
+            post(routes::auth_session::create_session)
+                .delete(routes::auth_session::delete_session),
+        )
+        .route(
             "/collections/{name}/crdt/apply",
             post(routes::crdt::crdt_apply),
         )

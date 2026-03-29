@@ -39,6 +39,7 @@ pub async fn execute(
         "HMGET" => super::handler_hash::handle_hmget(cmd, session, state).await,
         "HSET" => super::handler_hash::handle_hset(cmd, session, state).await,
         "FLUSHDB" => super::handler_hash::handle_flushdb(session, state).await,
+        "AUTH" => handle_auth(cmd, session, state),
         "PUBLISH" => super::handler_pubsub::handle_publish(cmd, session, state).await,
         "INFO" => handle_info(cmd, session, state).await,
         "COMMAND" => RespValue::ok(), // Stub: redis-cli sends COMMAND on connect.
@@ -72,6 +73,48 @@ fn handle_select(cmd: &RespCommand, session: &mut RespSession) -> RespValue {
             RespValue::ok()
         }
         None => RespValue::err("ERR wrong number of arguments for 'select' command"),
+    }
+}
+
+/// AUTH [username] password
+///
+/// Redis supports two forms:
+/// - `AUTH password` — authenticates with default username "admin"
+/// - `AUTH username password` — authenticates with explicit username
+///
+/// On success, updates `session.tenant_id` from the authenticated identity.
+fn handle_auth(cmd: &RespCommand, session: &mut RespSession, state: &SharedState) -> RespValue {
+    let (username, password) = match cmd.argc() {
+        1 => ("admin", cmd.arg_str(0).unwrap_or("")),
+        2 => (
+            cmd.arg_str(0).unwrap_or("admin"),
+            cmd.arg_str(1).unwrap_or(""),
+        ),
+        _ => return RespValue::err("ERR wrong number of arguments for 'auth' command"),
+    };
+
+    // Validate credentials using the same path as native/pgwire auth.
+    state.credentials.check_lockout(username).ok();
+
+    if !state.credentials.verify_password(username, password) {
+        state.credentials.record_login_failure(username);
+        state.auth_metrics.record_auth_failure("resp_password");
+        return RespValue::err("WRONGPASS invalid username-password pair");
+    }
+
+    state.credentials.record_login_success(username);
+
+    // Resolve identity to get tenant_id.
+    match state.credentials.to_identity(
+        username,
+        crate::control::security::identity::AuthMethod::CleartextPassword,
+    ) {
+        Some(identity) => {
+            session.tenant_id = identity.tenant_id;
+            state.auth_metrics.record_auth_success("resp_password");
+            RespValue::ok()
+        }
+        None => RespValue::err("ERR user not found after authentication"),
     }
 }
 
