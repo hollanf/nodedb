@@ -41,6 +41,16 @@ pub fn inject_rls(
     Ok(())
 }
 
+/// Inject RLS into a single physical plan (public for native protocol dispatch).
+pub fn inject_rls_for_single_plan(
+    tenant_id: u32,
+    plan: &mut PhysicalPlan,
+    rls_store: &RlsPolicyStore,
+    auth: &AuthContext,
+) -> crate::Result<()> {
+    inject_rls_for_plan(tenant_id, plan, rls_store, auth)
+}
+
 /// Core dispatch: inject RLS into a single physical plan.
 fn inject_rls_for_plan(
     tenant_id: u32,

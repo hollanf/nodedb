@@ -4,6 +4,8 @@ mod auth;
 mod conversion;
 mod direct_ops;
 mod pgwire_bridge;
+mod plan_builder;
+mod plan_builder_graph;
 mod session_ops;
 mod sql;
 mod transaction;

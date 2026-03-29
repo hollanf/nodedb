@@ -235,6 +235,26 @@ pub struct TextFields {
     pub query_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vector_weight: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fuzzy: Option<bool>,
+
+    // ── Vector search tuning ────────────────────────────────
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ef_search: Option<u64>,
+    /// Named vector field (for multi-field vector collections).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_name: Option<String>,
+
+    // ── Range scan bounds ───────────────────────────────────
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lower_bound: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upper_bound: Option<Vec<u8>>,
+
+    // ── CRDT dedup ──────────────────────────────────────────
+    /// Monotonic mutation ID for CRDT delta deduplication.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mutation_id: Option<u64>,
 
     // ── Batch operations ─────────────────────────────────────
     #[serde(skip_serializing_if = "Option::is_none")]
