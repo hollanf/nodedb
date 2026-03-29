@@ -6,21 +6,26 @@
 mod aggregate;
 pub mod approx;
 mod helpers;
+pub mod time_bucket_udf;
 mod window_basic;
 mod window_rate;
 mod window_smooth;
 
 use datafusion::execution::context::SessionContext;
-use datafusion::logical_expr::{AggregateUDF, WindowUDF};
+use datafusion::logical_expr::{AggregateUDF, ScalarUDF, WindowUDF};
 
 pub use aggregate::{TsCorrelateUdaf, TsPercentileUdaf, TsStddevUdaf};
 pub use approx::{ApproxCountDistinctUdaf, ApproxCountUdaf, ApproxPercentileUdaf, ApproxTopkUdaf};
+pub use time_bucket_udf::TimeBucketUdf;
 pub use window_basic::{TsDeltaUdwf, TsInterpolateUdwf, TsLagUdwf, TsLeadUdwf, TsRankUdwf};
 pub use window_rate::{TsDerivativeUdwf, TsRateUdwf};
 pub use window_smooth::{TsEmaUdwf, TsMovingAvgUdwf};
 
-/// Register all 12 timeseries SQL functions on a DataFusion session.
+/// Register all timeseries SQL functions on a DataFusion session.
 pub fn register_timeseries_udfs(ctx: &SessionContext) {
+    // Scalar functions (1).
+    ctx.register_udf(ScalarUDF::new_from_impl(TimeBucketUdf::new()));
+
     // Window functions (9).
     ctx.register_udwf(WindowUDF::new_from_impl(TsRateUdwf::new()));
     ctx.register_udwf(WindowUDF::new_from_impl(TsDerivativeUdwf::new()));
@@ -53,6 +58,9 @@ mod tests {
         use datafusion::execution::FunctionRegistry;
         let ctx = SessionContext::new();
         register_timeseries_udfs(&ctx);
+
+        // Scalar functions.
+        assert!(ctx.udf("time_bucket").is_ok());
 
         // Window functions.
         assert!(ctx.udwf("ts_rate").is_ok());

@@ -4,7 +4,7 @@
 use datafusion::prelude::*;
 
 use crate::bridge::envelope::PhysicalPlan;
-use crate::bridge::physical_plan::{DocumentOp, QueryOp, TextOp, VectorOp};
+use crate::bridge::physical_plan::{DocumentOp, QueryOp, TextOp, TimeseriesOp, VectorOp};
 use crate::control::planner::physical::PhysicalTask;
 use crate::types::{TenantId, VShardId};
 
@@ -142,77 +142,139 @@ impl PlanConverter {
     }
 }
 
-/// Convert a DataFusion `Aggregate` logical plan into a `QueryOp::Aggregate`.
-pub(super) fn convert_aggregate(
-    agg: &datafusion::logical_expr::Aggregate,
-    tenant_id: TenantId,
-) -> crate::Result<Vec<PhysicalTask>> {
-    let collection = extract_table_name(&agg.input).ok_or_else(|| crate::Error::PlanError {
-        detail: "GROUP BY requires a table scan input".into(),
-    })?;
-    let vshard = VShardId::from_collection(&collection);
+impl PlanConverter {
+    /// Convert a DataFusion `Aggregate` logical plan into physical tasks.
+    ///
+    /// For timeseries collections with `time_bucket()` in GROUP BY, routes to
+    /// `TimeseriesOp::Scan` with `bucket_interval_ms` populated. Otherwise,
+    /// produces a `QueryOp::Aggregate` for document-style aggregation.
+    pub(super) fn convert_aggregate(
+        &self,
+        agg: &datafusion::logical_expr::Aggregate,
+        tenant_id: TenantId,
+    ) -> crate::Result<Vec<PhysicalTask>> {
+        let collection = extract_table_name(&agg.input).ok_or_else(|| crate::Error::PlanError {
+            detail: "GROUP BY requires a table scan input".into(),
+        })?;
+        let vshard = VShardId::from_collection(&collection);
 
-    // Extract GROUP BY fields (all group expressions).
-    let group_by: Vec<String> = agg
-        .group_expr
-        .iter()
-        .filter_map(|e| {
-            if let Expr::Column(col) = e {
-                Some(col.name.clone())
-            } else {
-                None
-            }
-        })
-        .collect();
+        // Check for timeseries collection with time_bucket() in GROUP BY.
+        if self.is_timeseries(tenant_id, &collection)
+            && let Some(bucket_interval_ms) = try_extract_time_bucket_interval(&agg.group_expr)
+        {
+            // Extract time range from input filters.
+            let (time_range, filter_bytes) =
+                if let datafusion::logical_expr::LogicalPlan::Filter(filter) = agg.input.as_ref() {
+                    extract_timeseries_filters(std::slice::from_ref(&filter.predicate))?
+                } else {
+                    ((0i64, i64::MAX), Vec::new())
+                };
 
-    // Extract aggregate functions.
-    let mut aggregates = Vec::new();
-    for expr in &agg.aggr_expr {
-        if let Expr::AggregateFunction(func) = expr {
-            let mut op = func.func.name().to_lowercase();
-            let field = func
-                .params
-                .args
-                .first()
-                .map(|a| match a {
-                    Expr::Column(col) => col.name.clone(),
-                    Expr::Literal(..) => "*".into(),
-                    _ => format!("{a}"),
-                })
-                .unwrap_or_else(|| "*".into());
-
-            // Handle DISTINCT modifier: COUNT(DISTINCT col) → "count_distinct".
-            if func.params.distinct {
-                op = format!("{op}_distinct");
-            }
-
-            aggregates.push((op, field));
+            return Ok(vec![PhysicalTask {
+                tenant_id,
+                vshard_id: vshard,
+                plan: PhysicalPlan::Timeseries(TimeseriesOp::Scan {
+                    collection,
+                    time_range,
+                    projection: Vec::new(),
+                    limit: 10_000,
+                    filters: filter_bytes,
+                    bucket_interval_ms,
+                    rls_filters: Vec::new(),
+                }),
+            }]);
         }
-    }
 
-    // Extract filters from input if it's a Filter plan.
-    let filter_bytes =
-        if let datafusion::logical_expr::LogicalPlan::Filter(filter) = agg.input.as_ref() {
-            let filters = expr_to_scan_filters(&filter.predicate);
-            rmp_serde::to_vec_named(&filters).unwrap_or_default()
-        } else {
-            Vec::new()
+        // Standard document-style aggregation.
+        let group_by: Vec<String> = agg
+            .group_expr
+            .iter()
+            .filter_map(|e| {
+                if let Expr::Column(col) = e {
+                    Some(col.name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut aggregates = Vec::new();
+        for expr in &agg.aggr_expr {
+            if let Expr::AggregateFunction(func) = expr {
+                let mut op = func.func.name().to_lowercase();
+                let field = func
+                    .params
+                    .args
+                    .first()
+                    .map(|a| match a {
+                        Expr::Column(col) => col.name.clone(),
+                        Expr::Literal(..) => "*".into(),
+                        _ => format!("{a}"),
+                    })
+                    .unwrap_or_else(|| "*".into());
+
+                if func.params.distinct {
+                    op = format!("{op}_distinct");
+                }
+
+                aggregates.push((op, field));
+            }
+        }
+
+        let filter_bytes =
+            if let datafusion::logical_expr::LogicalPlan::Filter(filter) = agg.input.as_ref() {
+                let filters = expr_to_scan_filters(&filter.predicate);
+                rmp_serde::to_vec_named(&filters).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+        Ok(vec![PhysicalTask {
+            tenant_id,
+            vshard_id: vshard,
+            plan: PhysicalPlan::Query(QueryOp::Aggregate {
+                collection,
+                group_by,
+                aggregates,
+                filters: filter_bytes,
+                having: Vec::new(),
+                limit: 10000,
+                sub_group_by: Vec::new(),
+                sub_aggregates: Vec::new(),
+            }),
+        }])
+    }
+}
+
+/// Extract `time_bucket(interval, ...)` from GROUP BY expressions.
+///
+/// Returns `Some(bucket_interval_ms)` if any GROUP BY expression is a
+/// `time_bucket()` call with a parseable interval string.
+fn try_extract_time_bucket_interval(group_exprs: &[Expr]) -> Option<i64> {
+    for expr in group_exprs {
+        let func = match expr {
+            Expr::ScalarFunction(f) => f,
+            Expr::Alias(alias) => match alias.expr.as_ref() {
+                Expr::ScalarFunction(f) => f,
+                _ => continue,
+            },
+            _ => continue,
         };
 
-    Ok(vec![PhysicalTask {
-        tenant_id,
-        vshard_id: vshard,
-        plan: PhysicalPlan::Query(QueryOp::Aggregate {
-            collection,
-            group_by,
-            aggregates,
-            filters: filter_bytes,
-            having: Vec::new(),
-            limit: 10000,
-            sub_group_by: Vec::new(),
-            sub_aggregates: Vec::new(),
-        }),
-    }])
+        if func.name() != "time_bucket" || func.args.is_empty() {
+            continue;
+        }
+
+        // First arg is the interval string literal.
+        if let Expr::Literal(lit, _) = &func.args[0] {
+            let interval_str = lit.to_string();
+            let trimmed = interval_str.trim_matches('\'').trim_matches('"');
+            if let Ok(ms) = nodedb_types::kv_parsing::parse_interval_to_ms(trimmed) {
+                return Some(ms as i64);
+            }
+        }
+    }
+    None
 }
 
 /// Extract time-range predicates from filter expressions for timeseries routing.

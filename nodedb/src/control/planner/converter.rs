@@ -286,13 +286,32 @@ impl PlanConverter {
                     let limit = scan.fetch.unwrap_or(10_000);
                     let (time_range, filter_bytes) =
                         super::converter_helpers::extract_timeseries_filters(&scan.filters)?;
+
+                    // Resolve column projection from indices to names.
+                    let projection = scan
+                        .projection
+                        .as_ref()
+                        .map(|indices| {
+                            let schema = scan.source.schema();
+                            indices
+                                .iter()
+                                .filter_map(|&idx| {
+                                    schema
+                                        .fields()
+                                        .get(idx)
+                                        .map(|f| f.name().clone())
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+
                     return Ok(vec![PhysicalTask {
                         tenant_id,
                         vshard_id: vshard,
                         plan: PhysicalPlan::Timeseries(TimeseriesOp::Scan {
                             collection,
                             time_range,
-                            projection: Vec::new(),
+                            projection,
                             limit,
                             filters: filter_bytes,
                             bucket_interval_ms: 0,
@@ -396,9 +415,7 @@ impl PlanConverter {
 
             LogicalPlan::Sort(sort) => self.convert_sort(sort, tenant_id),
 
-            LogicalPlan::Aggregate(agg) => {
-                super::converter_helpers::convert_aggregate(agg, tenant_id)
-            }
+            LogicalPlan::Aggregate(agg) => self.convert_aggregate(agg, tenant_id),
 
             LogicalPlan::Dml(dml) => self.convert_dml(dml, tenant_id),
 

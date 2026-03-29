@@ -15,7 +15,7 @@ use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 
 use super::super::types::{int8_field, sqlstate_error, text_field};
-use super::timeseries_helpers::{format_bytes, parse_with_clause};
+use super::timeseries_helpers::{format_bytes, parse_column_defs, parse_with_clause};
 
 /// CREATE TIMESERIES <name> [WITH (key = 'value', ...)]
 pub fn create_timeseries(
@@ -49,10 +49,14 @@ pub fn create_timeseries(
         .unwrap_or_default()
         .as_secs();
 
-    let fields = vec![
-        ("timestamp".into(), "TIMESTAMP".into()),
-        ("value".into(), "FLOAT".into()),
-    ];
+    // Parse column definitions from CREATE TIMESERIES name (...) syntax.
+    // Falls back to (timestamp, value) if no columns specified.
+    let fields = parse_column_defs(parts).unwrap_or_else(|| {
+        vec![
+            ("timestamp".into(), "TIMESTAMP".into()),
+            ("value".into(), "FLOAT".into()),
+        ]
+    });
 
     let coll = StoredCollection {
         tenant_id: tenant_id.as_u32(),
