@@ -140,6 +140,70 @@ pub fn create_collection(
     Ok(vec![Response::Execution(Tag::new("CREATE COLLECTION"))])
 }
 
+/// Dispatch a `DocumentOp::Register` to the Data Plane after collection creation.
+///
+/// Tells the Data Plane core about the collection's storage mode (schemaless vs strict)
+/// so it encodes documents correctly. For schemaless collections this is optional
+/// (MessagePack is the default), but for strict collections it's required (Binary Tuple
+/// encoding needs the schema).
+pub async fn dispatch_register_if_needed(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+    sql: &str,
+) {
+    let name = parts.get(2).map(|s| s.to_lowercase()).unwrap_or_default();
+    let tenant_id = identity.tenant_id;
+
+    // Look up the just-created collection to get its type.
+    let Some(catalog) = state.credentials.catalog() else {
+        return;
+    };
+    let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), &name) else {
+        return;
+    };
+
+    // Determine storage mode from collection type.
+    let storage_mode = match &coll.collection_type {
+        nodedb_types::CollectionType::Document(nodedb_types::DocumentMode::Strict(schema)) => {
+            crate::bridge::physical_plan::StorageMode::Strict {
+                schema: schema.clone(),
+            }
+        }
+        _ => crate::bridge::physical_plan::StorageMode::Schemaless,
+    };
+
+    // Parse index paths from FIELDS clause (if any).
+    let fields = super::schema_validation::parse_fields_clause(parts);
+    let index_paths: Vec<String> = fields.iter().map(|(name, _ty)| format!("$.{name}")).collect();
+
+    let _ = sql; // Reserved for future CRDT detection from SQL.
+    let crdt_enabled = false;
+
+    let vshard = crate::types::VShardId::from_collection(&name);
+    let plan = crate::bridge::envelope::PhysicalPlan::Document(
+        crate::bridge::physical_plan::DocumentOp::Register {
+            collection: name.clone(),
+            index_paths,
+            crdt_enabled,
+            storage_mode,
+        },
+    );
+
+    if let Err(e) =
+        crate::control::server::dispatch_utils::dispatch_to_data_plane(
+            state, tenant_id, vshard, plan, 0,
+        )
+        .await
+    {
+        tracing::warn!(
+            %name,
+            error = %e,
+            "failed to dispatch Register to Data Plane (non-fatal)"
+        );
+    }
+}
+
 /// DROP COLLECTION <name>
 ///
 /// Marks collection as inactive. Requires owner or admin.

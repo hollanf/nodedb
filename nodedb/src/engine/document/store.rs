@@ -28,6 +28,8 @@ pub struct CollectionConfig {
     pub index_paths: Vec<IndexPath>,
     /// Whether this collection uses CRDT-backed storage (Loro).
     pub crdt_enabled: bool,
+    /// Storage encoding mode (schemaless MessagePack or strict Binary Tuple).
+    pub storage_mode: crate::bridge::physical_plan::StorageMode,
 }
 
 impl CollectionConfig {
@@ -36,6 +38,7 @@ impl CollectionConfig {
             name: name.to_string(),
             index_paths: Vec::new(),
             crdt_enabled: false,
+            storage_mode: crate::bridge::physical_plan::StorageMode::Schemaless,
         }
     }
 
@@ -46,6 +49,11 @@ impl CollectionConfig {
 
     pub fn with_crdt(mut self) -> Self {
         self.crdt_enabled = true;
+        self
+    }
+
+    pub fn with_storage_mode(mut self, mode: crate::bridge::physical_plan::StorageMode) -> Self {
+        self.storage_mode = mode;
         self
     }
 }

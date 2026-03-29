@@ -12,8 +12,11 @@
 
 /// Convert a document byte blob to `serde_json::Value`.
 ///
-/// Auto-detects the format: MessagePack or JSON. Returns `None` if
-/// deserialization fails for both formats.
+/// Auto-detects the format: MessagePack, JSON, or Binary Tuple.
+/// Binary Tuple detection requires knowing the schema — if the bytes
+/// don't match MessagePack or JSON, returns `None` (the caller should
+/// use `strict_format::binary_tuple_to_json` with the schema if the
+/// collection is known to be strict).
 pub(super) fn decode_document(bytes: &[u8]) -> Option<serde_json::Value> {
     if bytes.is_empty() {
         return None;
@@ -30,6 +33,10 @@ pub(super) fn decode_document(bytes: &[u8]) -> Option<serde_json::Value> {
 
     // Fall back to JSON.
     serde_json::from_slice(bytes).ok()
+
+    // Note: Binary Tuple bytes are NOT auto-detected here because decoding
+    // requires the schema. For strict collections, callers must check
+    // doc_configs.storage_mode and use strict_format::binary_tuple_to_json().
 }
 
 /// Extract multiple fields from a MessagePack document without full

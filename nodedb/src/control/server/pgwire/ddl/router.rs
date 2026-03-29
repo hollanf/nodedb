@@ -95,9 +95,15 @@ pub async fn dispatch(
 
     // Collection management.
     if upper.starts_with("CREATE COLLECTION ") {
-        return Some(super::collection::create_collection(
-            state, identity, &parts, sql,
-        ));
+        let result = super::collection::create_collection(state, identity, &parts, sql);
+        // If creation succeeded, register the collection's storage mode with the
+        // Data Plane so it knows how to encode/decode documents (MessagePack vs
+        // Binary Tuple). This must happen after the catalog persist so the collection
+        // metadata is durable.
+        if result.is_ok() {
+            super::collection::dispatch_register_if_needed(state, identity, &parts, sql).await;
+        }
+        return Some(result);
     }
     if upper.starts_with("DROP COLLECTION ") {
         return Some(super::collection::drop_collection(state, identity, &parts));

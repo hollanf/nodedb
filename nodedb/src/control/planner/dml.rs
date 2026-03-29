@@ -86,6 +86,11 @@ impl PlanConverter {
             return self.convert_timeseries_dml(dml, tenant_id, &collection, vshard);
         }
 
+        // Strict and schemaless document collections both use DocumentOp.
+        // The encoding difference (MessagePack vs Binary Tuple) is handled
+        // at the Data Plane based on the collection's StorageMode, which is
+        // propagated via DocumentOp::Register at CREATE COLLECTION time.
+
         match &dml.op {
             WriteOp::Insert(_) | WriteOp::Ctas => {
                 // Try VALUES-based INSERT first.

@@ -31,6 +31,7 @@ nodedb-document = { workspace = true }
 nodedb-query = { workspace = true }
 nodedb-crdt = { workspace = true }
 nodedb-codec = { workspace = true }
+nodedb-strict = { workspace = true }
 
 # Async runtime (Control Plane)
 tokio = { workspace = true }

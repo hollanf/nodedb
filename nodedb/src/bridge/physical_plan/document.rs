@@ -1,5 +1,29 @@
 //! Document / sparse engine operations dispatched to the Data Plane.
 
+use nodedb_types::columnar::StrictSchema;
+
+/// Storage encoding mode for a document collection.
+///
+/// Determines how documents are serialized before storage in the sparse engine.
+/// Propagated from the Control Plane catalog to the Data Plane via
+/// `DocumentOp::Register`.
+#[derive(Debug, Clone)]
+pub enum StorageMode {
+    /// Schemaless: documents stored as MessagePack blobs. Self-describing,
+    /// supports arbitrary nested fields. Default for collections without a schema.
+    Schemaless,
+    /// Strict: documents stored as Binary Tuples with O(1) field extraction.
+    /// Schema-enforced — all fields must match declared types. 3-4x better
+    /// cache density than MessagePack.
+    Strict { schema: StrictSchema },
+}
+
+impl Default for StorageMode {
+    fn default() -> Self {
+        Self::Schemaless
+    }
+}
+
 /// Document engine physical operations (schemaless + strict + DML).
 #[derive(Debug, Clone)]
 pub enum DocumentOp {
@@ -68,11 +92,13 @@ pub enum DocumentOp {
         limit: usize,
     },
 
-    /// Register collection with secondary index paths (DDL).
+    /// Register collection with secondary index paths and storage mode (DDL).
     Register {
         collection: String,
         index_paths: Vec<String>,
         crdt_enabled: bool,
+        /// Storage encoding mode. Determines how documents are serialized.
+        storage_mode: StorageMode,
     },
 
     /// Lookup documents by secondary index value.

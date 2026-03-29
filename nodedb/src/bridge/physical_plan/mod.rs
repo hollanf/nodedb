@@ -16,7 +16,7 @@ pub mod timeseries;
 pub mod vector;
 
 pub use crdt::CrdtOp;
-pub use document::DocumentOp;
+pub use document::{DocumentOp, StorageMode};
 pub use graph::GraphOp;
 pub use kv::KvOp;
 pub use meta::MetaOp;

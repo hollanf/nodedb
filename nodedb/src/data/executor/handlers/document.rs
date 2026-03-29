@@ -333,17 +333,24 @@ impl CoreLoop {
         collection: &str,
         index_paths: &[String],
         crdt_enabled: bool,
+        storage_mode: &crate::bridge::physical_plan::StorageMode,
     ) -> Response {
+        let mode_label = match storage_mode {
+            crate::bridge::physical_plan::StorageMode::Schemaless => "schemaless",
+            crate::bridge::physical_plan::StorageMode::Strict { .. } => "strict",
+        };
         debug!(
             core = self.core_id,
             %collection,
             index_count = index_paths.len(),
             crdt_enabled,
+            storage_mode = mode_label,
             "register document collection"
         );
 
         let mut config = crate::engine::document::store::CollectionConfig::new(collection);
         config.crdt_enabled = crdt_enabled;
+        config.storage_mode = storage_mode.clone();
         for path in index_paths {
             config = config.with_index(path);
         }

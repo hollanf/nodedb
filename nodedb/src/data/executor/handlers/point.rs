@@ -3,8 +3,7 @@
 use redb::WriteTransaction;
 use tracing::{debug, warn};
 
-use crate::bridge::envelope::{ErrorCode, PhysicalPlan, Response};
-use crate::bridge::physical_plan::DocumentOp;
+use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
 
@@ -19,41 +18,74 @@ impl CoreLoop {
     ) -> Response {
         debug!(core = self.core_id, %collection, %document_id, "point get");
 
-        // O(1) cache check — skip redb B-Tree traversal for hot keys.
-        // Copy out of borrow before calling response_with_payload (needs &self).
+        // Check if this is a strict collection — affects decode format.
+        let config_key = format!("{tid}:{collection}");
+        let strict_schema = self.doc_configs.get(&config_key).and_then(|c| {
+            if let crate::bridge::physical_plan::StorageMode::Strict { ref schema } =
+                c.storage_mode
+            {
+                Some(schema.clone())
+            } else {
+                None
+            }
+        });
+
+        // Fetch data from cache or redb.
         let cached = self
             .doc_cache
             .get(tid, collection, document_id)
             .map(|v| v.to_vec());
-        if let Some(data) = cached {
-            // RLS post-fetch: evaluate filters, return NOT_FOUND on denial.
-            if !super::rls_eval::rls_check_msgpack_bytes(rls_filters, &data) {
+        let data = if let Some(data) = cached {
+            data
+        } else {
+            match self.sparse.get(tid, collection, document_id) {
+                Ok(Some(data)) => {
+                    self.doc_cache.put(tid, collection, document_id, &data);
+                    data
+                }
+                Ok(None) => return self.response_error(task, ErrorCode::NotFound),
+                Err(e) => {
+                    tracing::warn!(core = self.core_id, error = %e, "sparse get failed");
+                    return self.response_error(
+                        task,
+                        ErrorCode::Internal {
+                            detail: e.to_string(),
+                        },
+                    );
+                }
+            }
+        };
+
+        // RLS post-fetch: evaluate filters. For strict collections, decode
+        // Binary Tuple to JSON for RLS evaluation, then return JSON.
+        // For schemaless, check directly against MessagePack bytes.
+        if !rls_filters.is_empty() {
+            if strict_schema.is_some() {
+                // Strict: decode to JSON, check RLS against JSON.
+                if let Some(ref schema) = strict_schema
+                    && let Some(json) =
+                        super::super::strict_format::binary_tuple_to_json(&data, schema)
+                {
+                    let json_bytes = serde_json::to_vec(&json).unwrap_or_default();
+                    if !super::rls_eval::rls_check_msgpack_bytes(rls_filters, &json_bytes) {
+                        return self.response_error(task, ErrorCode::NotFound);
+                    }
+                }
+            } else if !super::rls_eval::rls_check_msgpack_bytes(rls_filters, &data) {
                 return self.response_error(task, ErrorCode::NotFound);
             }
-            return self.response_with_payload(task, data);
         }
 
-        match self.sparse.get(tid, collection, document_id) {
-            Ok(Some(data)) => {
-                // RLS post-fetch: evaluate filters, return NOT_FOUND on denial.
-                if !super::rls_eval::rls_check_msgpack_bytes(rls_filters, &data) {
-                    return self.response_error(task, ErrorCode::NotFound);
-                }
-                // Populate cache on miss (write-through).
-                self.doc_cache.put(tid, collection, document_id, &data);
-                self.response_with_payload(task, data)
-            }
-            Ok(None) => self.response_error(task, ErrorCode::NotFound),
-            Err(e) => {
-                tracing::warn!(core = self.core_id, error = %e, "sparse get failed");
-                self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                )
+        // For strict collections, return JSON instead of raw Binary Tuple
+        // (clients expect JSON, not Binary Tuple).
+        if let Some(ref schema) = strict_schema {
+            if let Some(json) = super::super::strict_format::binary_tuple_to_json(&data, schema) {
+                let json_bytes = serde_json::to_vec(&json).unwrap_or_default();
+                return self.response_with_payload(task, json_bytes);
             }
         }
+
+        self.response_with_payload(task, data)
     }
 
     pub(in crate::data::executor) fn execute_point_put(
@@ -163,19 +195,58 @@ impl CoreLoop {
         updates: &[(String, Vec<u8>)],
     ) -> Response {
         debug!(core = self.core_id, %collection, %document_id, fields = updates.len(), "point update");
+
+        let config_key = format!("{tid}:{collection}");
+        let is_strict = self
+            .doc_configs
+            .get(&config_key)
+            .is_some_and(|c| matches!(c.storage_mode, crate::bridge::physical_plan::StorageMode::Strict { .. }));
+
         match self.sparse.get(tid, collection, document_id) {
             Ok(Some(current_bytes)) => {
-                let mut doc = match super::super::doc_format::decode_document(&current_bytes) {
-                    Some(v) => v,
-                    None => {
+                // Decode current value — format depends on storage mode.
+                let mut doc = if is_strict {
+                    if let Some(config) = self.doc_configs.get(&config_key)
+                        && let crate::bridge::physical_plan::StorageMode::Strict { ref schema } =
+                            config.storage_mode
+                    {
+                        match super::super::strict_format::binary_tuple_to_json(
+                            &current_bytes,
+                            schema,
+                        ) {
+                            Some(v) => v,
+                            None => {
+                                return self.response_error(
+                                    task,
+                                    ErrorCode::Internal {
+                                        detail: "failed to decode Binary Tuple for update".into(),
+                                    },
+                                );
+                            }
+                        }
+                    } else {
                         return self.response_error(
                             task,
                             ErrorCode::Internal {
-                                detail: "failed to parse document for update".into(),
+                                detail: "strict config missing during update".into(),
                             },
                         );
                     }
+                } else {
+                    match super::super::doc_format::decode_document(&current_bytes) {
+                        Some(v) => v,
+                        None => {
+                            return self.response_error(
+                                task,
+                                ErrorCode::Internal {
+                                    detail: "failed to parse document for update".into(),
+                                },
+                            );
+                        }
+                    }
                 };
+
+                // Apply field-level updates.
                 if let Some(obj) = doc.as_object_mut() {
                     for (field, value_bytes) in updates {
                         let val: serde_json::Value = match serde_json::from_slice(value_bytes) {
@@ -187,13 +258,45 @@ impl CoreLoop {
                         obj.insert(field.clone(), val);
                     }
                 }
-                let updated_bytes = super::super::doc_format::encode_to_msgpack(&doc);
+
+                // Re-encode — format depends on storage mode.
+                let updated_bytes = if is_strict {
+                    if let Some(config) = self.doc_configs.get(&config_key)
+                        && let crate::bridge::physical_plan::StorageMode::Strict { ref schema } =
+                            config.storage_mode
+                    {
+                        let json_bytes = serde_json::to_vec(&doc).unwrap_or_default();
+                        match super::super::strict_format::json_to_binary_tuple(
+                            &json_bytes,
+                            schema,
+                        ) {
+                            Ok(bytes) => bytes,
+                            Err(e) => {
+                                return self.response_error(
+                                    task,
+                                    ErrorCode::Internal {
+                                        detail: format!("strict re-encode: {e}"),
+                                    },
+                                );
+                            }
+                        }
+                    } else {
+                        return self.response_error(
+                            task,
+                            ErrorCode::Internal {
+                                detail: "strict config missing during re-encode".into(),
+                            },
+                        );
+                    }
+                } else {
+                    super::super::doc_format::encode_to_msgpack(&doc)
+                };
+
                 match self
                     .sparse
                     .put(tid, collection, document_id, &updated_bytes)
                 {
                     Ok(()) => {
-                        // Write-through: update cache with new value.
                         self.doc_cache
                             .put(tid, collection, document_id, &updated_bytes);
                         self.response_ok(task)
@@ -228,11 +331,28 @@ impl CoreLoop {
         document_id: &str,
         value: &[u8],
     ) -> crate::Result<()> {
-        let stored = super::super::doc_format::json_to_msgpack(value);
+        // Check if this collection uses strict (Binary Tuple) encoding.
+        let config_key = format!("{tid}:{collection}");
+        let stored = if let Some(config) = self.doc_configs.get(&config_key)
+            && let crate::bridge::physical_plan::StorageMode::Strict { ref schema } =
+                config.storage_mode
+        {
+            super::super::strict_format::json_to_binary_tuple(value, schema).map_err(|e| {
+                crate::Error::Serialization {
+                    format: "binary_tuple".into(),
+                    detail: e,
+                }
+            })?
+        } else {
+            super::super::doc_format::json_to_msgpack(value)
+        };
 
         self.sparse
             .put_in_txn(txn, tid, collection, document_id, &stored)?;
 
+        // Text indexing and stats use the original JSON input, not the stored
+        // bytes — Binary Tuple requires a schema to decode, and the input JSON
+        // is already available here regardless of storage mode.
         if let Some(doc) = super::super::doc_format::decode_document(value) {
             if let Some(obj) = doc.as_object() {
                 let text_content: String = obj
@@ -278,154 +398,5 @@ impl CoreLoop {
         }
 
         Ok(())
-    }
-
-    /// Batch-coalesce consecutive PointPut tasks from the front of the task queue.
-    ///
-    /// Opens ONE redb WriteTransaction, executes all PointPuts within it,
-    /// commits once, and sends individual responses. This amortizes the
-    /// fsync cost across N writes instead of paying it per-write.
-    ///
-    /// Returns the number of tasks processed (0 if the front of the queue
-    /// is not a batchable PointPut, in which case the caller should fall
-    /// back to `poll_one`).
-    pub fn poll_write_batch(&mut self) -> usize {
-        // Check if the front of the queue is a non-expired PointPut.
-        let front_is_put = self.task_queue.front().is_some_and(|t| {
-            matches!(
-                t.plan(),
-                PhysicalPlan::Document(DocumentOp::PointPut { .. })
-            ) && !t.is_expired()
-        });
-        if !front_is_put {
-            return 0;
-        }
-
-        // Collect consecutive non-expired PointPuts (max 64).
-        let mut batch: Vec<ExecutionTask> = Vec::with_capacity(64);
-        while batch.len() < 64 {
-            let is_put = self.task_queue.front().is_some_and(|t| {
-                matches!(
-                    t.plan(),
-                    PhysicalPlan::Document(DocumentOp::PointPut { .. })
-                ) && !t.is_expired()
-            });
-            if !is_put {
-                break;
-            }
-            if let Some(task) = self.task_queue.pop_front() {
-                batch.push(task);
-            } else {
-                break;
-            }
-        }
-
-        // Single write: no batching benefit, let poll_one handle it
-        // (poll_one also handles idempotency cache and other bookkeeping).
-        if batch.len() <= 1 {
-            for t in batch.into_iter().rev() {
-                self.task_queue.push_front(t);
-            }
-            return 0;
-        }
-
-        // Open ONE transaction for the entire batch.
-        let txn = match self.sparse.begin_write() {
-            Ok(t) => t,
-            Err(_) => {
-                // Can't open txn — put tasks back, let poll_one handle individually.
-                for t in batch.into_iter().rev() {
-                    self.task_queue.push_front(t);
-                }
-                return 0;
-            }
-        };
-
-        // Execute each PointPut within the shared transaction.
-        // Track per-task success/failure for individual responses.
-        let mut results: Vec<Result<(), Response>> = Vec::with_capacity(batch.len());
-        for task in &batch {
-            let PhysicalPlan::Document(DocumentOp::PointPut {
-                collection,
-                document_id,
-                value,
-            }) = task.plan()
-            else {
-                unreachable!("batch only contains PointPut");
-            };
-            let tid = task.request.tenant_id.as_u32();
-            results.push(
-                self.apply_point_put(&txn, tid, collection, document_id, value)
-                    .map_err(|e| {
-                        self.response_error(
-                            task,
-                            ErrorCode::Internal {
-                                detail: e.to_string(),
-                            },
-                        )
-                    }),
-            );
-        }
-
-        // If ANY write failed hard (document put error), abort the batch.
-        let any_hard_failure = results.iter().any(|r| r.is_err());
-        if any_hard_failure {
-            // Don't commit — transaction is dropped (implicit rollback).
-            // Send error responses for failed tasks, put successful ones back.
-            let count = batch.len();
-            for (task, result) in batch.into_iter().zip(results) {
-                let response = match result {
-                    Err(err_response) => err_response,
-                    Ok(()) => self.response_error(
-                        &task,
-                        ErrorCode::Internal {
-                            detail: "batch aborted due to sibling failure".into(),
-                        },
-                    ),
-                };
-                let _ = self
-                    .response_tx
-                    .try_push(crate::bridge::dispatch::BridgeResponse { inner: response });
-            }
-            return count;
-        }
-
-        // Commit once for all writes.
-        let commit_result = txn.commit();
-
-        let count = batch.len();
-        for task in &batch {
-            let response = match &commit_result {
-                Ok(()) => self.response_ok(task),
-                Err(e) => self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: format!("batch commit: {e}"),
-                    },
-                ),
-            };
-
-            // Record idempotency key.
-            if let Some(key) = task.request.idempotency_key {
-                let succeeded = response.status == crate::bridge::envelope::Status::Ok;
-                if self.idempotency_cache.len() >= 16_384
-                    && let Some(oldest) = self.idempotency_order.pop_front()
-                {
-                    self.idempotency_cache.remove(&oldest);
-                }
-                self.idempotency_cache.insert(key, succeeded);
-                self.idempotency_order.push_back(key);
-            }
-
-            let _ = self
-                .response_tx
-                .try_push(crate::bridge::dispatch::BridgeResponse { inner: response });
-        }
-
-        if commit_result.is_ok() {
-            debug!(core = self.core_id, count, "write batch committed");
-        }
-
-        count
     }
 }
