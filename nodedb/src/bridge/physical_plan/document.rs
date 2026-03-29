@@ -7,21 +7,16 @@ use nodedb_types::columnar::StrictSchema;
 /// Determines how documents are serialized before storage in the sparse engine.
 /// Propagated from the Control Plane catalog to the Data Plane via
 /// `DocumentOp::Register`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum StorageMode {
     /// Schemaless: documents stored as MessagePack blobs. Self-describing,
     /// supports arbitrary nested fields. Default for collections without a schema.
+    #[default]
     Schemaless,
     /// Strict: documents stored as Binary Tuples with O(1) field extraction.
     /// Schema-enforced — all fields must match declared types. 3-4x better
     /// cache density than MessagePack.
     Strict { schema: StrictSchema },
-}
-
-impl Default for StorageMode {
-    fn default() -> Self {
-        Self::Schemaless
-    }
 }
 
 /// Document engine physical operations (schemaless + strict + DML).

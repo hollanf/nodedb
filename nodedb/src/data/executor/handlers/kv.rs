@@ -264,10 +264,10 @@ impl CoreLoop {
     ) -> Response {
         debug!(core = self.core_id, %collection, "kv get_ttl");
         let now_ms = current_ms();
-        let ttl_ms = match self.kv_engine.get_ttl_ms(tid, collection, key, now_ms) {
-            Some(remaining) => remaining,
-            None => -2, // Key does not exist.
-        };
+        let ttl_ms = self
+            .kv_engine
+            .get_ttl_ms(tid, collection, key, now_ms)
+            .unwrap_or(-2); // -2 = key does not exist.
         let payload = serde_json::json!({ "ttl_ms": ttl_ms })
             .to_string()
             .into_bytes();

@@ -77,11 +77,11 @@ impl CoreLoop {
 
         // For strict collections, return JSON instead of raw Binary Tuple
         // (clients expect JSON, not Binary Tuple).
-        if let Some(ref schema) = strict_schema {
-            if let Some(json) = super::super::strict_format::binary_tuple_to_json(&data, schema) {
-                let json_bytes = serde_json::to_vec(&json).unwrap_or_default();
-                return self.response_with_payload(task, json_bytes);
-            }
+        if let Some(ref schema) = strict_schema
+            && let Some(json) = super::super::strict_format::binary_tuple_to_json(&data, schema)
+        {
+            let json_bytes = serde_json::to_vec(&json).unwrap_or_default();
+            return self.response_with_payload(task, json_bytes);
         }
 
         self.response_with_payload(task, data)

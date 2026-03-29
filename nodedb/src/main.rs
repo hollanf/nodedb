@@ -443,11 +443,11 @@ async fn main() -> anyhow::Result<()> {
         if enabled { base_acceptor.clone() } else { None }
     };
     let tls_flags = config.tls.as_ref();
-    let pgwire_tls_enabled = tls_flags.map_or(false, |t| t.pgwire);
-    let http_tls_enabled = tls_flags.map_or(false, |t| t.http);
-    let resp_tls_enabled = tls_flags.map_or(false, |t| t.resp);
-    let ilp_tls_enabled = tls_flags.map_or(false, |t| t.ilp);
-    let native_tls_enabled = tls_flags.map_or(false, |t| t.native);
+    let pgwire_tls_enabled = tls_flags.is_some_and(|t| t.pgwire);
+    let http_tls_enabled = tls_flags.is_some_and(|t| t.http);
+    let resp_tls_enabled = tls_flags.is_some_and(|t| t.resp);
+    let ilp_tls_enabled = tls_flags.is_some_and(|t| t.ilp);
+    let native_tls_enabled = tls_flags.is_some_and(|t| t.native);
 
     // Run pgwire listener in a separate task.
     let shared_pg = Arc::clone(&shared);
