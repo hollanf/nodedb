@@ -65,23 +65,6 @@ pub(super) fn binary_tuple_to_json(
     Some(serde_json::Value::Object(obj))
 }
 
-/// Detect if bytes are a Binary Tuple (not MessagePack or JSON).
-///
-/// Binary Tuples start with a 2-byte LE schema version (typically 1).
-/// MessagePack maps start with 0x80-0x8F/0xDE/0xDF. JSON starts with `{`.
-/// This heuristic checks that the first byte is NOT a MessagePack map prefix
-/// and NOT `{`.
-pub(super) fn is_likely_binary_tuple(bytes: &[u8]) -> bool {
-    if bytes.len() < 4 {
-        return false;
-    }
-    let first = bytes[0];
-    // MessagePack maps: 0x80-0x8F (fixmap), 0xDE (map16), 0xDF (map32)
-    // JSON: 0x7B ('{')
-    // Binary Tuple schema version 1: [0x01, 0x00, ...]
-    !((0x80..=0x8F).contains(&first) || first == 0xDE || first == 0xDF || first == b'{')
-}
-
 /// Convert a JSON value to a typed `Value` according to the column type.
 fn json_to_typed_value(
     val: &serde_json::Value,
@@ -273,7 +256,6 @@ mod tests {
         let json_bytes = serde_json::to_vec(&json).unwrap();
 
         let tuple_bytes = json_to_binary_tuple(&json_bytes, &schema).unwrap();
-        assert!(is_likely_binary_tuple(&tuple_bytes));
 
         let decoded = binary_tuple_to_json(&tuple_bytes, &schema).unwrap();
         assert_eq!(decoded["id"], "u1");
