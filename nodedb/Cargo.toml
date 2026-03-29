@@ -63,6 +63,8 @@ regex = { workspace = true }
 # Protobuf + compression (Prometheus remote write/read)
 prost = { workspace = true }
 snap = { workspace = true }
+flate2 = { workspace = true }
+tonic = { workspace = true }
 
 # Password hashing & cryptography
 argon2 = { workspace = true }

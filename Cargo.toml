@@ -103,9 +103,11 @@ loro = "1"
 # Regex
 regex = "1"
 
-# Protobuf + compression (Prometheus remote write/read)
+# Protobuf + compression (Prometheus remote write/read, OTLP)
 prost = "0.13"
 snap = "1"
+flate2 = "1"
+tonic = "0.14"
 
 # Query engine
 datafusion = "53"

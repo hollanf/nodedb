@@ -9,6 +9,7 @@ pub mod event_trigger;
 pub mod forward;
 pub mod lock_utils;
 pub mod metrics;
+pub mod otel;
 pub mod planner;
 pub mod promql;
 pub mod pubsub;
