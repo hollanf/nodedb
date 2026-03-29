@@ -72,7 +72,7 @@ fn matches_pattern(key: &[u8], pattern: Option<&str>) -> bool {
 }
 
 /// Glob matching: `*` matches zero or more bytes, `?` matches exactly one byte.
-fn glob_match(pattern: &[u8], input: &[u8]) -> bool {
+pub(crate) fn glob_match(pattern: &[u8], input: &[u8]) -> bool {
     let mut pi = 0;
     let mut ii = 0;
     let mut star_pi = usize::MAX;

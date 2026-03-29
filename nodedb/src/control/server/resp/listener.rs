@@ -199,9 +199,18 @@ async fn handle_connection(
                         return Ok(());
                     }
 
-                    // SUBSCRIBE takes over the connection (enters push mode).
-                    if cmd.name == "SUBSCRIBE" || cmd.name == "PSUBSCRIBE" {
+                    // SUBSCRIBE/PSUBSCRIBE take over the connection (enter push mode).
+                    if cmd.name == "SUBSCRIBE" {
                         return super::handler_pubsub::handle_subscribe(
+                            &cmd,
+                            &session,
+                            state,
+                            &mut stream,
+                        )
+                        .await;
+                    }
+                    if cmd.name == "PSUBSCRIBE" {
+                        return super::handler_pubsub::handle_psubscribe(
                             &cmd,
                             &session,
                             state,
