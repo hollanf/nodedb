@@ -2,7 +2,7 @@
 
 ### Commercial Licensing Notice
 
-NodeDB free for internal use, self-hosting, and powering your SaaS/AI applications under the Business Source License (BSL) 1.1 below. However, offering NodNodeDBmanaged Database-as-a-Service (DBaaS) or commercial database tooling is restricted.
+NodeDB free for internal use, self-hosting, and powering your SaaS/AI applications under the Business Source License (BSL) 1.1 below. However, offering NodeDB-managed Database-as-a-Service (DBaaS) or commercial database tooling is restricted.
 
 If you wish to provide commercial hosting, DBaaS, or distribute NodeDB part of a competitive database product, please contact us to purchase a Commercial License.
 
