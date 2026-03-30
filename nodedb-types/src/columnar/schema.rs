@@ -190,6 +190,7 @@ mod tests {
             nullable: true,
             default: None,
             primary_key: true,
+            modifiers: Vec::new(),
         }];
         assert!(matches!(
             StrictSchema::new(cols),

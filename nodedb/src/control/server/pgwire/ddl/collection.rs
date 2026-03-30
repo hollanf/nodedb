@@ -58,7 +58,57 @@ pub fn create_collection(
         let schema = parse_typed_schema(sql).map_err(|e| sqlstate_error("42601", &e))?;
         nodedb_types::CollectionType::strict(schema)
     } else if upper.contains("STORAGE") && upper.contains("COLUMNAR") {
-        nodedb_types::CollectionType::columnar()
+        // Infer columnar profile from column modifiers or explicit profile keyword.
+        // Priority: column modifiers (TIME_KEY, SPATIAL_INDEX) > WITH profile = '...'
+        let schema = parse_typed_schema(sql).ok();
+        let partition_by =
+            extract_with_value(sql, "partition_by").unwrap_or_else(|| "1h".to_string());
+
+        // Check column modifiers first.
+        let time_key_col = schema.as_ref().and_then(|s| {
+            s.columns
+                .iter()
+                .find(|c| c.is_time_key())
+                .map(|c| c.name.clone())
+        });
+        let spatial_col = schema.as_ref().and_then(|s| {
+            s.columns
+                .iter()
+                .find(|c| c.is_spatial_index())
+                .map(|c| c.name.clone())
+        });
+
+        if let Some(time_key) = time_key_col {
+            nodedb_types::CollectionType::timeseries(time_key, partition_by)
+        } else if let Some(geom_col) = spatial_col {
+            nodedb_types::CollectionType::spatial(geom_col)
+        } else if upper.contains("PROFILE") && upper.contains("TIMESERIES") {
+            // Fallback: explicit profile keyword. Find first TIMESTAMP column.
+            let time_key = schema
+                .as_ref()
+                .and_then(|s| {
+                    s.columns
+                        .iter()
+                        .find(|c| c.column_type == nodedb_types::columnar::ColumnType::Timestamp)
+                        .map(|c| c.name.clone())
+                })
+                .unwrap_or_else(|| "timestamp".to_string());
+            nodedb_types::CollectionType::timeseries(time_key, partition_by)
+        } else if upper.contains("PROFILE") && upper.contains("SPATIAL") {
+            // Fallback: explicit profile keyword. Find first GEOMETRY column.
+            let geom_col = schema
+                .as_ref()
+                .and_then(|s| {
+                    s.columns
+                        .iter()
+                        .find(|c| c.column_type == nodedb_types::columnar::ColumnType::Geometry)
+                        .map(|c| c.name.clone())
+                })
+                .unwrap_or_else(|| "geom".to_string());
+            nodedb_types::CollectionType::spatial(geom_col)
+        } else {
+            nodedb_types::CollectionType::columnar()
+        }
     } else if super::kv::is_kv_storage_mode(&upper) {
         super::kv::parse_kv_collection(sql, &upper)?
     } else {
@@ -791,6 +841,31 @@ fn sql_upper_from_parts(parts: &[&str]) -> String {
     parts.join(" ").to_uppercase()
 }
 
+/// Extract a value from a WITH clause: `key = 'value'`.
+///
+/// Searches the SQL for `key = 'value'` or `key = "value"` patterns.
+fn extract_with_value(sql: &str, key: &str) -> Option<String> {
+    let upper = sql.to_uppercase();
+    let key_upper = key.to_uppercase();
+    let pos = upper.find(&key_upper)?;
+    let after = sql[pos + key.len()..].trim_start();
+    let after = after.strip_prefix('=')?;
+    let after = after.trim_start();
+    let val = after.trim_start_matches('\'').trim_start_matches('"');
+    let end = val
+        .find('\'')
+        .or_else(|| val.find('"'))
+        .or_else(|| val.find(','))
+        .or_else(|| val.find(')'))
+        .unwrap_or(val.len());
+    let result = val[..end].trim().to_string();
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
 /// Parse column definitions from a CREATE COLLECTION SQL statement into a StrictSchema.
 ///
 /// Extracts the parenthesized column list: `(id BIGINT NOT NULL PRIMARY KEY, name TEXT, ...)`.
@@ -877,7 +952,14 @@ fn parse_origin_column_def(s: &str) -> Result<nodedb_types::columnar::ColumnDef,
     let name = tokens[0].to_lowercase();
 
     // Find the type string (may span tokens for VECTOR(dim)).
-    let keywords = [" NOT ", " NULL", " PRIMARY ", " DEFAULT "];
+    let keywords = [
+        " NOT ",
+        " NULL",
+        " PRIMARY ",
+        " DEFAULT ",
+        " TIME_KEY",
+        " SPATIAL_INDEX",
+    ];
     let type_end = keywords
         .iter()
         .filter_map(|kw| upper[name.len()..].find(kw))
@@ -922,5 +1004,16 @@ fn parse_origin_column_def(s: &str) -> Result<nodedb_types::columnar::ColumnDef,
     if let Some(d) = default {
         col = col.with_default(d);
     }
+
+    // Column modifiers: TIME_KEY, SPATIAL_INDEX.
+    if upper.contains("TIME_KEY") {
+        col.modifiers
+            .push(nodedb_types::columnar::ColumnModifier::TimeKey);
+    }
+    if upper.contains("SPATIAL_INDEX") {
+        col.modifiers
+            .push(nodedb_types::columnar::ColumnModifier::SpatialIndex);
+    }
+
     Ok(col)
 }

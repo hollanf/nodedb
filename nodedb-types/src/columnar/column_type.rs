@@ -141,6 +141,20 @@ pub enum ColumnTypeParseError {
     InvalidVectorDim(String),
 }
 
+/// Column-level modifiers that designate special engine roles.
+///
+/// These tell the engine which column serves a specialized purpose.
+/// Extensible for future column roles (e.g., `PartitionKey`, `SortKey`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ColumnModifier {
+    /// This column is the time-partitioning key (timeseries profile).
+    /// Exactly one required for timeseries collections.
+    TimeKey,
+    /// This column has an automatic R-tree spatial index (spatial profile).
+    /// Exactly one required for spatial collections.
+    SpatialIndex,
+}
+
 /// A single column definition in a strict document or columnar schema.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnDef {
@@ -149,6 +163,9 @@ pub struct ColumnDef {
     pub nullable: bool,
     pub default: Option<String>,
     pub primary_key: bool,
+    /// Column-level modifiers (TIME_KEY, SPATIAL_INDEX, etc.).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modifiers: Vec<ColumnModifier>,
 }
 
 impl ColumnDef {
@@ -159,6 +176,7 @@ impl ColumnDef {
             nullable: false,
             default: None,
             primary_key: false,
+            modifiers: Vec::new(),
         }
     }
 
@@ -169,6 +187,7 @@ impl ColumnDef {
             nullable: true,
             default: None,
             primary_key: false,
+            modifiers: Vec::new(),
         }
     }
 
@@ -176,6 +195,16 @@ impl ColumnDef {
         self.primary_key = true;
         self.nullable = false;
         self
+    }
+
+    /// Check if this column has the TIME_KEY modifier.
+    pub fn is_time_key(&self) -> bool {
+        self.modifiers.contains(&ColumnModifier::TimeKey)
+    }
+
+    /// Check if this column has the SPATIAL_INDEX modifier.
+    pub fn is_spatial_index(&self) -> bool {
+        self.modifiers.contains(&ColumnModifier::SpatialIndex)
     }
 
     pub fn with_default(mut self, expr: impl Into<String>) -> Self {

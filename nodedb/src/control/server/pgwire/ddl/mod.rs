@@ -8,6 +8,7 @@ pub mod cluster;
 pub mod collection;
 pub mod collection_insert;
 pub mod continuous_agg;
+pub mod convert;
 pub mod crdt_ops;
 pub mod dsl;
 pub mod emergency_ddl;
