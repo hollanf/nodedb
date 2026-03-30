@@ -128,16 +128,16 @@ fn revoke_role(
 // ── GRANT/REVOKE <permission> ON <collection> ───────────────────────
 
 /// GRANT <perm> ON <collection> TO <grantee>
+/// GRANT EXECUTE ON FUNCTION <name> TO <grantee>
 fn grant_permission(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
     parts: &[&str],
 ) -> PgWireResult<Vec<Response>> {
-    // GRANT READ ON users TO analyst
     if parts.len() < 6 {
         return Err(sqlstate_error(
             "42601",
-            "syntax: GRANT <perm> ON <collection> TO <grantee>",
+            "syntax: GRANT <perm> ON <collection|FUNCTION name> TO <grantee>",
         ));
     }
 
@@ -145,13 +145,37 @@ fn grant_permission(
     if !parts[2].eq_ignore_ascii_case("ON") {
         return Err(sqlstate_error("42601", "expected ON after permission"));
     }
-    let collection = parts[3];
-    if !parts[4].eq_ignore_ascii_case("TO") {
-        return Err(sqlstate_error("42601", "expected TO after collection"));
-    }
-    let grantee = parts[5];
 
-    require_admin(identity, "grant collection permissions")?;
+    // Detect ON FUNCTION <name> TO <grantee>  (7 parts)
+    // vs     ON <collection> TO <grantee>     (6 parts)
+    let (target, object_desc) = if parts[3].eq_ignore_ascii_case("FUNCTION") {
+        if parts.len() < 7 {
+            return Err(sqlstate_error(
+                "42601",
+                "syntax: GRANT <perm> ON FUNCTION <name> TO <grantee>",
+            ));
+        }
+        let func_name = parts[4].to_lowercase();
+        let target =
+            crate::control::security::permission::function_target(identity.tenant_id, &func_name);
+        (target, format!("function '{func_name}'"))
+    } else {
+        let collection = parts[3];
+        let target = format!("collection:{}:{collection}", identity.tenant_id.as_u32());
+        (target, format!("collection '{collection}'"))
+    };
+
+    // Find TO keyword (position varies based on ON FUNCTION vs ON collection).
+    let to_idx = parts
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case("TO"))
+        .ok_or_else(|| sqlstate_error("42601", "expected TO <grantee>"))?;
+    if to_idx + 1 >= parts.len() {
+        return Err(sqlstate_error("42601", "expected grantee after TO"));
+    }
+    let grantee = parts[to_idx + 1];
+
+    require_admin(identity, "grant permissions")?;
 
     let perms = if perm_str.eq_ignore_ascii_case("ALL") {
         vec![
@@ -167,7 +191,6 @@ fn grant_permission(
         vec![perm]
     };
 
-    let target = format!("collection:{}:{collection}", identity.tenant_id.as_u32());
     let catalog = state.credentials.catalog();
 
     for perm in &perms {
@@ -187,13 +210,14 @@ fn grant_permission(
         AuditEvent::PrivilegeChange,
         Some(identity.tenant_id),
         &identity.username,
-        &format!("granted {perm_str} on '{collection}' to '{grantee}'"),
+        &format!("granted {perm_str} on {object_desc} to '{grantee}'"),
     );
 
     Ok(vec![Response::Execution(Tag::new("GRANT"))])
 }
 
 /// REVOKE <perm> ON <collection> FROM <grantee>
+/// REVOKE EXECUTE ON FUNCTION <name> FROM <grantee>
 fn revoke_permission(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
@@ -202,7 +226,7 @@ fn revoke_permission(
     if parts.len() < 6 {
         return Err(sqlstate_error(
             "42601",
-            "syntax: REVOKE <perm> ON <collection> FROM <grantee>",
+            "syntax: REVOKE <perm> ON <collection|FUNCTION name> FROM <grantee>",
         ));
     }
 
@@ -210,18 +234,39 @@ fn revoke_permission(
     if !parts[2].eq_ignore_ascii_case("ON") {
         return Err(sqlstate_error("42601", "expected ON after permission"));
     }
-    let collection = parts[3];
-    if !parts[4].eq_ignore_ascii_case("FROM") {
-        return Err(sqlstate_error("42601", "expected FROM after collection"));
-    }
-    let grantee = parts[5];
 
-    require_admin(identity, "revoke collection permissions")?;
+    // Detect ON FUNCTION <name> FROM <grantee> vs ON <collection> FROM <grantee>.
+    let (target, object_desc) = if parts[3].eq_ignore_ascii_case("FUNCTION") {
+        if parts.len() < 7 {
+            return Err(sqlstate_error(
+                "42601",
+                "syntax: REVOKE <perm> ON FUNCTION <name> FROM <grantee>",
+            ));
+        }
+        let func_name = parts[4].to_lowercase();
+        let target =
+            crate::control::security::permission::function_target(identity.tenant_id, &func_name);
+        (target, format!("function '{func_name}'"))
+    } else {
+        let collection = parts[3];
+        let target = format!("collection:{}:{collection}", identity.tenant_id.as_u32());
+        (target, format!("collection '{collection}'"))
+    };
+
+    let from_idx = parts
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case("FROM"))
+        .ok_or_else(|| sqlstate_error("42601", "expected FROM <grantee>"))?;
+    if from_idx + 1 >= parts.len() {
+        return Err(sqlstate_error("42601", "expected grantee after FROM"));
+    }
+    let grantee = parts[from_idx + 1];
+
+    require_admin(identity, "revoke permissions")?;
 
     let perm = parse_permission(perm_str)
         .ok_or_else(|| sqlstate_error("42601", &format!("unknown permission: {perm_str}")))?;
 
-    let target = format!("collection:{}:{collection}", identity.tenant_id.as_u32());
     let catalog = state.credentials.catalog();
 
     state
@@ -233,7 +278,7 @@ fn revoke_permission(
         AuditEvent::PrivilegeChange,
         Some(identity.tenant_id),
         &identity.username,
-        &format!("revoked {perm_str} on '{collection}' from '{grantee}'"),
+        &format!("revoked {perm_str} on {object_desc} from '{grantee}'"),
     );
 
     Ok(vec![Response::Execution(Tag::new("REVOKE"))])

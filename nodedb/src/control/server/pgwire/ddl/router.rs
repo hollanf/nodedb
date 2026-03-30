@@ -93,6 +93,9 @@ pub async fn dispatch(
     if upper.starts_with("DROP FUNCTION ") {
         return Some(super::function::drop_function(state, identity, &parts));
     }
+    if upper == "SHOW FUNCTIONS" || upper.starts_with("SHOW FUNCTIONS") {
+        return Some(super::function::show_functions(state, identity));
+    }
 
     // Schema introspection.
     if upper.starts_with("DESCRIBE ") || upper.starts_with("\\D ") {

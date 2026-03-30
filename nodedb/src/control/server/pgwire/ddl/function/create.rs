@@ -58,6 +58,7 @@ pub fn create_function(
         return_type: parsed.return_type,
         body_sql: parsed.body_sql,
         volatility: parsed.volatility,
+        security: crate::control::security::catalog::FunctionSecurity::default(),
         owner: identity.username.clone(),
         created_at: now,
     };
@@ -65,6 +66,24 @@ pub fn create_function(
     catalog
         .put_function(&stored)
         .map_err(|e| sqlstate_error("XX000", &format!("catalog write: {e}")))?;
+
+    // Set function ownership so the permission system can check it.
+    state
+        .permissions
+        .set_owner(
+            "function",
+            identity.tenant_id,
+            &stored.name,
+            &identity.username,
+            Some(catalog),
+        )
+        .map_err(|e| sqlstate_error("XX000", &format!("set ownership: {e}")))?;
+
+    // Extract and store dependencies (referenced functions in the body).
+    let deps = extract_dependencies(&stored);
+    if !deps.is_empty() {
+        let _ = catalog.put_dependencies("function", tenant_id, &stored.name, &deps);
+    }
 
     state.audit_record(
         crate::control::security::audit::AuditEvent::AdminAction,
@@ -74,6 +93,115 @@ pub fn create_function(
     );
 
     Ok(vec![Response::Execution(Tag::new("CREATE FUNCTION"))])
+}
+
+// ─── Dependency extraction ───────────────────────────────────────────────────
+
+use crate::control::security::catalog::dependencies::Dependency;
+
+/// Extract dependency references from a function body.
+///
+/// Scans the body SQL for function calls that match other user-defined functions.
+/// Collection references in subqueries (e.g., `SELECT x FROM users`) are not
+/// extracted here — they are resolved at query time via the schema provider
+/// and protected by collection-level permissions + RLS.
+fn extract_dependencies(func: &StoredFunction) -> Vec<Dependency> {
+    // For expression UDFs, dependencies are other function calls in the body.
+    // We use a simple regex-free scan: look for `identifier(` patterns that
+    // aren't SQL keywords or built-in functions.
+    //
+    // A more robust approach would parse the body into an AST and walk it,
+    // but the validate step already did that. For now, we extract function
+    // names from the body by finding word(...) patterns.
+    let body = func.body_sql.to_lowercase();
+    let param_names: std::collections::HashSet<&str> =
+        func.parameters.iter().map(|p| p.name.as_str()).collect();
+
+    let mut deps = Vec::new();
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Find start of an identifier.
+        if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            let word = &body[start..i];
+            // Skip whitespace.
+            let mut j = i;
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            // If followed by '(', it's a function call.
+            if j < bytes.len()
+                && bytes[j] == b'('
+                && !is_sql_keyword(word)
+                && !param_names.contains(word)
+            {
+                deps.push(Dependency {
+                    target_type: "function".into(),
+                    target_name: word.to_string(),
+                });
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    // Deduplicate.
+    deps.sort_by(|a, b| a.target_name.cmp(&b.target_name));
+    deps.dedup_by(|a, b| a.target_name == b.target_name && a.target_type == b.target_type);
+    deps
+}
+
+/// Check if a word is a SQL keyword (not a function reference).
+fn is_sql_keyword(word: &str) -> bool {
+    matches!(
+        word,
+        "select"
+            | "from"
+            | "where"
+            | "and"
+            | "or"
+            | "not"
+            | "in"
+            | "is"
+            | "null"
+            | "true"
+            | "false"
+            | "as"
+            | "case"
+            | "when"
+            | "then"
+            | "else"
+            | "end"
+            | "between"
+            | "like"
+            | "exists"
+            | "cast"
+            | "coalesce"
+            | "nullif"
+            | "if"
+            | "limit"
+            | "order"
+            | "by"
+            | "asc"
+            | "desc"
+            | "group"
+            | "having"
+            | "union"
+            | "all"
+            | "distinct"
+            | "join"
+            | "on"
+            | "left"
+            | "right"
+            | "inner"
+            | "outer"
+            | "cross"
+            | "values"
+    )
 }
 
 // ─── Parsing ─────────────────────────────────────────────────────────────────

@@ -28,25 +28,54 @@ pub fn drop_function(
         .as_ref()
         .ok_or_else(|| sqlstate_error("XX000", "system catalog not available"))?;
 
-    let existed = catalog
-        .delete_function(tenant_id, &name)
-        .map_err(|e| sqlstate_error("XX000", &format!("catalog write: {e}")))?;
+    // Check if function exists.
+    let func_exists = catalog
+        .get_function(tenant_id, &name)
+        .map_err(|e| sqlstate_error("XX000", &format!("catalog read: {e}")))?
+        .is_some();
 
-    if !existed && !if_exists {
+    if !func_exists && !if_exists {
         return Err(sqlstate_error(
             "42883",
             &format!("function '{name}' does not exist"),
         ));
     }
 
-    if existed {
-        state.audit_record(
-            crate::control::security::audit::AuditEvent::AdminAction,
-            Some(identity.tenant_id),
-            &identity.username,
-            &format!("DROP FUNCTION {name}"),
-        );
+    if !func_exists {
+        // IF EXISTS and function doesn't exist — no-op.
+        return Ok(vec![Response::Execution(Tag::new("DROP FUNCTION"))]);
     }
+
+    // Check dependencies: block DROP if other objects depend on this function.
+    let dependents = catalog
+        .find_dependents(tenant_id, "function", &name)
+        .map_err(|e| sqlstate_error("XX000", &format!("dependency check: {e}")))?;
+    if !dependents.is_empty() {
+        let dep_list: Vec<String> = dependents
+            .iter()
+            .map(|(t, n)| format!("{t} '{n}'"))
+            .collect();
+        return Err(sqlstate_error(
+            "2BP01",
+            &format!(
+                "cannot drop function '{name}': depended on by {}",
+                dep_list.join(", ")
+            ),
+        ));
+    }
+
+    // Delete function definition + dependencies + ownership.
+    catalog
+        .delete_function(tenant_id, &name)
+        .map_err(|e| sqlstate_error("XX000", &format!("catalog write: {e}")))?;
+    let _ = catalog.delete_dependencies("function", tenant_id, &name);
+
+    state.audit_record(
+        crate::control::security::audit::AuditEvent::AdminAction,
+        Some(identity.tenant_id),
+        &identity.username,
+        &format!("DROP FUNCTION {name}"),
+    );
 
     Ok(vec![Response::Execution(Tag::new("DROP FUNCTION"))])
 }
