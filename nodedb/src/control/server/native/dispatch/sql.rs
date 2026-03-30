@@ -110,9 +110,16 @@ async fn execute_planned(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeRe
     let clean_sql =
         crate::control::server::session_auth::extract_and_apply_on_deny(sql, &mut auth_ctx);
 
+    let sec = crate::control::planner::context::PlanSecurityContext {
+        identity: ctx.identity,
+        auth: &auth_ctx,
+        rls_store: &ctx.state.rls,
+        permissions: &ctx.state.permissions,
+        roles: &ctx.state.roles,
+    };
     let tasks = match ctx
         .query_ctx
-        .plan_sql_with_rls(&clean_sql, ctx.tenant_id(), &auth_ctx, &ctx.state.rls)
+        .plan_sql_with_rls(&clean_sql, ctx.tenant_id(), &sec)
         .await
     {
         Ok(t) => t,
@@ -409,9 +416,16 @@ async fn handle_explain(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeRes
         };
     }
 
+    let sec = crate::control::planner::context::PlanSecurityContext {
+        identity: ctx.identity,
+        auth: ctx.auth_context,
+        rls_store: &ctx.state.rls,
+        permissions: &ctx.state.permissions,
+        roles: &ctx.state.roles,
+    };
     match ctx
         .query_ctx
-        .plan_sql_with_rls(inner_sql, ctx.tenant_id(), ctx.auth_context, &ctx.state.rls)
+        .plan_sql_with_rls(inner_sql, ctx.tenant_id(), &sec)
         .await
     {
         Ok(tasks) => {

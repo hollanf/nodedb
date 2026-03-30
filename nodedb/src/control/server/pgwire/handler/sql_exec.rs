@@ -443,8 +443,15 @@ impl NodeDbPgHandler {
         );
 
         let auth_ctx = crate::control::server::session_auth::build_auth_context(identity);
+        let sec = crate::control::planner::context::PlanSecurityContext {
+            identity,
+            auth: &auth_ctx,
+            rls_store: &self.state.rls,
+            permissions: &self.state.permissions,
+            roles: &self.state.roles,
+        };
         let tasks = query_ctx
-            .plan_sql_with_rls(sql, tenant_id, &auth_ctx, &self.state.rls)
+            .plan_sql_with_rls(sql, tenant_id, &sec)
             .await
             .map_err(|e| {
                 PgWireError::UserError(Box::new(ErrorInfo::new(

@@ -43,9 +43,16 @@ impl NodeDbPgHandler {
         let clean_sql =
             crate::control::server::session_auth::extract_and_apply_on_deny(sql, &mut auth_ctx);
 
+        let sec = crate::control::planner::context::PlanSecurityContext {
+            identity,
+            auth: &auth_ctx,
+            rls_store: &self.state.rls,
+            permissions: &self.state.permissions,
+            roles: &self.state.roles,
+        };
         let tasks = self
             .query_ctx
-            .plan_sql_with_rls(&clean_sql, tenant_id, &auth_ctx, &self.state.rls)
+            .plan_sql_with_rls(&clean_sql, tenant_id, &sec)
             .await
             .map_err(|e| {
                 let (severity, code, message) = error_to_sqlstate(&e);

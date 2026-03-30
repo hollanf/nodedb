@@ -53,9 +53,16 @@ pub async fn query(
     let mut auth_ctx = crate::control::server::session_auth::build_auth_context(&identity);
     let clean_sql =
         crate::control::server::session_auth::extract_and_apply_on_deny(sql, &mut auth_ctx);
+    let sec = crate::control::planner::context::PlanSecurityContext {
+        identity: &identity,
+        auth: &auth_ctx,
+        rls_store: &state.shared.rls,
+        permissions: &state.shared.permissions,
+        roles: &state.shared.roles,
+    };
     let tasks = state
         .query_ctx
-        .plan_sql_with_rls(&clean_sql, tenant_id, &auth_ctx, &state.shared.rls)
+        .plan_sql_with_rls(&clean_sql, tenant_id, &sec)
         .await
         .map_err(|e| ApiError::BadRequest(format!("SQL planning failed: {e}")))?;
 
@@ -234,10 +241,14 @@ pub async fn query_ndjson(
     let query_ctx = &state.query_ctx;
 
     let auth_ctx = crate::control::server::session_auth::build_auth_context(&identity);
-    let tasks = match query_ctx
-        .plan_sql_with_rls(sql, tenant_id, &auth_ctx, &state.shared.rls)
-        .await
-    {
+    let sec = crate::control::planner::context::PlanSecurityContext {
+        identity: &identity,
+        auth: &auth_ctx,
+        rls_store: &state.shared.rls,
+        permissions: &state.shared.permissions,
+        roles: &state.shared.roles,
+    };
+    let tasks = match query_ctx.plan_sql_with_rls(sql, tenant_id, &sec).await {
         Ok(t) => t,
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
