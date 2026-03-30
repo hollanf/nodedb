@@ -14,6 +14,7 @@ pub mod dsl;
 pub mod emergency_ddl;
 pub mod explain_ddl;
 pub mod field_def;
+pub mod function;
 pub mod grant;
 pub mod graph_ops;
 pub mod impersonation_ddl;

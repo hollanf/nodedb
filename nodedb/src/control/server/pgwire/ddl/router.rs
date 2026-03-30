@@ -86,6 +86,14 @@ pub async fn dispatch(
         return Some(super::backup::restore_tenant(state, identity, &parts).await);
     }
 
+    // User-defined functions.
+    if upper.starts_with("CREATE OR REPLACE FUNCTION ") || upper.starts_with("CREATE FUNCTION ") {
+        return Some(super::function::create_function(state, identity, sql));
+    }
+    if upper.starts_with("DROP FUNCTION ") {
+        return Some(super::function::drop_function(state, identity, &parts));
+    }
+
     // Schema introspection.
     if upper.starts_with("DESCRIBE ") || upper.starts_with("\\D ") {
         return Some(super::collection::describe_collection(

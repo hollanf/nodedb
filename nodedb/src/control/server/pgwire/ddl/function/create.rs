@@ -1,0 +1,309 @@
+//! `CREATE [OR REPLACE] FUNCTION` DDL handler.
+
+use pgwire::api::results::{Response, Tag};
+use pgwire::error::PgWireResult;
+
+use crate::control::security::catalog::{FunctionParam, FunctionVolatility, StoredFunction};
+use crate::control::security::identity::AuthenticatedIdentity;
+use crate::control::state::SharedState;
+
+use super::super::super::types::{require_admin, sqlstate_error};
+use super::parse::{find_matching_paren, is_valid_sql_type, parse_parameters, validate_identifier};
+use super::validate::validate_function_body;
+
+/// Handle `CREATE [OR REPLACE] FUNCTION <name>(<params>) RETURNS <type> [IMMUTABLE|STABLE|VOLATILE] AS <body>`
+///
+/// Requires superuser or tenant_admin — function bodies are SQL expressions
+/// that can reference any collection, so creation is a privileged operation.
+/// (Once SECURITY INVOKER enforcement is wired in, this can be relaxed to
+/// users with a specific EXECUTE / CREATE FUNCTION grant.)
+pub fn create_function(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    sql: &str,
+) -> PgWireResult<Vec<Response>> {
+    require_admin(identity, "create functions")?;
+
+    let parsed = parse_create_function(sql)?;
+    let tenant_id = identity.tenant_id.as_u32();
+
+    let catalog = state
+        .credentials
+        .catalog()
+        .as_ref()
+        .ok_or_else(|| sqlstate_error("XX000", "system catalog not available"))?;
+
+    // Check for existing function.
+    if !parsed.or_replace
+        && let Ok(Some(_)) = catalog.get_function(tenant_id, &parsed.name)
+    {
+        return Err(sqlstate_error(
+            "42723",
+            &format!("function '{}' already exists", parsed.name),
+        ));
+    }
+
+    // Validate body: parse as SQL expression via DataFusion.
+    validate_function_body(&parsed)?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| sqlstate_error("XX000", "system clock before UNIX epoch"))?
+        .as_secs();
+
+    let stored = StoredFunction {
+        tenant_id,
+        name: parsed.name.clone(),
+        parameters: parsed.parameters,
+        return_type: parsed.return_type,
+        body_sql: parsed.body_sql,
+        volatility: parsed.volatility,
+        owner: identity.username.clone(),
+        created_at: now,
+    };
+
+    catalog
+        .put_function(&stored)
+        .map_err(|e| sqlstate_error("XX000", &format!("catalog write: {e}")))?;
+
+    state.audit_record(
+        crate::control::security::audit::AuditEvent::AdminAction,
+        Some(identity.tenant_id),
+        &identity.username,
+        &format!("CREATE FUNCTION {}", stored.name),
+    );
+
+    Ok(vec![Response::Execution(Tag::new("CREATE FUNCTION"))])
+}
+
+// ─── Parsing ─────────────────────────────────────────────────────────────────
+
+/// Parsed components of a CREATE FUNCTION statement.
+pub(super) struct ParsedCreateFunction {
+    pub or_replace: bool,
+    pub name: String,
+    pub parameters: Vec<FunctionParam>,
+    pub return_type: String,
+    pub volatility: FunctionVolatility,
+    pub body_sql: String,
+}
+
+/// Parse a CREATE [OR REPLACE] FUNCTION statement.
+///
+/// Grammar:
+/// ```text
+/// CREATE [OR REPLACE] FUNCTION <name>(<param_name> <type> [, ...])
+///   RETURNS <type>
+///   [IMMUTABLE | STABLE | VOLATILE]
+///   AS <sql_expression> ;
+/// ```
+pub(super) fn parse_create_function(sql: &str) -> PgWireResult<ParsedCreateFunction> {
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    let upper = trimmed.to_uppercase();
+
+    // Detect OR REPLACE.
+    let (or_replace, after_create) = if upper.starts_with("CREATE OR REPLACE FUNCTION ") {
+        (true, &trimmed["CREATE OR REPLACE FUNCTION ".len()..])
+    } else if upper.starts_with("CREATE FUNCTION ") {
+        (false, &trimmed["CREATE FUNCTION ".len()..])
+    } else {
+        return Err(sqlstate_error("42601", "expected CREATE FUNCTION"));
+    };
+
+    // Extract function name (everything before the first '(').
+    let paren_open = after_create
+        .find('(')
+        .ok_or_else(|| sqlstate_error("42601", "expected '(' after function name"))?;
+    let name = after_create[..paren_open].trim().to_lowercase();
+    if name.is_empty() {
+        return Err(sqlstate_error("42601", "function name is required"));
+    }
+    validate_identifier(&name)?;
+
+    // Extract parameter list (between matching parens).
+    let paren_close = find_matching_paren(after_create, paren_open)
+        .ok_or_else(|| sqlstate_error("42601", "unmatched '(' in parameter list"))?;
+    let params_str = &after_create[paren_open + 1..paren_close];
+    let parameters = parse_parameters(params_str)?;
+
+    // Everything after the closing paren.
+    let after_params = after_create[paren_close + 1..].trim();
+    let after_params_upper = after_params.to_uppercase();
+
+    // RETURNS <type>
+    if !after_params_upper.starts_with("RETURNS ") {
+        return Err(sqlstate_error("42601", "expected RETURNS <type>"));
+    }
+    let after_returns = after_params["RETURNS ".len()..].trim();
+
+    // Extract return type — next word(s) until AS or volatility keyword.
+    let (return_type, rest) = extract_return_type(after_returns)?;
+
+    // Optional volatility keyword, then AS.
+    let (volatility, body_part) = extract_volatility_and_body(rest)?;
+
+    // The body is the SQL expression after AS.
+    let body_sql = body_part.trim().trim_end_matches(';').trim().to_string();
+    if body_sql.is_empty() {
+        return Err(sqlstate_error("42601", "function body is empty"));
+    }
+
+    Ok(ParsedCreateFunction {
+        or_replace,
+        name,
+        parameters,
+        return_type,
+        volatility,
+        body_sql,
+    })
+}
+
+/// Extract return type tokens until we hit AS or a volatility keyword.
+fn extract_return_type(s: &str) -> PgWireResult<(String, &str)> {
+    let upper = s.to_uppercase();
+    let keywords = [" AS ", " IMMUTABLE ", " STABLE ", " VOLATILE "];
+
+    let mut earliest = s.len();
+    for kw in &keywords {
+        if let Some(pos) = upper.find(kw) {
+            earliest = earliest.min(pos);
+        }
+    }
+    // Handle keyword at end of string (no trailing space).
+    for kw in [" AS", " IMMUTABLE", " STABLE", " VOLATILE"] {
+        if upper.ends_with(kw) {
+            let pos = s.len() - kw.len();
+            earliest = earliest.min(pos);
+        }
+    }
+
+    if earliest == 0 {
+        return Err(sqlstate_error(
+            "42601",
+            "expected return type after RETURNS",
+        ));
+    }
+
+    let return_type = s[..earliest].trim().to_uppercase();
+    if !is_valid_sql_type(&return_type) {
+        return Err(sqlstate_error(
+            "42601",
+            &format!("unsupported return type: '{return_type}'"),
+        ));
+    }
+    let rest = s[earliest..].trim();
+    Ok((return_type, rest))
+}
+
+/// Extract optional volatility keyword and the body after AS.
+fn extract_volatility_and_body(s: &str) -> PgWireResult<(FunctionVolatility, &str)> {
+    let upper = s.to_uppercase();
+    let mut rest = s;
+    let mut volatility = FunctionVolatility::Immutable; // default
+
+    // Check for volatility keyword before AS.
+    for kw in ["IMMUTABLE", "STABLE", "VOLATILE"] {
+        if upper.starts_with(kw) {
+            volatility = FunctionVolatility::parse(kw).unwrap_or_default();
+            rest = s[kw.len()..].trim();
+            break;
+        }
+    }
+
+    // Expect AS.
+    let rest_upper = rest.to_uppercase();
+    if !rest_upper.starts_with("AS ") && !rest_upper.starts_with("AS\n") {
+        if rest_upper.starts_with("AS") {
+            return Err(sqlstate_error("42601", "expected function body after AS"));
+        }
+        return Err(sqlstate_error("42601", "expected AS <body>"));
+    }
+    let body = rest["AS".len()..].trim();
+
+    Ok((volatility, body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_simple_expression_function() {
+        let sql =
+            "CREATE FUNCTION normalize_email(email TEXT) RETURNS TEXT AS SELECT LOWER(TRIM(email))";
+        let parsed = parse_create_function(sql).unwrap();
+        assert_eq!(parsed.name, "normalize_email");
+        assert!(!parsed.or_replace);
+        assert_eq!(parsed.parameters.len(), 1);
+        assert_eq!(parsed.parameters[0].name, "email");
+        assert_eq!(parsed.parameters[0].data_type, "TEXT");
+        assert_eq!(parsed.return_type, "TEXT");
+        assert_eq!(parsed.body_sql, "SELECT LOWER(TRIM(email))");
+        assert_eq!(parsed.volatility, FunctionVolatility::Immutable);
+    }
+
+    #[test]
+    fn parse_or_replace() {
+        let sql = "CREATE OR REPLACE FUNCTION f(x INT) RETURNS INT AS SELECT x + 1";
+        let parsed = parse_create_function(sql).unwrap();
+        assert!(parsed.or_replace);
+        assert_eq!(parsed.name, "f");
+    }
+
+    #[test]
+    fn parse_multi_param() {
+        let sql = "CREATE FUNCTION add(a FLOAT, b FLOAT) RETURNS FLOAT AS SELECT a + b";
+        let parsed = parse_create_function(sql).unwrap();
+        assert_eq!(parsed.parameters.len(), 2);
+        assert_eq!(parsed.parameters[0].name, "a");
+        assert_eq!(parsed.parameters[1].name, "b");
+        assert_eq!(parsed.return_type, "FLOAT");
+    }
+
+    #[test]
+    fn parse_no_params() {
+        let sql = "CREATE FUNCTION pi() RETURNS FLOAT AS SELECT 3.14159";
+        let parsed = parse_create_function(sql).unwrap();
+        assert!(parsed.parameters.is_empty());
+        assert_eq!(parsed.body_sql, "SELECT 3.14159");
+    }
+
+    #[test]
+    fn parse_explicit_volatility() {
+        let sql = "CREATE FUNCTION f(x INT) RETURNS INT VOLATILE AS SELECT x";
+        let parsed = parse_create_function(sql).unwrap();
+        assert_eq!(parsed.volatility, FunctionVolatility::Volatile);
+    }
+
+    #[test]
+    fn parse_stable_volatility() {
+        let sql = "CREATE FUNCTION f(x INT) RETURNS INT STABLE AS SELECT x";
+        let parsed = parse_create_function(sql).unwrap();
+        assert_eq!(parsed.volatility, FunctionVolatility::Stable);
+    }
+
+    #[test]
+    fn parse_with_semicolon() {
+        let sql = "CREATE FUNCTION f(x INT) RETURNS INT AS SELECT x + 1;";
+        let parsed = parse_create_function(sql).unwrap();
+        assert_eq!(parsed.body_sql, "SELECT x + 1");
+    }
+
+    #[test]
+    fn parse_error_no_returns() {
+        let sql = "CREATE FUNCTION f(x INT) AS SELECT x";
+        assert!(parse_create_function(sql).is_err());
+    }
+
+    #[test]
+    fn parse_error_bad_type() {
+        let sql = "CREATE FUNCTION f(x FOOBAR) RETURNS INT AS SELECT x";
+        assert!(parse_create_function(sql).is_err());
+    }
+
+    #[test]
+    fn parse_error_empty_body() {
+        let sql = "CREATE FUNCTION f(x INT) RETURNS INT AS";
+        assert!(parse_create_function(sql).is_err());
+    }
+}

@@ -40,6 +40,10 @@ pub(super) const COLLECTIONS: TableDefinition<&str, &[u8]> =
 pub(super) const MATERIALIZED_VIEWS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.materialized_views");
 
+/// Table: "{tenant_id}:{name}" -> MessagePack-serialized user function definition.
+pub(super) const FUNCTIONS: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("_system.functions");
+
 /// Table: metadata key -> value bytes (counters, config).
 pub(super) const METADATA: TableDefinition<&str, &[u8]> = TableDefinition::new("_system.metadata");
 
@@ -429,6 +433,9 @@ impl SystemCatalog {
             let _ = write_txn
                 .open_table(MATERIALIZED_VIEWS)
                 .map_err(|e| catalog_err("init materialized_views table", e))?;
+            let _ = write_txn
+                .open_table(FUNCTIONS)
+                .map_err(|e| catalog_err("init functions table", e))?;
         }
         write_txn
             .commit()

@@ -44,6 +44,9 @@ impl QueryContext {
     ///
     /// Collections stored in the system catalog will be visible to DataFusion,
     /// enabling `SELECT * FROM <collection>` to resolve correctly.
+    ///
+    /// Also loads all user-defined functions for the tenant from the catalog
+    /// and registers them as DataFusion ScalarUDFs + an inlining AnalyzerRule.
     pub fn with_catalog(credentials: Arc<CredentialStore>, tenant_id: u32) -> Self {
         let config = SessionConfig::new()
             .with_information_schema(false)
@@ -51,6 +54,9 @@ impl QueryContext {
 
         let session = SessionContext::new_with_config(config);
         register_udfs(&session);
+
+        // Load and register user-defined functions for this tenant.
+        register_user_functions(&session, &credentials, tenant_id);
 
         // Register our custom schema provider so DataFusion can resolve
         // collection names during SQL planning.
@@ -138,6 +144,72 @@ impl QueryContext {
 impl Default for QueryContext {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Register all system UDFs on an arbitrary `SessionContext`.
+///
+/// Exposed for use by the DDL body validator (CREATE FUNCTION) which needs
+/// a temporary session with all system UDFs registered.
+pub fn register_udfs_on(session: &SessionContext) {
+    register_udfs(session);
+}
+
+/// Load user-defined functions from the catalog and register them with DataFusion.
+///
+/// For each stored function:
+/// 1. Creates a `UserDefinedFunction` (ScalarUDFImpl) for vectorized fallback execution.
+/// 2. Adds the function to an `InlineUserFunctions` AnalyzerRule for plan-level inlining.
+///
+/// The AnalyzerRule is only registered if there are user functions to inline.
+fn register_user_functions(
+    session: &SessionContext,
+    credentials: &CredentialStore,
+    tenant_id: u32,
+) {
+    use super::udf::{InlineUserFunctions, UserDefinedFunction};
+    use datafusion::logical_expr::ScalarUDF;
+
+    let catalog = match credentials.catalog() {
+        Some(c) => c,
+        None => return, // In-memory mode (tests) — no catalog, no user UDFs.
+    };
+
+    let functions = match catalog.load_functions_for_tenant(tenant_id) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(tenant_id, error = %e, "failed to load user functions");
+            return;
+        }
+    };
+
+    if functions.is_empty() {
+        return;
+    }
+
+    let mut inliner = InlineUserFunctions::new();
+
+    for func in &functions {
+        // Register as ScalarUDF (vectorized fallback).
+        if let Some(udf_impl) = UserDefinedFunction::from_stored(func) {
+            let param_names = udf_impl.param_names().to_vec();
+            let body_sql = udf_impl.body_sql().to_string();
+
+            session.register_udf(ScalarUDF::new_from_impl(udf_impl));
+
+            // Also register for inlining.
+            inliner.add(func.name.clone(), param_names, body_sql);
+        } else {
+            tracing::warn!(
+                function = %func.name,
+                "skipping user function with unmappable types"
+            );
+        }
+    }
+
+    // Register the inlining analyzer rule.
+    if !inliner.is_empty() {
+        session.add_analyzer_rule(Arc::new(inliner));
     }
 }
 
