@@ -404,7 +404,8 @@ impl CoreLoop {
                 }
 
                 // Ensure memtable exists (auto-create on first write).
-                if !self.columnar_memtables.contains_key(collection) {
+                let is_new_memtable = !self.columnar_memtables.contains_key(collection);
+                if is_new_memtable {
                     let schema = ilp_ingest::infer_schema(&lines);
                     let config = ColumnarMemtableConfig {
                         max_memory_bytes: 64 * 1024 * 1024,
@@ -428,11 +429,35 @@ impl CoreLoop {
 
                 self.checkpoint_coordinator
                     .mark_dirty("timeseries", accepted);
-                let result = serde_json::json!({
-                    "accepted": accepted,
-                    "rejected": rejected,
-                    "collection": collection,
-                });
+                let result = if is_new_memtable {
+                    let mt = self.columnar_memtables.get(collection).unwrap();
+                    let schema_columns: Vec<serde_json::Value> = mt
+                        .schema()
+                        .columns
+                        .iter()
+                        .map(|(name, col_type)| {
+                            let type_str = match col_type {
+                                ColumnType::Timestamp => "TIMESTAMP",
+                                ColumnType::Float64 => "FLOAT",
+                                ColumnType::Int64 => "BIGINT",
+                                ColumnType::Symbol => "VARCHAR",
+                            };
+                            serde_json::json!([name, type_str])
+                        })
+                        .collect();
+                    serde_json::json!({
+                        "accepted": accepted,
+                        "rejected": rejected,
+                        "collection": collection,
+                        "schema_columns": schema_columns,
+                    })
+                } else {
+                    serde_json::json!({
+                        "accepted": accepted,
+                        "rejected": rejected,
+                        "collection": collection,
+                    })
+                };
                 let json = serde_json::to_vec(&result).unwrap_or_default();
                 Response {
                     request_id: task.request.request_id,

@@ -156,7 +156,13 @@ fn collection_to_arrow_schema(
         ]));
     }
 
-    let mut fields = vec![Field::new("id", DataType::Utf8, false)];
+    let is_timeseries = coll.collection_type.is_timeseries();
+
+    let mut fields = if is_timeseries {
+        Vec::new()
+    } else {
+        vec![Field::new("id", DataType::Utf8, false)]
+    };
 
     for (name, type_str) in &coll.fields {
         let dt = match type_str.to_uppercase().as_str() {
@@ -166,6 +172,7 @@ fn collection_to_arrow_schema(
             "BOOL" | "BOOLEAN" => DataType::Boolean,
             "BYTES" | "BYTEA" | "BLOB" => DataType::Binary,
             "JSON" | "JSONB" => DataType::Utf8,
+            "TIMESTAMP" | "TIMESTAMPTZ" if is_timeseries => DataType::Int64,
             "TIMESTAMP" | "TIMESTAMPTZ" => DataType::Utf8,
             t if t.starts_with("VECTOR") => DataType::Utf8,
             _ => DataType::Utf8,
