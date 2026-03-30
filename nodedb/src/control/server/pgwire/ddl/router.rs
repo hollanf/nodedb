@@ -146,6 +146,13 @@ pub async fn dispatch(
         );
     }
 
+    // CONVERT COLLECTION.
+    if upper.starts_with("CONVERT COLLECTION ")
+        || upper.starts_with("CONVERT ") && upper.contains(" TO ")
+    {
+        return Some(super::convert::convert_collection(state, identity, sql).await);
+    }
+
     // Materialized views (HTAP).
     if upper.starts_with("CREATE MATERIALIZED VIEW ") {
         return Some(super::materialized_view::create_materialized_view(
