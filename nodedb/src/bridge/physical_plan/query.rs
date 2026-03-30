@@ -61,4 +61,23 @@ pub enum QueryOp {
         join_type: String,
         limit: usize,
     },
+
+    /// Recursive CTE: iterative fixed-point execution.
+    ///
+    /// Executes the base query once, then repeatedly executes the recursive
+    /// query using the previous iteration's results as the working table,
+    /// until no new rows are produced (fixed point).
+    RecursiveScan {
+        /// Collection for the recursive scan.
+        collection: String,
+        /// Base query filters (seeded once).
+        base_filters: Vec<u8>,
+        /// Recursive step filters (applied to working table each iteration).
+        recursive_filters: Vec<u8>,
+        /// Maximum iterations to prevent infinite loops. Default: 100.
+        max_iterations: usize,
+        /// Whether to deduplicate results (UNION vs UNION ALL).
+        distinct: bool,
+        limit: usize,
+    },
 }

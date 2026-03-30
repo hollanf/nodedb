@@ -358,6 +358,24 @@ impl CoreLoop {
                 *limit,
             ),
 
+            PhysicalPlan::Query(QueryOp::RecursiveScan {
+                collection,
+                base_filters,
+                recursive_filters,
+                max_iterations,
+                distinct,
+                limit,
+            }) => self.execute_recursive_scan(
+                task,
+                tid,
+                collection,
+                base_filters,
+                recursive_filters,
+                *max_iterations,
+                *distinct,
+                *limit,
+            ),
+
             PhysicalPlan::Meta(MetaOp::TransactionBatch { plans }) => {
                 self.execute_transaction_batch(task, tid, plans)
             }

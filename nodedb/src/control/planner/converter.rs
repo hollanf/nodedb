@@ -191,9 +191,7 @@ impl PlanConverter {
                     // to document scan instead of KV scan.
                     if self.is_kv(tenant_id, &collection) {
                         // Try O(1) hash lookup: WHERE <any_column> = <literal>.
-                        if let Some(key_bytes) =
-                            extract_equality_key(&filter.predicate)
-                        {
+                        if let Some(key_bytes) = extract_equality_key(&filter.predicate) {
                             return Ok(vec![PhysicalTask {
                                 tenant_id,
                                 vshard_id: vshard,
@@ -207,13 +205,12 @@ impl PlanConverter {
 
                         // Fall back to KV scan with filters.
                         let filters = expr_to_scan_filters(&filter.predicate);
-                        let filter_bytes =
-                            rmp_serde::to_vec_named(&filters).map_err(|e| {
-                                crate::Error::Serialization {
-                                    format: "msgpack".into(),
-                                    detail: format!("kv filter serialization: {e}"),
-                                }
-                            })?;
+                        let filter_bytes = rmp_serde::to_vec_named(&filters).map_err(|e| {
+                            crate::Error::Serialization {
+                                format: "msgpack".into(),
+                                detail: format!("kv filter serialization: {e}"),
+                            }
+                        })?;
                         let limit = scan.fetch.unwrap_or(1000);
                         return Ok(vec![PhysicalTask {
                             tenant_id,
@@ -302,8 +299,7 @@ impl PlanConverter {
                         detail: format!("filter serialization: {e}"),
                     })?;
                 for task in &mut tasks {
-                    if let PhysicalPlan::Document(DocumentOp::Scan { filters, .. }) =
-                        &mut task.plan
+                    if let PhysicalPlan::Document(DocumentOp::Scan { filters, .. }) = &mut task.plan
                     {
                         *filters = filter_bytes.clone();
                     }
@@ -330,10 +326,7 @@ impl PlanConverter {
                             indices
                                 .iter()
                                 .filter_map(|&idx| {
-                                    schema
-                                        .fields()
-                                        .get(idx)
-                                        .map(|f| f.name().clone())
+                                    schema.fields().get(idx).map(|f| f.name().clone())
                                 })
                                 .collect::<Vec<_>>()
                         })
@@ -380,7 +373,9 @@ impl PlanConverter {
                             let schema = scan.source.schema();
                             indices
                                 .iter()
-                                .filter_map(|&idx| schema.fields().get(idx).map(|f| f.name().clone()))
+                                .filter_map(|&idx| {
+                                    schema.fields().get(idx).map(|f| f.name().clone())
+                                })
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default();
@@ -388,15 +383,13 @@ impl PlanConverter {
                     return Ok(vec![PhysicalTask {
                         tenant_id,
                         vshard_id: vshard,
-                        plan: PhysicalPlan::Columnar(
-                            ColumnarOp::Scan {
-                                collection,
-                                projection,
-                                limit,
-                                filters: filter_bytes,
-                                rls_filters: Vec::new(),
-                            },
-                        ),
+                        plan: PhysicalPlan::Columnar(ColumnarOp::Scan {
+                            collection,
+                            projection,
+                            limit,
+                            filters: filter_bytes,
+                            rls_filters: Vec::new(),
+                        }),
                     }]);
                 }
 
@@ -412,7 +405,9 @@ impl PlanConverter {
                             let schema = scan.source.schema();
                             indices
                                 .iter()
-                                .filter_map(|&idx| schema.fields().get(idx).map(|f| f.name().clone()))
+                                .filter_map(|&idx| {
+                                    schema.fields().get(idx).map(|f| f.name().clone())
+                                })
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default();
@@ -420,15 +415,13 @@ impl PlanConverter {
                     return Ok(vec![PhysicalTask {
                         tenant_id,
                         vshard_id: vshard,
-                        plan: PhysicalPlan::Columnar(
-                            ColumnarOp::Scan {
-                                collection,
-                                projection,
-                                limit,
-                                filters: Vec::new(),
-                                rls_filters: Vec::new(),
-                            },
-                        ),
+                        plan: PhysicalPlan::Columnar(ColumnarOp::Scan {
+                            collection,
+                            projection,
+                            limit,
+                            filters: Vec::new(),
+                            rls_filters: Vec::new(),
+                        }),
                     }]);
                 }
 
@@ -589,14 +582,49 @@ impl PlanConverter {
                 Ok(all_tasks)
             }
 
-            LogicalPlan::RecursiveQuery(_) => Err(crate::Error::PlanError {
-                detail: "WITH RECURSIVE is not yet supported. Use iterative queries or graph traversal (GRAPH TRAVERSE) instead.".into(),
-            }),
+            LogicalPlan::RecursiveQuery(recursive) => {
+                // Extract base collection from the static (base) term.
+                let collection = super::search::extract_table_name(&recursive.static_term)
+                    .ok_or_else(|| crate::Error::PlanError {
+                        detail: "WITH RECURSIVE base term must reference a table".into(),
+                    })?;
+                let vshard = VShardId::from_collection(&collection);
+
+                // Extract filters from base and recursive terms.
+                let base_filters = extract_filters_from_plan(&recursive.static_term);
+                let recursive_filters = extract_filters_from_plan(&recursive.recursive_term);
+
+                Ok(vec![PhysicalTask {
+                    tenant_id,
+                    vshard_id: vshard,
+                    plan: PhysicalPlan::Query(QueryOp::RecursiveScan {
+                        collection,
+                        base_filters,
+                        recursive_filters,
+                        max_iterations: 100,
+                        distinct: recursive.is_distinct,
+                        limit: 10_000,
+                    }),
+                }])
+            }
 
             _ => Err(crate::Error::PlanError {
                 detail: format!("unsupported logical plan type: {}", plan.display()),
             }),
         }
+    }
+}
+
+/// Extract serialized filter predicates from a LogicalPlan (for recursive CTE terms).
+fn extract_filters_from_plan(plan: &LogicalPlan) -> Vec<u8> {
+    match plan {
+        LogicalPlan::Filter(filter) => {
+            let filters = super::extract::expr_to_scan_filters(&filter.predicate);
+            rmp_serde::to_vec_named(&filters).unwrap_or_default()
+        }
+        LogicalPlan::Projection(proj) => extract_filters_from_plan(&proj.input),
+        LogicalPlan::SubqueryAlias(alias) => extract_filters_from_plan(&alias.input),
+        _ => Vec::new(),
     }
 }
 
