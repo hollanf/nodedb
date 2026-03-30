@@ -15,7 +15,9 @@ use tracing::{debug, info};
 use super::bus::EventConsumerRx;
 use super::consumer::{ConsumerConfig, ConsumerHandle, spawn_consumer};
 use super::metrics::{AggregateMetrics, CoreMetrics};
+use super::trigger::dlq::TriggerDlq;
 use super::watermark::WatermarkStore;
+use crate::control::state::SharedState;
 use crate::wal::WalManager;
 
 /// Top-level Event Plane handle.
@@ -40,6 +42,8 @@ impl EventPlane {
         consumers_rx: Vec<EventConsumerRx>,
         wal: Arc<WalManager>,
         watermark_store: Arc<WatermarkStore>,
+        shared_state: Arc<SharedState>,
+        trigger_dlq: Arc<std::sync::Mutex<TriggerDlq>>,
     ) -> Self {
         let num_cores = consumers_rx.len();
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -52,6 +56,8 @@ impl EventPlane {
                     shutdown: shutdown_rx.clone(),
                     wal: Arc::clone(&wal),
                     watermark_store: Arc::clone(&watermark_store),
+                    shared_state: Arc::clone(&shared_state),
+                    trigger_dlq: Arc::clone(&trigger_dlq),
                     num_cores,
                 })
             })
@@ -148,12 +154,10 @@ mod tests {
     async fn event_plane_lifecycle() {
         let (mut producers, consumers) = create_event_bus_with_capacity(2, 64);
         let dir = tempfile::tempdir().unwrap();
-        let watermark_store = Arc::new(WatermarkStore::open(dir.path()).unwrap());
-        let wal_dir = dir.path().join("wal");
-        std::fs::create_dir_all(&wal_dir).unwrap();
-        let wal = Arc::new(WalManager::open_for_testing(&wal_dir).unwrap());
+        let (wal, watermark_store, shared_state, trigger_dlq) =
+            crate::event::test_utils::event_test_deps(&dir);
 
-        let plane = EventPlane::spawn(consumers, wal, watermark_store);
+        let plane = EventPlane::spawn(consumers, wal, watermark_store, shared_state, trigger_dlq);
         assert_eq!(plane.num_consumers(), 2);
 
         // Emit events on both cores.
@@ -174,12 +178,10 @@ mod tests {
     async fn drop_aborts_consumers() {
         let (_producers, consumers) = create_event_bus_with_capacity(1, 16);
         let dir = tempfile::tempdir().unwrap();
-        let watermark_store = Arc::new(WatermarkStore::open(dir.path()).unwrap());
-        let wal_dir = dir.path().join("wal");
-        std::fs::create_dir_all(&wal_dir).unwrap();
-        let wal = Arc::new(WalManager::open_for_testing(&wal_dir).unwrap());
+        let (wal, watermark_store, shared_state, trigger_dlq) =
+            crate::event::test_utils::event_test_deps(&dir);
 
-        let plane = EventPlane::spawn(consumers, wal, watermark_store);
+        let plane = EventPlane::spawn(consumers, wal, watermark_store, shared_state, trigger_dlq);
         drop(plane); // Should not panic.
     }
 }

@@ -184,15 +184,15 @@ async fn main() -> anyhow::Result<()> {
 
     info!(num_cores, "data plane cores running (eventfd-driven)");
 
-    // Spawn Event Plane: one consumer Tokio task per Data Plane core.
-    // Kept alive until process exit — Drop impl aborts consumer tasks.
+    // Event Plane resources (spawned after SharedState is created — needs it for trigger dispatch).
     let watermark_store = Arc::new(
         nodedb::event::watermark::WatermarkStore::open(&config.data_dir)
             .expect("failed to open event plane watermark store"),
     );
-    let _event_plane =
-        nodedb::event::EventPlane::spawn(event_consumers, Arc::clone(&wal), watermark_store);
-    info!(num_cores, "event plane running");
+    let trigger_dlq = Arc::new(std::sync::Mutex::new(
+        nodedb::event::trigger::TriggerDlq::open(&config.data_dir)
+            .expect("failed to open trigger DLQ"),
+    ));
 
     // Initialize cluster mode if configured.
     let cluster_handle = if let Some(ref cluster_cfg) = config.cluster {
@@ -305,6 +305,17 @@ async fn main() -> anyhow::Result<()> {
 
     // Event trigger processor: evaluates DEFINE EVENT triggers on writes.
     nodedb::control::event_trigger::spawn_event_trigger_processor(Arc::clone(&shared));
+
+    // Spawn Event Plane: one consumer Tokio task per Data Plane core.
+    // Kept alive until process exit — Drop impl aborts consumer tasks.
+    let _event_plane = nodedb::event::EventPlane::spawn(
+        event_consumers,
+        Arc::clone(&wal),
+        watermark_store,
+        Arc::clone(&shared),
+        trigger_dlq,
+    );
+    info!(num_cores, "event plane running");
 
     // Tenant rate counter reset (1-second timer).
     let shared_rate = Arc::clone(&shared);

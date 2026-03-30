@@ -2,6 +2,9 @@ pub mod bus;
 pub mod consumer;
 pub mod metrics;
 pub mod plane;
+#[cfg(test)]
+mod test_utils;
+pub mod trigger;
 pub mod types;
 pub mod wal_replay;
 pub mod watermark;

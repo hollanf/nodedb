@@ -22,8 +22,11 @@ use tracing::{debug, info, trace, warn};
 
 use super::bus::EventConsumerRx;
 use super::metrics::CoreMetrics;
+use super::trigger::dlq::TriggerDlq;
+use super::trigger::retry::TriggerRetryQueue;
 use super::types::WriteEvent;
 use super::watermark::WatermarkStore;
+use crate::control::state::SharedState;
 use crate::types::Lsn;
 use crate::wal::WalManager;
 
@@ -45,12 +48,17 @@ enum ConsumerMode {
     WalCatchup,
 }
 
+/// How often to process the retry queue (check for due retries).
+const RETRY_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
 /// Configuration for spawning a consumer.
 pub struct ConsumerConfig {
     pub rx: EventConsumerRx,
     pub shutdown: watch::Receiver<bool>,
     pub wal: Arc<WalManager>,
     pub watermark_store: Arc<WatermarkStore>,
+    pub shared_state: Arc<SharedState>,
+    pub trigger_dlq: Arc<std::sync::Mutex<TriggerDlq>>,
     pub num_cores: usize,
 }
 
@@ -96,6 +104,8 @@ async fn consumer_loop(config: ConsumerConfig, metrics: Arc<CoreMetrics>) {
         mut shutdown,
         wal,
         watermark_store,
+        shared_state,
+        trigger_dlq,
         num_cores,
     } = config;
 
@@ -105,6 +115,8 @@ async fn consumer_loop(config: ConsumerConfig, metrics: Arc<CoreMetrics>) {
     let mut last_lsn = Lsn::ZERO;
     let mut dirty_watermark = false;
     let mut last_watermark_flush = tokio::time::Instant::now();
+    let mut retry_queue = TriggerRetryQueue::new();
+    let mut last_retry_poll = tokio::time::Instant::now();
 
     // Load persisted watermark.
     match watermark_store.load(core_id) {
@@ -132,16 +144,29 @@ async fn consumer_loop(config: ConsumerConfig, metrics: Arc<CoreMetrics>) {
 
         match mode {
             ConsumerMode::Normal => {
-                let batch_count = drain_ring_buffer(
+                // Drain events from ring buffer.
+                let events = drain_ring_buffer(
                     &mut rx,
                     &metrics,
                     core_id,
                     &mut last_sequence,
                     &mut last_lsn,
                 );
+                let batch_count = events.len();
 
                 if batch_count > 0 {
                     dirty_watermark = true;
+
+                    // Dispatch triggers for each event (async).
+                    for event in &events {
+                        super::trigger::dispatcher::dispatch_triggers(
+                            event,
+                            &shared_state,
+                            &mut retry_queue,
+                        )
+                        .await;
+                    }
+
                     trace!(core_id, batch_count, "event batch processed");
 
                     // Check for Suspended backpressure → WAL catchup.
@@ -155,16 +180,45 @@ async fn consumer_loop(config: ConsumerConfig, metrics: Arc<CoreMetrics>) {
                         continue;
                     }
 
-                    // Update utilization metric.
-                    // Can't read utilization from consumer side (only producer has it).
-                    // This is fine — the backpressure controller on the producer side
-                    // handles the state transitions.
-
                     tokio::task::yield_now().await;
                     continue;
                 }
 
-                // No events — flush watermark if due, then sleep.
+                // No new events — process retry queue if due.
+                if !retry_queue.is_empty() && last_retry_poll.elapsed() >= RETRY_POLL_INTERVAL {
+                    // Step 1: drain exhausted entries and DLQ them (sync, no await).
+                    let (ready, exhausted) = retry_queue.drain_due();
+                    if !exhausted.is_empty() {
+                        let mut dlq = trigger_dlq.lock().unwrap_or_else(|p| p.into_inner());
+                        for entry in &exhausted {
+                            let _ = dlq.enqueue(super::trigger::dlq::DlqEnqueueParams {
+                                tenant_id: entry.tenant_id,
+                                source_collection: entry.collection.clone(),
+                                row_id: entry.row_id.clone(),
+                                operation: entry.operation.clone(),
+                                trigger_name: entry.trigger_name.clone(),
+                                error: entry.last_error.clone(),
+                                retry_count: entry.attempts,
+                                source_lsn: entry.source_lsn,
+                                source_sequence: entry.source_sequence,
+                            });
+                        }
+                        // dlq MutexGuard dropped here before any await.
+                    }
+
+                    // Step 2: retry ready entries (async).
+                    for entry in ready {
+                        super::trigger::dispatcher::retry_single(
+                            &entry,
+                            &shared_state,
+                            &mut retry_queue,
+                        )
+                        .await;
+                    }
+                    last_retry_poll = tokio::time::Instant::now();
+                }
+
+                // Flush watermark if due, then sleep.
                 maybe_flush_watermark(
                     &watermark_store,
                     core_id,
@@ -205,7 +259,14 @@ async fn consumer_loop(config: ConsumerConfig, metrics: Arc<CoreMetrics>) {
                         wal_retry_count = 0;
                         let count = events.len() as u64;
                         for event in &events {
-                            process_event(core_id, event, &metrics);
+                            record_event(core_id, event, &metrics);
+                            // Also dispatch triggers for WAL-replayed events.
+                            super::trigger::dispatcher::dispatch_triggers(
+                                event,
+                                &shared_state,
+                                &mut retry_queue,
+                            )
+                            .await;
                             last_sequence = event.sequence;
                             if event.lsn.is_ahead_of(last_lsn) {
                                 last_lsn = event.lsn;
@@ -275,31 +336,30 @@ async fn consumer_loop(config: ConsumerConfig, metrics: Arc<CoreMetrics>) {
 }
 
 /// Drain all available events from the ring buffer (up to DRAIN_BATCH_LIMIT).
-/// Returns the number of events processed.
+/// Returns the drained events for async processing (trigger dispatch).
 fn drain_ring_buffer(
     rx: &mut EventConsumerRx,
     metrics: &CoreMetrics,
     core_id: usize,
     last_sequence: &mut u64,
     last_lsn: &mut Lsn,
-) -> u32 {
-    let mut batch_count = 0u32;
+) -> Vec<WriteEvent> {
+    let mut events = Vec::new();
     while let Some(event) = rx.try_recv() {
         detect_sequence_gap(core_id, &event, *last_sequence, metrics);
-        process_event(core_id, &event, metrics);
+        record_event(core_id, &event, metrics);
 
         *last_sequence = event.sequence;
         if event.lsn.is_ahead_of(*last_lsn) {
             *last_lsn = event.lsn;
         }
 
-        batch_count += 1;
-        if batch_count.is_multiple_of(DRAIN_BATCH_LIMIT) {
+        events.push(event);
+        if (events.len() as u32).is_multiple_of(DRAIN_BATCH_LIMIT) {
             break;
         }
     }
-
-    batch_count
+    events
 }
 
 /// Drain the ring buffer, skipping events with sequence <= last_sequence.
@@ -345,7 +405,7 @@ fn detect_sequence_gap(
 }
 
 /// Process a single event. Dispatch point for trigger matching, CDC, etc.
-fn process_event(core_id: usize, event: &WriteEvent, metrics: &CoreMetrics) {
+fn record_event(core_id: usize, event: &WriteEvent, metrics: &CoreMetrics) {
     metrics.record_process(event.lsn.as_u64(), event.sequence);
 
     trace!(
@@ -414,9 +474,9 @@ mod tests {
         let e1 = make_event(1);
         let e5 = make_event(5);
 
-        process_event(0, &e1, &metrics);
+        record_event(0, &e1, &metrics);
         detect_sequence_gap(0, &e5, 1, &metrics);
-        process_event(0, &e5, &metrics);
+        record_event(0, &e5, &metrics);
 
         use std::sync::atomic::Ordering;
         assert_eq!(metrics.events_processed.load(Ordering::Relaxed), 2);
@@ -427,10 +487,8 @@ mod tests {
     async fn consumer_processes_and_persists_watermark() {
         let (mut producers, consumers) = create_event_bus_with_capacity(1, 64);
         let dir = tempfile::tempdir().unwrap();
-        let watermark_store = Arc::new(WatermarkStore::open(dir.path()).unwrap());
-        let wal_dir = dir.path().join("wal");
-        std::fs::create_dir_all(&wal_dir).unwrap();
-        let wal = Arc::new(WalManager::open_for_testing(&wal_dir).unwrap());
+        let (wal, watermark_store, shared_state, trigger_dlq) =
+            crate::event::test_utils::event_test_deps(&dir);
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -444,6 +502,8 @@ mod tests {
             shutdown: shutdown_rx,
             wal,
             watermark_store: Arc::clone(&watermark_store),
+            shared_state,
+            trigger_dlq,
             num_cores: 1,
         });
 
