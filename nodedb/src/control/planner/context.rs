@@ -6,8 +6,24 @@ use datafusion::prelude::*;
 
 use crate::control::planner::converter::PlanConverter;
 use crate::control::security::credential::CredentialStore;
+use crate::control::security::identity::AuthenticatedIdentity;
+use crate::control::security::permission::PermissionStore;
+use crate::control::security::role::RoleStore;
 
 use super::catalog::NodeDbSchemaProvider;
+use super::udf::InlineUserFunctions;
+
+/// Security context for query planning — bundles identity + permission stores.
+///
+/// Used by `plan_sql_with_rls` to check EXECUTE permissions on user UDFs
+/// and inject RLS predicates.
+pub struct PlanSecurityContext<'a> {
+    pub identity: &'a AuthenticatedIdentity,
+    pub auth: &'a crate::control::security::auth_context::AuthContext,
+    pub rls_store: &'a crate::control::security::rls::RlsPolicyStore,
+    pub permissions: &'a PermissionStore,
+    pub roles: &'a RoleStore,
+}
 
 /// DataFusion session context for the Control Plane.
 ///
@@ -15,10 +31,22 @@ use super::catalog::NodeDbSchemaProvider;
 /// execution model. SQL/DSL queries are parsed and logically planned here,
 /// then converted to `PhysicalPlan` variants for dispatch to the Data Plane.
 ///
+/// The planning pipeline is:
+/// 1. Parse SQL → analyzed logical plan (DataFusion analyzer, UDFs registered)
+/// 2. Extract user UDF references from the plan
+/// 3. Check EXECUTE permission for each referenced UDF
+/// 4. Inline user UDF calls (replace with body expressions)
+/// 5. Optimize the inlined plan (DataFusion optimizer)
+/// 6. Convert to NodeDB physical plan(s)
+/// 7. Inject RLS predicates
+///
 /// This type is `Send + Sync` — lives on the Control Plane (Tokio).
 pub struct QueryContext {
     session: SessionContext,
     converter: PlanConverter,
+    /// User UDF definitions for inlining + permission extraction.
+    /// Empty if no user functions exist for the tenant.
+    inliner: InlineUserFunctions,
 }
 
 impl QueryContext {
@@ -37,6 +65,7 @@ impl QueryContext {
         Self {
             session,
             converter: PlanConverter::new(),
+            inliner: InlineUserFunctions::new(),
         }
     }
 
@@ -46,7 +75,9 @@ impl QueryContext {
     /// enabling `SELECT * FROM <collection>` to resolve correctly.
     ///
     /// Also loads all user-defined functions for the tenant from the catalog
-    /// and registers them as DataFusion ScalarUDFs + an inlining AnalyzerRule.
+    /// and registers them as DataFusion ScalarUDFs. The inlining transform
+    /// is stored for use in the planning pipeline (not as an AnalyzerRule,
+    /// so EXECUTE permission can be checked between parsing and inlining).
     pub fn with_catalog(credentials: Arc<CredentialStore>, tenant_id: u32) -> Self {
         let config = SessionConfig::new()
             .with_information_schema(false)
@@ -56,7 +87,7 @@ impl QueryContext {
         register_udfs(&session);
 
         // Load and register user-defined functions for this tenant.
-        register_user_functions(&session, &credentials, tenant_id);
+        let inliner = load_user_functions(&session, &credentials, tenant_id);
 
         // Register our custom schema provider so DataFusion can resolve
         // collection names during SQL planning.
@@ -73,10 +104,13 @@ impl QueryContext {
         Self {
             session,
             converter: PlanConverter::with_credentials(credentials),
+            inliner,
         }
     }
 
-    /// Parse a SQL string into a DataFusion logical plan.
+    /// Parse a SQL string into a fully optimized DataFusion logical plan.
+    ///
+    /// Skips EXECUTE permission checking (for internal use, event triggers, etc.).
     pub async fn sql_to_logical(
         &self,
         sql: &str,
@@ -88,12 +122,19 @@ impl QueryContext {
             .map_err(|e| crate::Error::PlanError {
                 detail: format!("SQL parse: {e}"),
             })?;
-        let plan = df
-            .into_optimized_plan()
+        let (state, plan) = df.into_parts();
+        let inlined = self
+            .inliner
+            .inline(plan)
+            .map_err(|e| crate::Error::PlanError {
+                detail: format!("UDF inlining: {e}"),
+            })?;
+        let optimized = state
+            .optimize(&inlined)
             .map_err(|e| crate::Error::PlanError {
                 detail: format!("optimization: {e}"),
             })?;
-        Ok(plan)
+        Ok(optimized)
     }
 
     /// Parse SQL and convert to NodeDB physical plan(s).
@@ -108,24 +149,68 @@ impl QueryContext {
         self.converter.convert(&logical, tenant_id)
     }
 
-    /// Parse SQL, convert to physical plan, and inject RLS predicates.
+    /// Parse SQL, check EXECUTE permissions, convert to physical plan, inject RLS.
     ///
-    /// This is the primary query entry point when RLS is active. It:
-    /// 1. Parses SQL → logical plan via DataFusion.
-    /// 2. Converts logical → physical plan(s).
-    /// 3. Injects RLS read predicates for each task's collection.
-    ///
-    /// Superusers bypass RLS (handled inside `inject_rls`).
+    /// This is the primary query entry point. The pipeline:
+    /// 1. Parse SQL → analyzed logical plan (UDFs registered as ScalarUDF markers)
+    /// 2. Extract user UDF references from the pre-inline plan
+    /// 3. Check EXECUTE permission for each referenced UDF
+    /// 4. Inline UDFs (replace calls with body expressions — SECURITY INVOKER
+    ///    is enforced because the inlined body runs in the caller's plan context)
+    /// 5. Optimize the inlined plan
+    /// 6. Convert to NodeDB physical plan(s)
+    /// 7. Inject RLS predicates (applies to inlined UDF body subqueries too)
+    #[allow(clippy::too_many_arguments)]
     pub async fn plan_sql_with_rls(
         &self,
         sql: &str,
         tenant_id: crate::types::TenantId,
-        auth: &crate::control::security::auth_context::AuthContext,
-        rls_store: &crate::control::security::rls::RlsPolicyStore,
+        sec: &PlanSecurityContext<'_>,
     ) -> crate::Result<Vec<super::physical::PhysicalTask>> {
-        let logical = self.sql_to_logical(sql).await?;
-        let mut tasks = self.converter.convert(&logical, tenant_id)?;
-        super::rls_injection::inject_rls(&mut tasks, rls_store, auth)?;
+        // Step 1: Parse + analyze (UDFs still as ScalarFunction nodes, not inlined).
+        let df = self
+            .session
+            .sql(sql)
+            .await
+            .map_err(|e| crate::Error::PlanError {
+                detail: format!("SQL parse: {e}"),
+            })?;
+        let (state, plan) = df.into_parts();
+
+        // Step 2-3: Check EXECUTE permissions on referenced user UDFs.
+        let udf_refs = self.inliner.extract_udf_references(&plan);
+        for func_name in &udf_refs {
+            if !sec
+                .permissions
+                .check_function(sec.identity, func_name, sec.roles)
+            {
+                return Err(crate::Error::RejectedAuthz {
+                    tenant_id: sec.identity.tenant_id,
+                    resource: format!("EXECUTE on function '{func_name}'"),
+                });
+            }
+        }
+
+        // Step 4: Inline UDFs (SECURITY INVOKER — body runs in caller's context).
+        let inlined = self
+            .inliner
+            .inline(plan)
+            .map_err(|e| crate::Error::PlanError {
+                detail: format!("UDF inlining: {e}"),
+            })?;
+
+        // Step 5: Optimize.
+        let optimized = state
+            .optimize(&inlined)
+            .map_err(|e| crate::Error::PlanError {
+                detail: format!("optimization: {e}"),
+            })?;
+
+        // Step 6: Convert to physical plan.
+        let mut tasks = self.converter.convert(&optimized, tenant_id)?;
+
+        // Step 7: Inject RLS (applies to inlined body expressions too).
+        super::rls_injection::inject_rls(&mut tasks, sec.rls_store, sec.auth)?;
         Ok(tasks)
     }
 
@@ -155,49 +240,41 @@ pub fn register_udfs_on(session: &SessionContext) {
     register_udfs(session);
 }
 
-/// Load user-defined functions from the catalog and register them with DataFusion.
+/// Load user-defined functions from the catalog, register as ScalarUDFs,
+/// and return the inliner (NOT registered as an AnalyzerRule).
 ///
-/// For each stored function:
-/// 1. Creates a `UserDefinedFunction` (ScalarUDFImpl) for vectorized fallback execution.
-/// 2. Adds the function to an `InlineUserFunctions` AnalyzerRule for plan-level inlining.
-///
-/// The AnalyzerRule is only registered if there are user functions to inline.
-fn register_user_functions(
+/// UDFs are registered as ScalarUDFs so DataFusion can parse SQL that
+/// references them. The actual inlining happens in the planning pipeline
+/// after EXECUTE permission checking.
+fn load_user_functions(
     session: &SessionContext,
     credentials: &CredentialStore,
     tenant_id: u32,
-) {
-    use super::udf::{InlineUserFunctions, UserDefinedFunction};
+) -> InlineUserFunctions {
+    use super::udf::UserDefinedFunction;
     use datafusion::logical_expr::ScalarUDF;
+
+    let mut inliner = InlineUserFunctions::new();
 
     let catalog = match credentials.catalog() {
         Some(c) => c,
-        None => return, // In-memory mode (tests) — no catalog, no user UDFs.
+        None => return inliner,
     };
 
     let functions = match catalog.load_functions_for_tenant(tenant_id) {
         Ok(f) => f,
         Err(e) => {
             tracing::warn!(tenant_id, error = %e, "failed to load user functions");
-            return;
+            return inliner;
         }
     };
 
-    if functions.is_empty() {
-        return;
-    }
-
-    let mut inliner = InlineUserFunctions::new();
-
     for func in &functions {
-        // Register as ScalarUDF (vectorized fallback).
         if let Some(udf_impl) = UserDefinedFunction::from_stored(func) {
             let param_names = udf_impl.param_names().to_vec();
             let body_sql = udf_impl.body_sql().to_string();
 
             session.register_udf(ScalarUDF::new_from_impl(udf_impl));
-
-            // Also register for inlining.
             inliner.add(func.name.clone(), param_names, body_sql);
         } else {
             tracing::warn!(
@@ -207,11 +284,52 @@ fn register_user_functions(
         }
     }
 
-    // Register the inlining analyzer rule.
-    if !inliner.is_empty() {
-        session.add_analyzer_rule(Arc::new(inliner));
-    }
+    inliner
 }
+
+/// Canonical list of built-in system UDF/UDAF/UDWF names.
+///
+/// Used by `SHOW FUNCTIONS` to list system functions alongside user-defined ones.
+/// Must match the registrations in [`register_udfs`] below and
+/// [`nodedb_query::ts_udfs::register_timeseries_udfs`].
+pub const SYSTEM_FUNCTION_NAMES: &[&str] = &[
+    // Scalar UDFs (registered below).
+    "doc_get",
+    "doc_exists",
+    "doc_array_contains",
+    "vector_distance",
+    "multi_vector_search",
+    "rrf_score",
+    "bm25_score",
+    "text_match",
+    "st_dwithin",
+    "st_contains",
+    "st_intersects",
+    "st_within",
+    "st_distance",
+    "geo_distance",
+    // Timeseries scalar (nodedb-query).
+    "time_bucket",
+    // Timeseries window functions (nodedb-query).
+    "ts_rate",
+    "ts_derivative",
+    "ts_moving_avg",
+    "ts_ema",
+    "ts_delta",
+    "ts_interpolate",
+    "ts_lag",
+    "ts_lead",
+    "ts_rank",
+    // Timeseries aggregate functions (nodedb-query).
+    "ts_percentile",
+    "ts_stddev",
+    "ts_correlate",
+    // Approximate aggregates (nodedb-query).
+    "approx_count_distinct",
+    "approx_percentile",
+    "approx_topk",
+    "approx_count",
+];
 
 fn register_udfs(session: &SessionContext) {
     use super::udf::spatial::{

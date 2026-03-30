@@ -2,7 +2,9 @@ use datafusion::logical_expr::{FetchType, LogicalPlan};
 use datafusion::prelude::*;
 
 use crate::bridge::envelope::PhysicalPlan;
-use crate::bridge::physical_plan::{ColumnarOp, DocumentOp, KvOp, QueryOp, TextOp, TimeseriesOp};
+use crate::bridge::physical_plan::{
+    ColumnarOp, DocumentOp, KvOp, QueryOp, SpatialOp, TextOp, TimeseriesOp,
+};
 use crate::control::planner::physical::PhysicalTask;
 use crate::control::security::credential::CredentialStore;
 use crate::types::{TenantId, VShardId};
@@ -298,10 +300,36 @@ impl PlanConverter {
                         format: "msgpack".into(),
                         detail: format!("filter serialization: {e}"),
                     })?;
+                // Inject WHERE filters into any scan-type plan that carries a
+                // `filters` field. Covers Document, Timeseries, Columnar, KV,
+                // and Spatial scans. If the plan already has filters (e.g.,
+                // time-range predicates from TableScan extraction), merge them.
                 for task in &mut tasks {
-                    if let PhysicalPlan::Document(DocumentOp::Scan { filters, .. }) = &mut task.plan
-                    {
-                        *filters = filter_bytes.clone();
+                    let existing_filters: Option<&mut Vec<u8>> = match &mut task.plan {
+                        PhysicalPlan::Document(DocumentOp::Scan { filters, .. }) => Some(filters),
+                        PhysicalPlan::Timeseries(TimeseriesOp::Scan { filters, .. }) => {
+                            Some(filters)
+                        }
+                        PhysicalPlan::Columnar(ColumnarOp::Scan { filters, .. }) => Some(filters),
+                        PhysicalPlan::Kv(KvOp::Scan { filters, .. }) => Some(filters),
+                        PhysicalPlan::Spatial(SpatialOp::Scan {
+                            attribute_filters, ..
+                        }) => Some(attribute_filters),
+                        _ => None,
+                    };
+                    if let Some(filters) = existing_filters {
+                        if filters.is_empty() {
+                            *filters = filter_bytes.clone();
+                        } else {
+                            // Merge existing filters (e.g., time-range) with new
+                            // WHERE predicates.
+                            let mut existing: Vec<crate::bridge::scan_filter::ScanFilter> =
+                                rmp_serde::from_slice(filters).unwrap_or_default();
+                            let new: Vec<crate::bridge::scan_filter::ScanFilter> =
+                                rmp_serde::from_slice(&filter_bytes).unwrap_or_default();
+                            existing.extend(new);
+                            *filters = rmp_serde::to_vec_named(&existing).unwrap_or_default();
+                        }
                     }
                 }
                 Ok(tasks)

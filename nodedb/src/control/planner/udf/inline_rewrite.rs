@@ -1,44 +1,32 @@
-//! AnalyzerRule that inlines user-defined SQL expression functions.
+//! User-defined function inlining and permission checking.
 //!
-//! When DataFusion encounters a `ScalarFunction` call matching a user UDF,
-//! this rule replaces it with the function's body expression, substituting
-//! parameter references with the actual argument expressions.
+//! Provides two operations on logical plans:
+//! 1. **Extract** user UDF references (for EXECUTE permission checking).
+//! 2. **Inline** user UDF calls (replace with body expressions).
 //!
-//! This makes the optimizer see through user functions: predicate pushdown,
-//! constant folding, and projection elimination all work on the inlined body.
+//! The pipeline is: parse SQL → extract UDF refs → check EXECUTE → inline → optimize.
+//! This separation ensures EXECUTE permission is verified before inlining erases
+//! the function name from the plan.
 //!
 //! **Volatility handling:** The `FunctionVolatility` classification is enforced
-//! by DataFusion's optimizer *before* inlining occurs. When the UDF is registered
-//! as a `ScalarUDF`, its `Volatility` is set from the stored definition. DataFusion
-//! uses this to decide constant-folding eligibility: `Immutable` UDFs with all-literal
-//! inputs are folded; `Stable`/`Volatile` are not. After inlining replaces the UDF
-//! call with the body expression, the constituent functions (e.g. `LOWER`, `TRIM`)
-//! carry their own volatility, so the optimizer continues to respect the semantics.
+//! by DataFusion's optimizer. When the UDF is registered as a `ScalarUDF`, its
+//! `Volatility` is set from the stored definition. DataFusion uses this to decide
+//! constant-folding eligibility. After inlining replaces the UDF call with the body
+//! expression, the constituent functions carry their own volatility.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use datafusion::common::Result as DfResult;
-use datafusion::common::config::ConfigOptions;
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::logical_expr::{Expr, LogicalPlan};
-use datafusion::optimizer::AnalyzerRule;
 
-/// Holds the parsed body expression and parameter names for one user UDF.
-pub struct InlinableFunction {
-    /// Parameter names in declaration order.
-    pub param_names: Vec<String>,
-    /// The body SQL expression text (sans leading SELECT).
-    pub body_sql: String,
-}
-
-/// Analyzer rule that inlines user SQL expression UDFs into the logical plan.
+/// Stores user UDF definitions for inlining and permission checking.
 ///
-/// Registered per-session with the functions available for that tenant.
+/// Created per-session from the tenant's function catalog.
 #[derive(Debug)]
 pub struct InlineUserFunctions {
-    /// function_name -> inlinable definition.
-    /// Stored as body_sql + param_names; parsed lazily on first match.
+    /// function_name -> (param_names, body_sql).
     functions: HashMap<String, (Vec<String>, String)>,
 }
 
@@ -60,20 +48,105 @@ impl InlineUserFunctions {
         self.functions.insert(name, (param_names, body_sql));
     }
 
-    /// Returns true if there are no functions to inline (skip the rule).
+    /// Returns true if there are no user functions registered.
     pub fn is_empty(&self) -> bool {
         self.functions.is_empty()
     }
+
+    /// Check if a function name is a user-defined function.
+    pub fn is_user_function(&self, name: &str) -> bool {
+        self.functions.contains_key(name)
+    }
+
+    /// Extract all user UDF names referenced in a logical plan.
+    ///
+    /// Walks the plan's expression tree looking for `ScalarFunction` calls
+    /// whose names match registered user UDFs. Returns the set of function
+    /// names found. This is called BEFORE inlining to check EXECUTE permissions.
+    pub fn extract_udf_references(&self, plan: &LogicalPlan) -> HashSet<String> {
+        let mut refs = HashSet::new();
+        if self.functions.is_empty() {
+            return refs;
+        }
+        extract_udf_refs_from_plan(plan, &self.functions, &mut refs);
+        refs
+    }
+
+    /// Inline all user UDF calls in the logical plan.
+    ///
+    /// Replaces `ScalarFunction` calls matching registered user UDFs with their
+    /// body expressions, substituting parameter references with actual arguments.
+    /// Must be called AFTER EXECUTE permission check.
+    pub fn inline(&self, plan: LogicalPlan) -> DfResult<LogicalPlan> {
+        if self.functions.is_empty() {
+            return Ok(plan);
+        }
+
+        // Build a minimal SessionContext for parsing body expressions.
+        let ctx = Arc::new({
+            let config = datafusion::prelude::SessionConfig::new()
+                .with_information_schema(false)
+                .with_default_catalog_and_schema("nodedb", "public");
+            let session = datafusion::execution::context::SessionContext::new_with_config(config);
+            crate::control::planner::context::register_udfs_on(&session);
+            session
+        });
+
+        let functions = &self.functions;
+        let ctx_ref = &ctx;
+
+        plan.transform_up(|node| node.map_expressions(|expr| inline_expr(expr, functions, ctx_ref)))
+            .map(|t| t.data)
+    }
 }
 
-/// Minimal reference to session context for expression parsing.
+// ─── UDF reference extraction ────────────────────────────────────────────────
+
+/// Recursively walk a logical plan and collect user UDF names from expressions.
+fn extract_udf_refs_from_plan(
+    plan: &LogicalPlan,
+    functions: &HashMap<String, (Vec<String>, String)>,
+    refs: &mut HashSet<String>,
+) {
+    // Check all expressions in this plan node.
+    for expr in plan.expressions() {
+        extract_udf_refs_from_expr(&expr, functions, refs);
+    }
+    // Recurse into child plans.
+    for input in plan.inputs() {
+        extract_udf_refs_from_plan(input, functions, refs);
+    }
+}
+
+/// Recursively walk an expression and collect user UDF names.
+fn extract_udf_refs_from_expr(
+    expr: &Expr,
+    functions: &HashMap<String, (Vec<String>, String)>,
+    refs: &mut HashSet<String>,
+) {
+    if let Expr::ScalarFunction(sf) = expr {
+        let name = sf.name().to_lowercase();
+        if functions.contains_key(&name) {
+            refs.insert(name);
+        }
+    }
+    // Use DataFusion's Expr children traversal — handles all expression variants.
+    let _ = expr.apply(|e| {
+        if let Expr::ScalarFunction(sf) = e {
+            let name = sf.name().to_lowercase();
+            if functions.contains_key(&name) {
+                refs.insert(name);
+            }
+        }
+        Ok(datafusion::common::tree_node::TreeNodeRecursion::Continue)
+    });
+}
+
+// ─── Inlining ────────────────────────────────────────────────────────────────
+
 type SessionContextRef = Arc<datafusion::execution::context::SessionContext>;
 
 /// Parse a SQL expression body, substituting parameter references with actual args.
-///
-/// Strategy: parse the body SQL into an Expr using a schema built from param names
-/// (typed to match the actual argument expressions), then replace Column references
-/// matching param names with the corresponding argument expressions.
 fn parse_body_expr(
     body_sql: &str,
     param_names: &[String],
@@ -83,8 +156,6 @@ fn parse_body_expr(
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::common::DFSchema;
 
-    // Build a schema from parameter names. We use Utf8 as a placeholder type —
-    // the actual type coercion happens when we substitute with real args.
     let fields: Vec<Field> = param_names
         .iter()
         .map(|name| Field::new(name, DataType::Utf8, true))
@@ -92,7 +163,6 @@ fn parse_body_expr(
     let schema = Schema::new(fields);
     let df_schema = DFSchema::try_from(schema)?;
 
-    // Strip leading SELECT if present.
     let expr_sql = body_sql.trim();
     let expr_sql = if expr_sql.to_uppercase().starts_with("SELECT ") {
         &expr_sql["SELECT ".len()..]
@@ -103,7 +173,6 @@ fn parse_body_expr(
     let state = ctx.state();
     let body_expr = state.create_logical_expr(expr_sql, &df_schema)?;
 
-    // Substitute parameter Column references with actual argument expressions.
     let substituted = body_expr.transform_up(|e| {
         if let Expr::Column(col) = &e
             && let Some(idx) = param_names.iter().position(|n| n == col.name())
@@ -117,43 +186,12 @@ fn parse_body_expr(
     Ok(substituted.data)
 }
 
-impl AnalyzerRule for InlineUserFunctions {
-    fn analyze(&self, plan: LogicalPlan, _config: &ConfigOptions) -> DfResult<LogicalPlan> {
-        if self.functions.is_empty() {
-            return Ok(plan);
-        }
-
-        // We need a SessionContext for parsing body expressions.
-        // Build a minimal one with system UDFs registered.
-        let ctx = Arc::new({
-            let config = datafusion::prelude::SessionConfig::new()
-                .with_information_schema(false)
-                .with_default_catalog_and_schema("nodedb", "public");
-            let session = datafusion::execution::context::SessionContext::new_with_config(config);
-            crate::control::planner::context::register_udfs_on(&session);
-            session
-        });
-
-        let functions = &self.functions;
-        let ctx_ref = &ctx;
-
-        // Transform the plan bottom-up, rewriting expressions that match user UDFs.
-        plan.transform_up(|node| node.map_expressions(|expr| inline_expr(expr, functions, ctx_ref)))
-            .map(|t| t.data)
-    }
-
-    fn name(&self) -> &str {
-        "inline_user_functions"
-    }
-}
-
 /// Recursively inline user UDF calls within an expression tree.
 fn inline_expr(
     expr: Expr,
     functions: &HashMap<String, (Vec<String>, String)>,
     ctx: &SessionContextRef,
 ) -> DfResult<Transformed<Expr>> {
-    // Transform bottom-up so nested UDF calls get inlined first.
     expr.transform_up(|e| {
         if let Expr::ScalarFunction(ref sf) = e {
             let func_name = sf.name().to_lowercase();
