@@ -153,6 +153,16 @@ pub async fn dispatch(
         ));
     }
 
+    // Stream consumption: SELECT * FROM STREAM <name> CONSUMER GROUP <group>
+    if upper.starts_with("SELECT ")
+        && upper.contains("FROM STREAM ")
+        && upper.contains("CONSUMER GROUP")
+    {
+        return Some(super::stream_select::select_from_stream(
+            state, identity, &parts,
+        ));
+    }
+
     // Schedules: CREATE/DROP/SHOW SCHEDULE
     if upper.starts_with("CREATE SCHEDULE ") {
         return Some(super::schedule::create_schedule(state, identity, sql));

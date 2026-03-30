@@ -9,5 +9,7 @@ pub mod metrics;
 pub mod promql;
 pub mod query;
 pub mod status;
+pub mod stream_poll;
+pub mod stream_sse;
 pub mod subscribe;
 pub mod ws_rpc;

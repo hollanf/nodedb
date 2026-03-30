@@ -41,6 +41,7 @@ pub mod service_account;
 pub mod session_ddl;
 pub mod spatial;
 pub(crate) mod sql_parse;
+pub mod stream_select;
 pub mod sync_dispatch;
 pub mod tenant;
 pub mod timeseries;

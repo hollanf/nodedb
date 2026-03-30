@@ -1,0 +1,87 @@
+//! SSE streaming endpoint for change stream consumption.
+//!
+//! `GET /v1/streams/{stream}/events?group={group}&partition=3`
+//!
+//! Pushes events as Server-Sent Events in real-time. On each poll cycle,
+//! reads new events from the buffer since the consumer group's committed
+//! offset. The consumer should COMMIT OFFSET via SQL to advance the cursor.
+
+use std::convert::Infallible;
+use std::time::Duration;
+
+use axum::extract::{Path, Query, State};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use futures::stream::Stream;
+use serde::Deserialize;
+
+use super::super::auth::AppState;
+use crate::event::cdc::consume::{ConsumeParams, consume_stream};
+
+/// Query parameters.
+#[derive(Deserialize, Default)]
+pub struct SseParams {
+    /// Consumer group name (required).
+    pub group: Option<String>,
+    /// Optional: stream from a specific partition only.
+    pub partition: Option<u16>,
+    /// Tenant ID. Default: 1.
+    pub tenant_id: Option<u32>,
+}
+
+/// `GET /v1/streams/{stream}/events`
+pub async fn stream_events(
+    Path(stream_name): Path<String>,
+    Query(params): Query<SseParams>,
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let group = params.group.unwrap_or_default().to_lowercase();
+    let tenant_id = params.tenant_id.unwrap_or(1);
+    let stream_name = stream_name.to_lowercase();
+    let partition = params.partition;
+
+    let stream = async_stream::stream! {
+        // If no group specified, send an error event and close.
+        if group.is_empty() {
+            yield Ok(Event::default()
+                .event("error")
+                .data("missing 'group' query parameter"));
+            return;
+        }
+
+        loop {
+            let consume_params = ConsumeParams {
+                tenant_id,
+                stream_name: &stream_name,
+                group_name: &group,
+                partition,
+                limit: 100,
+            };
+
+            match consume_stream(&state.shared, &consume_params) {
+                Ok(result) if !result.events.is_empty() => {
+                    for event in &result.events {
+                        let json = serde_json::to_string(event).unwrap_or_default();
+                        yield Ok(Event::default()
+                            .event("change")
+                            .id(format!("{}:{}", event.partition, event.lsn))
+                            .data(json));
+                    }
+                }
+                Ok(_) => {
+                    // No new events — wait before polling again.
+                }
+                Err(e) => {
+                    yield Ok(Event::default()
+                        .event("error")
+                        .data(e.to_string()));
+                    return;
+                }
+            }
+
+            // Poll interval: 100ms for low-latency event delivery.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    };
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}

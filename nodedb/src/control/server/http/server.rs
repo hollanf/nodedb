@@ -42,7 +42,16 @@ fn build_router(state: AppState) -> Router {
         .route("/query/stream", post(routes::query::query_ndjson))
         .route("/ws", get(routes::ws_rpc::ws_handler))
         .route("/cdc/{collection}", get(routes::cdc::sse_stream))
-        .route("/cdc/{collection}/poll", get(routes::cdc::poll_changes));
+        .route("/cdc/{collection}/poll", get(routes::cdc::poll_changes))
+        // Event Plane change stream endpoints (new CDC system).
+        .route(
+            "/v1/streams/{stream}/poll",
+            get(routes::stream_poll::poll_stream),
+        )
+        .route(
+            "/v1/streams/{stream}/events",
+            get(routes::stream_sse::stream_events),
+        );
 
     #[cfg(feature = "promql")]
     let router = router
