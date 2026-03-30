@@ -1,11 +1,11 @@
-//! KV engine plan builders for native protocol opcodes.
+//! KV engine plan builders.
 
 use nodedb_types::protocol::TextFields;
 
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::KvOp;
 
-pub(crate) fn build_kv_scan(fields: &TextFields, collection: &str) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_scan(fields: &TextFields, collection: &str) -> crate::Result<PhysicalPlan> {
     let cursor = fields.cursor.clone().unwrap_or_default();
     let count = fields.limit.unwrap_or(100) as usize;
     let filters = fields.filters.clone().unwrap_or_default();
@@ -20,10 +20,7 @@ pub(crate) fn build_kv_scan(fields: &TextFields, collection: &str) -> crate::Res
     }))
 }
 
-pub(crate) fn build_kv_expire(
-    fields: &TextFields,
-    collection: &str,
-) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_expire(fields: &TextFields, collection: &str) -> crate::Result<PhysicalPlan> {
     let key = require_key_bytes(fields)?;
     let ttl_ms = fields.ttl_ms.ok_or_else(|| crate::Error::BadRequest {
         detail: "missing 'ttl_ms'".to_string(),
@@ -36,10 +33,7 @@ pub(crate) fn build_kv_expire(
     }))
 }
 
-pub(crate) fn build_kv_persist(
-    fields: &TextFields,
-    collection: &str,
-) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_persist(fields: &TextFields, collection: &str) -> crate::Result<PhysicalPlan> {
     let key = require_key_bytes(fields)?;
 
     Ok(PhysicalPlan::Kv(KvOp::Persist {
@@ -48,10 +42,7 @@ pub(crate) fn build_kv_persist(
     }))
 }
 
-pub(crate) fn build_kv_get_ttl(
-    fields: &TextFields,
-    collection: &str,
-) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_get_ttl(fields: &TextFields, collection: &str) -> crate::Result<PhysicalPlan> {
     let key = require_key_bytes(fields)?;
 
     Ok(PhysicalPlan::Kv(KvOp::GetTtl {
@@ -60,7 +51,7 @@ pub(crate) fn build_kv_get_ttl(
     }))
 }
 
-pub(crate) fn build_kv_batch_get(
+pub(crate) fn build_batch_get(
     fields: &TextFields,
     collection: &str,
 ) -> crate::Result<PhysicalPlan> {
@@ -83,7 +74,7 @@ pub(crate) fn build_kv_batch_get(
     }))
 }
 
-pub(crate) fn build_kv_batch_put(
+pub(crate) fn build_batch_put(
     fields: &TextFields,
     collection: &str,
 ) -> crate::Result<PhysicalPlan> {
@@ -108,7 +99,7 @@ pub(crate) fn build_kv_batch_put(
     }))
 }
 
-pub(crate) fn build_kv_field_get(
+pub(crate) fn build_field_get(
     fields: &TextFields,
     collection: &str,
 ) -> crate::Result<PhysicalPlan> {
@@ -128,7 +119,7 @@ pub(crate) fn build_kv_field_get(
     }))
 }
 
-pub(crate) fn build_kv_field_set(
+pub(crate) fn build_field_set(
     fields: &TextFields,
     collection: &str,
 ) -> crate::Result<PhysicalPlan> {

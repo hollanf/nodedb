@@ -1,4 +1,4 @@
-//! Graph operation plan builders for NDB native protocol.
+//! Graph operation plan builders.
 
 use std::sync::Arc;
 
@@ -7,9 +7,9 @@ use nodedb_types::protocol::TextFields;
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::GraphOp;
 
-use super::plan_builder::parse_direction;
+use super::parse_direction;
 
-pub(super) fn build_graph_rag_fusion(
+pub(crate) fn build_rag_fusion(
     fields: &TextFields,
     collection: &str,
 ) -> crate::Result<PhysicalPlan> {
@@ -35,7 +35,7 @@ pub(super) fn build_graph_rag_fusion(
     }))
 }
 
-pub(super) fn build_graph_hop(fields: &TextFields) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_hop(fields: &TextFields) -> crate::Result<PhysicalPlan> {
     let start = fields
         .start_node
         .as_ref()
@@ -52,7 +52,7 @@ pub(super) fn build_graph_hop(fields: &TextFields) -> crate::Result<PhysicalPlan
     }))
 }
 
-pub(super) fn build_graph_neighbors(fields: &TextFields) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_neighbors(fields: &TextFields) -> crate::Result<PhysicalPlan> {
     let start = fields
         .start_node
         .as_ref()
@@ -67,7 +67,7 @@ pub(super) fn build_graph_neighbors(fields: &TextFields) -> crate::Result<Physic
     }))
 }
 
-pub(super) fn build_graph_path(fields: &TextFields) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_path(fields: &TextFields) -> crate::Result<PhysicalPlan> {
     let from = fields
         .start_node
         .as_ref()
@@ -90,7 +90,7 @@ pub(super) fn build_graph_path(fields: &TextFields) -> crate::Result<PhysicalPla
     }))
 }
 
-pub(super) fn build_graph_subgraph(fields: &TextFields) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_subgraph(fields: &TextFields) -> crate::Result<PhysicalPlan> {
     let start = fields
         .start_node
         .as_ref()
@@ -106,7 +106,7 @@ pub(super) fn build_graph_subgraph(fields: &TextFields) -> crate::Result<Physica
     }))
 }
 
-pub(super) fn build_edge_put(fields: &TextFields) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_edge_put(fields: &TextFields) -> crate::Result<PhysicalPlan> {
     let src = fields
         .from_node
         .as_ref()
@@ -138,7 +138,7 @@ pub(super) fn build_edge_put(fields: &TextFields) -> crate::Result<PhysicalPlan>
     }))
 }
 
-pub(super) fn build_edge_delete(fields: &TextFields) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_edge_delete(fields: &TextFields) -> crate::Result<PhysicalPlan> {
     let src = fields
         .from_node
         .as_ref()

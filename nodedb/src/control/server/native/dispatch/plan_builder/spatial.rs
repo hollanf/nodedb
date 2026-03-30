@@ -1,14 +1,11 @@
-//! Spatial scan plan builder for the native protocol.
+//! Spatial scan plan builder.
 
 use nodedb_types::protocol::TextFields;
 
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::{SpatialOp, SpatialPredicate};
 
-pub(super) fn build_spatial_scan(
-    fields: &TextFields,
-    collection: &str,
-) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_scan(fields: &TextFields, collection: &str) -> crate::Result<PhysicalPlan> {
     let query_geometry = fields
         .query_geometry
         .as_ref()

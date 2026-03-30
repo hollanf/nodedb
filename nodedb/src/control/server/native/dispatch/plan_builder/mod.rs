@@ -1,0 +1,124 @@
+//! Physical plan construction from NDB opcodes.
+//!
+//! Each engine has its own sub-module with builder functions.
+//! `build_plan()` dispatches to the appropriate engine module.
+
+pub(crate) mod columnar;
+pub(crate) mod crdt;
+pub(crate) mod document;
+pub(crate) mod graph;
+pub(crate) mod kv;
+pub(crate) mod spatial;
+pub(crate) mod text;
+pub(crate) mod timeseries;
+pub(crate) mod vector;
+
+use nodedb_types::protocol::{OpCode, TextFields};
+
+use crate::bridge::envelope::PhysicalPlan;
+
+use super::DispatchCtx;
+
+/// Build a PhysicalPlan from an opcode and request fields.
+pub(crate) fn build_plan(
+    ctx: &DispatchCtx<'_>,
+    op: OpCode,
+    fields: &TextFields,
+    collection: &str,
+) -> crate::Result<PhysicalPlan> {
+    match op {
+        // Point operations (collection-type-aware).
+        OpCode::PointGet => document::build_point_get(ctx, fields, collection),
+        OpCode::PointPut => document::build_point_put(ctx, fields, collection),
+        OpCode::PointDelete => document::build_point_delete(ctx, fields, collection),
+        OpCode::RangeScan => document::build_range_scan(fields, collection),
+        OpCode::DocumentBatchInsert => document::build_batch_insert(fields, collection),
+        OpCode::DocumentUpdate => document::build_update(fields, collection),
+        OpCode::DocumentScan => document::build_scan(fields, collection),
+        OpCode::DocumentUpsert => document::build_upsert(fields, collection),
+        OpCode::DocumentBulkUpdate => document::build_bulk_update(fields, collection),
+        OpCode::DocumentBulkDelete => document::build_bulk_delete(fields, collection),
+        // Vector.
+        OpCode::VectorSearch => vector::build_search(fields, collection),
+        OpCode::VectorBatchInsert => vector::build_batch_insert(fields, collection),
+        OpCode::VectorInsert => vector::build_insert(fields, collection),
+        OpCode::VectorMultiSearch => vector::build_multi_search(fields, collection),
+        OpCode::VectorDelete => vector::build_delete(fields, collection),
+        // Graph.
+        OpCode::GraphRagFusion => graph::build_rag_fusion(fields, collection),
+        OpCode::GraphHop => graph::build_hop(fields),
+        OpCode::GraphNeighbors => graph::build_neighbors(fields),
+        OpCode::GraphPath => graph::build_path(fields),
+        OpCode::GraphSubgraph => graph::build_subgraph(fields),
+        OpCode::EdgePut => graph::build_edge_put(fields),
+        OpCode::EdgeDelete => graph::build_edge_delete(fields),
+        // KV.
+        OpCode::KvScan => kv::build_scan(fields, collection),
+        OpCode::KvExpire => kv::build_expire(fields, collection),
+        OpCode::KvPersist => kv::build_persist(fields, collection),
+        OpCode::KvGetTtl => kv::build_get_ttl(fields, collection),
+        OpCode::KvBatchGet => kv::build_batch_get(fields, collection),
+        OpCode::KvBatchPut => kv::build_batch_put(fields, collection),
+        OpCode::KvFieldGet => kv::build_field_get(fields, collection),
+        OpCode::KvFieldSet => kv::build_field_set(fields, collection),
+        // CRDT.
+        OpCode::CrdtRead => crdt::build_read(fields, collection),
+        OpCode::CrdtApply => crdt::build_apply(fields, collection),
+        OpCode::AlterCollectionPolicy => crdt::build_alter_policy(fields, collection),
+        // Text/Search.
+        OpCode::TextSearch => text::build_search(fields, collection),
+        OpCode::HybridSearch => text::build_hybrid_search(fields, collection),
+        // Spatial.
+        OpCode::SpatialScan => spatial::build_scan(fields, collection),
+        // Timeseries.
+        OpCode::TimeseriesScan => timeseries::build_scan(fields, collection),
+        OpCode::TimeseriesIngest => timeseries::build_ingest(fields, collection),
+        // Columnar.
+        // (future: ColumnarScan, ColumnarInsert opcodes)
+        _ => Err(crate::Error::BadRequest {
+            detail: format!("operation {op:?} not supported as direct dispatch"),
+        }),
+    }
+}
+
+// ── Shared helpers ──────────────────────────────────────────────────
+
+/// Check if a collection is KV type via catalog lookup.
+pub(super) fn is_kv(ctx: &DispatchCtx<'_>, collection: &str) -> bool {
+    if let Some(catalog) = ctx.state.credentials.catalog()
+        && let Ok(Some(coll)) = catalog.get_collection(ctx.identity.tenant_id.as_u32(), collection)
+    {
+        return coll.collection_type.is_kv();
+    }
+    false
+}
+
+/// Check if a collection is timeseries type via catalog lookup.
+pub(super) fn is_timeseries(ctx: &DispatchCtx<'_>, collection: &str) -> bool {
+    if let Some(catalog) = ctx.state.credentials.catalog()
+        && let Ok(Some(coll)) = catalog.get_collection(ctx.identity.tenant_id.as_u32(), collection)
+    {
+        return coll.collection_type.is_timeseries();
+    }
+    false
+}
+
+/// Extract document_id from request fields.
+pub(super) fn require_doc_id(fields: &TextFields) -> crate::Result<String> {
+    fields
+        .document_id
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| crate::Error::BadRequest {
+            detail: "missing 'document_id'".to_string(),
+        })
+}
+
+/// Parse direction string for graph operations.
+pub(super) fn parse_direction(s: Option<&str>) -> crate::engine::graph::edge_store::Direction {
+    match s {
+        Some("in") => crate::engine::graph::edge_store::Direction::In,
+        Some("both") => crate::engine::graph::edge_store::Direction::Both,
+        _ => crate::engine::graph::edge_store::Direction::Out,
+    }
+}
