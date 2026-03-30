@@ -56,9 +56,13 @@ impl PermissionStore {
 
     pub fn load_from(&self, catalog: &SystemCatalog) -> crate::Result<()> {
         let stored_perms = catalog.load_all_permissions()?;
-        let mut grants = self.grants.write().map_err(|e| crate::Error::Internal {
-            detail: format!("permission store lock poisoned: {e}"),
-        })?;
+        let mut grants = match self.grants.write() {
+            Ok(g) => g,
+            Err(p) => {
+                tracing::error!("permission grants lock poisoned — recovering data");
+                p.into_inner()
+            }
+        };
         for sp in stored_perms {
             if let Some(perm) = parse_permission(&sp.permission) {
                 grants.insert(Grant {
@@ -70,9 +74,13 @@ impl PermissionStore {
         }
 
         let stored_owners = catalog.load_all_owners()?;
-        let mut owners = self.owners.write().map_err(|e| crate::Error::Internal {
-            detail: format!("owner store lock poisoned: {e}"),
-        })?;
+        let mut owners = match self.owners.write() {
+            Ok(o) => o,
+            Err(p) => {
+                tracing::error!("owner store lock poisoned — recovering data");
+                p.into_inner()
+            }
+        };
         for so in stored_owners {
             let key = owner_key(&so.object_type, so.tenant_id, &so.object_name);
             owners.insert(key, so.owner_username);
@@ -113,9 +121,13 @@ impl PermissionStore {
             })?;
         }
 
-        let mut grants = self.grants.write().map_err(|e| crate::Error::Internal {
-            detail: format!("permission store lock poisoned: {e}"),
-        })?;
+        let mut grants = match self.grants.write() {
+            Ok(g) => g,
+            Err(p) => {
+                tracing::error!("permission grants lock poisoned — recovering data");
+                p.into_inner()
+            }
+        };
         grants.insert(grant);
         Ok(())
     }
@@ -138,9 +150,13 @@ impl PermissionStore {
             catalog.delete_permission(target, grantee, &format_permission(permission))?;
         }
 
-        let mut grants = self.grants.write().map_err(|e| crate::Error::Internal {
-            detail: format!("permission store lock poisoned: {e}"),
-        })?;
+        let mut grants = match self.grants.write() {
+            Ok(g) => g,
+            Err(p) => {
+                tracing::error!("permission grants lock poisoned — recovering data");
+                p.into_inner()
+            }
+        };
         Ok(grants.remove(&grant))
     }
 
@@ -178,7 +194,10 @@ impl PermissionStore {
 
         let grants = match self.grants.read() {
             Ok(g) => g,
-            Err(_) => return false,
+            Err(p) => {
+                tracing::error!("permission grants lock poisoned — recovering data");
+                p.into_inner()
+            }
         };
 
         // Check explicit user grant.
@@ -209,11 +228,77 @@ impl PermissionStore {
         false
     }
 
+    /// Check if an identity has EXECUTE permission on a function.
+    ///
+    /// Same multi-layer check as `check()` but uses `function:tenant:name` targets.
+    /// Function owners implicitly have EXECUTE.
+    pub fn check_function(
+        &self,
+        identity: &AuthenticatedIdentity,
+        function_name: &str,
+        role_store: &RoleStore,
+    ) -> bool {
+        if identity.is_superuser {
+            return true;
+        }
+
+        let target = function_target(identity.tenant_id, function_name);
+
+        // Check ownership — function owner has implicit EXECUTE.
+        if self.is_owner(&target, &identity.username) {
+            return true;
+        }
+
+        // Check built-in roles.
+        for role in &identity.roles {
+            if super::identity::role_grants_permission(role, Permission::Execute) {
+                return true;
+            }
+        }
+
+        let grants = match self.grants.read() {
+            Ok(g) => g,
+            Err(p) => {
+                tracing::error!("permission grants lock poisoned — recovering data");
+                p.into_inner()
+            }
+        };
+
+        // Check explicit user grant.
+        let user_grantee = format!("user:{}", identity.username);
+        if grants.contains(&Grant {
+            target: target.clone(),
+            grantee: user_grantee,
+            permission: Permission::Execute,
+        }) {
+            return true;
+        }
+
+        // Check grants on any of the user's roles (including inheritance).
+        for role in &identity.roles {
+            let chain = role_store.resolve_inheritance(role);
+            for ancestor in &chain {
+                if grants.contains(&Grant {
+                    target: target.clone(),
+                    grantee: ancestor.to_string(),
+                    permission: Permission::Execute,
+                }) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     /// List all grants for a grantee.
     pub fn grants_for(&self, grantee: &str) -> Vec<Grant> {
         let grants = match self.grants.read() {
             Ok(g) => g,
-            Err(_) => return Vec::new(),
+            Err(p) => {
+                tracing::error!("permission grants lock poisoned — recovering data");
+                p.into_inner()
+            }
         };
         grants
             .iter()
@@ -226,7 +311,10 @@ impl PermissionStore {
     pub fn grants_on(&self, target: &str) -> Vec<Grant> {
         let grants = match self.grants.read() {
             Ok(g) => g,
-            Err(_) => return Vec::new(),
+            Err(p) => {
+                tracing::error!("permission grants lock poisoned — recovering data");
+                p.into_inner()
+            }
         };
         grants
             .iter()
@@ -257,9 +345,13 @@ impl PermissionStore {
             })?;
         }
 
-        let mut owners = self.owners.write().map_err(|e| crate::Error::Internal {
-            detail: format!("owner store lock poisoned: {e}"),
-        })?;
+        let mut owners = match self.owners.write() {
+            Ok(o) => o,
+            Err(p) => {
+                tracing::error!("owner store lock poisoned — recovering data");
+                p.into_inner()
+            }
+        };
         owners.insert(key, owner_username.to_string());
         Ok(())
     }
@@ -278,9 +370,13 @@ impl PermissionStore {
             catalog.delete_owner(object_type, tenant_id.as_u32(), object_name)?;
         }
 
-        let mut owners = self.owners.write().map_err(|e| crate::Error::Internal {
-            detail: format!("owner store lock poisoned: {e}"),
-        })?;
+        let mut owners = match self.owners.write() {
+            Ok(o) => o,
+            Err(p) => {
+                tracing::error!("owner store lock poisoned — recovering data");
+                p.into_inner()
+            }
+        };
         owners.remove(&key);
         Ok(())
     }
@@ -293,7 +389,13 @@ impl PermissionStore {
         object_name: &str,
     ) -> Option<String> {
         let key = owner_key(object_type, tenant_id.as_u32(), object_name);
-        let owners = self.owners.read().ok()?;
+        let owners = match self.owners.read() {
+            Ok(o) => o,
+            Err(p) => {
+                tracing::error!("owner store lock poisoned — recovering data");
+                p.into_inner()
+            }
+        };
         owners.get(&key).cloned()
     }
 
@@ -318,7 +420,10 @@ impl PermissionStore {
     fn is_owner(&self, target: &str, username: &str) -> bool {
         let owners = match self.owners.read() {
             Ok(o) => o,
-            Err(_) => return false,
+            Err(p) => {
+                tracing::error!("owner store lock poisoned — recovering data");
+                p.into_inner()
+            }
         };
         owners.get(target).is_some_and(|o| o == username)
     }
@@ -342,6 +447,7 @@ pub fn parse_permission(s: &str) -> Option<Permission> {
         "alter" => Some(Permission::Alter),
         "admin" => Some(Permission::Admin),
         "monitor" => Some(Permission::Monitor),
+        "execute" | "call" => Some(Permission::Execute),
         _ => None,
     }
 }
@@ -355,7 +461,13 @@ fn format_permission(p: Permission) -> String {
         Permission::Alter => "alter".into(),
         Permission::Admin => "admin".into(),
         Permission::Monitor => "monitor".into(),
+        Permission::Execute => "execute".into(),
     }
+}
+
+/// Build the permission target string for a function.
+pub fn function_target(tenant_id: TenantId, function_name: &str) -> String {
+    format!("function:{}:{}", tenant_id.as_u32(), function_name)
 }
 
 #[cfg(test)]

@@ -44,6 +44,11 @@ pub(super) const MATERIALIZED_VIEWS: TableDefinition<&str, &[u8]> =
 pub(super) const FUNCTIONS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.functions");
 
+/// Table: "{source_type}:{tenant_id}:{source_name}" -> MessagePack-serialized dependency list.
+/// Tracks what objects a function/trigger/procedure references in its body.
+pub(super) const DEPENDENCIES: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("_system.dependencies");
+
 /// Table: metadata key -> value bytes (counters, config).
 pub(super) const METADATA: TableDefinition<&str, &[u8]> = TableDefinition::new("_system.metadata");
 
@@ -436,6 +441,9 @@ impl SystemCatalog {
             let _ = write_txn
                 .open_table(FUNCTIONS)
                 .map_err(|e| catalog_err("init functions table", e))?;
+            let _ = write_txn
+                .open_table(DEPENDENCIES)
+                .map_err(|e| catalog_err("init dependencies table", e))?;
         }
         write_txn
             .commit()

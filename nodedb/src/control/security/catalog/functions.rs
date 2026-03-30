@@ -126,6 +126,7 @@ mod tests {
             return_type: "TEXT".into(),
             body_sql: "SELECT LOWER(TRIM(email))".into(),
             volatility: FunctionVolatility::Immutable,
+            security: crate::control::security::catalog::FunctionSecurity::default(),
             owner: "admin".into(),
             created_at: 1000,
         }

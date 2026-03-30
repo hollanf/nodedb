@@ -112,6 +112,8 @@ pub enum Permission {
     Admin,
     /// Read metrics, health checks, EXPLAIN, slow query log.
     Monitor,
+    /// Call a user-defined function (`SELECT func(...)`, UDF in expression).
+    Execute,
 }
 
 /// What the permission applies to.
@@ -137,10 +139,13 @@ pub fn role_grants_permission(role: &Role, permission: Permission) -> bool {
     match role {
         Role::Superuser => true,
         Role::TenantAdmin => true,
-        Role::ReadWrite => matches!(permission, Permission::Read | Permission::Write),
-        Role::ReadOnly => matches!(permission, Permission::Read),
+        Role::ReadWrite => matches!(
+            permission,
+            Permission::Read | Permission::Write | Permission::Execute
+        ),
+        Role::ReadOnly => matches!(permission, Permission::Read | Permission::Execute),
         Role::Monitor => matches!(permission, Permission::Monitor | Permission::Read),
-        Role::Custom(_) => false, // Custom roles need explicit grants (future)
+        Role::Custom(_) => false, // Custom roles need explicit grants
     }
 }
 
