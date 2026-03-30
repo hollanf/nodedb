@@ -152,6 +152,13 @@ pub fn wal_append_if_write_with_creds(
             })?;
             wal.append_vector_params(tenant_id, vshard_id, &entry)?;
         }
+        PhysicalPlan::Columnar(crate::bridge::physical_plan::ColumnarOp::Insert {
+            collection: _,
+            payload,
+            format: _,
+        }) => {
+            wal.append_timeseries_batch(tenant_id, vshard_id, payload)?;
+        }
         PhysicalPlan::Timeseries(TimeseriesOp::Ingest {
             collection,
             payload,

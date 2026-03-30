@@ -415,13 +415,17 @@ impl CoreLoop {
         // Spatial index: detect geometry fields and insert into R-tree.
         // Tries to parse each object field as a GeoJSON Geometry.
         // If successful, computes bbox and inserts into the per-field R-tree.
+        // Also writes the document to columnar_memtables so that bare table scans
+        // and aggregates on spatial collections read from columnar (spatial extends columnar).
         if let Some(doc) = super::super::doc_format::decode_document(value)
             && let Some(obj) = doc.as_object()
         {
+            let mut has_geometry = false;
             for (field_name, field_value) in obj {
                 if let Ok(geom) =
                     serde_json::from_value::<nodedb_types::geometry::Geometry>(field_value.clone())
                 {
+                    has_geometry = true;
                     let bbox = nodedb_types::bbox::geometry_bbox(&geom);
                     let index_key = format!("{tid}:{collection}:{field_name}");
                     let entry_id = crate::util::fnv1a_hash(document_id.as_bytes());
@@ -431,6 +435,12 @@ impl CoreLoop {
                     self.spatial_doc_map
                         .insert((index_key, entry_id), document_id.to_string());
                 }
+            }
+
+            // If document has geometry, also write to columnar memtable.
+            // This ensures bare scans + aggregates work via columnar path.
+            if has_geometry {
+                self.ingest_doc_to_columnar(collection, obj);
             }
         }
 

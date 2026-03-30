@@ -121,7 +121,45 @@ impl CoreLoop {
         // Aggregates must scan all matching documents for correct results.
         // Cap at aggregate_scan_cap to prevent OOM on unbounded collections.
         let scan_limit = self.query_tuning.aggregate_scan_cap;
-        match self.sparse.scan_documents(tid, collection, scan_limit) {
+
+        // If collection has columnar memtable data, read from there.
+        // Works for all columnar profiles: plain, timeseries, spatial.
+        // Spatial inserts write to both sparse (R-tree) and columnar (scans/aggregates).
+        let use_columnar = self
+            .columnar_memtables
+            .get(collection)
+            .is_some_and(|mt| !mt.is_empty());
+
+        let docs_result = if use_columnar {
+            let mt = self.columnar_memtables.get(collection).unwrap();
+            let schema = mt.schema();
+            let row_count = (mt.row_count() as usize).min(scan_limit);
+            let col_meta: Vec<_> = schema
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(i, (name, ty))| (i, name.clone(), *ty))
+                .collect();
+            let mut docs = Vec::with_capacity(row_count);
+            for idx in 0..row_count {
+                let mut row = serde_json::Map::new();
+                for (col_idx, col_name, col_type) in &col_meta {
+                    let col_data = mt.column(*col_idx);
+                    let val = super::columnar_read::emit_column_value(
+                        mt, *col_idx, col_type, col_data, idx,
+                    );
+                    row.insert(col_name.to_string(), val);
+                }
+                // Encode as msgpack to match the sparse doc format the aggregate loop expects.
+                let bytes = rmp_serde::to_vec(&serde_json::Value::Object(row)).unwrap_or_default();
+                docs.push((idx.to_string(), bytes));
+            }
+            Ok(docs)
+        } else {
+            self.sparse.scan_documents(tid, collection, scan_limit)
+        };
+
+        match docs_result {
             Ok(docs) => {
                 let filter_predicates: Vec<ScanFilter> = if filters.is_empty() {
                     Vec::new()

@@ -34,6 +34,20 @@ pub enum MetaOp {
     /// Returns JSON-serialized `Vec<AggregateInfo>`.
     ListContinuousAggregates,
 
+    /// Convert a collection's storage mode.
+    ///
+    /// Scans all documents in the collection and re-encodes them for the
+    /// target type. The catalog update happens on the Control Plane after
+    /// the Data Plane confirms success.
+    ///
+    /// `target_type`: "document", "strict", "kv".
+    /// `schema_json`: for "strict"/"kv", JSON-serialized column definitions.
+    ConvertCollection {
+        collection: String,
+        target_type: String,
+        schema_json: String,
+    },
+
     /// Refresh a materialized view: scan source collection, write to target.
     RefreshMaterializedView {
         /// View name (also the target collection name).

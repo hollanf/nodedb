@@ -21,9 +21,9 @@ fn default_ts_config() -> ColumnarMemtableConfig {
 
 impl CoreLoop {
     /// Ensure a timeseries memtable exists for the given collection, creating if needed.
-    fn ensure_ts_memtable(&mut self, collection: &str, schema: ColumnarSchema) {
-        if !self.ts_memtables.contains_key(collection) {
-            self.ts_memtables.insert(
+    fn ensure_columnar_memtable(&mut self, collection: &str, schema: ColumnarSchema) {
+        if !self.columnar_memtables.contains_key(collection) {
+            self.columnar_memtables.insert(
                 collection.to_string(),
                 ColumnarMemtable::new(schema, default_ts_config()),
             );
@@ -103,9 +103,9 @@ impl CoreLoop {
 
                 // Ensure memtable exists.
                 let schema = crate::engine::timeseries::ilp_ingest::infer_schema(&lines);
-                self.ensure_ts_memtable(&collection, schema);
+                self.ensure_columnar_memtable(&collection, schema);
 
-                let mt = self.ts_memtables.get_mut(&collection).unwrap();
+                let mt = self.columnar_memtables.get_mut(&collection).unwrap();
                 let mut series_keys = std::collections::HashMap::new();
                 let now_ms = 0; // Default timestamp not needed for replay (records have timestamps).
                 let (accepted, _) = crate::engine::timeseries::ilp_ingest::ingest_batch(
@@ -120,9 +120,9 @@ impl CoreLoop {
                 if let Ok(batch) =
                     rmp_serde::from_slice::<nodedb_types::timeseries::TimeseriesWalBatch>(&payload)
                 {
-                    self.ensure_ts_memtable(&collection, ColumnarSchema::metric_default());
+                    self.ensure_columnar_memtable(&collection, ColumnarSchema::metric_default());
 
-                    let mt = self.ts_memtables.get_mut(&collection).unwrap();
+                    let mt = self.columnar_memtables.get_mut(&collection).unwrap();
                     for (series_id, timestamp_ms, value) in &batch.samples {
                         mt.ingest_metric(
                             *series_id,
@@ -142,7 +142,7 @@ impl CoreLoop {
                 core = self.core_id,
                 replayed,
                 skipped,
-                collections = self.ts_memtables.len(),
+                collections = self.columnar_memtables.len(),
                 "WAL timeseries replay complete"
             );
         }

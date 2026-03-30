@@ -148,8 +148,8 @@ pub fn role_grants_permission(role: &Role, permission: Permission) -> bool {
 pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Permission {
     use crate::bridge::envelope::PhysicalPlan;
     use crate::bridge::physical_plan::{
-        CrdtOp, DocumentOp, GraphOp, KvOp, MetaOp, QueryOp, SpatialOp, TextOp, TimeseriesOp,
-        VectorOp,
+        ColumnarOp, CrdtOp, DocumentOp, GraphOp, KvOp, MetaOp, QueryOp, SpatialOp, TextOp,
+        TimeseriesOp, VectorOp,
     };
     match plan {
         // Read operations.
@@ -190,6 +190,8 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
 
         PhysicalPlan::Spatial(SpatialOp::Scan { .. }) => Permission::Read,
 
+        PhysicalPlan::Columnar(ColumnarOp::Scan { .. }) => Permission::Read,
+
         PhysicalPlan::Timeseries(TimeseriesOp::Scan { .. }) => Permission::Read,
 
         // Write operations.
@@ -217,6 +219,8 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
 
         PhysicalPlan::Meta(MetaOp::WalAppend { .. }) => Permission::Write,
 
+        PhysicalPlan::Columnar(ColumnarOp::Insert { .. }) => Permission::Write,
+
         PhysicalPlan::Timeseries(TimeseriesOp::Ingest { .. }) => Permission::Write,
 
         // Transaction batch: requires write (contains writes).
@@ -233,7 +237,8 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
             MetaOp::RegisterContinuousAggregate { .. }
             | MetaOp::UnregisterContinuousAggregate { .. }
             | MetaOp::ListContinuousAggregates
-            | MetaOp::RefreshMaterializedView { .. },
+            | MetaOp::RefreshMaterializedView { .. }
+            | MetaOp::ConvertCollection { .. },
         ) => Permission::Alter,
 
         PhysicalPlan::Vector(VectorOp::SetParams { .. }) => Permission::Alter,

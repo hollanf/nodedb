@@ -4,6 +4,7 @@
 //! each defined in its own module. This keeps each engine's operations
 //! isolated.
 
+pub mod columnar;
 pub mod crdt;
 pub mod document;
 pub mod graph;
@@ -15,6 +16,7 @@ pub mod text;
 pub mod timeseries;
 pub mod vector;
 
+pub use columnar::ColumnarOp;
 pub use crdt::CrdtOp;
 pub use document::{DocumentOp, StorageMode};
 pub use graph::GraphOp;
@@ -42,9 +44,11 @@ pub enum PhysicalPlan {
     Kv(KvOp),
     /// Full-text search: BM25, hybrid vector+text.
     Text(TextOp),
-    /// Timeseries engine: columnar scan, ILP ingest.
+    /// Columnar engine (base): scan + insert for plain columnar collections.
+    Columnar(ColumnarOp),
+    /// Timeseries profile: extends columnar with time-range + bucketing.
     Timeseries(TimeseriesOp),
-    /// Spatial engine: R-tree scan with OGC predicates.
+    /// Spatial profile: extends columnar with R-tree + OGC predicates.
     Spatial(SpatialOp),
     /// CRDT engine: read, apply delta, set policy.
     Crdt(CrdtOp),

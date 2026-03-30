@@ -185,7 +185,13 @@ impl PlanConverter {
             }]);
         }
 
-        // Standard document-style aggregation.
+        // Plain columnar aggregate: scan all rows, let QueryOp::Aggregate
+        // read from columnar_memtables (the aggregate handler checks there first).
+        // No special routing needed — just fall through to standard aggregate
+        // with the collection name. The Data Plane aggregate handler was updated
+        // to read from columnar_memtables when data exists there.
+
+        // Standard document-style aggregation (also used by columnar via aggregate handler).
         let group_by: Vec<String> = agg
             .group_expr
             .iter()

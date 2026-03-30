@@ -1,7 +1,10 @@
 pub mod aggregate;
 pub mod bulk_dml;
+pub mod columnar_read;
+pub mod columnar_write;
 pub mod compact;
 pub mod control;
+pub mod convert;
 pub mod document;
 pub mod graph;
 pub mod graph_algo;

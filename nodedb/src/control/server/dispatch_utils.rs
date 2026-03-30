@@ -40,9 +40,10 @@ pub async fn dispatch_to_data_plane(
     trace_id: u64,
 ) -> crate::Result<Response> {
     // Extract write metadata before the plan is moved into the request.
-    let is_ts_collection = matches!(
+    let is_columnar_collection = matches!(
         &plan,
-        PhysicalPlan::Timeseries(TimeseriesOp::Ingest { .. })
+        PhysicalPlan::Columnar(_)
+            | PhysicalPlan::Timeseries(TimeseriesOp::Ingest { .. })
             | PhysicalPlan::Timeseries(TimeseriesOp::Scan { .. })
     );
     let change_meta = extract_write_metadata(&plan, tenant_id);
@@ -114,7 +115,7 @@ pub async fn dispatch_to_data_plane(
     {
         // CDC opt-in check for timeseries: skip publishing unless cdc_enabled.
         // Document collections always publish (backward compatible).
-        let should_publish = if is_ts_collection {
+        let should_publish = if is_columnar_collection {
             is_timeseries_cdc_enabled(shared, tenant_id, &collection)
         } else {
             true

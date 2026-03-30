@@ -40,7 +40,7 @@ impl CoreLoop {
         let mut results = Vec::new();
 
         // 1. Read from in-memory memtable (hot data).
-        if let Some(mt) = self.ts_memtables.get(collection)
+        if let Some(mt) = self.columnar_memtables.get(collection)
             && !mt.is_empty()
         {
             let schema = mt.schema();
@@ -239,7 +239,7 @@ impl CoreLoop {
                 }
 
                 // Ensure memtable exists (auto-create on first write).
-                if !self.ts_memtables.contains_key(collection) {
+                if !self.columnar_memtables.contains_key(collection) {
                     let schema = ilp_ingest::infer_schema(&lines);
                     let config = ColumnarMemtableConfig {
                         max_memory_bytes: 64 * 1024 * 1024,
@@ -247,16 +247,16 @@ impl CoreLoop {
                         max_tag_cardinality: 100_000,
                     };
                     let mt = ColumnarMemtable::new(schema, config);
-                    self.ts_memtables.insert(collection.to_string(), mt);
+                    self.columnar_memtables.insert(collection.to_string(), mt);
                 }
 
-                let mt = self.ts_memtables.get_mut(collection).unwrap();
+                let mt = self.columnar_memtables.get_mut(collection).unwrap();
                 let mut series_keys = HashMap::new();
                 let (accepted, rejected) =
                     ilp_ingest::ingest_batch(mt, &lines, &mut series_keys, now_ms);
 
                 // Check if memtable needs flushing.
-                let mt = self.ts_memtables.get(collection).unwrap();
+                let mt = self.columnar_memtables.get(collection).unwrap();
                 if mt.memory_bytes() >= 64 * 1024 * 1024 {
                     self.flush_ts_collection(collection, now_ms);
                 }
@@ -293,7 +293,7 @@ impl CoreLoop {
     /// Drains the columnar memtable, writes segments via `ColumnarSegmentWriter`,
     /// and fires the continuous aggregate hook with the flushed data.
     fn flush_ts_collection(&mut self, collection: &str, now_ms: i64) {
-        let Some(mt) = self.ts_memtables.get_mut(collection) else {
+        let Some(mt) = self.columnar_memtables.get_mut(collection) else {
             return;
         };
         if mt.is_empty() {

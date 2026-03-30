@@ -7,7 +7,7 @@
 
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::{
-    DocumentOp, GraphOp, KvOp, QueryOp, SpatialOp, TextOp, TimeseriesOp, VectorOp,
+    ColumnarOp, DocumentOp, GraphOp, KvOp, QueryOp, SpatialOp, TextOp, TimeseriesOp, VectorOp,
 };
 use crate::control::planner::physical::PhysicalTask;
 use crate::control::security::auth_context::AuthContext;
@@ -108,6 +108,11 @@ fn inject_rls_for_plan(
             ..
         })
         | PhysicalPlan::Text(TextOp::HybridSearch {
+            collection,
+            rls_filters,
+            ..
+        })
+        | PhysicalPlan::Columnar(ColumnarOp::Scan {
             collection,
             rls_filters,
             ..

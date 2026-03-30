@@ -7,7 +7,8 @@ use pgwire::api::results::{DataRowEncoder, QueryResponse, Response, Tag};
 
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::{
-    CrdtOp, DocumentOp, GraphOp, MetaOp, QueryOp, SpatialOp, TextOp, TimeseriesOp, VectorOp,
+    ColumnarOp, CrdtOp, DocumentOp, GraphOp, MetaOp, QueryOp, SpatialOp, TextOp, TimeseriesOp,
+    VectorOp,
 };
 
 use super::super::types::text_field;
@@ -68,6 +69,8 @@ pub(super) fn extract_collection(plan: &PhysicalPlan) -> Option<&str> {
         })
         | PhysicalPlan::Document(DocumentOp::Truncate { collection })
         | PhysicalPlan::Document(DocumentOp::EstimateCount { collection, .. })
+        | PhysicalPlan::Columnar(ColumnarOp::Scan { collection, .. })
+        | PhysicalPlan::Columnar(ColumnarOp::Insert { collection, .. })
         | PhysicalPlan::Timeseries(TimeseriesOp::Scan { collection, .. })
         | PhysicalPlan::Timeseries(TimeseriesOp::Ingest { collection, .. })
         | PhysicalPlan::Spatial(SpatialOp::Scan { collection, .. })

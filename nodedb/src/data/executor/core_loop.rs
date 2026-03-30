@@ -138,7 +138,7 @@ pub struct CoreLoop {
     pub(in crate::data::executor) doc_cache: DocCache,
 
     /// Per-collection columnar timeseries memtables (!Send, per-core owned).
-    pub(in crate::data::executor) ts_memtables:
+    pub(in crate::data::executor) columnar_memtables:
         HashMap<String, crate::engine::timeseries::columnar_memtable::ColumnarMemtable>,
 
     /// Per-collection timeseries partition registries for this core.
@@ -233,7 +233,7 @@ impl CoreLoop {
             doc_cache: DocCache::new(
                 nodedb_types::config::tuning::QueryTuning::default().doc_cache_entries,
             ),
-            ts_memtables: HashMap::new(),
+            columnar_memtables: HashMap::new(),
             ts_registries: HashMap::new(),
             continuous_agg_mgr:
                 crate::engine::timeseries::continuous_agg::ContinuousAggregateManager::new(),

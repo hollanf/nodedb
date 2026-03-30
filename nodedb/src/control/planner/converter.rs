@@ -2,7 +2,7 @@ use datafusion::logical_expr::{FetchType, LogicalPlan};
 use datafusion::prelude::*;
 
 use crate::bridge::envelope::PhysicalPlan;
-use crate::bridge::physical_plan::{DocumentOp, KvOp, QueryOp, TextOp, TimeseriesOp};
+use crate::bridge::physical_plan::{ColumnarOp, DocumentOp, KvOp, QueryOp, TextOp, TimeseriesOp};
 use crate::control::planner::physical::PhysicalTask;
 use crate::control::security::credential::CredentialStore;
 use crate::types::{TenantId, VShardId};
@@ -44,6 +44,40 @@ impl PlanConverter {
             && let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), collection)
         {
             return coll.collection_type.is_timeseries();
+        }
+        false
+    }
+
+    /// Check if a collection is a plain columnar collection (not timeseries, not spatial).
+    pub(super) fn is_plain_columnar(&self, tenant_id: TenantId, collection: &str) -> bool {
+        if let Some(ref creds) = self.credentials
+            && let Some(catalog) = creds.catalog()
+            && let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), collection)
+        {
+            return coll.collection_type.is_columnar()
+                && !coll.collection_type.is_timeseries()
+                && !matches!(
+                    coll.collection_type,
+                    nodedb_types::CollectionType::Columnar(
+                        nodedb_types::columnar::ColumnarProfile::Spatial { .. }
+                    )
+                );
+        }
+        false
+    }
+
+    /// Check if a collection is a spatial columnar collection.
+    pub(super) fn is_spatial(&self, tenant_id: TenantId, collection: &str) -> bool {
+        if let Some(ref creds) = self.credentials
+            && let Some(catalog) = creds.catalog()
+            && let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), collection)
+        {
+            return matches!(
+                coll.collection_type,
+                nodedb_types::CollectionType::Columnar(
+                    nodedb_types::columnar::ColumnarProfile::Spatial { .. }
+                )
+            );
         }
         false
     }
@@ -317,6 +351,84 @@ impl PlanConverter {
                             bucket_interval_ms: 0,
                             rls_filters: Vec::new(),
                         }),
+                    }]);
+                }
+
+                // Plain columnar routing: uses same infrastructure as timeseries
+                // but without time-range constraints or bucketing.
+                if self.is_plain_columnar(tenant_id, &collection) {
+                    let limit = scan.fetch.unwrap_or(10_000);
+                    let filter_bytes = if !scan.filters.is_empty() {
+                        let mut all_filters = Vec::new();
+                        for f in &scan.filters {
+                            all_filters.extend(expr_to_scan_filters(f));
+                        }
+                        rmp_serde::to_vec_named(&all_filters).map_err(|e| {
+                            crate::Error::Serialization {
+                                format: "msgpack".into(),
+                                detail: format!("columnar filter serialization: {e}"),
+                            }
+                        })?
+                    } else {
+                        Vec::new()
+                    };
+
+                    let projection = scan
+                        .projection
+                        .as_ref()
+                        .map(|indices| {
+                            let schema = scan.source.schema();
+                            indices
+                                .iter()
+                                .filter_map(|&idx| schema.fields().get(idx).map(|f| f.name().clone()))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+
+                    return Ok(vec![PhysicalTask {
+                        tenant_id,
+                        vshard_id: vshard,
+                        plan: PhysicalPlan::Columnar(
+                            ColumnarOp::Scan {
+                                collection,
+                                projection,
+                                limit,
+                                filters: filter_bytes,
+                                rls_filters: Vec::new(),
+                            },
+                        ),
+                    }]);
+                }
+
+                // Spatial columnar routing: bare table scans on spatial collections
+                // read from columnar memtable. ST_* predicate queries go through
+                // SpatialOp::Scan (handled in the Filter case above).
+                if self.is_spatial(tenant_id, &collection) {
+                    let limit = scan.fetch.unwrap_or(10_000);
+                    let projection = scan
+                        .projection
+                        .as_ref()
+                        .map(|indices| {
+                            let schema = scan.source.schema();
+                            indices
+                                .iter()
+                                .filter_map(|&idx| schema.fields().get(idx).map(|f| f.name().clone()))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+
+                    return Ok(vec![PhysicalTask {
+                        tenant_id,
+                        vshard_id: vshard,
+                        plan: PhysicalPlan::Columnar(
+                            ColumnarOp::Scan {
+                                collection,
+                                projection,
+                                limit,
+                                filters: Vec::new(),
+                                rls_filters: Vec::new(),
+                            },
+                        ),
                     }]);
                 }
 

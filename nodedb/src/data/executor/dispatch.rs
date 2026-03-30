@@ -2,8 +2,8 @@
 
 use crate::bridge::envelope::{ErrorCode, Response};
 use crate::bridge::physical_plan::{
-    CrdtOp, DocumentOp, GraphOp, MetaOp, PhysicalPlan, QueryOp, SpatialOp, TextOp, TimeseriesOp,
-    VectorOp,
+    ColumnarOp, CrdtOp, DocumentOp, GraphOp, MetaOp, PhysicalPlan, QueryOp, SpatialOp, TextOp,
+    TimeseriesOp, VectorOp,
 };
 
 use super::core_loop::CoreLoop;
@@ -474,10 +474,37 @@ impl CoreLoop {
                 self.response_with_payload(task, json)
             }
 
+            PhysicalPlan::Meta(MetaOp::ConvertCollection {
+                collection,
+                target_type,
+                schema_json,
+            }) => self.execute_convert_collection(task, tid, collection, target_type, schema_json),
+
             PhysicalPlan::Meta(MetaOp::RefreshMaterializedView {
                 view_name,
                 source_collection,
             }) => self.execute_refresh_materialized_view(task, tid, view_name, source_collection),
+
+            PhysicalPlan::Columnar(ColumnarOp::Scan {
+                collection,
+                projection,
+                limit,
+                filters,
+                rls_filters,
+            }) => self.execute_columnar_scan(
+                task,
+                collection,
+                projection,
+                *limit,
+                filters,
+                rls_filters,
+            ),
+
+            PhysicalPlan::Columnar(ColumnarOp::Insert {
+                collection,
+                payload,
+                format,
+            }) => self.execute_columnar_insert(task, collection, payload, format),
 
             PhysicalPlan::Timeseries(TimeseriesOp::Scan {
                 collection,
