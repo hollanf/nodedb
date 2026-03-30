@@ -11,6 +11,9 @@
 //! Data Plane Core N ──► [Bounded Ring Buffer N] ──► Event Plane Consumer N
 //! ```
 
+use std::sync::Arc;
+
+use nodedb_bridge::backpressure::{BackpressureConfig, BackpressureController, PressureState};
 use nodedb_bridge::buffer::{Consumer, Producer, RingBuffer};
 
 use super::types::WriteEvent;
@@ -25,6 +28,7 @@ const DEFAULT_EVENT_BUS_CAPACITY: usize = 65_536;
 pub struct EventProducer {
     inner: Producer<WriteEvent>,
     core_id: usize,
+    backpressure: Arc<BackpressureController>,
 }
 
 impl EventProducer {
@@ -33,12 +37,46 @@ impl EventProducer {
     /// The Data Plane NEVER blocks waiting for the Event Plane to process —
     /// fire-and-forget into the ring buffer. Dropped events are WAL-backed:
     /// the Event Plane detects gaps via sequence numbers and replays from WAL.
+    ///
+    /// Updates backpressure state after each emit. When Suspended (>95%),
+    /// events are dropped more aggressively (the Event Plane will enter
+    /// WAL Catchup Mode to recover).
     pub fn emit(&mut self, event: WriteEvent) -> bool {
+        let util = self.inner.utilization();
+
+        // Update backpressure state.
+        if let Some(new_state) = self.backpressure.update(util) {
+            match new_state {
+                PressureState::Throttled => {
+                    tracing::info!(
+                        core = self.core_id,
+                        utilization = util,
+                        "event bus backpressure: THROTTLED (>85%)"
+                    );
+                }
+                PressureState::Suspended => {
+                    tracing::warn!(
+                        core = self.core_id,
+                        utilization = util,
+                        "event bus backpressure: SUSPENDED (>95%) — events will be dropped, WAL catchup needed"
+                    );
+                }
+                PressureState::Normal => {
+                    tracing::info!(
+                        core = self.core_id,
+                        utilization = util,
+                        "event bus backpressure: NORMAL"
+                    );
+                }
+            }
+        }
+
         match self.inner.try_push(event) {
             Ok(()) => true,
             Err(_) => {
                 tracing::warn!(
                     core = self.core_id,
+                    utilization = util,
                     "event bus full — event dropped (WAL-backed, will replay on gap)"
                 );
                 false
@@ -54,12 +92,18 @@ impl EventProducer {
     pub fn utilization(&self) -> u8 {
         self.inner.utilization()
     }
+
+    /// Current backpressure state.
+    pub fn pressure_state(&self) -> PressureState {
+        self.backpressure.state()
+    }
 }
 
 /// The consumer half given to an Event Plane consumer task.
 pub struct EventConsumerRx {
     inner: Consumer<WriteEvent>,
     core_id: usize,
+    backpressure: Arc<BackpressureController>,
 }
 
 impl EventConsumerRx {
@@ -70,6 +114,11 @@ impl EventConsumerRx {
 
     pub fn core_id(&self) -> usize {
         self.core_id
+    }
+
+    /// Current backpressure state (read from the shared controller).
+    pub fn pressure_state(&self) -> PressureState {
+        self.backpressure.state()
     }
 }
 
@@ -91,15 +140,18 @@ pub fn create_event_bus_with_capacity(
 
     for core_id in 0..num_cores {
         let (producer, consumer) = RingBuffer::channel::<WriteEvent>(capacity);
+        let backpressure = Arc::new(BackpressureController::new(BackpressureConfig::default()));
 
         producers.push(EventProducer {
             inner: producer,
             core_id,
+            backpressure: Arc::clone(&backpressure),
         });
 
         consumers.push(EventConsumerRx {
             inner: consumer,
             core_id,
+            backpressure,
         });
     }
 

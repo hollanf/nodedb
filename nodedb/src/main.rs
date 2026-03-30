@@ -185,8 +185,13 @@ async fn main() -> anyhow::Result<()> {
     info!(num_cores, "data plane cores running (eventfd-driven)");
 
     // Spawn Event Plane: one consumer Tokio task per Data Plane core.
-    // Kept alive until process exit — Drop impl signals consumers to stop.
-    let _event_plane = nodedb::event::EventPlane::spawn(event_consumers);
+    // Kept alive until process exit — Drop impl aborts consumer tasks.
+    let watermark_store = Arc::new(
+        nodedb::event::watermark::WatermarkStore::open(&config.data_dir)
+            .expect("failed to open event plane watermark store"),
+    );
+    let _event_plane =
+        nodedb::event::EventPlane::spawn(event_consumers, Arc::clone(&wal), watermark_store);
     info!(num_cores, "event plane running");
 
     // Initialize cluster mode if configured.

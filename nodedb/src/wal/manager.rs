@@ -351,6 +351,18 @@ impl WalManager {
         Ok(records)
     }
 
+    /// Replay committed records from the WAL starting at `from_lsn`.
+    ///
+    /// Returns records with LSN >= `from_lsn` in LSN order. Used by the Event
+    /// Plane to catch up after restart or ring buffer overflow.
+    pub fn replay_from(&self, from_lsn: Lsn) -> crate::Result<Vec<WalRecord>> {
+        let wal = self.wal.lock().unwrap_or_else(|p| p.into_inner());
+        let records = wal
+            .replay_from(from_lsn.as_u64())
+            .map_err(crate::Error::Wal)?;
+        Ok(records)
+    }
+
     /// Total WAL size on disk across all segments.
     pub fn total_size_bytes(&self) -> crate::Result<u64> {
         let wal = self.wal.lock().unwrap_or_else(|p| p.into_inner());
