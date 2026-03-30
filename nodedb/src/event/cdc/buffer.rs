@@ -78,6 +78,23 @@ impl StreamBuffer {
             .collect()
     }
 
+    /// Read events from a specific partition, starting after `from_lsn`.
+    /// Partition = vShard ID. Scans the buffer and filters by partition.
+    pub fn read_partition_from_lsn(
+        &self,
+        partition_id: u16,
+        from_lsn: u64,
+        limit: usize,
+    ) -> Vec<CdcEvent> {
+        let events = self.events.read().unwrap_or_else(|p| p.into_inner());
+        events
+            .iter()
+            .filter(|e| e.partition == partition_id && e.lsn > from_lsn)
+            .take(limit)
+            .cloned()
+            .collect()
+    }
+
     /// Current number of buffered events.
     pub fn len(&self) -> usize {
         let events = self.events.read().unwrap_or_else(|p| p.into_inner());

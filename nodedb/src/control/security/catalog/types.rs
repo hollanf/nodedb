@@ -51,6 +51,10 @@ pub(super) const TRIGGERS: TableDefinition<&str, &[u8]> = TableDefinition::new("
 pub(super) const CHANGE_STREAMS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.change_streams");
 
+/// Table: "{tenant_id}:{stream_name}:{group_name}" -> MessagePack-serialized ConsumerGroupDef.
+pub(super) const CONSUMER_GROUPS: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("_system.consumer_groups");
+
 /// Table: "{tenant_id}:{name}" -> MessagePack-serialized stored procedure definition.
 pub(super) const PROCEDURES: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.procedures");
@@ -464,6 +468,9 @@ impl SystemCatalog {
             let _ = write_txn
                 .open_table(CHANGE_STREAMS)
                 .map_err(|e| catalog_err("init change_streams table", e))?;
+            let _ = write_txn
+                .open_table(CONSUMER_GROUPS)
+                .map_err(|e| catalog_err("init consumer_groups table", e))?;
         }
         write_txn
             .commit()

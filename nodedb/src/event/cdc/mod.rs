@@ -1,9 +1,11 @@
 pub mod buffer;
+pub mod consumer_group;
 pub mod event;
 pub mod registry;
 pub mod router;
 pub mod stream_def;
 
+pub use consumer_group::{ConsumerGroupDef, GroupRegistry, OffsetStore};
 pub use event::CdcEvent;
 pub use registry::StreamRegistry;
 pub use router::CdcRouter;

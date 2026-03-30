@@ -126,6 +126,33 @@ pub async fn dispatch(
         return Some(super::change_stream::show_change_streams(state, identity));
     }
 
+    // Consumer Groups: CREATE/DROP/SHOW CONSUMER GROUP + COMMIT OFFSET(S)
+    if upper.starts_with("CREATE CONSUMER GROUP ") {
+        return Some(super::consumer_group::create_consumer_group(
+            state, identity, &parts,
+        ));
+    }
+    if upper.starts_with("DROP CONSUMER GROUP ") {
+        return Some(super::consumer_group::drop_consumer_group(
+            state, identity, &parts,
+        ));
+    }
+    if upper.starts_with("SHOW CONSUMER GROUPS ") {
+        return Some(super::consumer_group::show_consumer_groups(
+            state, identity, &parts,
+        ));
+    }
+    if upper.starts_with("SHOW PARTITIONS ") {
+        return Some(super::consumer_group::show_partitions(
+            state, identity, &parts,
+        ));
+    }
+    if upper.starts_with("COMMIT OFFSET ") || upper.starts_with("COMMIT OFFSETS ") {
+        return Some(super::consumer_group::commit_offset(
+            state, identity, &parts,
+        ));
+    }
+
     // Triggers: CREATE [OR REPLACE] [SYNC|DEFERRED] TRIGGER ...
     if upper.starts_with("CREATE TRIGGER ")
         || upper.starts_with("CREATE OR REPLACE TRIGGER ")
