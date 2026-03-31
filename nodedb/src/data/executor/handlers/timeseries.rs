@@ -65,33 +65,33 @@ fn build_group_key_str<'a>(
         if i > 0 {
             key.push('\0');
         }
-        if let Some(col_idx) = schema.iter().position(|(n, _)| n == field) {
-            if let Some(data) = columns[col_idx] {
-                match &schema[col_idx].1 {
-                    ColumnType::Symbol => {
-                        if let ColumnData::Symbol(ids) = data {
-                            let sym_id = ids[row_idx];
-                            if let Some(dict) = sym_dicts(col_idx) {
-                                if let Some(s) = dict.get(sym_id) {
-                                    key.push_str(s);
-                                }
-                            }
+        if let Some(col_idx) = schema.iter().position(|(n, _)| n == field)
+            && let Some(data) = columns[col_idx]
+        {
+            match &schema[col_idx].1 {
+                ColumnType::Symbol => {
+                    if let ColumnData::Symbol(ids) = data {
+                        let sym_id = ids[row_idx];
+                        if let Some(dict) = sym_dicts(col_idx)
+                            && let Some(s) = dict.get(sym_id)
+                        {
+                            key.push_str(s);
                         }
                     }
-                    ColumnType::Int64 => {
-                        if let ColumnData::Int64(vals) = data {
-                            key.push_str(&vals[row_idx].to_string());
-                        }
+                }
+                ColumnType::Int64 => {
+                    if let ColumnData::Int64(vals) = data {
+                        key.push_str(&vals[row_idx].to_string());
                     }
-                    ColumnType::Float64 => {
-                        if let ColumnData::Float64(vals) = data {
-                            key.push_str(&vals[row_idx].to_string());
-                        }
+                }
+                ColumnType::Float64 => {
+                    if let ColumnData::Float64(vals) = data {
+                        key.push_str(&vals[row_idx].to_string());
                     }
-                    ColumnType::Timestamp => {
-                        if let ColumnData::Timestamp(vals) = data {
-                            key.push_str(&vals[row_idx].to_string());
-                        }
+                }
+                ColumnType::Timestamp => {
+                    if let ColumnData::Timestamp(vals) = data {
+                        key.push_str(&vals[row_idx].to_string());
                     }
                 }
             }
@@ -284,7 +284,7 @@ impl CoreLoop {
                 let query_range =
                     nodedb_types::timeseries::TimeRange::new(time_range.0, time_range.1);
                 for entry in registry.query_partitions(&query_range) {
-                    total += entry.meta.row_count as u64;
+                    total += entry.meta.row_count;
                 }
             }
             let results = vec![serde_json::json!({"count_all": total})];
@@ -602,24 +602,24 @@ impl CoreLoop {
                     for (agg_idx, (op, field)) in aggregates.iter().enumerate() {
                         if field == "*" {
                             accums[agg_idx].feed_count_only();
-                        } else if let Some(ci) = schema_vec.iter().position(|(n, _)| n == field) {
-                            if let Some(data) = col_refs[ci] {
-                                let val = match data {
-                                    ColumnData::Float64(vals) => vals[row_idx],
-                                    ColumnData::Int64(vals) => vals[row_idx] as f64,
-                                    ColumnData::Timestamp(vals) => vals[row_idx] as f64,
-                                    _ => {
-                                        if op == "count" {
-                                            accums[agg_idx].feed_count_only();
-                                        }
-                                        continue;
+                        } else if let Some(ci) = schema_vec.iter().position(|(n, _)| n == field)
+                            && let Some(data) = col_refs[ci]
+                        {
+                            let val = match data {
+                                ColumnData::Float64(vals) => vals[row_idx],
+                                ColumnData::Int64(vals) => vals[row_idx] as f64,
+                                ColumnData::Timestamp(vals) => vals[row_idx] as f64,
+                                _ => {
+                                    if op == "count" {
+                                        accums[agg_idx].feed_count_only();
                                     }
-                                };
-                                if op == "count" {
-                                    accums[agg_idx].feed_count_only();
-                                } else {
-                                    accums[agg_idx].feed(val);
+                                    continue;
                                 }
+                            };
+                            if op == "count" {
+                                accums[agg_idx].feed_count_only();
+                            } else {
+                                accums[agg_idx].feed(val);
                             }
                         }
                     }
@@ -736,24 +736,23 @@ impl CoreLoop {
                             if field == "*" {
                                 accums[agg_idx].feed_count_only();
                             } else if let Some(ci) = schema_vec.iter().position(|(n, _)| n == field)
+                                && let Some(data) = col_refs[ci]
                             {
-                                if let Some(data) = col_refs[ci] {
-                                    let val = match data {
-                                        ColumnData::Float64(vals) => vals[row_idx],
-                                        ColumnData::Int64(vals) => vals[row_idx] as f64,
-                                        ColumnData::Timestamp(vals) => vals[row_idx] as f64,
-                                        _ => {
-                                            if op == "count" {
-                                                accums[agg_idx].feed_count_only();
-                                            }
-                                            continue;
+                                let val = match data {
+                                    ColumnData::Float64(vals) => vals[row_idx],
+                                    ColumnData::Int64(vals) => vals[row_idx] as f64,
+                                    ColumnData::Timestamp(vals) => vals[row_idx] as f64,
+                                    _ => {
+                                        if op == "count" {
+                                            accums[agg_idx].feed_count_only();
                                         }
-                                    };
-                                    if op == "count" {
-                                        accums[agg_idx].feed_count_only();
-                                    } else {
-                                        accums[agg_idx].feed(val);
+                                        continue;
                                     }
+                                };
+                                if op == "count" {
+                                    accums[agg_idx].feed_count_only();
+                                } else {
+                                    accums[agg_idx].feed(val);
                                 }
                             }
                         }
@@ -858,16 +857,15 @@ impl CoreLoop {
                 // because the latter aligns to boundary intervals, creating
                 // a key mismatch with the raw min_ts.
                 let meta_path = entry.path().join("partition.meta");
-                if let Ok(meta_bytes) = std::fs::read(&meta_path) {
-                    if let Ok(meta) =
+                if let Ok(meta_bytes) = std::fs::read(&meta_path)
+                    && let Ok(meta) =
                         sonic_rs::from_slice::<nodedb_types::timeseries::PartitionMeta>(&meta_bytes)
-                    {
-                        let pe = crate::engine::timeseries::partition_registry::PartitionEntry {
-                            meta,
-                            dir_name: name_str.to_string(),
-                        };
-                        registry.import(vec![(pe.meta.min_ts, pe)]);
-                    }
+                {
+                    let pe = crate::engine::timeseries::partition_registry::PartitionEntry {
+                        meta,
+                        dir_name: name_str.to_string(),
+                    };
+                    registry.import(vec![(pe.meta.min_ts, pe)]);
                 }
             }
         }
@@ -946,10 +944,10 @@ impl CoreLoop {
                 } else {
                     0
                 };
-                if !is_new_memtable {
-                    if let Some(mt) = self.columnar_memtables.get_mut(collection) {
-                        ilp_ingest::evolve_schema(mt, &lines);
-                    }
+                if !is_new_memtable
+                    && let Some(mt) = self.columnar_memtables.get_mut(collection)
+                {
+                    ilp_ingest::evolve_schema(mt, &lines);
                 }
                 let schema_changed = !is_new_memtable
                     && self

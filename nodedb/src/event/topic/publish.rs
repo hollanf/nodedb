@@ -37,18 +37,18 @@ pub fn publish_to_topic(
         .ok_or_else(|| PublishError::TopicNotFound(topic_name.to_string()))?;
 
     // Cluster-aware: check if this topic's home node is remote.
-    if let Some(leader) = topic_home_node(state, topic_name) {
-        if leader != state.node_id {
-            debug!(
-                topic = topic_name,
-                home_node = leader,
-                "topic home is remote — forwarding publish"
-            );
-            return Err(PublishError::RemoteHome {
-                topic_name: topic_name.to_string(),
-                leader_node: leader,
-            });
-        }
+    if let Some(leader) = topic_home_node(state, topic_name)
+        && leader != state.node_id
+    {
+        debug!(
+            topic = topic_name,
+            home_node = leader,
+            "topic home is remote — forwarding publish"
+        );
+        return Err(PublishError::RemoteHome {
+            topic_name: topic_name.to_string(),
+            leader_node: leader,
+        });
     }
 
     let now_ms = SystemTime::now()

@@ -66,19 +66,19 @@ pub fn consume_stream(
     }
 
     // Cluster-aware: check if the requested partition is remote.
-    if let Some(partition_id) = params.partition {
-        if let Some(remote_node) = remote_partition_leader(state, partition_id) {
-            debug!(
-                partition = partition_id,
-                remote_node,
-                stream = params.stream_name,
-                "partition is remote — forwarding consume request"
-            );
-            return Err(ConsumeError::RemotePartition {
-                partition_id,
-                leader_node: remote_node,
-            });
-        }
+    if let Some(partition_id) = params.partition
+        && let Some(remote_node) = remote_partition_leader(state, partition_id)
+    {
+        debug!(
+            partition = partition_id,
+            remote_node,
+            stream = params.stream_name,
+            "partition is remote — forwarding consume request"
+        );
+        return Err(ConsumeError::RemotePartition {
+            partition_id,
+            leader_node: remote_node,
+        });
     }
 
     // Local consumption path.

@@ -34,17 +34,11 @@ fn ilp_lines(collection: &str, count: usize, start_ts_ns: i64) -> String {
     lines
 }
 
-fn ingest_ilp(
-    core: &mut nodedb::data::executor::core_loop::CoreLoop,
-    tx: &mut nodedb_bridge::buffer::Producer<nodedb::bridge::dispatch::BridgeRequest>,
-    rx: &mut nodedb_bridge::buffer::Consumer<nodedb::bridge::dispatch::BridgeResponse>,
-    collection: &str,
-    payload: &str,
-) -> serde_json::Value {
+fn ingest_ilp(ctx: &mut crate::helpers::TestCtx, collection: &str, payload: &str) -> serde_json::Value {
     let raw = send_ok(
-        core,
-        tx,
-        rx,
+        &mut ctx.core,
+        &mut ctx.tx,
+        &mut ctx.rx,
         PhysicalPlan::Timeseries(TimeseriesOp::Ingest {
             collection: collection.to_string(),
             payload: payload.as_bytes().to_vec(),
@@ -55,18 +49,16 @@ fn ingest_ilp(
 }
 
 fn ts_scan(
-    core: &mut nodedb::data::executor::core_loop::CoreLoop,
-    tx: &mut nodedb_bridge::buffer::Producer<nodedb::bridge::dispatch::BridgeRequest>,
-    rx: &mut nodedb_bridge::buffer::Consumer<nodedb::bridge::dispatch::BridgeResponse>,
+    ctx: &mut crate::helpers::TestCtx,
     collection: &str,
     group_by: Vec<String>,
     aggregates: Vec<(String, String)>,
     bucket_interval_ms: i64,
 ) -> Vec<serde_json::Value> {
     let raw = send_ok(
-        core,
-        tx,
-        rx,
+        &mut ctx.core,
+        &mut ctx.tx,
+        &mut ctx.rx,
         PhysicalPlan::Timeseries(TimeseriesOp::Scan {
             collection: collection.to_string(),
             time_range: (0, i64::MAX),
@@ -83,9 +75,7 @@ fn ts_scan(
 }
 
 fn ts_scan_filtered(
-    core: &mut nodedb::data::executor::core_loop::CoreLoop,
-    tx: &mut nodedb_bridge::buffer::Producer<nodedb::bridge::dispatch::BridgeRequest>,
-    rx: &mut nodedb_bridge::buffer::Consumer<nodedb::bridge::dispatch::BridgeResponse>,
+    ctx: &mut crate::helpers::TestCtx,
     collection: &str,
     group_by: Vec<String>,
     aggregates: Vec<(String, String)>,
@@ -98,9 +88,9 @@ fn ts_scan_filtered(
         rmp_serde::to_vec_named(&filters).unwrap_or_default()
     };
     let raw = send_ok(
-        core,
-        tx,
-        rx,
+        &mut ctx.core,
+        &mut ctx.tx,
+        &mut ctx.rx,
         PhysicalPlan::Timeseries(TimeseriesOp::Scan {
             collection: collection.to_string(),
             time_range: (0, i64::MAX),
@@ -122,7 +112,7 @@ fn ts_scan_filtered(
 
 #[test]
 fn count_star_sees_flushed_partitions() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let mut ctx = make_ctx();
 
     // Ingest enough wide rows to force multiple memtable flushes.
     // Each row is ~7 columns × ~8 bytes = ~56 bytes of column data.
@@ -136,7 +126,7 @@ fn count_star_sees_flushed_partitions() {
     for b in 0..num_batches {
         let start_ns = (b * batch_size) as i64 * 1_000_000;
         let payload = ilp_lines("metrics", batch_size, start_ns);
-        let resp = ingest_ilp(&mut core, &mut tx, &mut rx, "metrics", &payload);
+        let resp = ingest_ilp(&mut ctx, "metrics", &payload);
         total_accepted += resp["accepted"].as_u64().unwrap_or(0);
         total_rejected += resp["rejected"].as_u64().unwrap_or(0);
     }
@@ -155,9 +145,7 @@ fn count_star_sees_flushed_partitions() {
     // This catches: partition registry not populated, flush losing drain data,
     // or query path not reading from all sources.
     let results = ts_scan(
-        &mut core,
-        &mut tx,
-        &mut rx,
+        &mut ctx,
         "metrics",
         Vec::new(),
         vec![("count".into(), "*".into())],
@@ -174,20 +162,18 @@ fn count_star_sees_flushed_partitions() {
 
 #[test]
 fn group_by_sees_both_memtable_and_partitions() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let mut ctx = make_ctx();
 
     // Ingest two batches — enough for at least one flush.
     for b in 0..10 {
         let start_ns = b * 5_000 * 1_000_000_000i64;
         let payload = ilp_lines("dns", 5_000, start_ns);
-        ingest_ilp(&mut core, &mut tx, &mut rx, "dns", &payload);
+        ingest_ilp(&mut ctx, "dns", &payload);
     }
 
     // GROUP BY qtype should see all data.
     let results = ts_scan(
-        &mut core,
-        &mut tx,
-        &mut rx,
+        &mut ctx,
         "dns",
         vec!["qtype".into()],
         vec![("count".into(), "*".into())],
@@ -207,17 +193,15 @@ fn group_by_sees_both_memtable_and_partitions() {
 
 #[test]
 fn time_bucket_aggregation_does_not_panic() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let mut ctx = make_ctx();
 
     // Ingest data spanning multiple hours.
     let payload = ilp_lines("ts_bucket", 1_000, 1_700_000_000_000_000_000);
-    ingest_ilp(&mut core, &mut tx, &mut rx, "ts_bucket", &payload);
+    ingest_ilp(&mut ctx, "ts_bucket", &payload);
 
     // time_bucket('1h') should return valid buckets — not panic or timeout.
     let results = ts_scan(
-        &mut core,
-        &mut tx,
-        &mut rx,
+        &mut ctx,
         "ts_bucket",
         Vec::new(),
         vec![("count".into(), "*".into())],
@@ -236,16 +220,14 @@ fn time_bucket_aggregation_does_not_panic() {
 
 #[test]
 fn time_bucket_with_named_value_column() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let mut ctx = make_ctx();
 
     let payload = ilp_lines("ts_named", 500, 1_700_000_000_000_000_000);
-    ingest_ilp(&mut core, &mut tx, &mut rx, "ts_named", &payload);
+    ingest_ilp(&mut ctx, "ts_named", &payload);
 
     // AVG(elapsed_ms) grouped by time bucket — uses named column, not hardcoded index.
     let results = ts_scan(
-        &mut core,
-        &mut tx,
-        &mut rx,
+        &mut ctx,
         "ts_named",
         Vec::new(),
         vec![
@@ -267,16 +249,14 @@ fn time_bucket_with_named_value_column() {
 
 #[test]
 fn where_predicate_filters_count() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let mut ctx = make_ctx();
 
     let payload = ilp_lines("dns_filt", 1_000, 1_700_000_000_000_000_000);
-    ingest_ilp(&mut core, &mut tx, &mut rx, "dns_filt", &payload);
+    ingest_ilp(&mut ctx, "dns_filt", &payload);
 
     // Unfiltered COUNT(*) = 1000.
     let all = ts_scan(
-        &mut core,
-        &mut tx,
-        &mut rx,
+        &mut ctx,
         "dns_filt",
         Vec::new(),
         vec![("count".into(), "*".into())],
@@ -287,9 +267,7 @@ fn where_predicate_filters_count() {
 
     // Filtered: qtype = 'A' → 25% of rows (4 qtypes, round-robin).
     let filtered = ts_scan_filtered(
-        &mut core,
-        &mut tx,
-        &mut rx,
+        &mut ctx,
         "dns_filt",
         Vec::new(),
         vec![("count".into(), "*".into())],
@@ -311,23 +289,21 @@ fn where_predicate_filters_count() {
 
 #[test]
 fn schema_evolution_adds_new_fields() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let mut ctx = make_ctx();
 
     // First batch: only elapsed_ms.
     let batch1 = "dns,qtype=A elapsed_ms=1.5 1700000000000000000\n\
                    dns,qtype=AAAA elapsed_ms=2.5 1700000001000000000\n";
-    ingest_ilp(&mut core, &mut tx, &mut rx, "dns", batch1);
+    ingest_ilp(&mut ctx, "dns", batch1);
 
     // Second batch: adds response_bytes and ttl (new fields).
     let batch2 = "dns,qtype=A elapsed_ms=3.0,response_bytes=512i,ttl=3600i 1700000002000000000\n\
                    dns,qtype=MX elapsed_ms=4.0,response_bytes=256i,ttl=7200i 1700000003000000000\n";
-    ingest_ilp(&mut core, &mut tx, &mut rx, "dns", batch2);
+    ingest_ilp(&mut ctx, "dns", batch2);
 
     // Raw scan should show new columns with values for batch2 rows.
     let results = ts_scan(
-        &mut core,
-        &mut tx,
-        &mut rx,
+        &mut ctx,
         "dns",
         Vec::new(),
         Vec::new(), // raw scan
@@ -370,7 +346,7 @@ fn schema_evolution_adds_new_fields() {
 
 #[test]
 fn group_by_not_capped_at_10k() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let mut ctx = make_ctx();
 
     // Ingest data with high cardinality: 15K unique qnames.
     let mut lines = String::new();
@@ -380,13 +356,11 @@ fn group_by_not_capped_at_10k() {
             "dns,qname=host-{i}.example.com elapsed_ms=1.0 {ts_ns}\n"
         ));
     }
-    ingest_ilp(&mut core, &mut tx, &mut rx, "dns_card", &lines);
+    ingest_ilp(&mut ctx, "dns_card", &lines);
 
     // GROUP BY qname should return all 15K groups — not capped at 10K.
     let results = ts_scan(
-        &mut core,
-        &mut tx,
-        &mut rx,
+        &mut ctx,
         "dns_card",
         vec!["qname".into()],
         vec![("count".into(), "*".into())],
