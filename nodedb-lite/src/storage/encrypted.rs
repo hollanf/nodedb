@@ -203,7 +203,7 @@ impl<S: StorageEngine> StorageEngine for EncryptedStorage<S> {
         &self,
         ns: Namespace,
         prefix: &[u8],
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, LiteError> {
+    ) -> Result<Vec<super::engine::KvPair>, LiteError> {
         let encrypted_entries = self.inner.scan_prefix(ns, prefix).await?;
         let mut results = Vec::with_capacity(encrypted_entries.len());
         for (key, ciphertext) in &encrypted_entries {

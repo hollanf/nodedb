@@ -55,13 +55,13 @@ impl StorageEngine for MemStorage {
         &self,
         ns: Namespace,
         prefix: &[u8],
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, LiteError> {
+    ) -> Result<Vec<crate::storage::engine::KvPair>, LiteError> {
         let data = self.data.lock().await;
         let ns_byte = ns as u8;
         let mut full_prefix = vec![ns_byte];
         full_prefix.extend_from_slice(prefix);
 
-        let mut results: Vec<(Vec<u8>, Vec<u8>)> = data
+        let mut results: Vec<crate::storage::engine::KvPair> = data
             .iter()
             .filter(|(k, _)| k.starts_with(&full_prefix))
             .map(|(k, v)| (k[1..].to_vec(), v.clone()))

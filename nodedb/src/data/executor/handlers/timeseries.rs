@@ -944,9 +944,7 @@ impl CoreLoop {
                 } else {
                     0
                 };
-                if !is_new_memtable
-                    && let Some(mt) = self.columnar_memtables.get_mut(collection)
-                {
+                if !is_new_memtable && let Some(mt) = self.columnar_memtables.get_mut(collection) {
                     ilp_ingest::evolve_schema(mt, &lines);
                 }
                 let schema_changed = !is_new_memtable

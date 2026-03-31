@@ -259,7 +259,7 @@ impl StorageEngine for RedbStorage {
         &self,
         ns: Namespace,
         prefix: &[u8],
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, LiteError> {
+    ) -> Result<Vec<super::engine::KvPair>, LiteError> {
         let ns_byte = ns as u8;
         let mut start_key = Vec::with_capacity(1 + prefix.len());
         start_key.push(ns_byte);
@@ -378,7 +378,7 @@ impl crate::storage::engine::StorageEngineSync for RedbStorage {
         ns: Namespace,
         start: &[u8],
         limit: usize,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, LiteError> {
+    ) -> Result<Vec<super::engine::KvPair>, LiteError> {
         let ns_byte = ns as u8;
         let mut start_key = Vec::with_capacity(1 + start.len());
         start_key.push(ns_byte);

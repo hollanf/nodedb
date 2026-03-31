@@ -10,6 +10,13 @@ use async_trait::async_trait;
 use crate::error::LiteError;
 use nodedb_types::Namespace;
 
+/// Key-value pair returned by scan operations (`scan_prefix`, `scan_range_sync`).
+///
+/// First element is the key (without namespace prefix), second is the value.
+/// Defined here (not in `nodedb-types`) because it's specific to the
+/// `StorageEngine` trait's scan interface.
+pub type KvPair = (Vec<u8>, Vec<u8>);
+
 /// A write operation for batch writes.
 #[derive(Debug, Clone)]
 pub enum WriteOp {
@@ -54,7 +61,7 @@ pub trait StorageEngine: Send + Sync + 'static {
         &self,
         ns: Namespace,
         prefix: &[u8],
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, LiteError>;
+    ) -> Result<Vec<KvPair>, LiteError>;
 
     /// Atomically apply a batch of writes.
     ///
@@ -93,7 +100,7 @@ pub trait StorageEngineSync: StorageEngine {
         ns: Namespace,
         start: &[u8],
         limit: usize,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, LiteError>;
+    ) -> Result<Vec<KvPair>, LiteError>;
 }
 
 #[cfg(test)]

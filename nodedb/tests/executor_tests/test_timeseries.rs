@@ -34,7 +34,11 @@ fn ilp_lines(collection: &str, count: usize, start_ts_ns: i64) -> String {
     lines
 }
 
-fn ingest_ilp(ctx: &mut crate::helpers::TestCtx, collection: &str, payload: &str) -> serde_json::Value {
+fn ingest_ilp(
+    ctx: &mut crate::helpers::TestCtx,
+    collection: &str,
+    payload: &str,
+) -> serde_json::Value {
     let raw = send_ok(
         &mut ctx.core,
         &mut ctx.tx,

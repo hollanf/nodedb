@@ -272,7 +272,8 @@ async fn handle_sync_session(
         }
 
         // Register for CRDT sync delivery once authenticated.
-        if session.authenticated && !crdt_registered
+        if session.authenticated
+            && !crdt_registered
             && let Some(shared) = shared
         {
             let tenant_id = session.tenant_id.map(|t| t.as_u32()).unwrap_or(0);
@@ -323,9 +324,7 @@ async fn handle_sync_session(
     }
 
     // Unregister from CRDT sync delivery.
-    if crdt_registered
-        && let Some(shared) = shared
-    {
+    if crdt_registered && let Some(shared) = shared {
         shared.crdt_sync_delivery.unregister(&session_id);
     }
 
