@@ -437,8 +437,8 @@ impl NodeDbPgHandler {
         identity: &AuthenticatedIdentity,
     ) -> PgWireResult<Vec<String>> {
         let tenant_id = identity.tenant_id;
-        let query_ctx = crate::control::planner::context::QueryContext::with_catalog(
-            std::sync::Arc::clone(&self.state.credentials),
+        let query_ctx = crate::control::planner::context::QueryContext::for_state(
+            &self.state,
             tenant_id.as_u32(),
         );
 

@@ -236,8 +236,8 @@ impl<'a> StatementExecutor<'a> {
     async fn execute_dml(&self, sql: &str, bindings: &RowBindings) -> crate::Result<()> {
         let bound_sql = bindings.substitute(sql);
 
-        let ctx = crate::control::planner::context::QueryContext::with_catalog(
-            std::sync::Arc::clone(&self.state.credentials),
+        let ctx = crate::control::planner::context::QueryContext::for_state(
+            self.state,
             self.tenant_id.as_u32(),
         );
         let tasks = ctx.plan_sql(&bound_sql, self.tenant_id).await?;
@@ -331,8 +331,8 @@ impl<'a> StatementExecutor<'a> {
         expr: &str,
         context: &str,
     ) -> crate::Result<Vec<datafusion::arrow::record_batch::RecordBatch>> {
-        let ctx = crate::control::planner::context::QueryContext::with_catalog(
-            std::sync::Arc::clone(&self.state.credentials),
+        let ctx = crate::control::planner::context::QueryContext::for_state(
+            self.state,
             self.tenant_id.as_u32(),
         );
         let select_sql = format!("SELECT ({expr}) as __result");

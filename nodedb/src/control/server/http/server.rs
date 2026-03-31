@@ -95,12 +95,9 @@ pub async fn run(
     tls_settings: Option<&crate::config::server::TlsSettings>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> crate::Result<()> {
-    let query_ctx = Arc::new(
-        crate::control::planner::context::QueryContext::with_catalog(
-            Arc::clone(&shared.credentials),
-            1, // default tenant for name resolution
-        ),
-    );
+    let query_ctx = Arc::new(crate::control::planner::context::QueryContext::for_state(
+        &shared, 1,
+    ));
     let state = AppState {
         shared,
         auth_mode,

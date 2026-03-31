@@ -52,10 +52,7 @@ pub struct NodeDbPgHandler {
 
 impl NodeDbPgHandler {
     pub fn new(state: Arc<SharedState>, auth_mode: AuthMode) -> Self {
-        let query_ctx = QueryContext::with_catalog(
-            Arc::clone(&state.credentials),
-            1, // default tenant for name resolution
-        );
+        let query_ctx = QueryContext::for_state(&state, 1); // default tenant for name resolution
         Self {
             state,
             query_ctx,
