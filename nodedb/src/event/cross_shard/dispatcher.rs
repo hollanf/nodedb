@@ -118,6 +118,12 @@ impl CrossShardDispatcher {
         true
     }
 
+    /// Total pending writes across all target queues.
+    pub fn total_pending(&self) -> usize {
+        let queues = self.queues.lock().unwrap_or_else(|p| p.into_inner());
+        queues.values().map(|q| q.len()).sum()
+    }
+
     /// Drain a batch of writes for a target node (called by background task).
     fn drain_batch(&self, target_node: u64, limit: usize) -> Vec<QueuedWrite> {
         let mut queues = self.queues.lock().unwrap_or_else(|p| p.into_inner());
@@ -177,11 +183,13 @@ async fn send_write(
 /// Spawn the background dispatcher task.
 ///
 /// Drains queues, sends writes via QUIC, retries on failure, DLQs on exhaust.
+/// Updates the Event Plane budget with the pending write count each cycle.
 pub fn spawn_dispatcher_task(
     dispatcher: Arc<CrossShardDispatcher>,
     transport: Arc<NexarTransport>,
     metrics: Arc<CrossShardMetrics>,
     dlq: Arc<Mutex<CrossShardDlq>>,
+    budget: Arc<crate::event::budget::EventPlaneBudget>,
     mut shutdown: watch::Receiver<bool>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -191,6 +199,10 @@ pub fn spawn_dispatcher_task(
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(DRAIN_INTERVAL) => {
+                    // Update budget with pending write count.
+                    let pending = dispatcher.total_pending() as u64 + retry_queue.len() as u64;
+                    budget.update_pending_cross_shard(pending);
+
                     // Process retries first.
                     process_retries(
                         &retry_queue,

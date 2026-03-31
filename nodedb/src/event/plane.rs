@@ -106,6 +106,7 @@ impl EventPlane {
                 Arc::clone(transport),
                 Arc::clone(metrics),
                 Arc::clone(dlq),
+                Arc::clone(&shared_state.event_plane_budget),
                 shutdown_rx.clone(),
             );
             info!("cross-shard dispatcher task started");

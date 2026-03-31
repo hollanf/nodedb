@@ -11,6 +11,9 @@ use tracing::{info, warn};
 /// Default Event Plane memory budget: 512 MB.
 const DEFAULT_BUDGET_BYTES: u64 = 512 * 1024 * 1024;
 
+/// Estimated memory per pending cross-shard write entry (request struct + queue overhead).
+const CROSS_SHARD_ENTRY_BYTES: u64 = 512;
+
 /// Event Plane memory budget tracker.
 pub struct EventPlaneBudget {
     /// Maximum allowed memory usage in bytes.
@@ -21,6 +24,8 @@ pub struct EventPlaneBudget {
     exceeded: AtomicBool,
     /// Number of times the budget was exceeded.
     exceed_count: AtomicU64,
+    /// Pending cross-shard writes count (updated externally).
+    pending_cross_shard: AtomicU64,
 }
 
 impl EventPlaneBudget {
@@ -30,6 +35,7 @@ impl EventPlaneBudget {
             current: AtomicU64::new(0),
             exceeded: AtomicBool::new(false),
             exceed_count: AtomicU64::new(0),
+            pending_cross_shard: AtomicU64::new(0),
         }
     }
 
@@ -39,16 +45,20 @@ impl EventPlaneBudget {
             current: AtomicU64::new(0),
             exceeded: AtomicBool::new(false),
             exceed_count: AtomicU64::new(0),
+            pending_cross_shard: AtomicU64::new(0),
         }
     }
 
     /// Update the current memory usage estimate.
     ///
     /// Call this periodically from the Event Plane (e.g., every 30s)
-    /// with the sum of all component memory estimates.
-    pub fn update_usage(&self, total_bytes: u64) {
-        self.current.store(total_bytes, Ordering::Relaxed);
+    /// with the sum of all component memory estimates (stream buffers,
+    /// MV state, DLQ, etc.). Pending cross-shard writes are automatically
+    /// added to the total.
+    pub fn update_usage(&self, base_bytes: u64) {
+        self.current.store(base_bytes, Ordering::Relaxed);
 
+        let total_bytes = base_bytes + self.pending_cross_shard_bytes();
         let limit = self.limit.load(Ordering::Relaxed);
         let was_exceeded = self.exceeded.load(Ordering::Relaxed);
 
@@ -108,6 +118,28 @@ impl EventPlaneBudget {
     /// Number of times the budget was exceeded.
     pub fn exceed_count(&self) -> u64 {
         self.exceed_count.load(Ordering::Relaxed)
+    }
+
+    /// Update the pending cross-shard write count.
+    ///
+    /// Called periodically by the cross-shard dispatcher task.
+    /// The estimated memory is `count * CROSS_SHARD_ENTRY_BYTES`.
+    pub fn update_pending_cross_shard(&self, count: u64) {
+        self.pending_cross_shard.store(count, Ordering::Relaxed);
+    }
+
+    /// Estimated memory used by pending cross-shard writes.
+    pub fn pending_cross_shard_bytes(&self) -> u64 {
+        self.pending_cross_shard.load(Ordering::Relaxed) * CROSS_SHARD_ENTRY_BYTES
+    }
+
+    /// Total estimated usage including cross-shard pending writes.
+    ///
+    /// Callers should pass the base usage (stream buffers, MV state, etc.)
+    /// to `update_usage()`. The pending cross-shard bytes are automatically
+    /// added to the total.
+    pub fn effective_usage(&self) -> u64 {
+        self.current.load(Ordering::Relaxed) + self.pending_cross_shard_bytes()
     }
 
     /// Set a new limit (runtime reconfiguration).
