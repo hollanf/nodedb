@@ -193,6 +193,9 @@ pub struct SharedState {
     /// Streaming materialized view registry.
     pub mv_registry: Arc<crate::event::streaming_mv::MvRegistry>,
 
+    /// Consumer partition assignment tracker for rebalancing.
+    pub consumer_assignments: crate::event::cdc::consumer_group::ConsumerAssignments,
+
     /// Per-partition watermark tracker for streaming MVs.
     pub watermark_tracker: Arc<crate::event::watermark_tracker::WatermarkTracker>,
 
@@ -341,6 +344,7 @@ impl SharedState {
                 crate::event::webhook::WebhookManager::new(rx)
             },
             mv_registry: Arc::new(crate::event::streaming_mv::MvRegistry::new()),
+            consumer_assignments: crate::event::cdc::consumer_group::ConsumerAssignments::new(),
             watermark_tracker: Arc::new(crate::event::watermark_tracker::WatermarkTracker::new()),
             event_plane_budget: Arc::new(crate::event::budget::EventPlaneBudget::new()),
             mv_persistence: {
@@ -446,6 +450,7 @@ impl SharedState {
                 crate::event::webhook::WebhookManager::new(rx)
             },
             mv_registry,
+            consumer_assignments: crate::event::cdc::consumer_group::ConsumerAssignments::new(),
             watermark_tracker: Arc::new(crate::event::watermark_tracker::WatermarkTracker::new()),
             event_plane_budget: Arc::new(crate::event::budget::EventPlaneBudget::new()),
             mv_persistence: Arc::new(crate::event::streaming_mv::MvPersistence::open(
