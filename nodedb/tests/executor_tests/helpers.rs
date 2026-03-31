@@ -10,24 +10,35 @@ use nodedb_bridge::buffer::{Consumer, Producer, RingBuffer};
 
 /// Bundles the core + bridge channels that every test helper needs.
 /// Eliminates repeated `(core, tx, rx)` triple parameters.
+/// `_dir` keeps the TempDir alive — dropped when TestCtx is dropped.
 pub struct TestCtx {
     pub core: CoreLoop,
     pub tx: Producer<BridgeRequest>,
     pub rx: Consumer<BridgeResponse>,
+    _dir: tempfile::TempDir,
 }
 
-pub fn make_core() -> (CoreLoop, Producer<BridgeRequest>, Consumer<BridgeResponse>) {
+pub fn make_core() -> (
+    CoreLoop,
+    Producer<BridgeRequest>,
+    Consumer<BridgeResponse>,
+    tempfile::TempDir,
+) {
     let dir = tempfile::tempdir().unwrap();
     let (req_tx, req_rx) = RingBuffer::channel::<BridgeRequest>(64);
     let (resp_tx, resp_rx) = RingBuffer::channel::<BridgeResponse>(64);
     let core = CoreLoop::open(0, req_rx, resp_tx, dir.path()).unwrap();
-    std::mem::forget(dir);
-    (core, req_tx, resp_rx)
+    (core, req_tx, resp_rx, dir)
 }
 
 pub fn make_ctx() -> TestCtx {
-    let (core, tx, rx) = make_core();
-    TestCtx { core, tx, rx }
+    let (core, tx, rx, dir) = make_core();
+    TestCtx {
+        core,
+        tx,
+        rx,
+        _dir: dir,
+    }
 }
 
 pub fn make_request(plan: PhysicalPlan) -> Request {

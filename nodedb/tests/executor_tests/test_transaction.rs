@@ -7,7 +7,7 @@ use crate::helpers::*;
 
 #[test]
 fn transaction_batch_commits_atomically() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     let resp = send_raw(
         &mut core,
@@ -58,7 +58,7 @@ fn transaction_batch_commits_atomically() {
 
 #[test]
 fn transaction_batch_rollback_on_failure() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Pre-insert d1 via SPSC.
     send_ok(

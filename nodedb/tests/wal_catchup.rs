@@ -33,6 +33,7 @@ fn ilp_payload(collection: &str, count: usize, start_ts_ns: i64) -> Vec<u8> {
 struct TestStack {
     shared: Arc<SharedState>,
     wal: Arc<WalManager>,
+    _dir: tempfile::TempDir,
 }
 
 impl TestStack {
@@ -48,7 +49,6 @@ impl TestStack {
         let data_side = data_sides.into_iter().next().unwrap();
         let core_dir = dir.path().join("data");
         std::fs::create_dir_all(&core_dir).unwrap();
-        std::mem::forget(dir);
 
         // Data Plane: dedicated OS thread with tick loop.
         std::thread::spawn(move || {
@@ -69,7 +69,11 @@ impl TestStack {
             }
         });
 
-        Self { shared, wal }
+        Self {
+            shared,
+            wal,
+            _dir: dir,
+        }
     }
 
     async fn dispatch(&self, plan: PhysicalPlan, collection: &str) -> serde_json::Value {

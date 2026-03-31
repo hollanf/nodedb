@@ -273,9 +273,16 @@ pub struct SharedState {
 }
 
 impl SharedState {
+    /// Monotonic counter for unique test temp dirs (prevents redb lock collisions).
+    fn unique_test_id() -> u64 {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Create shared state with in-memory credential store (for tests).
     pub fn new(dispatcher: Dispatcher, wal: Arc<WalManager>) -> Arc<Self> {
         let mut shutdown_senders: Vec<tokio::sync::watch::Sender<bool>> = Vec::new();
+        let test_id = Self::unique_test_id();
         Arc::new(Self {
             dispatcher: Mutex::new(dispatcher),
             tracker: RequestTracker::new(),
@@ -336,14 +343,9 @@ impl SharedState {
             ))),
             group_registry: crate::event::cdc::GroupRegistry::new(),
             offset_store: {
-                // Each test gets a unique offset store to avoid cross-test locking.
                 let dir = std::env::temp_dir().join(format!(
-                    "nodedb-test-offsets-{}-{}",
+                    "nodedb-test-offsets-{}-{test_id}",
                     std::process::id(),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_nanos()
                 ));
                 Arc::new(
                     crate::event::cdc::OffsetStore::open(&dir)
@@ -353,12 +355,8 @@ impl SharedState {
             schedule_registry: Arc::new(crate::event::scheduler::ScheduleRegistry::new()),
             job_history: {
                 let dir = std::env::temp_dir().join(format!(
-                    "nodedb-test-history-{}-{}",
+                    "nodedb-test-history-{}-{test_id}",
                     std::process::id(),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_nanos()
                 ));
                 Arc::new(
                     crate::event::scheduler::JobHistoryStore::open(&dir)
@@ -388,12 +386,8 @@ impl SharedState {
             delta_packager: Arc::new(crate::event::crdt_sync::DeltaPackager::new()),
             mv_persistence: {
                 let dir = std::env::temp_dir().join(format!(
-                    "nodedb-test-mvstate-{}-{}",
+                    "nodedb-test-mvstate-{}-{test_id}",
                     std::process::id(),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_nanos()
                 ));
                 Arc::new(
                     crate::event::streaming_mv::MvPersistence::open(&dir)

@@ -10,7 +10,7 @@ use crate::helpers::*;
 
 #[test]
 fn vector_insert_and_search() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     for i in 0..10u32 {
         tx.try_push(BridgeRequest {
@@ -57,7 +57,7 @@ fn vector_insert_and_search() {
 
 #[test]
 fn vector_search_no_index_returns_not_found() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
     let resp = send_raw(
         &mut core,
         &mut tx,

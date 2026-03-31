@@ -12,7 +12,7 @@ use crate::helpers::*;
 
 #[test]
 fn kv_protocol_command_sequence() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // SET key1 value1
     send_ok(
@@ -160,7 +160,7 @@ fn kv_and_vector_coexist() {
     use nodedb::bridge::physical_plan::VectorOp;
     use std::sync::Arc;
 
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Insert KV entries.
     for i in 0..5u32 {
@@ -229,7 +229,7 @@ fn kv_and_vector_coexist() {
 
 #[test]
 fn ttl_expiry_produces_expired_key_info() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Insert with short TTL.
     send_ok(
@@ -297,7 +297,7 @@ fn ttl_expiry_produces_expired_key_info() {
 
 #[test]
 fn kv_field_get_and_set() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Store a MessagePack-encoded document.
     let doc = rmp_serde::to_vec(&serde_json::json!({
@@ -370,7 +370,7 @@ fn kv_field_get_and_set() {
 
 #[test]
 fn kv_truncate_clears_all() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     for i in 0..10u32 {
         send_ok(
@@ -418,7 +418,7 @@ fn kv_truncate_clears_all() {
 
 #[test]
 fn kv_index_write_amp_ratio_matches() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Register 3 indexes.
     for field in &["region", "status", "tier"] {
@@ -484,7 +484,7 @@ fn kv_mass_expiry_respects_reap_budget() {
     // This test validates that the expiry wheel's per-tick reap budget
     // prevents mass-expiry from stalling. We insert many keys with the
     // same TTL and verify the engine doesn't panic or corrupt state.
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Insert 1000 keys all expiring at the same time.
     for i in 0..1000u32 {

@@ -5,13 +5,17 @@ use crate::types::*;
 use nodedb_bridge::buffer::RingBuffer;
 use std::time::{Duration, Instant};
 
-fn make_core() -> (CoreLoop, Producer<BridgeRequest>, Consumer<BridgeResponse>) {
+fn make_core() -> (
+    CoreLoop,
+    Producer<BridgeRequest>,
+    Consumer<BridgeResponse>,
+    tempfile::TempDir,
+) {
     let dir = tempfile::tempdir().unwrap();
     let (req_tx, req_rx) = RingBuffer::channel::<BridgeRequest>(64);
     let (resp_tx, resp_rx) = RingBuffer::channel::<BridgeResponse>(64);
     let core = CoreLoop::open(0, req_rx, resp_tx, dir.path()).unwrap();
-    std::mem::forget(dir);
-    (core, req_tx, resp_rx)
+    (core, req_tx, resp_rx, dir)
 }
 
 pub fn make_core_with_dir(
@@ -39,13 +43,13 @@ fn make_request(plan: PhysicalPlan) -> Request {
 
 #[test]
 fn empty_tick_processes_nothing() {
-    let (mut core, _, _) = make_core();
+    let (mut core, _, _, _dir) = make_core();
     assert_eq!(core.tick(), 0);
 }
 
 #[test]
 fn expired_task_returns_deadline_exceeded() {
-    let (mut core, mut req_tx, mut resp_rx) = make_core();
+    let (mut core, mut req_tx, mut resp_rx, _dir) = make_core();
     req_tx
         .try_push(BridgeRequest {
             inner: Request {
@@ -66,7 +70,7 @@ fn expired_task_returns_deadline_exceeded() {
 
 #[test]
 fn watermark_in_response() {
-    let (mut core, mut req_tx, mut resp_rx) = make_core();
+    let (mut core, mut req_tx, mut resp_rx, _dir) = make_core();
     core.advance_watermark(Lsn::new(99));
     core.sparse.put(1, "x", "y", b"data").unwrap();
     req_tx
@@ -85,7 +89,7 @@ fn watermark_in_response() {
 
 #[test]
 fn cancel_removes_pending_task() {
-    let (mut core, mut req_tx, _resp_rx) = make_core();
+    let (mut core, mut req_tx, _resp_rx, _dir) = make_core();
     req_tx
         .try_push(BridgeRequest {
             inner: Request {

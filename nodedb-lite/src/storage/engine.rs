@@ -57,11 +57,7 @@ pub trait StorageEngine: Send + Sync + 'static {
     /// bytewise: `key.starts_with(prefix)`.
     ///
     /// If `prefix` is empty, returns all entries in the namespace.
-    async fn scan_prefix(
-        &self,
-        ns: Namespace,
-        prefix: &[u8],
-    ) -> Result<Vec<KvPair>, LiteError>;
+    async fn scan_prefix(&self, ns: Namespace, prefix: &[u8]) -> Result<Vec<KvPair>, LiteError>;
 
     /// Atomically apply a batch of writes.
     ///

@@ -11,7 +11,7 @@ use crate::helpers::*;
 
 #[test]
 fn edge_put_and_graph_neighbors() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     for dst in &["bob", "carol"] {
         send_ok(
@@ -45,7 +45,7 @@ fn edge_put_and_graph_neighbors() {
 
 #[test]
 fn graph_hop_traversal() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     for (s, d) in &[("a", "b"), ("b", "c")] {
         send_ok(
@@ -82,7 +82,7 @@ fn graph_hop_traversal() {
 
 #[test]
 fn graph_path_and_subgraph() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     for (s, d) in &[("a", "b"), ("b", "c")] {
         send_ok(
@@ -132,7 +132,7 @@ fn graph_path_and_subgraph() {
 
 #[test]
 fn edge_delete_updates_csr() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     send_ok(
         &mut core,
@@ -175,7 +175,7 @@ fn edge_delete_updates_csr() {
 
 #[test]
 fn graph_rag_fusion_pipeline() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Insert vectors.
     for i in 0..10u32 {

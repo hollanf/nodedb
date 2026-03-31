@@ -7,7 +7,7 @@ use crate::helpers::*;
 
 #[test]
 fn point_get_not_found() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
     let resp = send_raw(
         &mut core,
         &mut tx,
@@ -24,7 +24,7 @@ fn point_get_not_found() {
 
 #[test]
 fn point_put_and_get() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     send_ok(
         &mut core,
@@ -53,7 +53,7 @@ fn point_put_and_get() {
 
 #[test]
 fn point_delete_removes() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Insert then delete via SPSC.
     send_ok(
@@ -92,7 +92,7 @@ fn point_delete_removes() {
 
 #[test]
 fn crdt_read_not_found() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
     let resp = send_raw(
         &mut core,
         &mut tx,
@@ -108,7 +108,7 @@ fn crdt_read_not_found() {
 
 #[test]
 fn range_scan_returns_results() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Insert documents with indexed fields via PointPut.
     send_ok(

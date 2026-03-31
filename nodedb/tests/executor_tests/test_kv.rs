@@ -11,7 +11,7 @@ use crate::helpers::*;
 
 #[test]
 fn kv_put_get_delete() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // PUT
     send_ok(
@@ -68,7 +68,7 @@ fn kv_put_get_delete() {
 
 #[test]
 fn kv_overwrite_returns_ok() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     send_ok(
         &mut core,
@@ -114,7 +114,7 @@ fn kv_overwrite_returns_ok() {
 
 #[test]
 fn kv_batch_put_and_get() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     let entries: Vec<(Vec<u8>, Vec<u8>)> = (0..5u8).map(|i| (vec![i], vec![i * 10])).collect();
 
@@ -150,7 +150,7 @@ fn kv_batch_put_and_get() {
 
 #[test]
 fn kv_scan_returns_entries() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     for i in 0..5u32 {
         send_ok(
@@ -186,7 +186,7 @@ fn kv_scan_returns_entries() {
 
 #[test]
 fn kv_scan_with_match_pattern() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     for prefix in &["user:", "session:", "user:"] {
         for i in 0..3u32 {
@@ -229,7 +229,7 @@ fn kv_scan_with_match_pattern() {
 
 #[test]
 fn kv_expire_and_persist() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // PUT without TTL.
     send_ok(
@@ -289,7 +289,7 @@ fn kv_expire_and_persist() {
 
 #[test]
 fn kv_register_index_and_lookup() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Insert entries first.
     let doc1 =
@@ -338,7 +338,7 @@ fn kv_register_index_and_lookup() {
 
 #[test]
 fn kv_drop_index() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Register index.
     send_ok(
@@ -387,7 +387,7 @@ fn kv_drop_index() {
 
 #[test]
 fn kv_tenant_isolation() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Tenant 1 writes.
     let req = nodedb::bridge::envelope::Request {

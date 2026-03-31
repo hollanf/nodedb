@@ -16,7 +16,7 @@ use crate::helpers::*;
 
 #[test]
 fn security_tenant_isolation() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Tenant 1 inserts a document.
     send_ok(
@@ -120,7 +120,7 @@ fn security_jwt_validation() {
 
 #[test]
 fn linearizability_read_after_write() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Write then immediately read — must see the write.
     for i in 0..20u32 {
@@ -158,7 +158,7 @@ fn linearizability_read_after_write() {
 
 #[test]
 fn linearizability_delete_visibility() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     send_ok(
         &mut core,
@@ -200,7 +200,7 @@ fn linearizability_delete_visibility() {
 
 #[test]
 fn wal_replay_deterministic() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Perform a deterministic sequence of operations.
     let ops = vec![
@@ -275,7 +275,7 @@ fn wal_replay_deterministic() {
 
 #[test]
 fn mixed_engine_isolation_no_cross_eviction() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Insert documents (sparse engine).
     for i in 0..50u32 {

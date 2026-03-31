@@ -19,7 +19,7 @@ use crate::helpers::*;
 
 #[test]
 fn cross_model_query_vector_graph_relational() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // 1. Insert documents with relational fields.
     for i in 0..10u32 {
@@ -184,7 +184,7 @@ fn cross_model_query_vector_graph_relational() {
 
 #[test]
 fn rrf_fusion_mathematically_correct() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Insert documents with text content for BM25.
     for i in 0..20u32 {
@@ -279,7 +279,7 @@ fn rrf_fusion_mathematically_correct() {
 
 #[test]
 fn document_indexes_consistent_after_simulated_crash() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Insert documents — auto-indexes text fields in inverted index.
     send_ok(

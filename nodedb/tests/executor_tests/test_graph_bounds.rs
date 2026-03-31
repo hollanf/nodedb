@@ -11,7 +11,7 @@ use crate::helpers::*;
 
 #[test]
 fn graph_traversal_bounded_under_adversarial_queries() {
-    let (mut core, mut tx, mut rx) = make_core();
+    let (mut core, mut tx, mut rx, _dir) = make_core();
 
     // Create a supernode: node "hub" connected to 200 other nodes.
     for i in 0..200u32 {
