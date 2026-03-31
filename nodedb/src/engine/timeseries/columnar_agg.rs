@@ -203,6 +203,9 @@ pub fn aggregate_f64_filtered(values: &[f64], indices: &[u32]) -> AggResult {
 ///
 /// `timestamps` and `values` must have the same length.
 /// Returns `(bucket_start, AggResult)` pairs sorted by bucket.
+///
+/// Uses streaming accumulators — O(B) allocations where B = number of
+/// buckets, not O(N) like the previous Vec-per-bucket approach.
 pub fn aggregate_by_time_bucket(
     timestamps: &[i64],
     values: &[f64],
@@ -211,16 +214,139 @@ pub fn aggregate_by_time_bucket(
     use super::time_bucket::time_bucket;
     use std::collections::BTreeMap;
 
-    let mut buckets: BTreeMap<i64, Vec<f64>> = BTreeMap::new();
+    let mut buckets: BTreeMap<i64, AggAccum> = BTreeMap::new();
     for (i, &ts) in timestamps.iter().enumerate() {
-        let bucket = time_bucket(bucket_interval_ms, ts);
-        buckets.entry(bucket).or_default().push(values[i]);
+        let bucket_key = time_bucket(bucket_interval_ms, ts);
+        let accum = buckets.entry(bucket_key).or_default();
+        let v = values[i];
+        if !v.is_nan() {
+            accum.feed(v);
+        }
     }
 
     buckets
         .into_iter()
-        .map(|(bucket, vals)| (bucket, aggregate_f64(&vals)))
+        .map(|(bucket, accum)| (bucket, accum.into_agg_result()))
         .collect()
+}
+
+/// Count-only time-bucket aggregation (no value column needed).
+///
+/// For `COUNT(*)` queries — avoids reading a Float64 column entirely.
+pub fn count_by_time_bucket(timestamps: &[i64], bucket_interval_ms: i64) -> Vec<(i64, AggResult)> {
+    use super::time_bucket::time_bucket;
+    use std::collections::BTreeMap;
+
+    let mut buckets: BTreeMap<i64, u64> = BTreeMap::new();
+    for &ts in timestamps {
+        *buckets
+            .entry(time_bucket(bucket_interval_ms, ts))
+            .or_default() += 1;
+    }
+
+    buckets
+        .into_iter()
+        .map(|(bucket, count)| {
+            (
+                bucket,
+                AggResult {
+                    count,
+                    ..Default::default()
+                },
+            )
+        })
+        .collect()
+}
+
+/// Streaming accumulator for single-pass aggregation.
+///
+/// Maintains running sum (with Kahan compensation), min, max, count,
+/// first, and last. Zero intermediate allocation.
+#[derive(Debug, Clone)]
+pub struct AggAccum {
+    pub count: u64,
+    sum: f64,
+    compensation: f64,
+    pub min: f64,
+    pub max: f64,
+    first: f64,
+    last: f64,
+}
+
+impl Default for AggAccum {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            sum: 0.0,
+            compensation: 0.0,
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+            first: f64::NAN,
+            last: f64::NAN,
+        }
+    }
+}
+
+impl AggAccum {
+    /// Feed a single value into the accumulator.
+    pub fn feed(&mut self, v: f64) {
+        if self.count == 0 {
+            self.first = v;
+        }
+        self.last = v;
+        self.count += 1;
+        // Kahan compensated summation.
+        let y = v - self.compensation;
+        let t = self.sum + y;
+        self.compensation = (t - self.sum) - y;
+        self.sum = t;
+        if v < self.min {
+            self.min = v;
+        }
+        if v > self.max {
+            self.max = v;
+        }
+    }
+
+    /// Increment count without a value (for `COUNT(*)` on non-numeric columns).
+    pub fn feed_count_only(&mut self) {
+        self.count += 1;
+    }
+
+    /// Merge another accumulator into this one.
+    pub fn merge(&mut self, other: &AggAccum) {
+        if other.count == 0 {
+            return;
+        }
+        if self.count == 0 {
+            self.first = other.first;
+        }
+        self.last = other.last;
+        self.count += other.count;
+        self.sum += other.sum;
+        if other.min < self.min {
+            self.min = other.min;
+        }
+        if other.max > self.max {
+            self.max = other.max;
+        }
+    }
+
+    /// Convert to final `AggResult`.
+    pub fn into_agg_result(self) -> AggResult {
+        AggResult {
+            count: self.count,
+            sum: self.sum,
+            min: if self.count == 0 { f64::NAN } else { self.min },
+            max: if self.count == 0 { f64::NAN } else { self.max },
+            first: self.first,
+            last: self.last,
+        }
+    }
+
+    pub fn sum(&self) -> f64 {
+        self.sum
+    }
 }
 
 #[cfg(test)]

@@ -56,6 +56,50 @@ pub fn infer_schema(lines: &[IlpLine<'_>]) -> ColumnarSchema {
     }
 }
 
+/// Detect new fields in an ILP batch and expand the memtable schema.
+///
+/// Scans all lines for tag keys and field keys not present in the current
+/// schema. New columns are added with NULL backfill for existing rows.
+/// Must be called BEFORE `ingest_batch` so the batch can map values to
+/// the expanded schema.
+pub fn evolve_schema(memtable: &mut ColumnarMemtable, lines: &[IlpLine<'_>]) {
+    // Collect existing column names before mutating (avoids borrow conflict).
+    let existing: std::collections::HashSet<String> = memtable
+        .schema()
+        .columns
+        .iter()
+        .map(|(n, _)| n.clone())
+        .collect();
+
+    // Collect all new columns to add (name, type).
+    let mut new_columns: Vec<(String, ColumnType)> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for line in lines {
+        for &(key, _) in &line.tags {
+            if !existing.contains(key) && seen.insert(key.to_string()) {
+                new_columns.push((key.to_string(), ColumnType::Symbol));
+            }
+        }
+        for &(key, ref val) in &line.fields {
+            if !existing.contains(key) && seen.insert(key.to_string()) {
+                let col_type = match val {
+                    FieldValue::Float(_) => ColumnType::Float64,
+                    FieldValue::Int(_) | FieldValue::UInt(_) => ColumnType::Int64,
+                    FieldValue::Str(_) => ColumnType::Symbol,
+                    FieldValue::Bool(_) => ColumnType::Float64,
+                };
+                new_columns.push((key.to_string(), col_type));
+            }
+        }
+    }
+
+    // Now mutate — no outstanding borrows.
+    for (name, col_type) in new_columns {
+        memtable.add_column(name, col_type);
+    }
+}
+
 /// Ingest a batch of parsed ILP lines into a columnar memtable.
 ///
 /// The memtable's schema must already be set. Tag/field values are mapped
