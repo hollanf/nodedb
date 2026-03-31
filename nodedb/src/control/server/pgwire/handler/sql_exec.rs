@@ -132,12 +132,93 @@ impl NodeDbPgHandler {
                 }
             }
 
+            // Flush pending offset commits (deferred from COMMIT OFFSET inside transaction).
+            let pending_offsets = self.sessions.take_pending_offsets(addr);
+            for (tid, stream, group, partition_id, lsn) in pending_offsets {
+                if let Err(e) =
+                    self.state
+                        .offset_store
+                        .commit_offset(tid, &stream, &group, partition_id, lsn)
+                {
+                    tracing::warn!(
+                        stream = %stream,
+                        group = %group,
+                        partition = partition_id,
+                        error = %e,
+                        "failed to commit deferred offset"
+                    );
+                }
+            }
+
             return Ok(vec![Response::Execution(Tag::new("COMMIT"))]);
         }
 
         if upper == "ROLLBACK" || upper == "ABORT" {
             let _ = self.sessions.rollback(addr);
             return Ok(vec![Response::Execution(Tag::new("ROLLBACK"))]);
+        }
+
+        // Transactional consumption: if COMMIT OFFSET is inside a transaction,
+        // defer the offset commit until the transaction's COMMIT.
+        if (upper.starts_with("COMMIT OFFSET ") || upper.starts_with("COMMIT OFFSETS "))
+            && self.sessions.transaction_state(addr)
+                == crate::control::server::pgwire::session::TransactionState::InBlock
+        {
+            let parts: Vec<&str> = sql_trimmed.split_whitespace().collect();
+            let tenant_id = identity.tenant_id.as_u32();
+
+            // Parse single-partition: COMMIT OFFSET PARTITION <p> AT <lsn> ON <stream> CONSUMER GROUP <name>
+            if parts.len() >= 11
+                && parts[2].eq_ignore_ascii_case("PARTITION")
+                && parts[4].eq_ignore_ascii_case("AT")
+                && parts[6].eq_ignore_ascii_case("ON")
+            {
+                let partition_id: u16 = parts[3].parse().unwrap_or(0);
+                let lsn: u64 = parts[5].parse().unwrap_or(0);
+                let stream_name = parts[7].to_lowercase();
+                let group_name = parts[10].to_lowercase();
+                self.sessions.defer_offset_commit(
+                    addr,
+                    tenant_id,
+                    stream_name,
+                    group_name,
+                    partition_id,
+                    lsn,
+                );
+                return Ok(vec![Response::Execution(Tag::new("COMMIT OFFSET"))]);
+            }
+
+            // Batch: COMMIT OFFSETS ON <stream> CONSUMER GROUP <name>
+            if parts.len() >= 7
+                && parts[1].eq_ignore_ascii_case("OFFSETS")
+                && parts[2].eq_ignore_ascii_case("ON")
+            {
+                let stream_name = parts[3].to_lowercase();
+                let group_name = parts[6].to_lowercase();
+                // Read current latest LSNs from the buffer and defer them.
+                if let Some(buffer) = self.state.cdc_router.get_buffer(tenant_id, &stream_name) {
+                    let events = buffer.read_from_lsn(0, usize::MAX);
+                    let mut latest: std::collections::HashMap<u16, u64> =
+                        std::collections::HashMap::new();
+                    for e in &events {
+                        let entry = latest.entry(e.partition).or_insert(0);
+                        if e.lsn > *entry {
+                            *entry = e.lsn;
+                        }
+                    }
+                    for (pid, lsn) in latest {
+                        self.sessions.defer_offset_commit(
+                            addr,
+                            tenant_id,
+                            stream_name.clone(),
+                            group_name.clone(),
+                            pid,
+                            lsn,
+                        );
+                    }
+                }
+                return Ok(vec![Response::Execution(Tag::new("COMMIT OFFSETS"))]);
+            }
         }
 
         if upper.starts_with("SAVEPOINT ") {

@@ -58,6 +58,10 @@ pub struct PgSession {
     /// Savepoint stack: each entry is (name, tx_buffer_len_at_savepoint).
     /// On ROLLBACK TO, truncate tx_buffer to the saved length.
     pub savepoints: Vec<(String, usize)>,
+    /// Pending consumer offset commits deferred until COMMIT.
+    /// Each entry: (tenant_id, stream_name, group_name, partition_id, lsn).
+    /// Flushed atomically on COMMIT, discarded on ROLLBACK.
+    pub pending_offset_commits: Vec<(u32, String, String, u16, u64)>,
     /// Server-side cursors: name → (cached result rows as JSON strings, current position).
     pub cursors: HashMap<String, CursorState>,
     /// LIVE SELECT subscriptions: active change stream subscriptions for this connection.
@@ -92,6 +96,7 @@ impl PgSession {
             tx_snapshot_lsn: None,
             tx_read_set: Vec::new(),
             savepoints: Vec::new(),
+            pending_offset_commits: Vec::new(),
             cursors: HashMap::new(),
             live_subscriptions: Vec::new(),
         }
@@ -318,10 +323,10 @@ impl SessionStore {
         }
     }
 
-    /// COMMIT — drain the write buffer and return to idle.
+    /// COMMIT — drain the write buffer and pending offset commits, return to idle.
     ///
-    /// Returns the buffered write tasks for atomic dispatch. If the
-    /// transaction is in Failed state, discards the buffer.
+    /// Returns the buffered write tasks for atomic dispatch.
+    /// Also returns pending offset commits to be flushed after successful dispatch.
     pub fn commit(
         &self,
         addr: &SocketAddr,
@@ -332,10 +337,46 @@ impl SessionStore {
             session.tx_state = TransactionState::Idle;
             session.tx_snapshot_lsn = None;
             session.savepoints.clear();
+            // Note: pending_offset_commits are NOT cleared here.
+            // They are drained by take_pending_offsets() after successful dispatch.
             Ok(buffer)
         } else {
             Ok(Vec::new())
         }
+    }
+
+    /// Take pending offset commits (called after successful COMMIT dispatch).
+    pub fn take_pending_offsets(&self, addr: &SocketAddr) -> Vec<(u32, String, String, u16, u64)> {
+        let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        if let Some(session) = sessions.get_mut(addr) {
+            std::mem::take(&mut session.pending_offset_commits)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Defer an offset commit until the current transaction commits.
+    ///
+    /// Returns `true` if deferred (in transaction), `false` if not (commit immediately).
+    pub fn defer_offset_commit(
+        &self,
+        addr: &SocketAddr,
+        tenant_id: u32,
+        stream: String,
+        group: String,
+        partition_id: u16,
+        lsn: u64,
+    ) -> bool {
+        let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        if let Some(session) = sessions.get_mut(addr)
+            && session.tx_state == TransactionState::InBlock
+        {
+            session
+                .pending_offset_commits
+                .push((tenant_id, stream, group, partition_id, lsn));
+            return true;
+        }
+        false
     }
 
     /// Buffer a write task during a transaction block.
@@ -365,6 +406,7 @@ impl SessionStore {
             session.tx_snapshot_lsn = None;
             session.tx_read_set.clear();
             session.savepoints.clear();
+            session.pending_offset_commits.clear();
         }
         Ok(())
     }
