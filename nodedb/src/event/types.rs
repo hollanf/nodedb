@@ -91,6 +91,18 @@ pub enum WriteOp {
     BulkInsert { count: u32 },
     /// Multiple rows deleted in a batch.
     BulkDelete { count: u32 },
+    /// Idle heartbeat: emitted by the Data Plane when no user writes occur
+    /// for >1 second. Carries the current LSN and wall-clock timestamp.
+    /// Advances partition watermarks without triggering CDC/triggers/MVs.
+    Heartbeat,
+}
+
+impl WriteOp {
+    /// Whether this operation should trigger CDC routing, triggers, and MVs.
+    /// Heartbeats only advance watermarks — they are NOT data events.
+    pub fn is_data_event(&self) -> bool {
+        !matches!(self, Self::Heartbeat)
+    }
 }
 
 impl std::fmt::Display for WriteOp {
@@ -101,6 +113,7 @@ impl std::fmt::Display for WriteOp {
             Self::Delete => write!(f, "DELETE"),
             Self::BulkInsert { count } => write!(f, "BULK_INSERT({count})"),
             Self::BulkDelete { count } => write!(f, "BULK_DELETE({count})"),
+            Self::Heartbeat => write!(f, "HEARTBEAT"),
         }
     }
 }

@@ -224,6 +224,7 @@ pub fn spawn_core(
 
             let mut watchdog = CoreHealthWatchdog::new();
             let mut last_checkpoint = Instant::now();
+            let mut last_event_emit = Instant::now();
             /// Checkpoint interval: 5 minutes.
             const CHECKPOINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
@@ -313,6 +314,16 @@ pub fn spawn_core(
 
                 // Periodic compaction + maintenance (tombstone cleanup, CSR compact, edge sweep).
                 core.maybe_run_maintenance();
+
+                // Heartbeat: if no user writes for >1 second, emit a heartbeat
+                // to advance the Event Plane's partition watermark. Without this,
+                // streaming MV global_watermark() stalls on idle partitions.
+                if tasks_processed > 0 {
+                    last_event_emit = Instant::now();
+                } else if last_event_emit.elapsed() >= std::time::Duration::from_secs(1) {
+                    core.emit_heartbeat();
+                    last_event_emit = Instant::now();
+                }
             }
         })?;
 

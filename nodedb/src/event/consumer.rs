@@ -161,10 +161,16 @@ async fn consumer_loop(config: ConsumerConfig, metrics: Arc<CoreMetrics>) {
 
                     // Dispatch triggers + CDC routing + watermarks for each event.
                     for event in &events {
-                        // Advance partition watermark.
+                        // Advance partition watermark (for ALL events including heartbeats).
                         shared_state
                             .watermark_tracker
                             .advance(event.vshard_id.as_u16(), event.lsn.as_u64());
+
+                        // Heartbeats only advance watermarks — skip triggers/CDC/MVs.
+                        if !event.op.is_data_event() {
+                            continue;
+                        }
+
                         super::trigger::dispatcher::dispatch_triggers(
                             event,
                             &shared_state,
@@ -172,8 +178,8 @@ async fn consumer_loop(config: ConsumerConfig, metrics: Arc<CoreMetrics>) {
                         )
                         .await;
                         cdc_router.route_event(event);
-                        // Update streaming MVs: find streams that matched this event,
-                        // then process MVs sourced from those streams.
+                        // Update streaming MVs: find streams matching this event's
+                        // collection, then process MVs sourced from those streams.
                         let matching_streams = shared_state
                             .stream_registry
                             .find_matching(event.tenant_id.as_u32(), &event.collection);
