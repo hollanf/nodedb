@@ -18,6 +18,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 crc32c = { workspace = true }
 libc = { workspace = true }
+memmap2 = { workspace = true }
 io-uring = { workspace = true, optional = true }
 aes-gcm = { workspace = true }
 

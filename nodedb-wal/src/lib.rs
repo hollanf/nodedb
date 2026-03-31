@@ -26,6 +26,7 @@ pub mod crypto;
 pub mod double_write;
 pub mod error;
 pub mod group_commit;
+pub mod mmap_reader;
 pub mod reader;
 pub mod record;
 pub mod recovery;
