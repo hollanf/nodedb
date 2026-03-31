@@ -1,6 +1,7 @@
 pub mod config;
 pub mod engine;
 pub mod error;
+pub mod event;
 pub mod memory;
 pub mod nodedb;
 pub mod query;
