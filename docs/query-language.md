@@ -412,21 +412,33 @@ SHOW CHANGE STREAMS;
 
 ```sql
 -- Create a consumer group to track read position in a change stream
-CREATE CONSUMER GROUP processors FOR STREAM order_changes;
+CREATE CONSUMER GROUP processors ON order_changes;
 
--- Acknowledge processed offset
-COMMIT OFFSET FOR STREAM order_changes GROUP processors TO 42;
+-- Commit offset for a specific partition
+COMMIT OFFSET PARTITION 0 AT 42 ON order_changes CONSUMER GROUP processors;
 
-DROP CONSUMER GROUP processors FOR STREAM order_changes;
+-- Batch commit all partitions at their latest consumed position
+COMMIT OFFSETS ON order_changes CONSUMER GROUP processors;
+
+DROP CONSUMER GROUP processors ON order_changes;
 ```
 
 ### Durable Topics
 
 ```sql
--- Create a durable topic backed by a change stream
-CREATE TOPIC order_events ON STREAM order_changes;
+-- Create a durable topic with retention
+CREATE TOPIC order_events WITH (RETENTION = '1 hour');
+
+-- Publish a message
+PUBLISH TO order_events 'order 123 shipped';
+
+-- Consume with a consumer group
+CREATE CONSUMER GROUP processors ON order_events;
+SELECT * FROM TOPIC order_events CONSUMER GROUP processors LIMIT 100;
+COMMIT OFFSETS ON order_events CONSUMER GROUP processors;
 
 DROP TOPIC order_events;
+SHOW TOPICS;
 ```
 
 ### Cron Scheduler
@@ -787,7 +799,7 @@ SHOW USERS;
 ## Related
 
 - [Getting Started](getting-started.md) — First queries walkthrough
-- [Architecture](architecture.md) — How the hybrid execution model works
+- [Architecture](architecture.md) — How the three-plane execution model works
 - Engine guides: [Vectors](vectors.md) | [Graph](graph.md) | [Documents](documents.md) | [KV](kv.md) | [Timeseries](timeseries.md) | [Spatial](spatial.md) | [Full-Text](full-text-search.md)
 
 [Back to docs](README.md)

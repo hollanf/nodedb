@@ -5,7 +5,7 @@ Welcome to the NodeDB docs. These guides explain what each engine does, when to 
 ## Getting Started
 
 - [Getting Started](getting-started.md) — Prerequisites, build, run, first queries
-- [Architecture](architecture.md) — How the hybrid execution model works
+- [Architecture](architecture.md) — How the three-plane execution model works
 - [Query Language](query-language.md) — Full SQL reference (DDL, DML, engine-specific syntax, functions)
 - [Protocols](protocols.md) — Six wire protocols (pgwire, NDB, HTTP, RESP, ILP, Sync)
 

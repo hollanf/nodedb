@@ -2,7 +2,7 @@
 
 NodeDB is a real-time database. Every committed mutation publishes to an internal event bus. No external message broker needed — real-time is part of the database, not a sidecar.
 
-The event infrastructure is built on the **Event Plane** — a third architectural layer alongside the Control Plane (query planning) and Data Plane (storage I/O). The Data Plane emits `WriteEvent` and `DeleteEvent` records to the Event Plane via per-core bounded ring buffers after each WAL commit. The Event Plane routes these to change stream consumers, trigger dispatch, and webhook delivery. WAL-backed crash recovery ensures no events are lost across restarts.
+The event infrastructure is built on the **Event Plane** — a third architectural layer alongside the Control Plane (query planning) and Data Plane (storage I/O). The Data Plane emits `WriteEvent` records (covering inserts, updates, and deletes via `WriteOp`) to the Event Plane via per-core bounded ring buffers after each WAL commit. The Event Plane routes these to change stream consumers, trigger dispatch, and webhook delivery. WAL-backed crash recovery ensures no events are lost across restarts.
 
 ## LIVE SELECT
 
@@ -102,27 +102,40 @@ Consumer groups track read positions independently, enabling multiple consumers 
 
 ```sql
 -- Create a consumer group
-CREATE CONSUMER GROUP analytics FOR STREAM order_changes;
-CREATE CONSUMER GROUP billing FOR STREAM order_changes;
+CREATE CONSUMER GROUP analytics ON order_changes;
+CREATE CONSUMER GROUP billing ON order_changes;
 
--- Commit offset after successfully processing up to event 42
-COMMIT OFFSET FOR STREAM order_changes GROUP analytics TO 42;
+-- Commit offset for a specific partition
+COMMIT OFFSET PARTITION 0 AT 42 ON order_changes CONSUMER GROUP analytics;
 
-DROP CONSUMER GROUP analytics FOR STREAM order_changes;
+-- Or batch commit all partitions at their latest consumed position
+COMMIT OFFSETS ON order_changes CONSUMER GROUP analytics;
+
+DROP CONSUMER GROUP analytics ON order_changes;
 ```
 
 ## Durable Topics
 
-Durable topics provide persistent pub/sub backed by the change stream infrastructure.
+Durable topics are standalone named channels with configurable retention. They provide persistent pub/sub with consumer group offset tracking — messages survive disconnect, and consumers resume from their last committed offset.
 
 ```sql
--- Create a topic on an existing change stream
-CREATE TOPIC order_events ON STREAM order_changes;
+-- Create a durable topic with retention
+CREATE TOPIC order_events WITH (RETENTION = '1 hour');
 
--- Subscribe (with consumer group for load balancing)
-SUBSCRIBE TO order_events GROUP 'processors';
+-- Publish a message
+PUBLISH TO order_events 'order 123 shipped';
+
+-- Create a consumer group for durable consumption
+CREATE CONSUMER GROUP processors ON order_events;
+
+-- Consume from the topic (reads from last committed offset)
+SELECT * FROM TOPIC order_events CONSUMER GROUP processors LIMIT 100;
+
+-- Commit offsets after processing
+COMMIT OFFSETS ON order_events CONSUMER GROUP processors;
 
 DROP TOPIC order_events;
+SHOW TOPICS;
 ```
 
 ## Cron Scheduler
@@ -149,13 +162,86 @@ DROP SCHEDULE nightly_cleanup;
 SHOW SCHEDULES;
 ```
 
-## SSE Streaming
+## Streaming Materialized Views
+
+Continuously-updating aggregation fed by change streams. Each incoming event updates only the affected group key's partial aggregate state — O(1) per event, no full rescan.
+
+```sql
+CREATE MATERIALIZED VIEW order_stats STREAMING AS
+SELECT time_bucket('5 minutes', event_time) AS bucket,
+       count(*) AS order_count,
+       sum(doc_get(new_value, '$.total')::FLOAT) AS revenue
+FROM order_changes
+WHERE event_type = 'INSERT'
+GROUP BY bucket;
+
+-- Query the continuously-updating view
+SELECT * FROM order_stats;
+```
+
+Streaming MVs support COUNT, SUM, MIN, MAX, and AVG aggregates. State is persisted to redb every 30 seconds and restored on startup. Watermark-driven finalization marks time buckets as complete.
+
+## LISTEN/NOTIFY
+
+PostgreSQL-compatible ephemeral notifications, extended to cluster-wide delivery. A LISTEN on Node B receives NOTIFY from Node A.
+
+```sql
+-- Session-scoped, ephemeral (backward compatible with pgwire)
+LISTEN order_events;
+NOTIFY order_events, 'order 123 shipped';
+```
+
+For durable, resumable delivery, use [Durable Topics](#durable-topics) instead.
+
+## External Delivery
+
+### Webhook
+
+Change streams can deliver events to external HTTP endpoints with automatic retry:
+
+```sql
+CREATE CHANGE STREAM order_events ON orders
+WITH (
+    DELIVERY = 'webhook',
+    URL = 'https://hooks.example.com/orders',
+    RETRY = 3,
+    TIMEOUT = '5s'
+);
+```
+
+Each POST includes `X-Idempotency-Key`, `X-Event-Sequence`, `X-Partition`, and `X-LSN` headers. 4xx client errors (except 429) are not retried.
+
+### Kafka Bridge
+
+Publish change stream events to an external Kafka topic (feature-gated with `--features kafka`):
+
+```sql
+CREATE CHANGE STREAM order_events ON orders
+WITH (
+    DELIVERY = 'kafka',
+    BROKERS = 'localhost:9092',
+    TOPIC = 'orders',
+    FORMAT = 'json'
+);
+```
+
+Supports transactional exactly-once semantics via `enable.idempotence` and `transactional.id`.
+
+### SSE Streaming
 
 HTTP Server-Sent Events for CDC consumers that can't use WebSocket:
 
 ```
-GET /api/v1/collections/orders/changes?since=2024-01-15T00:00:00Z
+GET /v1/streams/{stream}/events?group={group}
 Accept: text/event-stream
+```
+
+### HTTP Long-Poll
+
+Pull-based consumption for simple integrations:
+
+```
+GET /v1/streams/{stream}/poll?group={group}&limit=100
 ```
 
 ## WebSocket RPC

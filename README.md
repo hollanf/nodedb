@@ -73,11 +73,13 @@ See [Getting Started](docs/getting-started.md) for a fuller walkthrough.
 - **User-Defined Functions** — `CREATE [OR REPLACE] FUNCTION` with SQL expression bodies or procedural `BEGIN...END` bodies. Volatility levels (`IMMUTABLE`, `STABLE`, `VOLATILE`). Expression UDFs inline directly into DataFusion query plans. `GRANT EXECUTE ON FUNCTION`.
 - **Triggers** — `CREATE TRIGGER` with `ASYNC` (default, Event Plane), `SYNC` (ACID, same transaction), and `DEFERRED` (at `COMMIT` time) execution modes.
 
-**Real-Time**
+**Real-Time** (powered by the [Event Plane](docs/real-time.md))
 
-- **CDC Change Streams** — `CREATE CHANGE STREAM` with consumer group offset tracking, webhook delivery (`WEBHOOK_URL`, `WEBHOOK_SECRET`), and log compaction (`COMPACTION=key`). Consumer groups support `CREATE/DROP CONSUMER GROUP` and `COMMIT OFFSET`.
-- **Durable Topics** — `CREATE TOPIC ... ON STREAM` for persistent pub/sub backed by change stream infrastructure.
-- **Cron Scheduler** — `CREATE SCHEDULE ... CRON '...' AS BEGIN...END` for recurring SQL jobs.
+- **CDC Change Streams** — `CREATE CHANGE STREAM` with consumer group offset tracking, per-partition offsets, log compaction, and retention. External delivery via webhook (retry + idempotency headers) or Kafka bridge (transactional exactly-once, feature-gated). ~1-5ms write-to-consumer latency.
+- **Streaming Materialized Views** — `CREATE MATERIALIZED VIEW ... STREAMING AS SELECT ... FROM <stream>`. Continuously-updating aggregation with O(1) incremental maintenance per event. Replaces ksqlDB.
+- **Durable Topics** — `CREATE TOPIC` with `PUBLISH TO` for persistent pub/sub. Consumer groups with offset tracking. Messages survive disconnect.
+- **Cron Scheduler** — `CREATE SCHEDULE ... CRON '...' AS BEGIN...END` for recurring SQL jobs. Per-collection affinity, leader-aware in distributed mode.
+- **LISTEN/NOTIFY** — PostgreSQL-compatible, extended to cluster-wide delivery.
 
 ## Operations
 
@@ -87,7 +89,7 @@ See [Getting Started](docs/getting-started.md) for a fuller walkthrough.
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) — Build, run, connect, first queries
-- [Architecture](docs/architecture.md) — How the hybrid execution model works
+- [Architecture](docs/architecture.md) — How the three-plane execution model works
 - [Engine Guides](docs/README.md) — Deep dives into each engine
 - [Security](docs/security.md) — Auth, RBAC, RLS, encryption
 - [Real-Time](docs/real-time.md) — LIVE SELECT, CDC, pub/sub

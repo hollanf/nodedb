@@ -1,6 +1,6 @@
 # Architecture
 
-NodeDB splits work across three runtimes connected by lock-free ring buffers. This separation is the core design decision — each plane does exactly what it is best at and nothing else.
+NodeDB splits work across three planes connected by lock-free ring buffers. This separation is the core design decision — each plane does exactly what it is best at and nothing else.
 
 ## Three-Plane Execution Model
 
@@ -17,14 +17,14 @@ NodeDB splits work across three runtimes connected by lock-free ring buffers. Th
 │  Physical execution    ├─►│  AFTER trigger dispatch             │
 │  Storage I/O, SIMD     │  │  CDC change streams                 │
 │  !Send, io_uring       │  │  Cron scheduler                     │
-│  Emits: WriteEvent,    │  │  Durable pub/sub, webhook delivery  │
-│  DeleteEvent           │  │  Retry, DLQ, backpressure           │
+│  Emits WriteEvent      │  │  Durable pub/sub, webhook delivery  │
+│  (Insert/Update/Delete)│  │  Retry, DLQ, backpressure           │
 └────────────────────────┘  └───────────────────────────────────┘
 ```
 
 **Control Plane** — Runs on Tokio. Handles connections (pgwire, HTTP, WebSocket), parses SQL via DataFusion, builds logical query plans, and dispatches work to the Data Plane. All types here are `Send + Sync`.
 
-**Data Plane** — One thread per CPU core, each an isolated shard. Reads from NVMe via io_uring, runs SIMD vector math, executes physical query plans. No locks, no atomics, no cross-core sharing. Types are `!Send` by design. Emits `WriteEvent` and `DeleteEvent` records to the Event Plane via per-core bounded ring buffers after each WAL commit.
+**Data Plane** — One thread per CPU core, each an isolated shard. Reads from NVMe via io_uring, runs SIMD vector math, executes physical query plans. No locks, no atomics, no cross-core sharing. Types are `!Send` by design. Emits `WriteEvent` records (covering inserts, updates, and deletes via `WriteOp`) to the Event Plane via per-core bounded ring buffers after each WAL commit.
 
 **Event Plane** — Runs on Tokio. Consumes the event stream from the Data Plane and handles all asynchronous, event-driven work: AFTER trigger dispatch, CDC change stream delivery, cron job evaluation, durable pub/sub topics, and webhook HTTP delivery. Side effects (trigger bodies, scheduled SQL) are dispatched back through the normal Control Plane → Data Plane path — the Event Plane handles routing and delivery, not compute. WAL-backed crash recovery ensures no events are lost across restarts.
 

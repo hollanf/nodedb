@@ -320,10 +320,10 @@ WITH (
 );
 
 -- Create a consumer group to track read offsets
-CREATE CONSUMER GROUP processors FOR STREAM order_changes;
+CREATE CONSUMER GROUP processors ON order_changes;
 
--- Commit an offset after processing
-COMMIT OFFSET FOR STREAM order_changes GROUP processors TO 42;
+-- Commit offsets after processing (batch: all partitions at latest)
+COMMIT OFFSETS ON order_changes CONSUMER GROUP processors;
 
 -- Show all streams
 SHOW CHANGE STREAMS;
@@ -344,7 +344,7 @@ RESTORE TENANT acme FROM '/backups/acme-2026-03-31.bak';
 
 ## What's Next
 
-- [Architecture](architecture.md) — understand how the hybrid execution model works
+- [Architecture](architecture.md) — understand how the three-plane execution model works
 - Engine deep dives: [Vectors](vectors.md) | [Graph](graph.md) | [Documents](documents.md) | [Columnar](columnar.md) | [Timeseries](timeseries.md) | [Spatial](spatial.md) | [KV](kv.md) | [Full-Text](full-text-search.md)
 - [NodeDB-Lite](lite.md) — embed NodeDB in your app (mobile, WASM, desktop)
 - [Security](security.md) — set up authentication and access control
