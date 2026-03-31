@@ -14,6 +14,9 @@ const DEFAULT_BUDGET_BYTES: u64 = 512 * 1024 * 1024;
 /// Estimated memory per pending cross-shard write entry (request struct + queue overhead).
 const CROSS_SHARD_ENTRY_BYTES: u64 = 512;
 
+/// Estimated memory per pending Kafka publish (event bytes + producer overhead).
+const KAFKA_ENTRY_BYTES: u64 = 1024;
+
 /// Event Plane memory budget tracker.
 pub struct EventPlaneBudget {
     /// Maximum allowed memory usage in bytes.
@@ -26,6 +29,8 @@ pub struct EventPlaneBudget {
     exceed_count: AtomicU64,
     /// Pending cross-shard writes count (updated externally).
     pending_cross_shard: AtomicU64,
+    /// Pending Kafka publishes count (updated externally).
+    pending_kafka: AtomicU64,
 }
 
 impl EventPlaneBudget {
@@ -36,6 +41,7 @@ impl EventPlaneBudget {
             exceeded: AtomicBool::new(false),
             exceed_count: AtomicU64::new(0),
             pending_cross_shard: AtomicU64::new(0),
+            pending_kafka: AtomicU64::new(0),
         }
     }
 
@@ -46,6 +52,7 @@ impl EventPlaneBudget {
             exceeded: AtomicBool::new(false),
             exceed_count: AtomicU64::new(0),
             pending_cross_shard: AtomicU64::new(0),
+            pending_kafka: AtomicU64::new(0),
         }
     }
 
@@ -58,7 +65,8 @@ impl EventPlaneBudget {
     pub fn update_usage(&self, base_bytes: u64) {
         self.current.store(base_bytes, Ordering::Relaxed);
 
-        let total_bytes = base_bytes + self.pending_cross_shard_bytes();
+        let total_bytes =
+            base_bytes + self.pending_cross_shard_bytes() + self.pending_kafka_bytes();
         let limit = self.limit.load(Ordering::Relaxed);
         let was_exceeded = self.exceeded.load(Ordering::Relaxed);
 
@@ -133,13 +141,21 @@ impl EventPlaneBudget {
         self.pending_cross_shard.load(Ordering::Relaxed) * CROSS_SHARD_ENTRY_BYTES
     }
 
-    /// Total estimated usage including cross-shard pending writes.
-    ///
-    /// Callers should pass the base usage (stream buffers, MV state, etc.)
-    /// to `update_usage()`. The pending cross-shard bytes are automatically
-    /// added to the total.
+    /// Update the pending Kafka publish count.
+    pub fn update_pending_kafka(&self, count: u64) {
+        self.pending_kafka.store(count, Ordering::Relaxed);
+    }
+
+    /// Estimated memory used by pending Kafka publishes.
+    pub fn pending_kafka_bytes(&self) -> u64 {
+        self.pending_kafka.load(Ordering::Relaxed) * KAFKA_ENTRY_BYTES
+    }
+
+    /// Total estimated usage including cross-shard and Kafka pending writes.
     pub fn effective_usage(&self) -> u64 {
-        self.current.load(Ordering::Relaxed) + self.pending_cross_shard_bytes()
+        self.current.load(Ordering::Relaxed)
+            + self.pending_cross_shard_bytes()
+            + self.pending_kafka_bytes()
     }
 
     /// Set a new limit (runtime reconfiguration).

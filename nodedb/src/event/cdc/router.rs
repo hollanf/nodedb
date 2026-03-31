@@ -279,6 +279,7 @@ mod tests {
             compaction: CompactionConfig::default(),
             webhook: crate::event::webhook::WebhookConfig::default(),
             late_data: LateDataPolicy::default(),
+            kafka: crate::event::kafka::KafkaDeliveryConfig::default(),
             owner: "admin".into(),
             created_at: 0,
         }

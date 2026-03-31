@@ -107,6 +107,9 @@ io-uring = "0.7"
 # CRDTs
 loro = "1"
 
+# Kafka bridge
+rdkafka = { version = "0.36", features = ["cmake-build"] }
+
 # Regex
 regex = "1"
 

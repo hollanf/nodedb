@@ -177,6 +177,9 @@ pub struct ChangeStreamDef {
     /// Policy for events that arrive below the partition watermark.
     #[serde(default)]
     pub late_data: LateDataPolicy,
+    /// Kafka bridge delivery configuration (optional).
+    #[serde(default)]
+    pub kafka: crate::event::kafka::KafkaDeliveryConfig,
     /// Owner (creator).
     pub owner: String,
     /// Creation timestamp (epoch seconds).
@@ -223,6 +226,7 @@ mod tests {
             compaction: CompactionConfig::default(),
             webhook: crate::event::webhook::WebhookConfig::default(),
             late_data: LateDataPolicy::default(),
+            kafka: crate::event::kafka::KafkaDeliveryConfig::default(),
             owner: "admin".into(),
             created_at: 0,
         };
@@ -243,6 +247,7 @@ mod tests {
             compaction: CompactionConfig::default(),
             webhook: crate::event::webhook::WebhookConfig::default(),
             late_data: LateDataPolicy::default(),
+            kafka: crate::event::kafka::KafkaDeliveryConfig::default(),
             owner: "admin".into(),
             created_at: 0,
         };

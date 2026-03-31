@@ -214,6 +214,9 @@ pub struct SharedState {
     /// Cross-shard high-water-mark dedup store (None in single-node mode).
     pub hwm_store: Option<Arc<crate::event::cross_shard::HwmStore>>,
 
+    /// Kafka bridge producer manager (lifecycle of per-stream Kafka tasks).
+    pub kafka_manager: crate::event::kafka::KafkaManager,
+
     /// CRDT sync delivery: pushes outbound deltas to connected Lite sessions.
     pub crdt_sync_delivery: Arc<crate::event::crdt_sync::CrdtSyncDelivery>,
 
@@ -255,6 +258,11 @@ pub struct SharedState {
     /// Tracks each node's wire format version for N-1 compatibility checks.
     pub cluster_version_state: Mutex<crate::control::rolling_upgrade::ClusterVersionState>,
 
+    /// Keep-alive senders for shutdown watch channels used by background tasks
+    /// (webhook manager, kafka manager). Stored here so the receivers remain
+    /// valid for the lifetime of SharedState without `mem::forget`.
+    _shutdown_senders: Vec<tokio::sync::watch::Sender<bool>>,
+
     /// Performance tuning configuration (deadlines, query limits, engine
     /// knobs, etc.). Immutable after startup — set once from `ServerConfig`.
     pub tuning: TuningConfig,
@@ -267,6 +275,7 @@ pub struct SharedState {
 impl SharedState {
     /// Create shared state with in-memory credential store (for tests).
     pub fn new(dispatcher: Dispatcher, wal: Arc<WalManager>) -> Arc<Self> {
+        let mut shutdown_senders: Vec<tokio::sync::watch::Sender<bool>> = Vec::new();
         Arc::new(Self {
             dispatcher: Mutex::new(dispatcher),
             tracker: RequestTracker::new(),
@@ -358,11 +367,8 @@ impl SharedState {
             },
             ep_topic_registry: crate::event::topic::EpTopicRegistry::new(),
             webhook_manager: {
-                // Dummy shutdown channel for test context. Tasks are stopped
-                // explicitly via stop_task() or aborted via Drop — the watch
-                // receiver is kept alive but never signals true.
-                let (_tx, rx) = tokio::sync::watch::channel(false);
-                std::mem::forget(_tx);
+                let (tx, rx) = tokio::sync::watch::channel(false);
+                shutdown_senders.push(tx);
                 crate::event::webhook::WebhookManager::new(rx)
             },
             mv_registry: Arc::new(crate::event::streaming_mv::MvRegistry::new()),
@@ -373,6 +379,11 @@ impl SharedState {
             cross_shard_dlq: None,
             cross_shard_metrics: None,
             hwm_store: None,
+            kafka_manager: {
+                let (tx, rx) = tokio::sync::watch::channel(false);
+                shutdown_senders.push(tx);
+                crate::event::kafka::KafkaManager::new(rx)
+            },
             crdt_sync_delivery: Arc::new(crate::event::crdt_sync::CrdtSyncDelivery::new()),
             delta_packager: Arc::new(crate::event::crdt_sync::DeltaPackager::new()),
             mv_persistence: {
@@ -400,6 +411,7 @@ impl SharedState {
             ),
             tuning: TuningConfig::default(),
             wal_catchup_lsn: AtomicU64::new(0),
+            _shutdown_senders: shutdown_senders,
         })
     }
 
@@ -449,6 +461,7 @@ impl SharedState {
         let mut audit_log = AuditLog::new(10_000);
         audit_log.set_next_seq(audit_start_seq);
 
+        let mut shutdown_senders: Vec<tokio::sync::watch::Sender<bool>> = Vec::new();
         Ok(Arc::new(Self {
             dispatcher: Mutex::new(dispatcher),
             tracker: RequestTracker::new(),
@@ -471,11 +484,8 @@ impl SharedState {
             )?),
             ep_topic_registry,
             webhook_manager: {
-                // Dummy shutdown channel. Delivery tasks are stopped explicitly
-                // via stop_task() on DROP CHANGE STREAM, or aborted via Drop on
-                // process exit. The watch receiver stays valid but never signals.
-                let (_tx, rx) = tokio::sync::watch::channel(false);
-                std::mem::forget(_tx);
+                let (tx, rx) = tokio::sync::watch::channel(false);
+                shutdown_senders.push(tx);
                 crate::event::webhook::WebhookManager::new(rx)
             },
             mv_registry,
@@ -486,6 +496,11 @@ impl SharedState {
             cross_shard_dlq: None,
             cross_shard_metrics: None,
             hwm_store: None,
+            kafka_manager: {
+                let (tx, rx) = tokio::sync::watch::channel(false);
+                shutdown_senders.push(tx);
+                crate::event::kafka::KafkaManager::new(rx)
+            },
             crdt_sync_delivery: Arc::new(crate::event::crdt_sync::CrdtSyncDelivery::new()),
             delta_packager: Arc::new(crate::event::crdt_sync::DeltaPackager::new()),
             mv_persistence: Arc::new(crate::event::streaming_mv::MvPersistence::open(
@@ -546,6 +561,7 @@ impl SharedState {
             ),
             tuning,
             wal_catchup_lsn: AtomicU64::new(0),
+            _shutdown_senders: shutdown_senders,
         }))
     }
 

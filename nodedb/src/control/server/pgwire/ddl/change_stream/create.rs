@@ -67,26 +67,35 @@ pub fn create_change_stream(
         compaction: parsed.compaction,
         webhook: parsed.webhook,
         late_data: parsed.late_data,
+        kafka: parsed.kafka,
         owner: identity.username.clone(),
         created_at: now,
     };
 
-    // If webhook is configured, start the delivery task.
+    // Extract configs before moving def into registry.
     let has_webhook = def.webhook.is_configured();
+    let webhook_config = def.webhook.clone();
+    let kafka_config = def.kafka.clone();
+    let stream_name_owned = parsed.name.clone();
 
     catalog
         .put_change_stream(&def)
         .map_err(|e| sqlstate_error("XX000", &format!("catalog write: {e}")))?;
 
-    let webhook_config = def.webhook.clone();
-    let stream_name_for_webhook = parsed.name.clone();
     state.stream_registry.register(def);
 
     // Start webhook delivery task if configured.
     if has_webhook {
         state
             .webhook_manager
-            .start_task(tenant_id, &stream_name_for_webhook, webhook_config);
+            .start_task(tenant_id, &stream_name_owned, webhook_config);
+    }
+
+    // Start Kafka producer task if configured.
+    if kafka_config.enabled {
+        state
+            .kafka_manager
+            .start(tenant_id, &stream_name_owned, kafka_config);
     }
 
     state.audit_record(
@@ -111,6 +120,7 @@ struct ParsedCreateChangeStream {
     compaction: CompactionConfig,
     webhook: WebhookConfig,
     late_data: LateDataPolicy,
+    kafka: crate::event::kafka::KafkaDeliveryConfig,
 }
 
 /// Extract all `KEY = VALUE` pairs from a WITH clause inner string.
@@ -191,6 +201,7 @@ fn parse_create_change_stream(sql: &str) -> PgWireResult<ParsedCreateChangeStrea
     let mut webhook = WebhookConfig::default();
     let mut late_data = LateDataPolicy::default();
 
+    let mut kv_pairs: Option<Vec<(String, String)>> = None;
     if let Some(with_pos) = upper.find("WITH") {
         let with_section = trimmed[with_pos + 4..].trim();
         let inner = with_section
@@ -199,10 +210,11 @@ fn parse_create_change_stream(sql: &str) -> PgWireResult<ParsedCreateChangeStrea
             .map(|(i, _)| i)
             .unwrap_or(with_section);
 
-        for (key, val) in extract_key_value_pairs(inner) {
+        let pairs = extract_key_value_pairs(inner);
+        for (key, val) in &pairs {
             match key.as_str() {
                 "FORMAT" => {
-                    if let Some(f) = StreamFormat::from_str_opt(&val) {
+                    if let Some(f) = StreamFormat::from_str_opt(val) {
                         format = f;
                     }
                 }
@@ -225,14 +237,14 @@ fn parse_create_change_stream(sql: &str) -> PgWireResult<ParsedCreateChangeStrea
                     compaction.enabled = true;
                 }
                 "KEY" if !val.is_empty() => {
-                    compaction.key_field = val;
+                    compaction.key_field = val.clone();
                     compaction.enabled = true;
                 }
                 "DELIVERY" if val.eq_ignore_ascii_case("webhook") => {
                     // Webhook delivery mode — URL must also be specified.
                 }
                 "URL" if !val.is_empty() => {
-                    webhook.url = val;
+                    webhook.url = val.clone();
                 }
                 "RETRY" => {
                     webhook.max_retries = val.parse().unwrap_or(3);
@@ -240,20 +252,27 @@ fn parse_create_change_stream(sql: &str) -> PgWireResult<ParsedCreateChangeStrea
                 "TIMEOUT" => {
                     let secs = val
                         .strip_suffix('s')
-                        .or(Some(&val))
+                        .or(Some(val))
                         .and_then(|s| s.parse::<u64>().ok())
                         .unwrap_or(5);
                     webhook.timeout_secs = secs;
                 }
                 "LATE_DATA" => {
-                    if let Some(policy) = LateDataPolicy::from_str_opt(&val) {
+                    if let Some(policy) = LateDataPolicy::from_str_opt(val) {
                         late_data = policy;
                     }
                 }
                 _ => {}
             }
         }
+        kv_pairs = Some(pairs);
     }
+
+    // Parse Kafka delivery config from WITH clause.
+    let kafka = kv_pairs
+        .as_ref()
+        .and_then(|pairs| crate::event::kafka::KafkaDeliveryConfig::from_with_params(pairs))
+        .unwrap_or_default();
 
     Ok(ParsedCreateChangeStream {
         name,
@@ -264,6 +283,7 @@ fn parse_create_change_stream(sql: &str) -> PgWireResult<ParsedCreateChangeStrea
         compaction,
         webhook,
         late_data,
+        kafka,
     })
 }
 
