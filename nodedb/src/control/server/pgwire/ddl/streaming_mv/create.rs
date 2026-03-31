@@ -53,9 +53,12 @@ pub fn create_streaming_mv(
         .map_err(|_| sqlstate_error("XX000", "system clock error"))?
         .as_secs();
 
+    let mv_name = parsed.name.clone();
+    let source_stream = parsed.source_stream.clone();
+
     let def = StreamingMvDef {
         tenant_id,
-        name: parsed.name.clone(),
+        name: parsed.name,
         source_stream: parsed.source_stream,
         group_by_columns: parsed.group_by_columns,
         aggregates: parsed.aggregates,
@@ -76,11 +79,19 @@ pub fn create_streaming_mv(
 
     state.mv_registry.register(def);
 
+    // Backfill: process all events currently in the source stream's buffer
+    // to bootstrap the MV with historical data.
+    if let Some(mv_state) = state.mv_registry.get_state(tenant_id, &mv_name)
+        && let Some(buffer) = state.cdc_router.get_buffer(tenant_id, &source_stream)
+    {
+        crate::event::streaming_mv::processor::backfill_from_buffer(&mv_state, &buffer);
+    }
+
     state.audit_record(
         crate::control::security::audit::AuditEvent::AdminAction,
         Some(identity.tenant_id),
         &identity.username,
-        &format!("CREATE MATERIALIZED VIEW {} STREAMING", parsed.name),
+        &format!("CREATE MATERIALIZED VIEW {mv_name} STREAMING"),
     );
 
     Ok(vec![Response::Execution(Tag::new(

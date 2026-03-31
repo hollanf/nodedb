@@ -65,6 +65,34 @@ pub fn process_event_for_mvs(event: &CdcEvent, registry: &MvRegistry, stream_nam
     }
 }
 
+/// Backfill a streaming MV from the source stream's retention buffer.
+///
+/// Called on `CREATE MATERIALIZED VIEW ... STREAMING` to bootstrap the MV
+/// with all events currently in the stream's buffer. Without backfill,
+/// new MVs start empty and only aggregate future events.
+pub fn backfill_from_buffer(
+    mv_state: &MvState,
+    buffer: &crate::event::cdc::buffer::StreamBuffer,
+) -> u64 {
+    let events = buffer.read_from_lsn(0, usize::MAX);
+    let mut processed = 0u64;
+
+    for event in &events {
+        update_mv(event, mv_state);
+        processed += 1;
+    }
+
+    if processed > 0 {
+        tracing::info!(
+            mv = %mv_state.name,
+            events = processed,
+            "streaming MV backfilled from buffer"
+        );
+    }
+
+    processed
+}
+
 /// Update a single MV's state from a CdcEvent.
 fn update_mv(event: &CdcEvent, mv_state: &MvState) {
     // Extract GROUP BY key from the event.
