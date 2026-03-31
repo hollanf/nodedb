@@ -16,6 +16,8 @@ mod test_kv;
 mod test_kv_advanced;
 #[path = "executor_tests/test_security_and_isolation.rs"]
 mod test_security_and_isolation;
+#[path = "executor_tests/test_timeseries.rs"]
+mod test_timeseries;
 #[path = "executor_tests/test_transaction.rs"]
 mod test_transaction;
 #[path = "executor_tests/test_vector.rs"]
