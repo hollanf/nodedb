@@ -853,19 +853,20 @@ impl CoreLoop {
                 if !name_str.starts_with("ts-") || !entry.path().is_dir() {
                     continue;
                 }
-                // Read partition metadata.
+                // Read partition metadata and import directly.
+                // We use import() instead of get_or_create_partition()
+                // because the latter aligns to boundary intervals, creating
+                // a key mismatch with the raw min_ts.
                 let meta_path = entry.path().join("partition.meta");
                 if let Ok(meta_bytes) = std::fs::read(&meta_path) {
                     if let Ok(meta) =
                         sonic_rs::from_slice::<nodedb_types::timeseries::PartitionMeta>(&meta_bytes)
                     {
-                        let _ = registry.get_or_create_partition(meta.min_ts);
-                        let start_ts = meta.min_ts;
-                        registry.update_meta(start_ts, meta);
-                        // Update dir_name to match actual directory name.
-                        if let Some(pe) = registry.get_mut(start_ts) {
-                            pe.dir_name = name_str.to_string();
-                        }
+                        let pe = crate::engine::timeseries::partition_registry::PartitionEntry {
+                            meta,
+                            dir_name: name_str.to_string(),
+                        };
+                        registry.import(vec![(pe.meta.min_ts, pe)]);
                     }
                 }
             }
@@ -1047,7 +1048,9 @@ impl CoreLoop {
                     "timeseries columnar flush complete"
                 );
 
-                // Register partition in ts_registries.
+                // Register partition in ts_registries via direct import.
+                // Avoids get_or_create_partition which aligns to boundary
+                // intervals and creates a key mismatch with update_meta.
                 let registry = self
                     .ts_registries
                     .entry(collection.to_string())
@@ -1056,15 +1059,15 @@ impl CoreLoop {
                             nodedb_types::timeseries::TieredPartitionConfig::origin_defaults(),
                         )
                     });
-                let (_, _is_new) = registry.get_or_create_partition(drain.min_ts);
                 let mut reg_meta = meta;
                 reg_meta.min_ts = drain.min_ts;
                 reg_meta.max_ts = drain.max_ts;
-                registry.update_meta(drain.min_ts, reg_meta);
-                if let Some(pe) = registry.get_mut(drain.min_ts) {
-                    pe.dir_name = partition_name;
-                }
-                registry.seal_partition(drain.min_ts);
+                reg_meta.state = nodedb_types::timeseries::PartitionState::Sealed;
+                let pe = crate::engine::timeseries::partition_registry::PartitionEntry {
+                    meta: reg_meta,
+                    dir_name: partition_name,
+                };
+                registry.import(vec![(drain.min_ts, pe)]);
             }
             Err(e) => {
                 tracing::error!(
