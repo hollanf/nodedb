@@ -25,6 +25,10 @@ use crate::control::security::credential::CredentialStore;
 pub struct NodeDbSchemaProvider {
     credentials: Arc<CredentialStore>,
     tenant_id: u32,
+    /// Stream registry for resolving change stream names as virtual tables.
+    stream_registry: Arc<crate::event::cdc::StreamRegistry>,
+    /// CDC router for accessing stream buffers.
+    cdc_router: Arc<crate::event::cdc::CdcRouter>,
 }
 
 impl std::fmt::Debug for NodeDbSchemaProvider {
@@ -36,10 +40,17 @@ impl std::fmt::Debug for NodeDbSchemaProvider {
 }
 
 impl NodeDbSchemaProvider {
-    pub fn new(credentials: Arc<CredentialStore>, tenant_id: u32) -> Self {
+    pub fn new(
+        credentials: Arc<CredentialStore>,
+        tenant_id: u32,
+        stream_registry: Arc<crate::event::cdc::StreamRegistry>,
+        cdc_router: Arc<crate::event::cdc::CdcRouter>,
+    ) -> Self {
         Self {
             credentials,
             tenant_id,
+            stream_registry,
+            cdc_router,
         }
     }
 
@@ -61,15 +72,26 @@ impl SchemaProvider for NodeDbSchemaProvider {
     }
 
     fn table_names(&self) -> Vec<String> {
-        self.load_collections()
+        let mut names: Vec<String> = self
+            .load_collections()
             .into_iter()
             .map(|c| c.name)
-            .collect()
+            .collect();
+        // Include change stream names as virtual tables.
+        for stream in self.stream_registry.list_for_tenant(self.tenant_id) {
+            names.push(stream.name);
+        }
+        names
     }
 
     fn table_exist(&self, name: &str) -> bool {
         let name = name.to_lowercase();
         let name = name.as_str();
+        // Check change streams first.
+        if self.stream_registry.get(self.tenant_id, name).is_some() {
+            return true;
+        }
+        // Then check collections.
         let catalog = self.credentials.catalog();
         match catalog {
             Some(c) => c
@@ -84,6 +106,23 @@ impl SchemaProvider for NodeDbSchemaProvider {
     async fn table(&self, name: &str) -> datafusion::error::Result<Option<Arc<dyn TableProvider>>> {
         let name = name.to_lowercase();
         let name = name.as_str();
+
+        // Check if this is a change stream — return a MemTable backed by buffer events.
+        if self.stream_registry.get(self.tenant_id, name).is_some()
+            && let Some(buffer) = self.cdc_router.get_buffer(self.tenant_id, name)
+        {
+            let schema = super::stream_table::stream_event_schema();
+            let events = buffer.read_from_lsn(0, usize::MAX);
+            let batches = match super::stream_table::events_to_record_batch(&events) {
+                Some(batch) => vec![vec![batch]],
+                None => vec![vec![]],
+            };
+            let mem_table = datafusion::datasource::MemTable::try_new(schema, batches)
+                .map_err(|e| DataFusionError::External(Box::new(e)))?;
+            return Ok(Some(Arc::new(mem_table)));
+        }
+
+        // Fall through to collection lookup.
         let catalog = self.credentials.catalog();
         let coll = match catalog {
             Some(c) => c

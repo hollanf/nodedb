@@ -12,4 +12,5 @@ pub mod procedural;
 pub mod rls_injection;
 mod search;
 pub mod sql_expr_convert;
+pub mod stream_table;
 pub mod udf;

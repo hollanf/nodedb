@@ -69,16 +69,28 @@ impl QueryContext {
         }
     }
 
-    /// Create a query context with catalog integration.
+    /// Create a query context from SharedState.
     ///
-    /// Collections stored in the system catalog will be visible to DataFusion,
-    /// enabling `SELECT * FROM <collection>` to resolve correctly.
+    /// Collections and change streams are visible to DataFusion as tables.
+    /// This is the standard constructor — all query paths should use this.
+    pub fn for_state(state: &crate::control::state::SharedState, tenant_id: u32) -> Self {
+        Self::with_catalog(
+            Arc::clone(&state.credentials),
+            tenant_id,
+            Arc::clone(&state.stream_registry),
+            Arc::clone(&state.cdc_router),
+        )
+    }
+
+    /// Create a query context with catalog + stream integration.
     ///
-    /// Also loads all user-defined functions for the tenant from the catalog
-    /// and registers them as DataFusion ScalarUDFs. The inlining transform
-    /// is stored for use in the planning pipeline (not as an AnalyzerRule,
-    /// so EXECUTE permission can be checked between parsing and inlining).
-    pub fn with_catalog(credentials: Arc<CredentialStore>, tenant_id: u32) -> Self {
+    /// Prefer `for_state()` when SharedState is available.
+    pub fn with_catalog(
+        credentials: Arc<CredentialStore>,
+        tenant_id: u32,
+        stream_registry: Arc<crate::event::cdc::StreamRegistry>,
+        cdc_router: Arc<crate::event::cdc::CdcRouter>,
+    ) -> Self {
         let config = SessionConfig::new()
             .with_information_schema(false)
             .with_default_catalog_and_schema("nodedb", "public");
@@ -90,10 +102,12 @@ impl QueryContext {
         let inliner = load_user_functions(&session, &credentials, tenant_id);
 
         // Register our custom schema provider so DataFusion can resolve
-        // collection names during SQL planning.
+        // collection and stream names during SQL planning.
         let schema_provider = Arc::new(NodeDbSchemaProvider::new(
             Arc::clone(&credentials),
             tenant_id,
+            stream_registry,
+            cdc_router,
         ));
         let catalog = MemoryCatalogProvider::new();
         catalog
