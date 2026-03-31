@@ -22,6 +22,7 @@ pub fn show_schedules(
         text_field("name"),
         text_field("cron"),
         text_field("scope"),
+        text_field("target"),
         text_field("overlap"),
         text_field("missed_policy"),
         text_field("enabled"),
@@ -44,6 +45,8 @@ pub fn show_schedules(
         let _ = encoder.encode_field(&s.name);
         let _ = encoder.encode_field(&s.cron_expr);
         let _ = encoder.encode_field(&s.scope.as_str().to_string());
+        let target = s.target_collection.as_deref().unwrap_or("*");
+        let _ = encoder.encode_field(&target.to_string());
         let _ = encoder.encode_field(&s.allow_overlap.to_string());
         let _ = encoder.encode_field(&s.missed_policy.as_str().to_string());
         let _ = encoder.encode_field(&s.enabled.to_string());

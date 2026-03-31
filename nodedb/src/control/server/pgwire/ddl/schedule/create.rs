@@ -52,6 +52,8 @@ pub fn create_schedule(
         .map_err(|_| sqlstate_error("XX000", "system clock error"))?
         .as_secs();
 
+    let target_collection = extract_target_collection(&parsed.body_sql);
+
     let def = ScheduleDef {
         tenant_id,
         name: parsed.name.clone(),
@@ -61,6 +63,7 @@ pub fn create_schedule(
         missed_policy: parsed.missed_policy,
         allow_overlap: parsed.allow_overlap,
         enabled: true,
+        target_collection,
         owner: identity.username.clone(),
         created_at: now,
     };
@@ -233,6 +236,59 @@ fn extract_cron_expr(rest: &str, tokens: &[&str], i: &mut usize) -> PgWireResult
         "42601",
         "expected cron expression after CRON keyword",
     ))
+}
+
+/// Extract the target collection from a schedule's SQL body.
+///
+/// Looks for the first collection name after FROM, INTO, UPDATE, ON keywords
+/// in the procedural body. Returns `None` for cross-collection, dynamic SQL,
+/// or CALL statements (conservative default → `_system` coordinator in cluster mode).
+fn extract_target_collection(body_sql: &str) -> Option<String> {
+    let tokens: Vec<&str> = body_sql.split_whitespace().collect();
+    let upper_tokens: Vec<String> = tokens.iter().map(|t| t.to_uppercase()).collect();
+
+    // Find the first occurrence of FROM/INTO/UPDATE/ON followed by a collection name.
+    // Skip BEGIN, END, and SQL keywords that aren't collection references.
+    let target_keywords = ["FROM", "INTO", "UPDATE", "ON"];
+    let skip_after = [
+        "BEGIN",
+        "END",
+        "EACH",
+        "ROW",
+        "STATEMENT",
+        "RETURN",
+        "IF",
+        "THEN",
+        "ELSE",
+        "LOOP",
+        "WHILE",
+        "DECLARE",
+        "SET",
+        "WHERE",
+        "AND",
+        "OR",
+        "NOT",
+        "NULL",
+        "TRUE",
+        "FALSE",
+    ];
+
+    for (i, token) in upper_tokens.iter().enumerate() {
+        if target_keywords.contains(&token.as_str()) && i + 1 < tokens.len() {
+            let candidate = tokens[i + 1]
+                .trim_end_matches([';', '(', ')'])
+                .to_lowercase();
+            if !candidate.is_empty()
+                && !skip_after.contains(&candidate.to_uppercase().as_str())
+                && !candidate.starts_with('$')
+                && !candidate.starts_with('\'')
+            {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

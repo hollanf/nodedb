@@ -72,6 +72,11 @@ pub struct ScheduleDef {
     pub allow_overlap: bool,
     /// Whether the schedule is currently enabled.
     pub enabled: bool,
+    /// Target collection inferred from the SQL body (e.g., "orders" from
+    /// `DELETE FROM orders ...`). Used for shard affinity in cluster mode.
+    /// `None` for cross-collection or opaque jobs → runs on `_system` coordinator.
+    #[serde(default)]
+    pub target_collection: Option<String>,
     /// Owner (creator). Job runs with this user's privileges.
     pub owner: String,
     /// Creation timestamp (epoch seconds).

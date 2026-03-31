@@ -95,6 +95,7 @@ mod tests {
             missed_policy: MissedPolicy::Skip,
             allow_overlap: true,
             enabled: true,
+            target_collection: None,
             owner: "admin".into(),
             created_at: 1000,
         };
@@ -118,6 +119,7 @@ mod tests {
             missed_policy: MissedPolicy::default(),
             allow_overlap: false,
             enabled: true,
+            target_collection: None,
             owner: "admin".into(),
             created_at: 0,
         };
