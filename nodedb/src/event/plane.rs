@@ -81,6 +81,18 @@ impl EventPlane {
             shutdown_rx.clone(),
         );
 
+        // Restore streaming MV state from redb (from last shutdown).
+        shared_state
+            .mv_persistence
+            .restore_all(&shared_state.mv_registry);
+
+        // Spawn MV state persistence task (flush to redb every 30s).
+        let _mv_persist_handle = super::streaming_mv::persist::spawn_persist_task(
+            Arc::clone(&shared_state.mv_persistence),
+            Arc::clone(&shared_state.mv_registry),
+            shutdown_rx.clone(),
+        );
+
         let plane = Self {
             consumers,
             watermark_store,

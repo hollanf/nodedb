@@ -159,8 +159,12 @@ async fn consumer_loop(config: ConsumerConfig, metrics: Arc<CoreMetrics>) {
                 if batch_count > 0 {
                     dirty_watermark = true;
 
-                    // Dispatch triggers + CDC routing for each event.
+                    // Dispatch triggers + CDC routing + watermarks for each event.
                     for event in &events {
+                        // Advance partition watermark.
+                        shared_state
+                            .watermark_tracker
+                            .advance(event.vshard_id.as_u16(), event.lsn.as_u64());
                         super::trigger::dispatcher::dispatch_triggers(
                             event,
                             &shared_state,

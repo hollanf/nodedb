@@ -193,6 +193,15 @@ pub struct SharedState {
     /// Streaming materialized view registry.
     pub mv_registry: Arc<crate::event::streaming_mv::MvRegistry>,
 
+    /// Per-partition watermark tracker for streaming MVs.
+    pub watermark_tracker: Arc<crate::event::watermark_tracker::WatermarkTracker>,
+
+    /// Event Plane memory budget (512 MB cap).
+    pub event_plane_budget: Arc<crate::event::budget::EventPlaneBudget>,
+
+    /// Streaming MV state persistence (redb).
+    pub mv_persistence: Arc<crate::event::streaming_mv::MvPersistence>,
+
     /// Total connections rejected due to max_connections limit (monotonic counter).
     pub connections_rejected: AtomicU64,
 
@@ -332,6 +341,22 @@ impl SharedState {
                 crate::event::webhook::WebhookManager::new(rx)
             },
             mv_registry: Arc::new(crate::event::streaming_mv::MvRegistry::new()),
+            watermark_tracker: Arc::new(crate::event::watermark_tracker::WatermarkTracker::new()),
+            event_plane_budget: Arc::new(crate::event::budget::EventPlaneBudget::new()),
+            mv_persistence: {
+                let dir = std::env::temp_dir().join(format!(
+                    "nodedb-test-mvstate-{}-{}",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos()
+                ));
+                Arc::new(
+                    crate::event::streaming_mv::MvPersistence::open(&dir)
+                        .expect("failed to open test MV persistence"),
+                )
+            },
             connections_rejected: AtomicU64::new(0),
             connections_accepted: AtomicU64::new(0),
             system_metrics: Some(Arc::new(crate::control::metrics::SystemMetrics::new())),
@@ -421,6 +446,11 @@ impl SharedState {
                 crate::event::webhook::WebhookManager::new(rx)
             },
             mv_registry,
+            watermark_tracker: Arc::new(crate::event::watermark_tracker::WatermarkTracker::new()),
+            event_plane_budget: Arc::new(crate::event::budget::EventPlaneBudget::new()),
+            mv_persistence: Arc::new(crate::event::streaming_mv::MvPersistence::open(
+                catalog_path.parent().unwrap_or(std::path::Path::new(".")),
+            )?),
             tenants: Mutex::new(TenantIsolation::new(TenantQuota::default())),
             cluster_topology: None,
             cluster_routing: None,

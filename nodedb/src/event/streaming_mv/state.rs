@@ -122,6 +122,31 @@ impl MvState {
         let groups = self.groups.read().unwrap_or_else(|p| p.into_inner());
         groups.len()
     }
+
+    /// Serialize all group states for persistence.
+    pub fn snapshot(&self) -> Vec<(String, Vec<GroupState>)> {
+        let groups = self.groups.read().unwrap_or_else(|p| p.into_inner());
+        groups.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    }
+
+    /// Restore group states from a persisted snapshot.
+    pub fn restore(&self, snapshot: Vec<(String, Vec<GroupState>)>) {
+        let mut groups = self.groups.write().unwrap_or_else(|p| p.into_inner());
+        groups.clear();
+        for (key, states) in snapshot {
+            groups.insert(key, states);
+        }
+    }
+
+    /// Estimated memory usage in bytes.
+    pub fn estimated_memory(&self) -> usize {
+        let groups = self.groups.read().unwrap_or_else(|p| p.into_inner());
+        groups
+            .iter()
+            .map(|(k, v)| k.len() + v.len() * std::mem::size_of::<GroupState>())
+            .sum::<usize>()
+            + std::mem::size_of::<Self>()
+    }
 }
 
 #[cfg(test)]

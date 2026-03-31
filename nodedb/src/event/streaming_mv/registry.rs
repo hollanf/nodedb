@@ -79,6 +79,12 @@ impl MvRegistry {
             .collect()
     }
 
+    /// List all MV definitions (all tenants).
+    pub fn list_all(&self) -> Vec<StreamingMvDef> {
+        let defs = self.defs.read().unwrap_or_else(|p| p.into_inner());
+        defs.values().cloned().collect()
+    }
+
     /// List all MV definitions for a tenant.
     pub fn list_for_tenant(&self, tenant_id: u32) -> Vec<StreamingMvDef> {
         let defs = self.defs.read().unwrap_or_else(|p| p.into_inner());

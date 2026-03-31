@@ -1,3 +1,4 @@
+pub mod budget;
 pub mod bus;
 pub mod cdc;
 pub mod consumer;
@@ -12,6 +13,7 @@ pub mod trigger;
 pub mod types;
 pub mod wal_replay;
 pub mod watermark;
+pub mod watermark_tracker;
 pub mod webhook;
 
 pub use bus::{EventProducer, create_event_bus};

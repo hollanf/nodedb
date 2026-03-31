@@ -26,6 +26,15 @@ pub fn create_change_stream(
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "create change streams")?;
 
+    // Reject new streams when Event Plane memory budget is exceeded.
+    if state.event_plane_budget.should_reject_new_streams() {
+        return Err(sqlstate_error(
+            "53000", // insufficient_resources
+            "Event Plane memory budget exceeded — cannot create new change streams. \
+             Existing streams continue with reduced retention.",
+        ));
+    }
+
     let parsed = parse_create_change_stream(sql)?;
     let tenant_id = identity.tenant_id.as_u32();
 
