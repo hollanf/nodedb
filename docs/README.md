@@ -23,6 +23,6 @@ Welcome to the NodeDB docs. These guides explain what each engine does, when to 
 ## Platform & Operations
 
 - [NodeDB-Lite](lite.md) — Embedded database for phones, browsers, desktops
-- [Security](security.md) — Authentication, RBAC, RLS, encryption
-- [Real-Time](real-time.md) — LIVE SELECT, CDC, pub/sub, WebSocket
+- [Security](security.md) — Authentication, RBAC, RLS, encryption, backup access control
+- [Real-Time](real-time.md) — LIVE SELECT, CDC change streams, consumer groups, webhook delivery, durable topics, cron scheduler
 - [CLI (`ndb`)](cli.md) — Terminal client usage and configuration

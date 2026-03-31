@@ -1,6 +1,8 @@
 # Real-Time Features
 
-NodeDB is a real-time database. Every committed mutation publishes to an internal Change Data Capture (CDC) bus. No external message broker needed — real-time is part of the database, not a sidecar.
+NodeDB is a real-time database. Every committed mutation publishes to an internal event bus. No external message broker needed — real-time is part of the database, not a sidecar.
+
+The event infrastructure is built on the **Event Plane** — a third architectural layer alongside the Control Plane (query planning) and Data Plane (storage I/O). The Data Plane emits `WriteEvent` and `DeleteEvent` records to the Event Plane via per-core bounded ring buffers after each WAL commit. The Event Plane routes these to change stream consumers, trigger dispatch, and webhook delivery. WAL-backed crash recovery ensures no events are lost across restarts.
 
 ## LIVE SELECT
 
@@ -33,34 +35,118 @@ Pull-based CDC with cursor pagination. Useful for batch consumers or point-in-ti
 SHOW CHANGES FOR orders SINCE '2024-01-15T00:00:00Z' LIMIT 1000;
 ```
 
-## Event Triggers
+## Triggers
 
-Define SQL actions that fire when specific conditions are met on a collection:
+SQL blocks that fire on data mutations. Three execution modes let you choose the trade-off between write latency and atomicity:
 
 ```sql
--- Fire when an order ships
-DEFINE EVENT on_shipment ON orders
-WHEN status = 'shipped'
-THEN INSERT INTO notifications { user_id: $new.customer_id, message: 'Your order shipped!' };
+-- ASYNC (default): fires after commit via Event Plane — zero write-latency impact
+-- Side effects are eventually consistent; failures retry with backoff, then go to DLQ
+CREATE TRIGGER audit_orders AFTER INSERT ON orders FOR EACH ROW
+BEGIN
+    INSERT INTO audit_log { collection: 'orders', action: 'INSERT', row_id: NEW.id, ts: now() };
+END;
 
--- Audit trail
-DEFINE EVENT audit_changes ON sensitive_data
-THEN INSERT INTO audit_log { table: 'sensitive_data', action: $event, user: $auth.user_id, ts: now() };
+-- SYNC: fires in the same transaction on the Data Plane (ACID, write latency += trigger time)
+CREATE TRIGGER enforce_balance AFTER UPDATE ON accounts FOR EACH ROW
+WITH (EXECUTION = SYNC)
+BEGIN
+    IF NEW.balance < 0 THEN
+        RAISE EXCEPTION 'Balance cannot go negative';
+    END IF;
+END;
+
+-- DEFERRED: fires at COMMIT time, batched (ACID, COMMIT is slower)
+CREATE TRIGGER validate_totals AFTER INSERT ON line_items FOR EACH ROW
+WITH (EXECUTION = DEFERRED)
+BEGIN
+    -- cross-row validation at statement boundary
+END;
+
+DROP TRIGGER audit_orders ON orders;
+SHOW TRIGGERS;
 ```
 
-## Pub/Sub
+| Mode | Atomicity | Write latency | Rollback on failure |
+| ---- | --------- | ------------- | ------------------- |
+| `ASYNC` (default) | Eventually consistent | None | No |
+| `SYNC` | Same transaction (ACID) | Trigger time added | Yes |
+| `DEFERRED` | Same transaction, batched | At COMMIT time | Yes |
 
-Named topics with consumer groups, bounded retention, and backlog replay on reconnect.
+## CDC Change Streams
+
+Change streams provide durable, cursor-tracked access to the mutation log for a collection. Unlike `LIVE SELECT` (push to a session), change streams survive reconnects, support consumer groups, and can deliver to external systems via webhook.
 
 ```sql
--- Create a topic
-CREATE TOPIC order_events WITH (retention = '7 days');
+-- Basic change stream
+CREATE CHANGE STREAM order_changes ON orders;
 
--- Publish
-PUBLISH TO order_events { event: 'created', order_id: '...', total: 99.99 };
+-- With webhook delivery (HMAC-signed POST to an external endpoint)
+CREATE CHANGE STREAM order_events ON orders
+WITH (
+    WEBHOOK_URL = 'https://hooks.example.com/orders',
+    WEBHOOK_SECRET = 'whsec_abc123'
+);
+
+-- With log compaction: only the latest mutation per key is retained
+CREATE CHANGE STREAM user_state ON users
+WITH (COMPACTION = 'key', KEY = 'id');
+
+DROP CHANGE STREAM order_changes;
+SHOW CHANGE STREAMS;
+```
+
+### Consumer Groups
+
+Consumer groups track read positions independently, enabling multiple consumers to process the same stream at their own pace.
+
+```sql
+-- Create a consumer group
+CREATE CONSUMER GROUP analytics FOR STREAM order_changes;
+CREATE CONSUMER GROUP billing FOR STREAM order_changes;
+
+-- Commit offset after successfully processing up to event 42
+COMMIT OFFSET FOR STREAM order_changes GROUP analytics TO 42;
+
+DROP CONSUMER GROUP analytics FOR STREAM order_changes;
+```
+
+## Durable Topics
+
+Durable topics provide persistent pub/sub backed by the change stream infrastructure.
+
+```sql
+-- Create a topic on an existing change stream
+CREATE TOPIC order_events ON STREAM order_changes;
 
 -- Subscribe (with consumer group for load balancing)
 SUBSCRIBE TO order_events GROUP 'processors';
+
+DROP TOPIC order_events;
+```
+
+## Cron Scheduler
+
+The Event Plane includes a distributed cron scheduler. Jobs are stored in the catalog, evaluated per-second, and dispatched through the normal Control Plane → Data Plane execution path.
+
+```sql
+-- Run a cleanup job at 2 AM UTC daily
+CREATE SCHEDULE nightly_cleanup
+CRON '0 2 * * *'
+AS BEGIN
+    DELETE FROM sessions WHERE expires_at < now();
+    INSERT INTO maintenance_log { task: 'nightly_cleanup', ran_at: now() };
+END;
+
+-- Run a 5-minute aggregate refresh
+CREATE SCHEDULE refresh_stats
+CRON '*/5 * * * *'
+AS BEGIN
+    REFRESH CONTINUOUS AGGREGATE order_stats;
+END;
+
+DROP SCHEDULE nightly_cleanup;
+SHOW SCHEDULES;
 ```
 
 ## SSE Streaming

@@ -1,31 +1,44 @@
 # Architecture
 
-NodeDB splits work between two runtimes connected by a lock-free bridge. This is the core design decision — it's what makes the database fast on modern hardware.
+NodeDB splits work across three runtimes connected by lock-free ring buffers. This separation is the core design decision — each plane does exactly what it is best at and nothing else.
 
-## Hybrid Execution Model
+## Three-Plane Execution Model
 
 ```
 ┌───────────────────────────────────────────┐
 │           Control Plane (Tokio)           │
 │  SQL parsing, query planning, connections │
 │           Send + Sync, async              │
-└─────────────────┬─────────────────────────┘
-                  │ SPSC Ring Buffers
-                  │ (bounded, lock-free)
-┌─────────────────▼─────────────────────────┐
-│         Data Plane (Thread-per-Core)      │
-│  Physical execution, storage I/O, SIMD    │
-│        !Send, io_uring, no locks          │
-└───────────────────────────────────────────┘
+└─────────────┬──────────────┬──────────────┘
+              │ SPSC Bridge  │ Event subscriptions
+              │              │
+┌─────────────▼──────────┐  ┌▼──────────────────────────────────┐
+│  Data Plane (TPC)      │  │  Event Plane (Tokio)               │
+│  Physical execution    ├─►│  AFTER trigger dispatch             │
+│  Storage I/O, SIMD     │  │  CDC change streams                 │
+│  !Send, io_uring       │  │  Cron scheduler                     │
+│  Emits: WriteEvent,    │  │  Durable pub/sub, webhook delivery  │
+│  DeleteEvent           │  │  Retry, DLQ, backpressure           │
+└────────────────────────┘  └───────────────────────────────────┘
 ```
 
 **Control Plane** — Runs on Tokio. Handles connections (pgwire, HTTP, WebSocket), parses SQL via DataFusion, builds logical query plans, and dispatches work to the Data Plane. All types here are `Send + Sync`.
 
-**Data Plane** — One thread per CPU core, each an isolated shard. Reads from NVMe via io_uring, runs SIMD vector math, executes physical query plans. No locks, no atomics, no cross-core sharing. Types are `!Send` by design.
+**Data Plane** — One thread per CPU core, each an isolated shard. Reads from NVMe via io_uring, runs SIMD vector math, executes physical query plans. No locks, no atomics, no cross-core sharing. Types are `!Send` by design. Emits `WriteEvent` and `DeleteEvent` records to the Event Plane via per-core bounded ring buffers after each WAL commit.
 
-**SPSC Bridge** — Bounded lock-free ring buffers are the only communication path between the two planes. Backpressure is automatic: at 85% queue utilization the Data Plane reduces read depth, at 95% it suspends new reads.
+**Event Plane** — Runs on Tokio. Consumes the event stream from the Data Plane and handles all asynchronous, event-driven work: AFTER trigger dispatch, CDC change stream delivery, cron job evaluation, durable pub/sub topics, and webhook HTTP delivery. Side effects (trigger bodies, scheduled SQL) are dispatched back through the normal Control Plane → Data Plane path — the Event Plane handles routing and delivery, not compute. WAL-backed crash recovery ensures no events are lost across restarts.
 
-This separation means the Control Plane never touches storage directly, and the Data Plane never handles network I/O. Each does what it's best at.
+**SPSC Bridge** — Bounded lock-free ring buffers are the only communication path between the planes. Backpressure is automatic: at 85% queue utilization the Data Plane reduces read depth, at 95% it suspends new reads.
+
+### Plane Boundaries
+
+| Plane | Does | Does not do |
+| ----- | ---- | ----------- |
+| Control Plane | SQL parsing, query planning, connection handling | Event processing, trigger execution, storage I/O |
+| Data Plane | Physical I/O, SIMD math, WAL append, BEFORE triggers | Event delivery, cross-shard coordination, AFTER triggers |
+| Event Plane | AFTER trigger dispatch, CDC, cron, webhook delivery, durable pub/sub | Query planning, storage I/O, spawning TPC tasks |
+
+**Mixing planes is a correctness bug.** If code needs to cross a plane boundary, it goes through the SPSC bridge.
 
 ## Query Entry Paths
 

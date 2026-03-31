@@ -17,6 +17,16 @@ NodeDB provides Vector, Graph, Document (schemaless + strict), Columnar (with Ti
 | [Key-Value](docs/kv.md)                      | Hash-indexed O(1) lookups, TTL, secondary indexes, SQL-queryable                   |
 | [Full-Text Search](docs/full-text-search.md) | BM25 + 15-language stemming + fuzzy + hybrid vector fusion                         |
 
+## Architecture
+
+NodeDB uses a three-plane hybrid execution model:
+
+- **Control Plane** (Tokio + DataFusion) — SQL parsing, query planning, connection handling. `Send + Sync`.
+- **Data Plane** (Thread-per-Core + io_uring) — Physical execution, storage I/O, SIMD math. `!Send`.
+- **Event Plane** (Tokio, bounded event bus) — AFTER trigger dispatch, CDC change streams, cron scheduler, durable pub/sub, webhook delivery. Consumes events from the Data Plane and dispatches side effects back through the Control Plane.
+
+The planes communicate only through bounded lock-free SPSC ring buffers. See [Architecture](docs/architecture.md) for the full design.
+
 ## Deployment Modes
 
 - **Origin (server)** — Full distributed database. Multi-Raft consensus, Thread-per-Core data plane with io_uring, PostgreSQL-compatible SQL over pgwire. Horizontal scaling with automatic shard balancing.
@@ -54,6 +64,25 @@ SELECT * FROM articles WHERE embedding <-> $query_vec LIMIT 10;
 ```
 
 See [Getting Started](docs/getting-started.md) for a fuller walkthrough.
+
+## Capabilities
+
+**Programmability**
+
+- **Stored Procedures** — `CREATE [OR REPLACE] PROCEDURE` with `BEGIN...END` bodies. Full procedural SQL: `IF/ELSIF/ELSE`, `FOR`, `WHILE`, `LOOP`, `DECLARE`, `RETURN`. Execution budgets via `WITH (MAX_ITERATIONS, TIMEOUT)`. `SECURITY DEFINER` execution model.
+- **User-Defined Functions** — `CREATE [OR REPLACE] FUNCTION` with SQL expression bodies or procedural `BEGIN...END` bodies. Volatility levels (`IMMUTABLE`, `STABLE`, `VOLATILE`). Expression UDFs inline directly into DataFusion query plans. `GRANT EXECUTE ON FUNCTION`.
+- **Triggers** — `CREATE TRIGGER` with `ASYNC` (default, Event Plane), `SYNC` (ACID, same transaction), and `DEFERRED` (at `COMMIT` time) execution modes.
+
+**Real-Time**
+
+- **CDC Change Streams** — `CREATE CHANGE STREAM` with consumer group offset tracking, webhook delivery (`WEBHOOK_URL`, `WEBHOOK_SECRET`), and log compaction (`COMPACTION=key`). Consumer groups support `CREATE/DROP CONSUMER GROUP` and `COMMIT OFFSET`.
+- **Durable Topics** — `CREATE TOPIC ... ON STREAM` for persistent pub/sub backed by change stream infrastructure.
+- **Cron Scheduler** — `CREATE SCHEDULE ... CRON '...' AS BEGIN...END` for recurring SQL jobs.
+
+## Operations
+
+- **Backup/Restore** — `BACKUP TENANT <id> TO '<path>'` and `RESTORE TENANT <id> FROM '<path>'`. Encrypted (AES-256-GCM), serialized as MessagePack. `DRY RUN` mode for pre-restore validation.
+- **Storage conversion** — `CONVERT COLLECTION <name> TO document|strict|kv` for live in-place storage mode migration.
 
 ## Documentation
 
