@@ -122,6 +122,7 @@ mod tests {
             retention: RetentionConfig::default(),
             compaction: CompactionConfig::default(),
             webhook: crate::event::webhook::WebhookConfig::default(),
+            late_data: LateDataPolicy::default(),
             owner: "admin".into(),
             created_at: 0,
         }

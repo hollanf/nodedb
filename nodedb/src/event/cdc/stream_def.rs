@@ -92,6 +92,45 @@ impl Default for RetentionConfig {
     }
 }
 
+/// Policy for events that arrive below the partition's current watermark.
+///
+/// In a well-ordered system, events arrive in LSN order within a partition.
+/// Late events can occur during WAL replay or catchup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum LateDataPolicy {
+    /// Accept and process normally. For single-partition streams, events are
+    /// strictly ordered by LSN so "late" events don't occur.
+    #[default]
+    Allow,
+    /// Silently discard events with LSN below the partition watermark.
+    Drop,
+    /// Accept the late event, process it (update streaming MV aggregates),
+    /// and emit a correction event into the stream so downstream consumers
+    /// know that a previously-emitted aggregate bucket was updated.
+    /// The correction event has `op = "RECOMPUTE"` and carries the updated
+    /// aggregate values in `new_value`.
+    Recompute,
+}
+
+impl LateDataPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "ALLOW",
+            Self::Drop => "DROP",
+            Self::Recompute => "RECOMPUTE",
+        }
+    }
+
+    pub fn from_str_opt(s: &str) -> Option<Self> {
+        match s.to_uppercase().as_str() {
+            "ALLOW" => Some(Self::Allow),
+            "DROP" => Some(Self::Drop),
+            "RECOMPUTE" => Some(Self::Recompute),
+            _ => None,
+        }
+    }
+}
+
 /// Log compaction configuration. When enabled, the buffer deduplicates
 /// by key field, keeping only the latest event per key value.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -135,6 +174,9 @@ pub struct ChangeStreamDef {
     /// Webhook delivery configuration (optional).
     #[serde(default)]
     pub webhook: crate::event::webhook::WebhookConfig,
+    /// Policy for events that arrive below the partition watermark.
+    #[serde(default)]
+    pub late_data: LateDataPolicy,
     /// Owner (creator).
     pub owner: String,
     /// Creation timestamp (epoch seconds).
@@ -180,6 +222,7 @@ mod tests {
             retention: RetentionConfig::default(),
             compaction: CompactionConfig::default(),
             webhook: crate::event::webhook::WebhookConfig::default(),
+            late_data: LateDataPolicy::default(),
             owner: "admin".into(),
             created_at: 0,
         };
@@ -199,6 +242,7 @@ mod tests {
             retention: RetentionConfig::default(),
             compaction: CompactionConfig::default(),
             webhook: crate::event::webhook::WebhookConfig::default(),
+            late_data: LateDataPolicy::default(),
             owner: "admin".into(),
             created_at: 0,
         };

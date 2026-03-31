@@ -12,7 +12,7 @@ use pgwire::error::PgWireResult;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 use crate::event::cdc::stream_def::{
-    ChangeStreamDef, CompactionConfig, OpFilter, RetentionConfig, StreamFormat,
+    ChangeStreamDef, CompactionConfig, LateDataPolicy, OpFilter, RetentionConfig, StreamFormat,
 };
 use crate::event::webhook::WebhookConfig;
 
@@ -66,6 +66,7 @@ pub fn create_change_stream(
         retention: RetentionConfig::default(),
         compaction: parsed.compaction,
         webhook: parsed.webhook,
+        late_data: parsed.late_data,
         owner: identity.username.clone(),
         created_at: now,
     };
@@ -109,6 +110,7 @@ struct ParsedCreateChangeStream {
     format: StreamFormat,
     compaction: CompactionConfig,
     webhook: WebhookConfig,
+    late_data: LateDataPolicy,
 }
 
 /// Extract all `KEY = VALUE` pairs from a WITH clause inner string.
@@ -187,6 +189,7 @@ fn parse_create_change_stream(sql: &str) -> PgWireResult<ParsedCreateChangeStrea
     let mut format = StreamFormat::Json;
     let mut compaction = CompactionConfig::default();
     let mut webhook = WebhookConfig::default();
+    let mut late_data = LateDataPolicy::default();
 
     if let Some(with_pos) = upper.find("WITH") {
         let with_section = trimmed[with_pos + 4..].trim();
@@ -235,13 +238,17 @@ fn parse_create_change_stream(sql: &str) -> PgWireResult<ParsedCreateChangeStrea
                     webhook.max_retries = val.parse().unwrap_or(3);
                 }
                 "TIMEOUT" => {
-                    // Parse duration like "5s", "10s", or raw seconds.
                     let secs = val
                         .strip_suffix('s')
                         .or(Some(&val))
                         .and_then(|s| s.parse::<u64>().ok())
                         .unwrap_or(5);
                     webhook.timeout_secs = secs;
+                }
+                "LATE_DATA" => {
+                    if let Some(policy) = LateDataPolicy::from_str_opt(&val) {
+                        late_data = policy;
+                    }
                 }
                 _ => {}
             }
@@ -256,6 +263,7 @@ fn parse_create_change_stream(sql: &str) -> PgWireResult<ParsedCreateChangeStrea
         format,
         compaction,
         webhook,
+        late_data,
     })
 }
 
