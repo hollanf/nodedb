@@ -64,11 +64,39 @@ impl CrdtState {
 
     /// Read a single row's fields as a `LoroValue::Map`.
     ///
-    /// Returns the deep value of the row (all nested containers resolved),
-    /// or `None` if the row does not exist.
+    /// Navigates via `LoroMap::get()` to avoid the expensive recursive
+    /// `get_deep_value()` clone on the entire row container.
     pub fn read_row(&self, collection: &str, row_id: &str) -> Option<LoroValue> {
-        let path = format!("{collection}/{row_id}");
-        Some(self.doc.get_by_str_path(&path)?.get_deep_value())
+        let coll = self.doc.get_map(collection);
+        match coll.get(row_id)? {
+            ValueOrContainer::Container(loro::Container::Map(m)) => Some(m.get_value()),
+            ValueOrContainer::Container(loro::Container::List(l)) => Some(l.get_value()),
+            ValueOrContainer::Container(_) => Some(LoroValue::Null),
+            ValueOrContainer::Value(v) => Some(v),
+        }
+    }
+
+    /// Read a single field from a row without cloning the entire row.
+    ///
+    /// This is the fast path for KV-style access where only one field
+    /// is needed. Avoids allocating a full Map for single-field reads.
+    ///
+    /// Shares the same `doc.get_map(collection).get(row_id)` lookup pattern
+    /// as `read_row`, but returns a single field value instead of the whole
+    /// row map — different return granularity, intentionally kept separate.
+    pub fn read_field(&self, collection: &str, row_id: &str, field: &str) -> Option<LoroValue> {
+        let coll = self.doc.get_map(collection);
+        let row_map = match coll.get(row_id)? {
+            ValueOrContainer::Container(loro::Container::Map(m)) => m,
+            ValueOrContainer::Value(v) => return Some(v),
+            _ => return None,
+        };
+        match row_map.get(field)? {
+            ValueOrContainer::Value(v) => Some(v),
+            ValueOrContainer::Container(loro::Container::Map(m)) => Some(m.get_value()),
+            ValueOrContainer::Container(loro::Container::List(l)) => Some(l.get_value()),
+            ValueOrContainer::Container(_) => Some(LoroValue::Null),
+        }
     }
 
     /// Check if a row exists in a collection.
