@@ -50,7 +50,7 @@ impl EventPlane {
         let num_cores = consumers_rx.len();
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        let slab_budget = Arc::new(super::slab_budget::SlabBudget::new());
+        let slab_budget = Arc::new(super::slab_budget::SlabBudget::for_cores(num_cores));
         let mut slab_accounts: Vec<Arc<super::slab_budget::ConsumerSlabAccount>> = Vec::new();
 
         let consumers: Vec<ConsumerHandle> = consumers_rx

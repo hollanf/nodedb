@@ -16,8 +16,19 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-/// Default slab pinning budget per core: 128 MB.
-const DEFAULT_BUDGET_PER_CORE: u64 = 128 * 1024 * 1024;
+/// Fallback slab pinning budget per core when system memory cannot be detected.
+const FALLBACK_BUDGET_PER_CORE: u64 = 128 * 1024 * 1024; // 128 MB
+
+/// Fraction of total system memory allocated to Event Plane slab budgets.
+/// The total slab budget is `system_memory * SLAB_MEMORY_FRACTION`, then
+/// divided evenly across cores.
+const SLAB_MEMORY_FRACTION: f64 = 0.10; // 10% of system RAM
+
+/// Minimum slab budget per core (prevents starvation on tiny systems).
+const MIN_BUDGET_PER_CORE: u64 = 32 * 1024 * 1024; // 32 MB
+
+/// Maximum slab budget per core (prevents excessive pinning on large systems).
+const MAX_BUDGET_PER_CORE: u64 = 1024 * 1024 * 1024; // 1 GB
 
 /// Per-consumer slab-pin accounting.
 ///
@@ -105,9 +116,38 @@ pub struct SlabBudget {
 }
 
 impl SlabBudget {
+    /// Create a slab budget with the fallback per-core limit (128 MB).
     pub fn new() -> Self {
         Self {
-            limit: DEFAULT_BUDGET_PER_CORE,
+            limit: FALLBACK_BUDGET_PER_CORE,
+            total_sheds: AtomicU64::new(0),
+        }
+    }
+
+    /// Create a slab budget auto-tuned from system memory.
+    ///
+    /// Allocates `SLAB_MEMORY_FRACTION` (10%) of total system RAM, divided
+    /// evenly across `num_cores`. Clamped to [32 MB, 1 GB] per core.
+    /// Falls back to 128 MB if system memory cannot be detected.
+    pub fn for_cores(num_cores: usize) -> Self {
+        let cores = num_cores.max(1) as u64;
+        let limit = match detect_system_memory_bytes() {
+            Some(total_mem) => {
+                let total_slab = (total_mem as f64 * SLAB_MEMORY_FRACTION) as u64;
+                let per_core = total_slab / cores;
+                per_core.clamp(MIN_BUDGET_PER_CORE, MAX_BUDGET_PER_CORE)
+            }
+            None => FALLBACK_BUDGET_PER_CORE,
+        };
+
+        tracing::info!(
+            limit_mb = limit / (1024 * 1024),
+            num_cores,
+            "slab budget auto-tuned from system memory"
+        );
+
+        Self {
+            limit,
             total_sheds: AtomicU64::new(0),
         }
     }
@@ -169,6 +209,23 @@ impl Default for SlabBudget {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Detect total system memory in bytes by reading `/proc/meminfo`.
+///
+/// Returns `None` if the file cannot be read or parsed (non-Linux, containers
+/// with restricted procfs, etc.). Callers should fall back to a hardcoded default.
+fn detect_system_memory_bytes() -> Option<u64> {
+    let contents = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in contents.lines() {
+        if let Some(rest) = line.strip_prefix("MemTotal:") {
+            // Format: "MemTotal:       16384000 kB"
+            let kb_str = rest.trim().strip_suffix("kB")?.trim();
+            let kb: u64 = kb_str.parse().ok()?;
+            return Some(kb * 1024);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -240,5 +297,29 @@ mod tests {
     fn default_budget_128mb() {
         let budget = SlabBudget::new();
         assert_eq!(budget.limit(), 128 * 1024 * 1024);
+    }
+
+    #[test]
+    fn for_cores_auto_tunes() {
+        let budget = SlabBudget::for_cores(4);
+        // On any real system, the limit should be within [32 MB, 1 GB].
+        assert!(budget.limit() >= MIN_BUDGET_PER_CORE);
+        assert!(budget.limit() <= MAX_BUDGET_PER_CORE);
+    }
+
+    #[test]
+    fn for_cores_zero_treated_as_one() {
+        let budget = SlabBudget::for_cores(0);
+        assert!(budget.limit() >= MIN_BUDGET_PER_CORE);
+    }
+
+    #[test]
+    fn detect_system_memory() {
+        // On Linux, /proc/meminfo should exist and return > 0.
+        if cfg!(target_os = "linux") {
+            let mem = detect_system_memory_bytes();
+            assert!(mem.is_some(), "should detect memory on Linux");
+            assert!(mem.unwrap() > 0);
+        }
     }
 }

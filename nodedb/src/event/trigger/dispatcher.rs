@@ -59,47 +59,18 @@ pub async fn dispatch_triggers(
 
     let op_str = event.op.to_string();
     let result = match event.op {
-        WriteOp::BulkInsert { .. } => {
-            // BulkInsert events from WAL replay may not carry per-row payload
-            // (new_value is None for KV batch puts). If we have row data,
-            // try to deserialize as an array and fire per-row in chunks of 1024.
-            if let Some(ref new) = new_fields {
-                fire_for_operation(
-                    "INSERT",
-                    state,
-                    &identity,
-                    event.tenant_id,
-                    &event.collection,
-                    Some(new),
-                    None,
-                    0,
-                    mode_filter,
-                )
-                .await
-            } else {
-                // No row data in bulk event (e.g., KV batch from WAL replay).
-                // Individual row events are emitted separately on the ring buffer path.
-                Ok(())
-            }
-        }
-        WriteOp::BulkDelete { .. } => {
-            // Same as BulkInsert: if we have old_value, fire per-row.
-            if let Some(ref old) = old_fields {
-                fire_for_operation(
-                    "DELETE",
-                    state,
-                    &identity,
-                    event.tenant_id,
-                    &event.collection,
-                    None,
-                    Some(old),
-                    0,
-                    mode_filter,
-                )
-                .await
-            } else {
-                Ok(())
-            }
+        WriteOp::BulkInsert { .. } | WriteOp::BulkDelete { .. } => {
+            // Bulk events are only created during WAL replay (wal_replay.rs)
+            // and always carry new_value: None / old_value: None — they are
+            // aggregate metadata (count of affected rows), not per-row payloads.
+            //
+            // The Data Plane ring buffer path emits individual Insert/Delete
+            // events for each row in a batch, so triggers fire on those
+            // individual events. Bulk events are safe to skip here.
+            //
+            // See also: crdt_sync/packager.rs which skips bulk events for the
+            // same reason ("per-row events handle delivery").
+            Ok(())
         }
         _ => {
             fire_for_operation(

@@ -225,6 +225,7 @@ pub fn spawn_core(
             let mut watchdog = CoreHealthWatchdog::new();
             let mut last_checkpoint = Instant::now();
             let mut last_event_emit = Instant::now();
+            let mut heartbeat_interval = heartbeat_interval_with_jitter();
             /// Checkpoint interval: 5 minutes.
             const CHECKPOINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
@@ -315,14 +316,17 @@ pub fn spawn_core(
                 // Periodic compaction + maintenance (tombstone cleanup, CSR compact, edge sweep).
                 core.maybe_run_maintenance();
 
-                // Heartbeat: if no user writes for >1 second, emit a heartbeat
-                // to advance the Event Plane's partition watermark. Without this,
-                // streaming MV global_watermark() stalls on idle partitions.
+                // Heartbeat: if no user writes for ~1 second (±100ms jitter),
+                // emit a heartbeat to advance the Event Plane's partition
+                // watermark. Without this, streaming MV global_watermark()
+                // stalls on idle partitions. Jitter prevents multi-core
+                // thundering herd when all cores go idle simultaneously.
                 if tasks_processed > 0 {
                     last_event_emit = Instant::now();
-                } else if last_event_emit.elapsed() >= std::time::Duration::from_secs(1) {
+                } else if last_event_emit.elapsed() >= heartbeat_interval {
                     core.emit_heartbeat();
                     last_event_emit = Instant::now();
+                    heartbeat_interval = heartbeat_interval_with_jitter();
                 }
             }
         })?;
@@ -354,6 +358,30 @@ fn drain_and_reject(core: &mut CoreLoop, core_id: usize) {
             warn!(core_id, error = %e, "failed to send degraded-rejection response");
         }
     }
+}
+
+/// Compute heartbeat interval with ±100ms jitter.
+///
+/// Returns a Duration in the range [900ms, 1100ms]. The jitter spreads
+/// heartbeat emissions across cores so they don't all fire in the same
+/// poll iteration when the system goes idle.
+///
+/// Uses a fast splitmix64-style hash of the current timestamp nanos to
+/// produce pseudo-random jitter without requiring the `rand` crate in
+/// production code (it's dev-only).
+fn heartbeat_interval_with_jitter() -> std::time::Duration {
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    // splitmix64
+    let mut x = seed;
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xbf58476d1ce4e5b9);
+    x ^= x >> 27;
+    // Map to [0, 200] → offset by -100 → [-100, +100] ms.
+    let jitter_ms = (x % 201) as i64 - 100;
+    std::time::Duration::from_millis((1000 + jitter_ms) as u64)
 }
 
 /// Extract a human-readable message from a panic payload.

@@ -487,7 +487,7 @@ fn detect_sequence_gap(
 
 /// Process a single event. Dispatch point for trigger matching, CDC, etc.
 fn record_event(core_id: usize, event: &WriteEvent, metrics: &CoreMetrics) {
-    metrics.record_process(event.lsn.as_u64(), event.sequence);
+    metrics.record_process_for_tenant(event.lsn.as_u64(), event.sequence, event.tenant_id.as_u32());
 
     trace!(
         core_id,
