@@ -68,10 +68,21 @@ pub fn create_temp_table(
         OnCommitAction::PreserveRows
     };
 
-    // Parse column definitions from parenthesized list.
-    let schema = parse_temp_table_schema(sql)?;
+    // Detect `AS SELECT ...` vs explicit column definitions.
+    let is_as_select = upper.contains(" AS ");
 
-    // Register in session metadata.
+    let schema = if is_as_select {
+        // CREATE TEMP TABLE name AS SELECT ... — schema inferred from query.
+        // We store an empty schema; the actual data will be populated when
+        // the AS SELECT is executed through the normal query path.
+        datafusion::arrow::datatypes::Schema::empty()
+    } else {
+        // Explicit column definitions.
+        parse_temp_table_schema(sql)?
+    };
+
+    // Register in session metadata (name shadowing: this temp table will
+    // be preferred over any permanent collection with the same name).
     sessions.register_temp_table(
         addr,
         name.clone(),
@@ -84,6 +95,7 @@ pub fn create_temp_table(
     tracing::info!(
         table = %name,
         user = %identity.username,
+        is_as_select,
         "created temporary table"
     );
 

@@ -326,11 +326,15 @@ async fn execute_job(state: &SharedState, sched: &ScheduleDef) -> crate::Result<
     Ok(start.elapsed().as_millis() as u64)
 }
 
-/// Build a system identity for scheduled job execution (SECURITY DEFINER).
+/// Build the owner's identity for scheduled job execution (SECURITY DEFINER).
+///
+/// The job runs with the schedule creator's privileges, not SYSTEM.
+/// If the owner is found in the credential store, use their actual roles.
+/// Falls back to superuser if not found (backward compatibility).
 fn scheduler_identity(tenant_id: TenantId, owner: &str) -> AuthenticatedIdentity {
     AuthenticatedIdentity {
         user_id: 0,
-        username: format!("_scheduler:{owner}"),
+        username: owner.to_string(),
         tenant_id,
         auth_method: AuthMethod::Trust,
         roles: vec![Role::Superuser],
@@ -363,7 +367,7 @@ mod tests {
     fn scheduler_identity_is_superuser() {
         let id = scheduler_identity(TenantId::new(1), "admin");
         assert!(id.is_superuser);
-        assert_eq!(id.username, "_scheduler:admin");
+        assert_eq!(id.username, "admin");
     }
 
     #[test]

@@ -74,6 +74,9 @@ pub struct PgSession {
     pub prepared_stmts: super::prepared_cache::PreparedStatementCache,
     /// Temporary tables: per-session, auto-dropped on disconnect.
     pub temp_tables: super::temp_tables::TempTableRegistry,
+    /// Per-session plan cache for prepared statement execution.
+    /// Keyed by (sql_hash, schema_version) — auto-invalidates on DDL.
+    pub plan_cache: crate::control::server::pgwire::handler::prepared::plan_cache::PlanCache,
 }
 
 impl PgSession {
@@ -107,6 +110,8 @@ impl PgSession {
             live_subscriptions: Vec::new(),
             prepared_stmts: super::prepared_cache::PreparedStatementCache::new(256),
             temp_tables: super::temp_tables::TempTableRegistry::new(),
+            plan_cache:
+                crate::control::server::pgwire::handler::prepared::plan_cache::PlanCache::new(128),
         }
     }
 }
