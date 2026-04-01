@@ -55,25 +55,41 @@ impl NodeDbPgHandler {
                 .register_table(name, Arc::clone(mem_table) as _);
         }
 
-        let sec = crate::control::planner::context::PlanSecurityContext {
-            identity,
-            auth: &auth_ctx,
-            rls_store: &self.state.rls,
-            permissions: &self.state.permissions,
-            roles: &self.state.roles,
+        // Check plan cache before full planning. Cache key includes schema_version
+        // for automatic invalidation on DDL. RLS policies and permissions are still
+        // validated per-query after cache lookup — caching does not bypass security.
+        let schema_ver = self.state.schema_version.current();
+        let cached_tasks = self.sessions.get_cached_plan(addr, &clean_sql, schema_ver);
+
+        let tasks = if let Some(tasks) = cached_tasks {
+            tasks
+        } else {
+            let sec = crate::control::planner::context::PlanSecurityContext {
+                identity,
+                auth: &auth_ctx,
+                rls_store: &self.state.rls,
+                permissions: &self.state.permissions,
+                roles: &self.state.roles,
+            };
+            let planned = self
+                .query_ctx
+                .plan_sql_with_rls(&clean_sql, tenant_id, &sec)
+                .await
+                .map_err(|e| {
+                    let (severity, code, message) = error_to_sqlstate(&e);
+                    PgWireError::UserError(Box::new(ErrorInfo::new(
+                        severity.to_owned(),
+                        code.to_owned(),
+                        message,
+                    )))
+                })?;
+
+            // Cache the result for future identical queries.
+            self.sessions
+                .put_cached_plan(addr, &clean_sql, planned.clone(), schema_ver);
+
+            planned
         };
-        let tasks = self
-            .query_ctx
-            .plan_sql_with_rls(&clean_sql, tenant_id, &sec)
-            .await
-            .map_err(|e| {
-                let (severity, code, message) = error_to_sqlstate(&e);
-                PgWireError::UserError(Box::new(ErrorInfo::new(
-                    severity.to_owned(),
-                    code.to_owned(),
-                    message,
-                )))
-            })?;
 
         if tasks.is_empty() {
             return Ok(vec![Response::Execution(Tag::new("OK"))]);

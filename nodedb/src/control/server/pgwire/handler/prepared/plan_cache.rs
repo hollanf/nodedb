@@ -1,14 +1,14 @@
 //! Per-session plan cache for prepared statements.
 //!
-//! Caches DataFusion `LogicalPlan` per SQL string, keyed by `(sql_hash, schema_version)`.
-//! When the schema version changes (CREATE/DROP/ALTER), cached plans are invalidated.
-//! This avoids re-parsing identical SQL on every Execute in the extended query protocol.
+//! Caches compiled `Vec<PhysicalTask>` per SQL string, keyed by `(sql_hash, schema_version)`.
+//! When the schema version changes (CREATE/DROP/ALTER), cached entries are invalidated.
+//! This avoids re-parsing and re-planning identical SQL on every Execute.
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use datafusion::logical_expr::LogicalPlan;
+use crate::control::planner::physical::PhysicalTask;
 
 /// Global schema version counter, bumped on any DDL that changes the schema.
 ///
@@ -42,9 +42,9 @@ impl Default for SchemaVersion {
     }
 }
 
-/// Cached plan entry: the plan and the schema version it was compiled against.
-struct CachedPlan {
-    plan: LogicalPlan,
+/// Cached entry: compiled physical tasks and the schema version at compile time.
+struct CachedEntry {
+    tasks: Vec<PhysicalTask>,
     schema_version: u64,
 }
 
@@ -53,7 +53,7 @@ struct CachedPlan {
 /// Keyed by SQL hash. Each entry records the schema version at plan time.
 /// On lookup, if the schema version has changed, the entry is evicted.
 pub struct PlanCache {
-    entries: HashMap<u64, CachedPlan>,
+    entries: HashMap<u64, CachedEntry>,
     max_entries: usize,
     /// Insertion order for LRU eviction (oldest first).
     order: Vec<u64>,
@@ -69,14 +69,13 @@ impl PlanCache {
         }
     }
 
-    /// Look up a cached plan for the given SQL.
+    /// Look up cached physical tasks for the given SQL.
     ///
-    /// Returns `None` if the plan is not cached or if the schema version
-    /// has changed (the stale entry is evicted).
-    pub fn get(&mut self, sql: &str, current_schema_version: u64) -> Option<&LogicalPlan> {
+    /// Returns `None` if not cached or if the schema version has changed
+    /// (stale entries are evicted automatically).
+    pub fn get(&mut self, sql: &str, current_schema_version: u64) -> Option<Vec<PhysicalTask>> {
         let key = hash_sql(sql);
 
-        // Check if entry exists and whether version matches.
         let version_matches = self
             .entries
             .get(&key)
@@ -84,8 +83,8 @@ impl PlanCache {
 
         match version_matches {
             Some(true) => {
-                // Safe: we just checked the entry exists.
-                Some(&self.entries.get(&key).expect("just checked").plan)
+                // Clone the cached tasks (PhysicalTask derives Clone).
+                Some(self.entries.get(&key).expect("just checked").tasks.clone())
             }
             Some(false) => {
                 // Schema changed — evict the stale entry.
@@ -97,14 +96,13 @@ impl PlanCache {
         }
     }
 
-    /// Store a plan in the cache.
-    pub fn put(&mut self, sql: &str, plan: LogicalPlan, schema_version: u64) {
+    /// Store compiled physical tasks in the cache.
+    pub fn put(&mut self, sql: &str, tasks: Vec<PhysicalTask>, schema_version: u64) {
         let key = hash_sql(sql);
 
-        // If replacing an existing entry, don't change LRU order.
         if let std::collections::hash_map::Entry::Occupied(mut e) = self.entries.entry(key) {
-            e.insert(CachedPlan {
-                plan,
+            e.insert(CachedEntry {
+                tasks,
                 schema_version,
             });
             return;
@@ -122,8 +120,8 @@ impl PlanCache {
 
         self.entries.insert(
             key,
-            CachedPlan {
-                plan,
+            CachedEntry {
+                tasks,
                 schema_version,
             },
         );
@@ -145,41 +143,40 @@ fn hash_sql(sql: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
+    use crate::bridge::envelope::PhysicalPlan;
+    use crate::bridge::physical_plan::MetaOp;
+    use crate::types::{TenantId, VShardId};
 
-    fn dummy_plan() -> LogicalPlan {
-        LogicalPlan::EmptyRelation(datafusion::logical_expr::EmptyRelation {
-            produce_one_row: false,
-            schema: Arc::new(datafusion::common::DFSchema::empty()),
-        })
+    fn dummy_tasks() -> Vec<PhysicalTask> {
+        vec![PhysicalTask {
+            tenant_id: TenantId::new(1),
+            vshard_id: VShardId::new(0),
+            plan: PhysicalPlan::Meta(MetaOp::Checkpoint),
+        }]
     }
 
     #[test]
     fn cache_hit_same_version() {
         let mut cache = PlanCache::new(10);
-        cache.put("SELECT 1", dummy_plan(), 1);
+        cache.put("SELECT 1", dummy_tasks(), 1);
         assert!(cache.get("SELECT 1", 1).is_some());
     }
 
     #[test]
     fn cache_miss_version_change() {
         let mut cache = PlanCache::new(10);
-        cache.put("SELECT 1", dummy_plan(), 1);
-        // Schema version bumped — cache miss.
+        cache.put("SELECT 1", dummy_tasks(), 1);
         assert!(cache.get("SELECT 1", 2).is_none());
-        // Entry should be evicted.
         assert!(cache.get("SELECT 1", 1).is_none());
     }
 
     #[test]
     fn lru_eviction() {
         let mut cache = PlanCache::new(2);
-        cache.put("SELECT 1", dummy_plan(), 1);
-        cache.put("SELECT 2", dummy_plan(), 1);
-        // Cache is full — inserting a third evicts the oldest.
-        cache.put("SELECT 3", dummy_plan(), 1);
+        cache.put("SELECT 1", dummy_tasks(), 1);
+        cache.put("SELECT 2", dummy_tasks(), 1);
+        cache.put("SELECT 3", dummy_tasks(), 1);
         assert!(cache.get("SELECT 1", 1).is_none());
         assert!(cache.get("SELECT 2", 1).is_some());
         assert!(cache.get("SELECT 3", 1).is_some());
@@ -188,7 +185,7 @@ mod tests {
     #[test]
     fn clear_empties_cache() {
         let mut cache = PlanCache::new(10);
-        cache.put("SELECT 1", dummy_plan(), 1);
+        cache.put("SELECT 1", dummy_tasks(), 1);
         cache.clear();
         assert!(cache.get("SELECT 1", 1).is_none());
     }

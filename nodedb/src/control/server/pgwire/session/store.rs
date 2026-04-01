@@ -58,6 +58,33 @@ impl SessionStore {
         sessions.len()
     }
 
+    /// Look up cached physical tasks for a SQL string in the session's plan cache.
+    pub fn get_cached_plan(
+        &self,
+        addr: &SocketAddr,
+        sql: &str,
+        schema_version: u64,
+    ) -> Option<Vec<crate::control::planner::physical::PhysicalTask>> {
+        let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        sessions
+            .get_mut(addr)
+            .and_then(|s| s.plan_cache.get(sql, schema_version))
+    }
+
+    /// Store compiled physical tasks in the session's plan cache.
+    pub fn put_cached_plan(
+        &self,
+        addr: &SocketAddr,
+        sql: &str,
+        tasks: Vec<crate::control::planner::physical::PhysicalTask>,
+        schema_version: u64,
+    ) {
+        let mut sessions = self.sessions.write().unwrap_or_else(|p| p.into_inner());
+        if let Some(session) = sessions.get_mut(addr) {
+            session.plan_cache.put(sql, tasks, schema_version);
+        }
+    }
+
     /// Access the session map with a read lock for use by other session submodules.
     pub(super) fn read_session<R>(
         &self,

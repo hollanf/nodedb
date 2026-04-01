@@ -5,7 +5,7 @@ use crate::types::{TenantId, VShardId};
 ///
 /// The planner produces these after converting a DataFusion logical plan
 /// into a concrete physical operation targeting a specific vShard.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PhysicalTask {
     /// Target tenant.
     pub tenant_id: TenantId,
