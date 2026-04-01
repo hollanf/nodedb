@@ -3,6 +3,7 @@ mod live;
 mod params;
 mod state;
 mod store;
+pub mod temp_tables;
 #[cfg(test)]
 mod tests;
 mod transaction;

@@ -33,6 +33,10 @@ pub struct CursorState {
     pub rows: Vec<String>,
     /// Current position (next row to return).
     pub position: usize,
+    /// Whether this cursor supports backward fetching (SCROLL).
+    pub scrollable: bool,
+    /// Whether this cursor survives transaction commit (WITH HOLD).
+    pub with_hold: bool,
 }
 
 /// Per-connection session state.
@@ -68,6 +72,8 @@ pub struct PgSession {
     /// SQL-level prepared statements: PREPARE name(types) AS query.
     /// Separate from pgwire wire-level prepared statements (managed by pgwire crate).
     pub prepared_stmts: super::prepared_cache::PreparedStatementCache,
+    /// Temporary tables: per-session, auto-dropped on disconnect.
+    pub temp_tables: super::temp_tables::TempTableRegistry,
 }
 
 impl PgSession {
@@ -100,6 +106,7 @@ impl PgSession {
             cursors: HashMap::new(),
             live_subscriptions: Vec::new(),
             prepared_stmts: super::prepared_cache::PreparedStatementCache::new(256),
+            temp_tables: super::temp_tables::TempTableRegistry::new(),
         }
     }
 }
