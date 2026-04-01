@@ -33,6 +33,7 @@ const METACOMMANDS: &[&str] = &[
     "\\x",
     "\\procedures",
     "\\triggers",
+    "\\upload",
     "\\?",
     "\\q",
     "\\quit",

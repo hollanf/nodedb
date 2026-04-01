@@ -113,6 +113,27 @@ pub fn parse(input: &str) -> MetaAction {
                 MetaAction::SaveResults(arg.to_string())
             }
         }
+        "\\upload" => {
+            // \upload <function_name> <path.wasm>
+            // Reads the file, base64-encodes, and sends CREATE FUNCTION LANGUAGE WASM.
+            let parts: Vec<&str> = arg.splitn(2, char::is_whitespace).collect();
+            if parts.len() < 2 {
+                MetaAction::Unknown("\\upload requires <function_name> <path.wasm>".into())
+            } else {
+                let func_name = parts[0];
+                let file_path = parts[1].trim();
+                match std::fs::read(file_path) {
+                    Ok(bytes) => {
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                        MetaAction::Sql(format!(
+                            "CREATE OR REPLACE FUNCTION {func_name}() RETURNS INT LANGUAGE WASM AS '{b64}'"
+                        ))
+                    }
+                    Err(e) => MetaAction::Unknown(format!("failed to read '{file_path}': {e}")),
+                }
+            }
+        }
         "\\watch" => {
             let n = arg.parse::<u64>().unwrap_or(2);
             MetaAction::Watch(n)
