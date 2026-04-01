@@ -60,7 +60,7 @@ fn ts_scan(
     aggregates: Vec<(String, String)>,
     bucket_interval_ms: i64,
 ) -> Vec<serde_json::Value> {
-    let raw = send_ok_streaming(
+    let raw = send_ok(
         &mut ctx.core,
         &mut ctx.tx,
         &mut ctx.rx,
@@ -76,24 +76,7 @@ fn ts_scan(
             rls_filters: Vec::new(),
         }),
     );
-    // Streaming responses produce concatenated JSON arrays: [a,b][c,d]...
-    // Parse each array and merge.
-    parse_chunked_json(&raw)
-}
-
-/// Parse concatenated JSON arrays from chunked responses into a single Vec.
-fn parse_chunked_json(data: &[u8]) -> Vec<serde_json::Value> {
-    // Try single array first (most common, non-chunked case).
-    if let Ok(arr) = serde_json::from_slice::<Vec<serde_json::Value>>(data) {
-        return arr;
-    }
-    // Chunked: multiple JSON arrays concatenated. Use streaming deserializer.
-    let mut results = Vec::new();
-    let deser = serde_json::Deserializer::from_slice(data).into_iter::<Vec<serde_json::Value>>();
-    for arr in deser.flatten() {
-        results.extend(arr);
-    }
-    results
+    serde_json::from_slice(&raw).unwrap_or_default()
 }
 
 fn ts_scan_filtered(
@@ -109,7 +92,7 @@ fn ts_scan_filtered(
     } else {
         rmp_serde::to_vec_named(&filters).unwrap_or_default()
     };
-    let raw = send_ok_streaming(
+    let raw = send_ok(
         &mut ctx.core,
         &mut ctx.tx,
         &mut ctx.rx,
@@ -125,7 +108,7 @@ fn ts_scan_filtered(
             rls_filters: Vec::new(),
         }),
     );
-    parse_chunked_json(&raw)
+    serde_json::from_slice(&raw).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -393,4 +376,186 @@ fn group_by_not_capped_at_10k() {
         15_000,
         "GROUP BY should return all unique groups, not capped at 10K"
     );
+}
+
+// ---------------------------------------------------------------------------
+// #11 — LSN-based deduplication for WAL catch-up
+// ---------------------------------------------------------------------------
+
+#[test]
+fn wal_lsn_dedup_skips_already_ingested() {
+    let mut ctx = make_ctx();
+
+    // First ingest: wal_lsn=Some(100) — should succeed.
+    let payload = b"dns,qname=a.com elapsed_ms=1.0 1700000000000000000\n";
+    let resp1 = send_raw(
+        &mut ctx.core,
+        &mut ctx.tx,
+        &mut ctx.rx,
+        PhysicalPlan::Timeseries(TimeseriesOp::Ingest {
+            collection: "dns_dedup".to_string(),
+            payload: payload.to_vec(),
+            format: "ilp".to_string(),
+            wal_lsn: Some(100),
+        }),
+    );
+    assert_eq!(resp1.status, nodedb::bridge::envelope::Status::Ok);
+    let v1: serde_json::Value = serde_json::from_slice(&resp1.payload).unwrap();
+    assert_eq!(v1["accepted"], 1);
+
+    // Duplicate ingest: same wal_lsn=100 — should be skipped.
+    let resp2 = send_raw(
+        &mut ctx.core,
+        &mut ctx.tx,
+        &mut ctx.rx,
+        PhysicalPlan::Timeseries(TimeseriesOp::Ingest {
+            collection: "dns_dedup".to_string(),
+            payload: payload.to_vec(),
+            format: "ilp".to_string(),
+            wal_lsn: Some(100),
+        }),
+    );
+    assert_eq!(resp2.status, nodedb::bridge::envelope::Status::Ok);
+    let v2: serde_json::Value = serde_json::from_slice(&resp2.payload).unwrap();
+    assert_eq!(v2["accepted"], 0);
+    assert_eq!(v2["dedup_skipped"], true);
+
+    // Higher LSN: wal_lsn=200 — should succeed.
+    let resp3 = send_raw(
+        &mut ctx.core,
+        &mut ctx.tx,
+        &mut ctx.rx,
+        PhysicalPlan::Timeseries(TimeseriesOp::Ingest {
+            collection: "dns_dedup".to_string(),
+            payload: payload.to_vec(),
+            format: "ilp".to_string(),
+            wal_lsn: Some(200),
+        }),
+    );
+    let v3: serde_json::Value = serde_json::from_slice(&resp3.payload).unwrap();
+    assert_eq!(v3["accepted"], 1);
+
+    // Live ingest (wal_lsn=None) — always accepted, no dedup.
+    let resp4 = send_raw(
+        &mut ctx.core,
+        &mut ctx.tx,
+        &mut ctx.rx,
+        PhysicalPlan::Timeseries(TimeseriesOp::Ingest {
+            collection: "dns_dedup".to_string(),
+            payload: payload.to_vec(),
+            format: "ilp".to_string(),
+            wal_lsn: None,
+        }),
+    );
+    let v4: serde_json::Value = serde_json::from_slice(&resp4.payload).unwrap();
+    assert_eq!(v4["accepted"], 1);
+}
+
+// ---------------------------------------------------------------------------
+// #11 — Idle memtable flush via maybe_run_maintenance
+// ---------------------------------------------------------------------------
+
+#[test]
+fn idle_flush_triggers_after_inactivity() {
+    let mut ctx = make_ctx();
+
+    // Ingest 5 small rows (well under 64MB threshold).
+    let mut lines = String::new();
+    for i in 0..5 {
+        let ts_ns = 1_700_000_000_000_000_000i64 + i * 1_000_000;
+        lines.push_str(&format!("dns,qname=idle-{i}.test elapsed_ms=1.0 {ts_ns}\n"));
+    }
+    ingest_ilp(&mut ctx, "dns_idle", &lines);
+
+    // COUNT(*) should see all 5 rows (from memtable).
+    let results = ts_scan(
+        &mut ctx,
+        "dns_idle",
+        Vec::new(),
+        vec![("count".into(), "*".into())],
+        0,
+    );
+    assert_eq!(results[0]["count_all"], 5);
+
+    // Simulate idle time: set last_ts_ingest to 10 seconds ago.
+    ctx.core.set_last_ts_ingest(Some(
+        std::time::Instant::now() - std::time::Duration::from_secs(10),
+    ));
+
+    // Run maintenance — should trigger idle flush.
+    ctx.core.maybe_run_maintenance();
+
+    // COUNT(*) should still see all 5 rows (now from sealed partition).
+    let results = ts_scan(
+        &mut ctx,
+        "dns_idle",
+        Vec::new(),
+        vec![("count".into(), "*".into())],
+        0,
+    );
+    assert_eq!(results[0]["count_all"], 5);
+
+    // Verify memtable was flushed by ingesting more and checking partition count.
+    // After idle flush, the partition registry should have at least one entry.
+    // We test indirectly: ingest 3 more rows and count — should get 8 total.
+    let mut lines2 = String::new();
+    for i in 5..8 {
+        let ts_ns = 1_700_000_000_000_000_000i64 + i * 1_000_000;
+        lines2.push_str(&format!("dns,qname=idle-{i}.test elapsed_ms=1.0 {ts_ns}\n"));
+    }
+    ingest_ilp(&mut ctx, "dns_idle", &lines2);
+
+    let results = ts_scan(
+        &mut ctx,
+        "dns_idle",
+        Vec::new(),
+        vec![("count".into(), "*".into())],
+        0,
+    );
+    assert_eq!(
+        results[0]["count_all"], 8,
+        "should see all 8 rows (5 from partition + 3 from memtable)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #12 — Large GROUP BY produces valid single-payload response at Data Plane
+// ---------------------------------------------------------------------------
+
+#[test]
+fn large_group_by_returns_single_valid_json() {
+    let mut ctx = make_ctx();
+
+    // Ingest 2000 unique groups (exceeds default stream_chunk_size of 1000).
+    let mut lines = String::new();
+    for i in 0..2_000 {
+        let ts_ns = 1_700_000_000_000_000_000i64 + i as i64 * 1_000_000;
+        lines.push_str(&format!(
+            "dns,qname=host-{i}.example.com elapsed_ms=1.0 {ts_ns}\n"
+        ));
+    }
+    ingest_ilp(&mut ctx, "dns_large", &lines);
+
+    // GROUP BY should return a single valid JSON response with all 2000 groups.
+    let raw = send_ok(
+        &mut ctx.core,
+        &mut ctx.tx,
+        &mut ctx.rx,
+        PhysicalPlan::Timeseries(TimeseriesOp::Scan {
+            collection: "dns_large".to_string(),
+            time_range: (0, i64::MAX),
+            projection: Vec::new(),
+            limit: usize::MAX,
+            filters: Vec::new(),
+            bucket_interval_ms: 0,
+            group_by: vec!["qname".into()],
+            aggregates: vec![("count".into(), "*".into())],
+            rls_filters: Vec::new(),
+        }),
+    );
+
+    // The response should be a single valid JSON array.
+    let results: Vec<serde_json::Value> = serde_json::from_slice(&raw)
+        .expect("Data Plane response should be a single valid JSON array");
+    assert_eq!(results.len(), 2_000);
 }

@@ -86,45 +86,6 @@ pub fn send_ok(
     resp.inner.payload.to_vec()
 }
 
-/// Push a request, tick, collect all responses (partial + final).
-/// Returns the combined payload bytes. Handles streaming responses.
-pub fn send_ok_streaming(
-    core: &mut CoreLoop,
-    req_tx: &mut Producer<BridgeRequest>,
-    resp_rx: &mut Consumer<BridgeResponse>,
-    plan: PhysicalPlan,
-) -> Vec<u8> {
-    req_tx
-        .try_push(BridgeRequest {
-            inner: make_request(plan),
-        })
-        .unwrap();
-    core.tick();
-
-    let mut combined = Vec::new();
-    loop {
-        let Ok(resp) = resp_rx.try_pop() else {
-            break;
-        };
-        if resp.inner.status == Status::Partial {
-            combined.extend_from_slice(&resp.inner.payload);
-        } else {
-            assert_eq!(
-                resp.inner.status,
-                Status::Ok,
-                "expected Ok, got {:?}",
-                resp.inner.error_code
-            );
-            if combined.is_empty() {
-                return resp.inner.payload.to_vec();
-            }
-            combined.extend_from_slice(&resp.inner.payload);
-            break;
-        }
-    }
-    combined
-}
-
 /// Push a request, tick, pop response — returns the raw response.
 pub fn send_raw(
     core: &mut CoreLoop,

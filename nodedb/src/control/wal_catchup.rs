@@ -86,10 +86,12 @@ async fn run_catchup_cycle(shared: &SharedState) -> CatchupResult {
 
     let catchup_lsn = shared.wal_catchup_lsn.load(Ordering::Acquire);
 
-    // Read at most PAGE_SIZE WAL records via mmap (bounded memory).
+    // Read at most PAGE_SIZE WAL records via sequential I/O (bounded memory).
+    // Uses sequential I/O (not mmap) to safely read the active segment
+    // even when written via O_DIRECT which bypasses the page cache.
     let (records, has_more) = match shared
         .wal
-        .replay_mmap_from_limit(Lsn::new(catchup_lsn + 1), PAGE_SIZE)
+        .replay_from_limit(Lsn::new(catchup_lsn + 1), PAGE_SIZE)
     {
         Ok(r) => r,
         Err(e) => {

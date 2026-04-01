@@ -291,6 +291,11 @@ impl CoreLoop {
         self.core_id
     }
 
+    /// Set the last timeseries ingest timestamp (for testing idle flush).
+    pub fn set_last_ts_ingest(&mut self, value: Option<std::time::Instant>) {
+        self.last_ts_ingest = value;
+    }
+
     pub fn pending_count(&self) -> usize {
         self.task_queue.len()
     }

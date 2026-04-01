@@ -378,7 +378,10 @@ impl WalManager {
     ///
     /// Returns `(records, has_more)` where `has_more` indicates whether the
     /// limit was hit before all segments were exhausted. Bounds memory to
-    /// O(max_records) per call — used by the WAL catch-up task.
+    /// O(max_records) per call.
+    ///
+    /// **Note:** Uses mmap, which cannot see data written via O_DIRECT to the
+    /// active segment. Use `replay_from_limit` for the catch-up task instead.
     pub fn replay_mmap_from_limit(
         &self,
         from_lsn: Lsn,
@@ -390,6 +393,21 @@ impl WalManager {
             max_records,
         )
         .map_err(crate::Error::Wal)
+    }
+
+    /// Paginated sequential replay: reads at most `max_records` from `from_lsn`.
+    ///
+    /// Uses sequential I/O (not mmap) while holding the WAL mutex, so it can
+    /// safely read the active segment even when written via O_DIRECT. This is
+    /// the correct method for the WAL catch-up task.
+    pub fn replay_from_limit(
+        &self,
+        from_lsn: Lsn,
+        max_records: usize,
+    ) -> crate::Result<(Vec<WalRecord>, bool)> {
+        let wal = self.wal.lock().unwrap_or_else(|p| p.into_inner());
+        wal.replay_from_limit(from_lsn.as_u64(), max_records)
+            .map_err(crate::Error::Wal)
     }
 
     /// Total WAL size on disk across all segments.

@@ -352,7 +352,7 @@ impl CoreLoop {
 
     /// Raw scan mode: emit rows from memtable + partitions.
     fn execute_ts_raw_scan(
-        &mut self,
+        &self,
         task: &ExecutionTask,
         collection: &str,
         time_range: (i64, i64),
@@ -519,7 +519,8 @@ impl CoreLoop {
             }
         }
 
-        self.emit_chunked_json_response(task, &results)
+        let json = serde_json::to_vec(&results).unwrap_or_default();
+        self.response_with_payload(task, json)
     }
 
     /// Aggregate mode: time-bucket or generic GROUP BY across memtable + partitions.
@@ -528,7 +529,7 @@ impl CoreLoop {
     /// JSON constructed once at the end.
     #[allow(clippy::too_many_arguments)]
     fn execute_ts_aggregate(
-        &mut self,
+        &self,
         task: &ExecutionTask,
         collection: &str,
         time_range: (i64, i64),
@@ -804,39 +805,8 @@ impl CoreLoop {
             emit_aggregate_results(&group_map, group_by, aggregates, limit)
         };
 
-        self.emit_chunked_json_response(task, &results)
-    }
-
-    /// Emit a JSON response, chunking into partial responses if the result
-    /// set is large. Follows the same pattern as document scan streaming.
-    fn emit_chunked_json_response(
-        &mut self,
-        task: &ExecutionTask,
-        results: &[serde_json::Value],
-    ) -> Response {
-        let chunk_size = self.query_tuning.stream_chunk_size;
-
-        if results.len() <= chunk_size {
-            let json = serde_json::to_vec(results).unwrap_or_default();
-            return self.response_with_payload(task, json);
-        }
-
-        // Large result: stream in chunks via partial responses.
-        let chunks: Vec<_> = results.chunks(chunk_size).collect();
-        let last_idx = chunks.len().saturating_sub(1);
-        for (i, chunk) in chunks.iter().enumerate() {
-            let json = serde_json::to_vec(chunk).unwrap_or_default();
-            if i == last_idx {
-                return self.response_with_payload(task, json);
-            }
-            let partial = self.response_partial(task, json);
-            let _ = self
-                .response_tx
-                .try_push(crate::bridge::dispatch::BridgeResponse { inner: partial });
-        }
-
-        // Unreachable: chunks is non-empty so the loop always returns.
-        self.response_ok(task)
+        let json = serde_json::to_vec(&results).unwrap_or_default();
+        self.response_with_payload(task, json)
     }
 
     /// Ensure the partition registry is loaded for a timeseries collection.
