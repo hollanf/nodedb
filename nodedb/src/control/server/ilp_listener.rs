@@ -311,6 +311,7 @@ async fn flush_ilp_batch(
             collection: collection.clone(),
             payload: shard_batch.as_bytes().to_vec(),
             format: "ilp".to_string(),
+            wal_lsn: None,
         });
 
         crate::control::server::wal_dispatch::wal_append_if_write_with_creds(

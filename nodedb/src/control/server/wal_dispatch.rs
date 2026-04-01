@@ -163,6 +163,7 @@ pub fn wal_append_if_write_with_creds(
             collection,
             payload,
             format: _,
+            ..
         }) => {
             // WAL bypass: skip WAL if collection has wal=false in timeseries_config.
             if let Some(creds) = credentials

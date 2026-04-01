@@ -47,6 +47,7 @@ fn ingest_ilp(
             collection: collection.to_string(),
             payload: payload.as_bytes().to_vec(),
             format: "ilp".to_string(),
+            wal_lsn: None,
         }),
     );
     serde_json::from_slice(&raw).unwrap_or(serde_json::Value::Null)
@@ -59,7 +60,7 @@ fn ts_scan(
     aggregates: Vec<(String, String)>,
     bucket_interval_ms: i64,
 ) -> Vec<serde_json::Value> {
-    let raw = send_ok(
+    let raw = send_ok_streaming(
         &mut ctx.core,
         &mut ctx.tx,
         &mut ctx.rx,
@@ -75,7 +76,24 @@ fn ts_scan(
             rls_filters: Vec::new(),
         }),
     );
-    serde_json::from_slice(&raw).unwrap_or_default()
+    // Streaming responses produce concatenated JSON arrays: [a,b][c,d]...
+    // Parse each array and merge.
+    parse_chunked_json(&raw)
+}
+
+/// Parse concatenated JSON arrays from chunked responses into a single Vec.
+fn parse_chunked_json(data: &[u8]) -> Vec<serde_json::Value> {
+    // Try single array first (most common, non-chunked case).
+    if let Ok(arr) = serde_json::from_slice::<Vec<serde_json::Value>>(data) {
+        return arr;
+    }
+    // Chunked: multiple JSON arrays concatenated. Use streaming deserializer.
+    let mut results = Vec::new();
+    let deser = serde_json::Deserializer::from_slice(data).into_iter::<Vec<serde_json::Value>>();
+    for arr in deser.flatten() {
+        results.extend(arr);
+    }
+    results
 }
 
 fn ts_scan_filtered(
@@ -91,7 +109,7 @@ fn ts_scan_filtered(
     } else {
         rmp_serde::to_vec_named(&filters).unwrap_or_default()
     };
-    let raw = send_ok(
+    let raw = send_ok_streaming(
         &mut ctx.core,
         &mut ctx.tx,
         &mut ctx.rx,
@@ -107,7 +125,7 @@ fn ts_scan_filtered(
             rls_filters: Vec::new(),
         }),
     );
-    serde_json::from_slice(&raw).unwrap_or_default()
+    parse_chunked_json(&raw)
 }
 
 // ---------------------------------------------------------------------------

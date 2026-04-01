@@ -158,6 +158,7 @@ async fn wal_redispatch_makes_data_queryable() {
                     collection: coll,
                     payload,
                     format: "ilp".to_string(),
+                    wal_lsn: Some(record.header.lsn),
                 }),
                 collection,
             )
