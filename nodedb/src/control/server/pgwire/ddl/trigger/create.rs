@@ -91,6 +91,7 @@ pub fn create_trigger(
         priority: parsed.priority,
         enabled: true,
         execution_mode: parsed.execution_mode,
+        security: parsed.security,
         owner: identity.username.clone(),
         created_at: now,
     };

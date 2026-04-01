@@ -49,7 +49,7 @@ pub fn drop_trigger(
     Ok(vec![Response::Execution(Tag::new("DROP TRIGGER"))])
 }
 
-/// Handle `ALTER TRIGGER <name> ENABLE` / `ALTER TRIGGER <name> DISABLE`
+/// Handle `ALTER TRIGGER <name> ENABLE|DISABLE|OWNER TO <new_owner>`
 pub fn alter_trigger(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
@@ -57,22 +57,28 @@ pub fn alter_trigger(
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "alter triggers")?;
 
-    // ALTER TRIGGER <name> ENABLE|DISABLE
     if parts.len() < 4 {
         return Err(sqlstate_error(
             "42601",
-            "syntax: ALTER TRIGGER <name> ENABLE|DISABLE",
+            "syntax: ALTER TRIGGER <name> ENABLE|DISABLE|OWNER TO <user>",
         ));
     }
+
     let name = parts[2].to_lowercase();
     let action = parts[3].to_uppercase();
+
+    // ALTER TRIGGER <name> OWNER TO <new_owner>
+    if action == "OWNER" {
+        return alter_trigger_owner(state, identity, parts, &name);
+    }
+
     let enabled = match action.as_str() {
         "ENABLE" => true,
         "DISABLE" => false,
         _ => {
             return Err(sqlstate_error(
                 "42601",
-                &format!("expected ENABLE or DISABLE, got '{action}'"),
+                &format!("expected ENABLE, DISABLE, or OWNER TO, got '{action}'"),
             ));
         }
     };
@@ -104,6 +110,53 @@ pub fn alter_trigger(
         Some(identity.tenant_id),
         &identity.username,
         &format!("ALTER TRIGGER {name} {action}"),
+    );
+
+    Ok(vec![Response::Execution(Tag::new("ALTER TRIGGER"))])
+}
+
+/// Handle `ALTER TRIGGER <name> OWNER TO <new_owner>`
+fn alter_trigger_owner(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+    name: &str,
+) -> PgWireResult<Vec<Response>> {
+    // ALTER TRIGGER <name> OWNER TO <new_owner>
+    if parts.len() < 6 || !parts[4].eq_ignore_ascii_case("TO") {
+        return Err(sqlstate_error(
+            "42601",
+            "syntax: ALTER TRIGGER <name> OWNER TO <new_owner>",
+        ));
+    }
+    let new_owner = parts[5].trim_end_matches(';').to_string();
+
+    let tenant_id = identity.tenant_id.as_u32();
+    let catalog = state
+        .credentials
+        .catalog()
+        .as_ref()
+        .ok_or_else(|| sqlstate_error("XX000", "system catalog not available"))?;
+
+    let mut trigger = catalog
+        .get_trigger(tenant_id, name)
+        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
+        .ok_or_else(|| sqlstate_error("42704", &format!("trigger '{name}' does not exist")))?;
+
+    let old_owner = trigger.owner.clone();
+    trigger.owner = new_owner.clone();
+    catalog
+        .put_trigger(&trigger)
+        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+
+    // Re-register with updated owner in the in-memory registry.
+    state.trigger_registry.register(trigger);
+
+    state.audit_record(
+        crate::control::security::audit::AuditEvent::AdminAction,
+        Some(identity.tenant_id),
+        &identity.username,
+        &format!("ALTER TRIGGER {name} OWNER TO {new_owner} (was: {old_owner})"),
     );
 
     Ok(vec![Response::Execution(Tag::new("ALTER TRIGGER"))])

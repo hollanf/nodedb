@@ -16,6 +16,7 @@ pub(super) struct ParsedCreateTrigger {
     pub when_condition: Option<String>,
     pub priority: i32,
     pub execution_mode: TriggerExecutionMode,
+    pub security: TriggerSecurity,
     pub body_sql: String,
 }
 
@@ -61,6 +62,7 @@ pub(super) fn parse_create_trigger(sql: &str) -> PgWireResult<ParsedCreateTrigge
     let granularity = parse_granularity(&tokens, &mut i)?;
     let when_condition = parse_when_clause(header, &tokens, &mut i)?;
     let priority = parse_priority(&tokens, &mut i)?;
+    let security = parse_security(&tokens, &mut i)?;
 
     Ok(ParsedCreateTrigger {
         or_replace,
@@ -72,6 +74,7 @@ pub(super) fn parse_create_trigger(sql: &str) -> PgWireResult<ParsedCreateTrigge
         when_condition,
         priority,
         execution_mode,
+        security,
         body_sql,
     })
 }
@@ -271,6 +274,31 @@ fn parse_priority(tokens: &[&str], i: &mut usize) -> PgWireResult<i32> {
         .map_err(|_| sqlstate_error("42601", &format!("invalid priority: '{}'", tokens[*i])))?;
     *i += 1;
     Ok(val)
+}
+
+/// Parse optional `SECURITY INVOKER` or `SECURITY DEFINER` clause.
+/// Defaults to INVOKER if not specified.
+fn parse_security(tokens: &[&str], i: &mut usize) -> PgWireResult<TriggerSecurity> {
+    if *i >= tokens.len() || !tokens[*i].eq_ignore_ascii_case("SECURITY") {
+        return Ok(TriggerSecurity::Invoker);
+    }
+    *i += 1;
+    if *i >= tokens.len() {
+        return Err(sqlstate_error(
+            "42601",
+            "expected INVOKER or DEFINER after SECURITY",
+        ));
+    }
+    let mode = tokens[*i].to_uppercase();
+    *i += 1;
+    match mode.as_str() {
+        "INVOKER" => Ok(TriggerSecurity::Invoker),
+        "DEFINER" => Ok(TriggerSecurity::Definer),
+        _ => Err(sqlstate_error(
+            "42601",
+            &format!("expected INVOKER or DEFINER, got '{mode}'"),
+        )),
+    }
 }
 
 fn find_begin_pos(s: &str) -> Option<usize> {
