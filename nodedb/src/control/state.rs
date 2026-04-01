@@ -162,6 +162,10 @@ pub struct SharedState {
     /// Loaded from catalog on startup, updated by CREATE/DROP TRIGGER DDL.
     pub trigger_registry: crate::control::trigger::TriggerRegistry,
 
+    /// Cached parsed procedural blocks for triggers and procedures.
+    /// Avoids re-parsing the same body SQL on every invocation.
+    pub block_cache: crate::control::planner::procedural::executor::ProcedureBlockCache,
+
     /// In-memory change stream registry for CDC event routing.
     /// Loaded from catalog on startup, updated by CREATE/DROP CHANGE STREAM DDL.
     /// Arc-wrapped for sharing with the Event Plane's CdcRouter.
@@ -337,6 +341,9 @@ impl SharedState {
             shape_registry: crate::control::server::sync::shape::ShapeRegistry::new(),
             change_stream: crate::control::change_stream::ChangeStream::new(4096),
             trigger_registry: crate::control::trigger::TriggerRegistry::new(),
+            block_cache: crate::control::planner::procedural::executor::ProcedureBlockCache::new(
+                4096,
+            ),
             stream_registry: Arc::new(crate::event::cdc::StreamRegistry::new()),
             cdc_router: Arc::new(crate::event::cdc::CdcRouter::new(Arc::new(
                 crate::event::cdc::StreamRegistry::new(),
@@ -466,6 +473,9 @@ impl SharedState {
             roles,
             permissions,
             trigger_registry,
+            block_cache: crate::control::planner::procedural::executor::ProcedureBlockCache::new(
+                4096,
+            ),
             stream_registry: Arc::clone(&stream_registry),
             cdc_router: Arc::new(crate::event::cdc::CdcRouter::new(stream_registry)),
             group_registry,

@@ -118,11 +118,11 @@ fn compile_statements(
                      Move it inside an IF block or use CREATE PROCEDURE",
                 ));
             }
-            Statement::ReturnQuery { .. } => {
-                return Err(ProceduralError::compile(
-                    "RETURN QUERY in procedural functions is not yet supported. \
-                     Use a plain RETURN with a subquery expression",
-                ));
+            Statement::ReturnQuery { query } => {
+                // RETURN QUERY compiles to a subquery expression.
+                // This enables table-valued functions: the function body becomes
+                // `(SELECT ... FROM ... WHERE ...)` which DataFusion can inline.
+                return Ok(format!("({})", ctx.substitute(query)));
             }
             // LOOP/WHILE rejected by validator for function bodies.
             Statement::Loop { .. } | Statement::While { .. } => {

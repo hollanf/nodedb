@@ -1,5 +1,8 @@
+pub mod before;
 pub mod classify;
 pub mod collector;
+pub mod error_blame;
+pub mod partition;
 pub mod when_filter;
 
 /// Configuration for trigger batch processing.

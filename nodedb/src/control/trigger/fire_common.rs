@@ -51,7 +51,7 @@ pub async fn fire_triggers(
             }
         }
 
-        let block = match crate::control::planner::procedural::parse_block(&trigger.body_sql) {
+        let block = match state.block_cache.get_or_parse(&trigger.body_sql) {
             Ok(b) => b,
             Err(e) => {
                 warn!(
@@ -104,7 +104,7 @@ pub async fn fire_triggers(
 /// - INVOKER (default): uses the caller's identity (passthrough).
 /// - DEFINER: creates a synthetic identity from the trigger's owner.
 ///   The tenant is always the trigger's tenant — DEFINER cannot cross tenants.
-fn resolve_trigger_identity(
+pub(crate) fn resolve_trigger_identity(
     trigger: &StoredTrigger,
     caller: &AuthenticatedIdentity,
     tenant_id: TenantId,
@@ -160,7 +160,7 @@ pub async fn fire_before_triggers_with_mutation(
             }
         }
 
-        let block = match crate::control::planner::procedural::parse_block(&trigger.body_sql) {
+        let block = match state.block_cache.get_or_parse(&trigger.body_sql) {
             Ok(b) => b,
             Err(e) => {
                 warn!(
