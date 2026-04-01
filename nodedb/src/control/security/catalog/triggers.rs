@@ -146,6 +146,7 @@ mod tests {
             priority: 0,
             enabled: true,
             execution_mode: TriggerExecutionMode::default(),
+            security: TriggerSecurity::default(),
             owner: "admin".into(),
             created_at: 1000,
         }

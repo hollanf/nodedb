@@ -54,6 +54,56 @@ impl RowBindings {
         copy
     }
 
+    /// Create a copy with replaced NEW row fields (for BEFORE trigger chaining).
+    ///
+    /// Used when a BEFORE trigger modifies the NEW row and subsequent triggers
+    /// in the chain need to see the updated values.
+    pub fn with_new_row(&self, new_row: HashMap<String, serde_json::Value>) -> Self {
+        let mut copy = self.clone();
+        copy.new_row = Some(new_row);
+        copy
+    }
+
+    /// Create bindings for a BEFORE INSERT trigger.
+    pub fn before_insert(collection: &str, new_row: HashMap<String, serde_json::Value>) -> Self {
+        Self {
+            new_row: Some(new_row),
+            old_row: None,
+            tg_op: "INSERT".into(),
+            tg_table_name: collection.into(),
+            tg_when: "BEFORE".into(),
+            variables: HashMap::new(),
+        }
+    }
+
+    /// Create bindings for a BEFORE UPDATE trigger.
+    pub fn before_update(
+        collection: &str,
+        old_row: HashMap<String, serde_json::Value>,
+        new_row: HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Self {
+            new_row: Some(new_row),
+            old_row: Some(old_row),
+            tg_op: "UPDATE".into(),
+            tg_table_name: collection.into(),
+            tg_when: "BEFORE".into(),
+            variables: HashMap::new(),
+        }
+    }
+
+    /// Create bindings for a BEFORE DELETE trigger.
+    pub fn before_delete(collection: &str, old_row: HashMap<String, serde_json::Value>) -> Self {
+        Self {
+            new_row: None,
+            old_row: Some(old_row),
+            tg_op: "DELETE".into(),
+            tg_table_name: collection.into(),
+            tg_when: "BEFORE".into(),
+            variables: HashMap::new(),
+        }
+    }
+
     /// Create bindings for an AFTER INSERT trigger.
     pub fn after_insert(collection: &str, new_row: HashMap<String, serde_json::Value>) -> Self {
         Self {
@@ -76,6 +126,18 @@ impl RowBindings {
             new_row: Some(new_row),
             old_row: Some(old_row),
             tg_op: "UPDATE".into(),
+            tg_table_name: collection.into(),
+            tg_when: "AFTER".into(),
+            variables: HashMap::new(),
+        }
+    }
+
+    /// Create bindings for a STATEMENT-level trigger (no NEW/OLD row).
+    pub fn statement(collection: &str, tg_op: &str) -> Self {
+        Self {
+            new_row: None,
+            old_row: None,
+            tg_op: tg_op.into(),
             tg_table_name: collection.into(),
             tg_when: "AFTER".into(),
             variables: HashMap::new(),

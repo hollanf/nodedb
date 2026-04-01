@@ -187,11 +187,58 @@ pub async fn insert_document(
     let tenant_id = identity.tenant_id;
     let vshard_id = crate::types::VShardId::from_key(parsed.doc_id.as_bytes());
 
+    // Fire INSTEAD OF INSERT triggers — if handled, skip normal dispatch.
+    match crate::control::trigger::fire_instead::fire_instead_of_insert(
+        state,
+        identity,
+        tenant_id,
+        &parsed.coll_name,
+        &parsed.fields,
+        0,
+    )
+    .await
+    {
+        Ok(crate::control::trigger::fire_instead::InsteadOfResult::Handled) => {
+            return Some(Ok(vec![Response::Execution(Tag::new("INSERT"))]));
+        }
+        Ok(crate::control::trigger::fire_instead::InsteadOfResult::NoTrigger) => {}
+        Err(e) => return Some(Err(sqlstate_error("XX000", &format!("trigger error: {e}")))),
+    }
+
+    // Fire BEFORE INSERT triggers — may reject via RAISE EXCEPTION, may mutate NEW fields.
+    let fields_after_before = match crate::control::trigger::fire_before::fire_before_insert(
+        state,
+        identity,
+        tenant_id,
+        &parsed.coll_name,
+        &parsed.fields,
+        0,
+    )
+    .await
+    {
+        Ok(f) => f,
+        Err(e) => {
+            return Some(Err(sqlstate_error(
+                "XX000",
+                &format!("BEFORE trigger error: {e}"),
+            )));
+        }
+    };
+
+    // Rebuild value bytes if BEFORE trigger mutated NEW fields.
+    let value_bytes = if fields_after_before != parsed.fields {
+        let doc = serde_json::Value::Object(fields_after_before.clone());
+        rmp_serde::to_vec_named(&doc).unwrap_or(parsed.value_bytes)
+    } else {
+        parsed.value_bytes
+    };
+    let fields = fields_after_before;
+
     // Store document via PointPut.
     let plan = crate::bridge::envelope::PhysicalPlan::Document(DocumentOp::PointPut {
         collection: parsed.coll_name.clone(),
         document_id: parsed.doc_id.clone(),
-        value: parsed.value_bytes,
+        value: value_bytes,
     });
 
     if let Err(e) = crate::control::server::dispatch_utils::wal_append_if_write(
@@ -215,8 +262,8 @@ pub async fn insert_document(
         identity,
         tenant_id,
         &parsed.coll_name,
-        &parsed.fields,
-        0, // cascade depth starts at 0
+        &fields,
+        0,
         Some(TriggerExecutionMode::Sync),
     )
     .await
@@ -251,7 +298,7 @@ pub async fn insert_document(
     }
 
     if parsed.has_returning {
-        return Some(returning_response(&parsed.doc_id, &parsed.fields));
+        return Some(returning_response(&parsed.doc_id, &fields));
     }
 
     Some(Ok(vec![Response::Execution(Tag::new("INSERT"))]))
@@ -274,10 +321,57 @@ pub async fn upsert_document(
     let tenant_id = identity.tenant_id;
     let vshard_id = crate::types::VShardId::from_key(parsed.doc_id.as_bytes());
 
+    // Fire INSTEAD OF INSERT triggers (upsert treated as INSERT for triggers).
+    match crate::control::trigger::fire_instead::fire_instead_of_insert(
+        state,
+        identity,
+        tenant_id,
+        &parsed.coll_name,
+        &parsed.fields,
+        0,
+    )
+    .await
+    {
+        Ok(crate::control::trigger::fire_instead::InsteadOfResult::Handled) => {
+            return Some(Ok(vec![Response::Execution(Tag::new("UPSERT"))]));
+        }
+        Ok(crate::control::trigger::fire_instead::InsteadOfResult::NoTrigger) => {}
+        Err(e) => return Some(Err(sqlstate_error("XX000", &format!("trigger error: {e}")))),
+    }
+
+    // Fire BEFORE INSERT triggers — may mutate NEW fields.
+    let fields_after_before = match crate::control::trigger::fire_before::fire_before_insert(
+        state,
+        identity,
+        tenant_id,
+        &parsed.coll_name,
+        &parsed.fields,
+        0,
+    )
+    .await
+    {
+        Ok(f) => f,
+        Err(e) => {
+            return Some(Err(sqlstate_error(
+                "XX000",
+                &format!("BEFORE trigger error: {e}"),
+            )));
+        }
+    };
+
+    // Rebuild value bytes if BEFORE trigger mutated NEW fields.
+    let value_bytes = if fields_after_before != parsed.fields {
+        let doc = serde_json::Value::Object(fields_after_before.clone());
+        rmp_serde::to_vec_named(&doc).unwrap_or(parsed.value_bytes)
+    } else {
+        parsed.value_bytes
+    };
+    let fields = fields_after_before;
+
     let plan = crate::bridge::envelope::PhysicalPlan::Document(DocumentOp::Upsert {
         collection: parsed.coll_name.clone(),
         document_id: parsed.doc_id.clone(),
-        value: parsed.value_bytes,
+        value: value_bytes,
     });
 
     if let Err(e) = crate::control::server::dispatch_utils::wal_append_if_write(
@@ -291,6 +385,22 @@ pub async fn upsert_document(
     .await
     {
         return Some(Err(sqlstate_error("XX000", &e.to_string())));
+    }
+
+    // Fire SYNC AFTER INSERT triggers.
+    use crate::control::security::catalog::trigger_types::TriggerExecutionMode;
+    if let Err(e) = crate::control::trigger::fire::fire_after_insert(
+        state,
+        identity,
+        tenant_id,
+        &parsed.coll_name,
+        &fields,
+        0,
+        Some(TriggerExecutionMode::Sync),
+    )
+    .await
+    {
+        return Some(Err(sqlstate_error("XX000", &format!("trigger error: {e}"))));
     }
 
     Some(Ok(vec![Response::Execution(Tag::new("UPSERT"))]))

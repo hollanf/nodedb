@@ -8,6 +8,9 @@
 //! is planned via DataFusion and dispatched to the Data Plane through
 //! the existing SPSC bridge.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
 use crate::control::planner::procedural::ast::*;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
@@ -22,6 +25,7 @@ pub const MAX_CASCADE_DEPTH: u32 = 16;
 /// Statement executor: steps through procedural SQL blocks with DML.
 ///
 /// Each instance tracks the current cascade depth to prevent infinite loops.
+/// For BEFORE triggers, captures `NEW.*` field mutations via ASSIGN statements.
 pub struct StatementExecutor<'a> {
     state: &'a SharedState,
     /// Stored for SECURITY INVOKER enforcement on trigger body DML.
@@ -33,6 +37,10 @@ pub struct StatementExecutor<'a> {
     /// DML uses `EventSource::Trigger` so the Data Plane emits WriteEvents
     /// with the correct source tag (preventing cascade re-triggering).
     event_source: crate::event::EventSource,
+    /// Accumulates `NEW.field := value` mutations from BEFORE trigger ASSIGN
+    /// statements. After execution, the caller reads these to apply row changes.
+    /// Uses Arc<Mutex> because the executor is borrowed across async boundaries.
+    new_mutations: Arc<Mutex<HashMap<String, serde_json::Value>>>,
 }
 
 /// Control flow signal from statement execution.
@@ -78,7 +86,17 @@ impl<'a> StatementExecutor<'a> {
             tenant_id,
             cascade_depth,
             event_source,
+            new_mutations: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Extract `NEW.*` field mutations accumulated during execution.
+    ///
+    /// Used by BEFORE triggers to capture `NEW.field := expr` assignments.
+    /// Returns an empty map if no mutations were made.
+    pub fn take_new_mutations(&self) -> HashMap<String, serde_json::Value> {
+        let mut guard = self.new_mutations.lock().unwrap_or_else(|p| p.into_inner());
+        std::mem::take(&mut *guard)
     }
 
     /// Execute a procedural block with the given row bindings.
@@ -219,7 +237,11 @@ impl<'a> StatementExecutor<'a> {
                     })
                 }
                 Statement::Raise { .. } => Ok(Flow::Continue),
-                Statement::Declare { .. } | Statement::Assign { .. } => Ok(Flow::Continue),
+                Statement::Declare { .. } => Ok(Flow::Continue),
+                Statement::Assign { target, expr } => {
+                    self.execute_assign(target, expr, bindings).await?;
+                    Ok(Flow::Continue)
+                }
                 Statement::Return { .. } | Statement::ReturnQuery { .. } => Ok(Flow::Continue),
                 Statement::Commit | Statement::Rollback => Err(crate::Error::BadRequest {
                     detail: "COMMIT/ROLLBACK not yet supported in procedure bodies".into(),
@@ -255,6 +277,69 @@ impl<'a> StatementExecutor<'a> {
             }
         }
         Ok(Flow::Continue)
+    }
+
+    /// Execute an ASSIGN statement (`target := expr`).
+    ///
+    /// If the target is `NEW.<field>`, evaluates the expression via DataFusion
+    /// and stores the result in `new_mutations` for the BEFORE trigger caller
+    /// to apply to the actual row being written.
+    ///
+    /// Other targets (local variables) are currently no-ops — they would need
+    /// a variable scope to be useful, which DECLARE currently doesn't create.
+    async fn execute_assign(
+        &self,
+        target: &str,
+        expr: &SqlExpr,
+        bindings: &RowBindings,
+    ) -> crate::Result<()> {
+        let target_upper = target.to_uppercase();
+        if let Some(field_name) = target_upper.strip_prefix("NEW.") {
+            let bound_expr = bindings.substitute(&expr.sql);
+            let value = self.evaluate_to_json(&bound_expr).await?;
+            let mut guard = self.new_mutations.lock().unwrap_or_else(|p| p.into_inner());
+            guard.insert(field_name.to_lowercase(), value);
+        }
+        // Non-NEW assignments: local variable tracking would go here when
+        // DECLARE creates a variable scope. For now they are side-effect-free.
+        Ok(())
+    }
+
+    /// Evaluate a SQL expression and return the result as a serde_json::Value.
+    async fn evaluate_to_json(&self, expr: &str) -> crate::Result<serde_json::Value> {
+        // Fast path: literal values.
+        let trimmed = expr.trim();
+        if trimmed.eq_ignore_ascii_case("NULL") {
+            return Ok(serde_json::Value::Null);
+        }
+        if trimmed.eq_ignore_ascii_case("TRUE") {
+            return Ok(serde_json::Value::Bool(true));
+        }
+        if trimmed.eq_ignore_ascii_case("FALSE") {
+            return Ok(serde_json::Value::Bool(false));
+        }
+        if let Ok(n) = trimmed.parse::<i64>() {
+            return Ok(serde_json::json!(n));
+        }
+        if let Ok(n) = trimmed.parse::<f64>() {
+            return Ok(serde_json::json!(n));
+        }
+        // String literal: 'value'
+        if trimmed.starts_with('\'') && trimmed.ends_with('\'') && trimmed.len() >= 2 {
+            let inner = &trimmed[1..trimmed.len() - 1];
+            return Ok(serde_json::Value::String(inner.replace("''", "'")));
+        }
+
+        // Complex expression: evaluate via DataFusion.
+        let batches = self.eval_sql_expr(trimmed, "assign").await?;
+        for batch in &batches {
+            if batch.num_rows() > 0 {
+                let col = batch.column(0);
+                return Ok(arrow_scalar_to_json(col, 0));
+            }
+        }
+
+        Ok(serde_json::Value::Null)
     }
 
     /// Execute a DML statement, substituting bindings into SQL.
@@ -376,5 +461,99 @@ impl<'a> StatementExecutor<'a> {
 
     pub fn cascade_depth(&self) -> u32 {
         self.cascade_depth
+    }
+}
+
+/// Extract a single scalar value from an Arrow array at the given row index
+/// and convert to serde_json::Value.
+fn arrow_scalar_to_json(
+    col: &std::sync::Arc<dyn datafusion::arrow::array::Array>,
+    row: usize,
+) -> serde_json::Value {
+    use datafusion::arrow::array::*;
+    use datafusion::arrow::datatypes::DataType;
+
+    if col.is_null(row) {
+        return serde_json::Value::Null;
+    }
+
+    match col.data_type() {
+        DataType::Boolean => {
+            let arr = col.as_any().downcast_ref::<BooleanArray>().unwrap();
+            serde_json::Value::Bool(arr.value(row))
+        }
+        DataType::Int8 => {
+            serde_json::json!(col.as_any().downcast_ref::<Int8Array>().unwrap().value(row))
+        }
+        DataType::Int16 => serde_json::json!(
+            col.as_any()
+                .downcast_ref::<Int16Array>()
+                .unwrap()
+                .value(row)
+        ),
+        DataType::Int32 => serde_json::json!(
+            col.as_any()
+                .downcast_ref::<Int32Array>()
+                .unwrap()
+                .value(row)
+        ),
+        DataType::Int64 => serde_json::json!(
+            col.as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap()
+                .value(row)
+        ),
+        DataType::UInt8 => serde_json::json!(
+            col.as_any()
+                .downcast_ref::<UInt8Array>()
+                .unwrap()
+                .value(row)
+        ),
+        DataType::UInt16 => serde_json::json!(
+            col.as_any()
+                .downcast_ref::<UInt16Array>()
+                .unwrap()
+                .value(row)
+        ),
+        DataType::UInt32 => serde_json::json!(
+            col.as_any()
+                .downcast_ref::<UInt32Array>()
+                .unwrap()
+                .value(row)
+        ),
+        DataType::UInt64 => serde_json::json!(
+            col.as_any()
+                .downcast_ref::<UInt64Array>()
+                .unwrap()
+                .value(row)
+        ),
+        DataType::Float32 => serde_json::json!(
+            col.as_any()
+                .downcast_ref::<Float32Array>()
+                .unwrap()
+                .value(row)
+        ),
+        DataType::Float64 => serde_json::json!(
+            col.as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap()
+                .value(row)
+        ),
+        DataType::Utf8 => {
+            let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
+            serde_json::Value::String(arr.value(row).to_string())
+        }
+        DataType::LargeUtf8 => {
+            let arr = col.as_any().downcast_ref::<LargeStringArray>().unwrap();
+            serde_json::Value::String(arr.value(row).to_string())
+        }
+        _ => {
+            // Fallback: format as debug string.
+            let scalar = datafusion::common::ScalarValue::try_from_array(col, row);
+            match scalar {
+                Ok(s) => serde_json::Value::String(s.to_string()),
+                Err(_) => serde_json::Value::Null,
+            }
+        }
     }
 }

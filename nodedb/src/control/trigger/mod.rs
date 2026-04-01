@@ -1,4 +1,10 @@
+pub mod dml_hook;
 pub mod fire;
+pub mod fire_after;
+pub mod fire_before;
+pub mod fire_common;
+pub mod fire_instead;
+pub mod fire_statement;
 pub mod registry;
 
 pub use registry::{DmlEvent, TriggerRegistry};

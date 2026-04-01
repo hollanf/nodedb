@@ -108,6 +108,58 @@ impl NodeDbPgHandler {
 
             let plan_kind = describe_plan(&task.plan);
             let collection_for_si = extract_collection(&task.plan).map(String::from);
+
+            // --- Trigger interception for DML writes ---
+            let dml_info = crate::control::trigger::dml_hook::classify_dml_write(&task.plan);
+
+            // Fetch OLD row and fire BEFORE/INSTEAD OF triggers if applicable.
+            let old_row = if let Some(ref info) = dml_info
+                && info.document_id.is_some()
+                && matches!(
+                    info.event,
+                    crate::control::trigger::DmlEvent::Update
+                        | crate::control::trigger::DmlEvent::Delete
+                ) {
+                let doc_id = info.document_id.as_deref().unwrap_or("");
+                let row = crate::control::trigger::dml_hook::fetch_old_row(
+                    &self.state,
+                    tenant_id,
+                    &info.collection,
+                    doc_id,
+                )
+                .await;
+                if row.is_empty() { None } else { Some(row) }
+            } else {
+                None
+            };
+
+            if let Some(ref info) = dml_info {
+                let proceed = crate::control::trigger::dml_hook::fire_pre_dispatch_triggers(
+                    &self.state,
+                    identity,
+                    tenant_id,
+                    info,
+                    &old_row,
+                    0,
+                )
+                .await
+                .map_err(|e| {
+                    let (severity, code, message) = error_to_sqlstate(&e);
+                    PgWireError::UserError(Box::new(ErrorInfo::new(
+                        severity.to_owned(),
+                        code.to_owned(),
+                        message,
+                    )))
+                })?;
+
+                if !proceed {
+                    // INSTEAD OF trigger handled the write — skip dispatch.
+                    responses.push(Response::Execution(Tag::new("OK")));
+                    continue;
+                }
+            }
+
+            // --- Normal dispatch ---
             let resp = self.dispatch_task(task).await.map_err(|e| {
                 let (severity, code, message) = error_to_sqlstate(&e);
                 PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -125,6 +177,27 @@ impl NodeDbPgHandler {
                     code.to_owned(),
                     message,
                 ))));
+            }
+
+            // --- SYNC AFTER triggers ---
+            if let Some(ref info) = dml_info {
+                crate::control::trigger::dml_hook::fire_post_dispatch_triggers(
+                    &self.state,
+                    identity,
+                    tenant_id,
+                    info,
+                    &old_row,
+                    0,
+                )
+                .await
+                .map_err(|e| {
+                    let (severity, code, message) = error_to_sqlstate(&e);
+                    PgWireError::UserError(Box::new(ErrorInfo::new(
+                        severity.to_owned(),
+                        code.to_owned(),
+                        message,
+                    )))
+                })?;
             }
 
             // Track reads for snapshot isolation conflict detection.

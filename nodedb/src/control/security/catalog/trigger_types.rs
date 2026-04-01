@@ -89,6 +89,29 @@ impl TriggerGranularity {
     }
 }
 
+/// Security execution mode for triggers and functions.
+///
+/// - `Invoker` (default): body executes with caller's credentials. Subqueries
+///   and DML subject to caller's GRANT/DENY and RLS policies.
+/// - `Definer`: body executes with the trigger/function owner's credentials.
+///   Allows privileged operations (e.g., admin-owned trigger can update system tables).
+///   Tenant boundary still enforced — DEFINER cannot cross tenant boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum TriggerSecurity {
+    #[default]
+    Invoker,
+    Definer,
+}
+
+impl TriggerSecurity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Invoker => "INVOKER",
+            Self::Definer => "DEFINER",
+        }
+    }
+}
+
 /// Serializable trigger definition for redb storage.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredTrigger {
@@ -116,6 +139,10 @@ pub struct StoredTrigger {
     /// Backward-compatible: defaults to ASYNC for triggers created before this field existed.
     #[serde(default)]
     pub execution_mode: TriggerExecutionMode,
+    /// Security mode: INVOKER (default) or DEFINER.
+    /// DEFINER executes the trigger body with the owner's credentials.
+    #[serde(default)]
+    pub security: TriggerSecurity,
     pub owner: String,
     pub created_at: u64,
 }

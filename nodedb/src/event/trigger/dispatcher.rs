@@ -66,14 +66,28 @@ pub async fn dispatch_triggers(
             //
             // The Data Plane ring buffer path emits individual Insert/Delete
             // events for each row in a batch, so triggers fire on those
-            // individual events. Bulk events are safe to skip here.
+            // individual events. Bulk events are safe to skip for ROW triggers.
             //
-            // See also: crdt_sync/packager.rs which skips bulk events for the
-            // same reason ("per-row events handle delivery").
-            Ok(())
+            // However, STATEMENT-level triggers fire on bulk events since they
+            // represent a complete DML statement.
+            let dml_event = match event.op {
+                WriteOp::BulkInsert { .. } => crate::control::trigger::DmlEvent::Insert,
+                _ => crate::control::trigger::DmlEvent::Delete,
+            };
+            crate::control::trigger::fire_statement::fire_after_statement(
+                state,
+                &identity,
+                event.tenant_id,
+                &event.collection,
+                dml_event,
+                0,
+                mode_filter,
+            )
+            .await
         }
         _ => {
-            fire_for_operation(
+            // Fire ROW-level triggers for individual events.
+            let row_result = fire_for_operation(
                 &op_str,
                 state,
                 &identity,
@@ -81,10 +95,57 @@ pub async fn dispatch_triggers(
                 &event.collection,
                 new_fields.as_ref(),
                 old_fields.as_ref(),
-                0, // cascade_depth starts at 0 for Event Plane dispatch
+                0,
                 mode_filter,
             )
-            .await
+            .await;
+
+            // Also fire STATEMENT-level triggers for individual point operations
+            // (a point INSERT/UPDATE/DELETE is also a complete statement).
+            if row_result.is_ok() {
+                let dml_event = match event.op {
+                    WriteOp::Insert => crate::control::trigger::DmlEvent::Insert,
+                    WriteOp::Update => crate::control::trigger::DmlEvent::Update,
+                    WriteOp::Delete => crate::control::trigger::DmlEvent::Delete,
+                    _ => return, // Heartbeat, etc.
+                };
+                if let Err(e) = crate::control::trigger::fire_statement::fire_after_statement(
+                    state,
+                    &identity,
+                    event.tenant_id,
+                    &event.collection,
+                    dml_event,
+                    0,
+                    mode_filter,
+                )
+                .await
+                {
+                    warn!(
+                        collection = %event.collection,
+                        op = %event.op,
+                        error = %e,
+                        "AFTER STATEMENT trigger failed, enqueuing for retry"
+                    );
+                    // Statement trigger failures also go through retry.
+                    retry_queue.enqueue(RetryEntry {
+                        tenant_id: event.tenant_id.as_u32(),
+                        collection: event.collection.to_string(),
+                        row_id: String::new(),
+                        operation: op_str.clone(),
+                        trigger_name: String::new(),
+                        new_fields: None,
+                        old_fields: None,
+                        attempts: 0,
+                        last_error: e.to_string(),
+                        next_retry_at: std::time::Instant::now(),
+                        source_lsn: event.lsn.as_u64(),
+                        source_sequence: event.sequence,
+                        cascade_depth: 0,
+                    });
+                }
+            }
+
+            row_result
         }
     };
 
