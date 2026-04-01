@@ -64,20 +64,16 @@ pub fn alter_schedule(
                     "ALTER SCHEDULE SET supports: CRON".to_owned(),
                 ))));
             }
-            let new_cron = parts
-                .get(5)
-                .ok_or_else(|| {
-                    PgWireError::UserError(Box::new(ErrorInfo::new(
-                        "ERROR".to_owned(),
-                        "42601".to_owned(),
-                        "ALTER SCHEDULE SET CRON requires a cron expression".to_owned(),
-                    )))
-                })?
-                .trim_matches('\'')
-                .trim_matches('"');
+            // Extract the quoted cron expression from the raw SQL.
+            let new_cron = extract_quoted_cron(sql).ok_or_else(|| {
+                PgWireError::UserError(Box::new(ErrorInfo::new(
+                    "ERROR".to_owned(),
+                    "42601".to_owned(),
+                    "ALTER SCHEDULE SET CRON requires a quoted cron expression".to_owned(),
+                )))
+            })?;
 
-            // Validate the new cron expression.
-            CronExpr::parse(new_cron).map_err(|e| {
+            CronExpr::parse(&new_cron).map_err(|e| {
                 PgWireError::UserError(Box::new(ErrorInfo::new(
                     "ERROR".to_owned(),
                     "22023".to_owned(),
@@ -85,7 +81,7 @@ pub fn alter_schedule(
                 )))
             })?;
 
-            def.cron_expr = new_cron.to_string();
+            def.cron_expr = new_cron;
         }
         _ => {
             return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -111,4 +107,14 @@ pub fn alter_schedule(
     state.schedule_registry.update(def);
 
     Ok(vec![Response::Execution(Tag::new("ALTER SCHEDULE"))])
+}
+
+/// Extract the content between single quotes after "CRON" in the SQL.
+fn extract_quoted_cron(sql: &str) -> Option<String> {
+    let upper = sql.to_uppercase();
+    let cron_idx = upper.find("CRON")?;
+    let rest = &sql[cron_idx + 4..];
+    let start = rest.find('\'')?;
+    let end = rest[start + 1..].find('\'')?;
+    Some(rest[start + 1..start + 1 + end].to_string())
 }
