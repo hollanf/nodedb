@@ -78,6 +78,71 @@ impl SequenceHandle {
         Ok(new_val)
     }
 
+    /// Advance the sequence by N values in one atomic operation.
+    ///
+    /// Returns a Vec of N consecutive values. Uses a single `fetch_add`
+    /// for the entire batch — zero contention for bulk inserts.
+    pub fn nextval_batch(&self, n: usize) -> Result<Vec<i64>, SequenceError> {
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        let increment = self.def.increment;
+        let total_advance = increment * n as i64;
+        let prev = self.counter.fetch_add(total_advance, Ordering::Relaxed);
+
+        self.called.store(true, Ordering::Relaxed);
+
+        let mut values = Vec::with_capacity(n);
+        for i in 0..n {
+            values.push(prev + increment * (i as i64 + 1));
+        }
+
+        // Check bounds on the last value (n > 0 guaranteed above).
+        let last = values[n - 1];
+        if increment > 0 && last > self.def.max_value {
+            if self.def.cycle {
+                // Wrap: reset counter to min_value + remainder.
+                self.counter.store(self.def.min_value, Ordering::Relaxed);
+                // Regenerate values from min_value.
+                values.clear();
+                for i in 0..n {
+                    values.push(self.def.min_value + increment * i as i64);
+                }
+                self.counter.store(
+                    self.def.min_value + increment * (n as i64 - 1),
+                    Ordering::Relaxed,
+                );
+                return Ok(values);
+            }
+            // Rollback.
+            self.counter.store(prev, Ordering::Relaxed);
+            return Err(SequenceError::Exhausted {
+                name: self.def.name.clone(),
+            });
+        }
+        if increment < 0 && last < self.def.min_value {
+            if self.def.cycle {
+                self.counter.store(self.def.max_value, Ordering::Relaxed);
+                values.clear();
+                for i in 0..n {
+                    values.push(self.def.max_value + increment * i as i64);
+                }
+                self.counter.store(
+                    self.def.max_value + increment * (n as i64 - 1),
+                    Ordering::Relaxed,
+                );
+                return Ok(values);
+            }
+            self.counter.store(prev, Ordering::Relaxed);
+            return Err(SequenceError::Exhausted {
+                name: self.def.name.clone(),
+            });
+        }
+
+        Ok(values)
+    }
+
     /// Get the last value returned by nextval (for currval).
     pub fn currval(&self) -> Result<i64, SequenceError> {
         if !self.called.load(Ordering::Relaxed) {

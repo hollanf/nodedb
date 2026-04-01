@@ -89,6 +89,21 @@ impl SequenceRegistry {
         handle.nextval()
     }
 
+    /// Get N values from a sequence in one atomic batch.
+    pub fn nextval_batch(
+        &self,
+        tenant_id: u32,
+        name: &str,
+        n: usize,
+    ) -> Result<Vec<i64>, SequenceError> {
+        let key = registry_key(tenant_id, name);
+        let map = self.sequences.read().unwrap_or_else(|p| p.into_inner());
+        let handle = map.get(&key).ok_or_else(|| SequenceError::NotFound {
+            name: name.to_string(),
+        })?;
+        handle.nextval_batch(n)
+    }
+
     /// Get the current value (last nextval result on this node).
     pub fn currval(&self, tenant_id: u32, name: &str) -> Result<i64, SequenceError> {
         let key = registry_key(tenant_id, name);
