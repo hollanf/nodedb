@@ -242,19 +242,27 @@ impl NodeDbPgHandler {
         }
 
         // DECLARE cursor_name CURSOR FOR SELECT ...
+        // DECLARE [name] [SCROLL | NO SCROLL] CURSOR [WITH HOLD] FOR query
         if upper.starts_with("DECLARE ") && upper.contains(" CURSOR ") {
+            let scrollable =
+                upper.contains(" SCROLL CURSOR") && !upper.contains(" NO SCROLL CURSOR");
+            let with_hold = upper.contains(" WITH HOLD ");
             let parts: Vec<&str> = sql_trimmed.split_whitespace().collect();
             let cursor_name = parts.get(1).unwrap_or(&"default").to_string();
-            // Extract the SQL after "CURSOR FOR"
             if let Some(for_pos) = upper.find(" FOR ") {
                 let inner_sql = sql_trimmed[for_pos + 5..].trim();
-                // Execute the inner query to get results.
                 match self
                     .execute_query_for_cursor(addr, inner_sql, identity)
                     .await
                 {
                     Ok(rows) => {
-                        self.sessions.declare_cursor(addr, cursor_name, rows);
+                        self.sessions.declare_cursor(
+                            addr,
+                            cursor_name,
+                            rows,
+                            scrollable,
+                            with_hold,
+                        );
                         return Ok(vec![Response::Execution(Tag::new("DECLARE CURSOR"))]);
                     }
                     Err(e) => return Err(e),
@@ -263,41 +271,14 @@ impl NodeDbPgHandler {
             return Ok(vec![Response::Execution(Tag::new("DECLARE CURSOR"))]);
         }
 
-        // FETCH [count] FROM cursor_name
+        // FETCH [ALL | FORWARD n | BACKWARD n | n] FROM cursor_name
         if upper.starts_with("FETCH ") {
-            let parts: Vec<&str> = sql_trimmed.split_whitespace().collect();
-            let (count, cursor_name) = if parts.len() >= 4 && parts[2].eq_ignore_ascii_case("FROM")
-            {
-                let n = parts[1].parse::<usize>().unwrap_or(1);
-                (n, parts[3].to_string())
-            } else if parts.len() >= 3 && parts[1].eq_ignore_ascii_case("FROM") {
-                (1, parts[2].to_string())
-            } else {
-                (1, parts.get(1).unwrap_or(&"default").to_string())
-            };
+            return self.handle_fetch(addr, sql_trimmed, &upper);
+        }
 
-            match self.sessions.fetch_cursor(addr, &cursor_name, count) {
-                Ok((rows, _exhausted)) => {
-                    let schema = std::sync::Arc::new(vec![text_field("result")]);
-                    let mut encoded_rows = Vec::with_capacity(rows.len());
-                    for row_json in &rows {
-                        let mut encoder = DataRowEncoder::new(schema.clone());
-                        let _ = encoder.encode_field(row_json);
-                        encoded_rows.push(Ok(encoder.take_row()));
-                    }
-                    return Ok(vec![Response::Query(QueryResponse::new(
-                        schema,
-                        futures::stream::iter(encoded_rows),
-                    ))]);
-                }
-                Err(msg) => {
-                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                        "ERROR".to_owned(),
-                        "34000".to_owned(),
-                        msg.to_string(),
-                    ))));
-                }
-            }
+        // MOVE [FORWARD | BACKWARD] n IN cursor_name
+        if upper.starts_with("MOVE ") {
+            return self.handle_move(addr, &upper);
         }
 
         // CLOSE cursor_name
@@ -432,6 +413,16 @@ impl NodeDbPgHandler {
         // LIVE SELECT: create subscription, store in session, return channel info.
         if upper.starts_with("LIVE SELECT ") {
             return self.handle_live_select(identity, addr, sql_trimmed);
+        }
+
+        // Temporary tables: CREATE TEMPORARY TABLE / CREATE TEMP TABLE.
+        if upper.starts_with("CREATE TEMPORARY TABLE ") || upper.starts_with("CREATE TEMP TABLE ") {
+            return super::super::ddl::temp_table::create_temp_table(
+                &self.sessions,
+                identity,
+                addr,
+                sql_trimmed,
+            );
         }
 
         if let Some(result) = super::super::ddl::dispatch(&self.state, identity, sql_trimmed).await

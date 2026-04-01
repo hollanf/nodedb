@@ -203,12 +203,21 @@ pub async fn dispatch(
         return Some(select_from_topic(state, identity, &parts).await);
     }
 
-    // Schedules: CREATE/DROP/SHOW SCHEDULE
+    // Schedules: CREATE/DROP/ALTER/SHOW SCHEDULE
     if upper.starts_with("CREATE SCHEDULE ") {
         return Some(super::schedule::create_schedule(state, identity, sql));
     }
     if upper.starts_with("DROP SCHEDULE ") {
         return Some(super::schedule::drop_schedule(state, identity, &parts));
+    }
+    if upper.starts_with("ALTER SCHEDULE ") {
+        return Some(super::schedule::alter_schedule(state, identity, sql));
+    }
+    if upper.starts_with("SHOW SCHEDULE HISTORY ") {
+        let name = parts.get(3).unwrap_or(&"");
+        return Some(super::schedule::show_schedule_history(
+            state, identity, name,
+        ));
     }
     if upper.starts_with("SHOW SCHEDULE") {
         return Some(super::schedule::show_schedules(state, identity));
@@ -226,6 +235,27 @@ pub async fn dispatch(
     }
     if upper == "SHOW SEQUENCES" || upper.starts_with("SHOW SEQUENCES ") {
         return Some(super::sequence::show_sequences(state, identity));
+    }
+
+    // Maintenance: ANALYZE, COMPACT, REINDEX, SHOW STORAGE, SHOW COMPACTION
+    if upper.starts_with("ANALYZE ") {
+        return Some(super::maintenance::handle_analyze(state, identity, sql));
+    }
+    if upper.starts_with("COMPACT ") {
+        return Some(super::maintenance::handle_compact(state, identity, &parts));
+    }
+    if upper.starts_with("REINDEX ") {
+        return Some(super::maintenance::handle_reindex(state, identity, &parts));
+    }
+    if upper.starts_with("SHOW STORAGE ") {
+        return Some(super::maintenance::handle_show_storage(
+            state, identity, &parts,
+        ));
+    }
+    if upper == "SHOW COMPACTION STATUS" || upper.starts_with("SHOW COMPACTION STATUS ") {
+        return Some(super::maintenance::handle_show_compaction_status(
+            state, identity,
+        ));
     }
 
     // Triggers: CREATE [OR REPLACE] [SYNC|DEFERRED] TRIGGER ...

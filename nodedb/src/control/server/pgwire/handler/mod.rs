@@ -1,4 +1,5 @@
 mod core;
+mod cursor_cmds;
 mod dispatch;
 pub mod listen_notify;
 mod plan;
