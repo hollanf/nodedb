@@ -319,9 +319,26 @@ async fn execute_job(state: &SharedState, sched: &ScheduleDef) -> crate::Result<
         }
     })?;
 
-    let executor = StatementExecutor::new(state, identity, TenantId::new(sched.tenant_id), 0);
+    let executor =
+        StatementExecutor::new(state, identity.clone(), TenantId::new(sched.tenant_id), 0);
     let bindings = RowBindings::empty();
-    executor.execute_block(&block, &bindings).await?;
+
+    // Execute with one retry — if a vShard migrated mid-job, the scatter-gather
+    // layer retries on the new location. Jobs are idempotent at the statement level.
+    match executor.execute_block(&block, &bindings).await {
+        Ok(()) => {}
+        Err(first_err) => {
+            tracing::warn!(
+                schedule = %sched.name,
+                error = %first_err,
+                "scheduled job failed, retrying once (possible vShard migration)"
+            );
+            // Retry with a fresh executor.
+            let retry_executor =
+                StatementExecutor::new(state, identity, TenantId::new(sched.tenant_id), 0);
+            retry_executor.execute_block(&block, &bindings).await?;
+        }
+    }
 
     Ok(start.elapsed().as_millis() as u64)
 }
