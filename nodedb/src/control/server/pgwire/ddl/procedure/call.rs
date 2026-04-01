@@ -66,16 +66,72 @@ pub async fn call_procedure(
     let block = crate::control::planner::procedural::parse_block(&proc.body_sql)
         .map_err(|e| sqlstate_error("42601", &format!("procedure body parse error: {e}")))?;
 
-    // Execute with fuel metering and timeout.
+    // Execute with fuel metering, timeout, and transaction context.
     let mut budget = ExecutionBudget::new(proc.max_iterations, proc.timeout_secs);
-    let executor = StatementExecutor::new(state, identity.clone(), tenant_id, 0);
+    let executor =
+        StatementExecutor::new(state, identity.clone(), tenant_id, 0).with_transaction_context();
 
     executor
         .execute_block_with_budget(&block, &bindings, &mut budget)
         .await
         .map_err(|e| sqlstate_error("P0001", &e.to_string()))?;
 
-    Ok(vec![Response::Execution(Tag::new("CALL"))])
+    // Check for OUT parameter values.
+    let out_params: Vec<_> = proc
+        .parameters
+        .iter()
+        .filter(|p| matches!(p.direction, ParamDirection::Out | ParamDirection::InOut))
+        .collect();
+
+    if out_params.is_empty() {
+        return Ok(vec![Response::Execution(Tag::new("CALL"))]);
+    }
+
+    // Return OUT values as a single-row result set.
+    let out_values = executor.take_out_values();
+    build_out_response(&out_params, &out_values)
+}
+
+/// Build a single-row result set from OUT parameter values.
+fn build_out_response(
+    out_params: &[&crate::control::security::catalog::procedure_types::ProcedureParam],
+    out_values: &std::collections::HashMap<String, serde_json::Value>,
+) -> PgWireResult<Vec<Response>> {
+    use futures::stream;
+    use pgwire::api::results::{DataRowEncoder, QueryResponse};
+
+    let schema = std::sync::Arc::new(
+        out_params
+            .iter()
+            .map(|p| super::super::super::types::text_field(&p.name))
+            .collect::<Vec<_>>(),
+    );
+
+    let mut encoder = DataRowEncoder::new(schema.clone());
+    for param in out_params {
+        let value = out_values
+            .get(&param.name)
+            // Also check __return for single-OUT-param procedures using RETURN.
+            .or_else(|| {
+                if out_params.len() == 1 {
+                    out_values.get("__return")
+                } else {
+                    None
+                }
+            });
+        let text = match value {
+            Some(serde_json::Value::Null) | None => String::new(),
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(v) => v.to_string(),
+        };
+        let _ = encoder.encode_field(&text);
+    }
+    let row = encoder.take_row();
+
+    Ok(vec![Response::Query(QueryResponse::new(
+        schema,
+        stream::iter(vec![Ok(row)]),
+    ))])
 }
 
 /// Parse `CALL <name>(arg1, arg2, ...)`.

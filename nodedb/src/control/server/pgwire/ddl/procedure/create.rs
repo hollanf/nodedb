@@ -51,6 +51,8 @@ pub fn create_procedure(
         .map_err(|_| sqlstate_error("XX000", "system clock before UNIX epoch"))?
         .as_secs();
 
+    let routability = extract_routability(&parsed.body_sql);
+
     let stored = StoredProcedure {
         tenant_id,
         name: parsed.name.clone(),
@@ -58,6 +60,7 @@ pub fn create_procedure(
         body_sql: parsed.body_sql,
         max_iterations: parsed.max_iterations,
         timeout_secs: parsed.timeout_secs,
+        routability,
         owner: identity.username.clone(),
         created_at: now,
     };
@@ -225,6 +228,90 @@ fn parse_with_clause(s: &str) -> PgWireResult<(u64, u64, &str)> {
     }
 
     Ok((max_iter, timeout, rest))
+}
+
+/// Extract routability classification from a procedure body.
+///
+/// Scans DML statements in the parsed body to find target collections.
+/// If all DML targets the same collection, returns `SingleCollection(name)`.
+/// Otherwise returns `MultiCollection`.
+fn extract_routability(body_sql: &str) -> ProcedureRoutability {
+    let block = match crate::control::planner::procedural::parse_block(body_sql) {
+        Ok(b) => b,
+        Err(_) => return ProcedureRoutability::MultiCollection,
+    };
+
+    let mut collections = std::collections::HashSet::new();
+    collect_dml_targets(&block.statements, &mut collections);
+
+    match collections.len() {
+        0 => ProcedureRoutability::MultiCollection, // No DML — no affinity
+        1 => {
+            let name = collections.into_iter().next().unwrap();
+            ProcedureRoutability::SingleCollection(name)
+        }
+        _ => ProcedureRoutability::MultiCollection,
+    }
+}
+
+/// Recursively walk statements to find DML target collection names.
+fn collect_dml_targets(
+    stmts: &[crate::control::planner::procedural::ast::Statement],
+    collections: &mut std::collections::HashSet<String>,
+) {
+    use crate::control::planner::procedural::ast::Statement;
+
+    for stmt in stmts {
+        match stmt {
+            Statement::Dml { sql } => {
+                if let Some(name) = extract_dml_target_collection(sql) {
+                    collections.insert(name);
+                }
+            }
+            Statement::If {
+                then_block,
+                elsif_branches,
+                else_block,
+                ..
+            } => {
+                collect_dml_targets(then_block, collections);
+                for branch in elsif_branches {
+                    collect_dml_targets(&branch.body, collections);
+                }
+                if let Some(else_stmts) = else_block {
+                    collect_dml_targets(else_stmts, collections);
+                }
+            }
+            Statement::Loop { body }
+            | Statement::While { body, .. }
+            | Statement::For { body, .. } => {
+                collect_dml_targets(body, collections);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Extract the target collection name from a DML SQL string.
+///
+/// Handles:
+/// - `INSERT INTO <collection> ...`
+/// - `UPDATE <collection> SET ...`
+/// - `DELETE FROM <collection> ...`
+fn extract_dml_target_collection(sql: &str) -> Option<String> {
+    let trimmed = sql.trim();
+    let upper = trimmed.to_uppercase();
+    let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+
+    if upper.starts_with("INSERT INTO") && tokens.len() >= 3 {
+        Some(tokens[2].to_lowercase().trim_matches('(').to_string())
+    } else if upper.starts_with("UPDATE") && tokens.len() >= 2 {
+        Some(tokens[1].to_lowercase())
+    } else if upper.starts_with("DELETE FROM") && tokens.len() >= 3 {
+        Some(tokens[2].to_lowercase())
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

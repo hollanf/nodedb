@@ -124,6 +124,7 @@ mod tests {
             body_sql: "BEGIN DELETE FROM orders WHERE age > cutoff; END".into(),
             max_iterations: 1_000_000,
             timeout_secs: 60,
+            routability: ProcedureRoutability::default(),
             owner: "admin".into(),
             created_at: 1000,
         }

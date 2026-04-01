@@ -31,6 +31,22 @@ fn default_direction() -> ParamDirection {
     ParamDirection::In
 }
 
+/// Routability classification for procedure DML targets.
+///
+/// Determined at CREATE PROCEDURE time by parsing the body for DML target
+/// collections. Used by the Event Plane cron scheduler for per-collection
+/// affinity routing of `CALL procedure(...)` in scheduled jobs.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum ProcedureRoutability {
+    /// Procedure targets a single collection — can be routed to that
+    /// collection's shard leader for locality.
+    SingleCollection(String),
+    /// Procedure targets multiple collections or has dynamic SQL —
+    /// must execute on the coordinator (no affinity routing).
+    #[default]
+    MultiCollection,
+}
+
 /// Serializable stored procedure definition for redb storage.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StoredProcedure {
@@ -45,6 +61,10 @@ pub struct StoredProcedure {
     /// Execution timeout in seconds (default 60).
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
+    /// Routability classification: which collections the procedure targets.
+    /// Used by cron scheduler for affinity routing.
+    #[serde(default)]
+    pub routability: ProcedureRoutability,
     pub owner: String,
     pub created_at: u64,
 }
