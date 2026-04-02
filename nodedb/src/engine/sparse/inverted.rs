@@ -62,6 +62,13 @@ pub struct MatchOffset {
     pub term: String,
 }
 
+fn inverted_err(ctx: &str, e: impl std::fmt::Display) -> crate::Error {
+    crate::Error::Storage {
+        engine: "inverted".into(),
+        detail: format!("{ctx}: {e}"),
+    }
+}
+
 /// Full-text inverted index backed by redb.
 pub struct InvertedIndex {
     db: Arc<Database>,
@@ -113,6 +120,56 @@ impl InvertedIndex {
     /// Access the underlying database (for sub-modules).
     pub(super) fn db(&self) -> &Database {
         &self.db
+    }
+
+    /// Purge all inverted index entries for a tenant.
+    ///
+    /// Scans POSTINGS and DOC_LENGTHS tables for keys starting with
+    /// `"{tenant_id}:"` (the scoped collection prefix) and removes them.
+    pub fn purge_tenant(&self, tenant_id: u32) -> crate::Result<usize> {
+        let prefix = format!("{tenant_id}:");
+        let end = format!("{tenant_id}:\u{ffff}");
+
+        let write_txn = self
+            .db
+            .begin_write()
+            .map_err(|e| inverted_err("purge write txn", e))?;
+        let mut removed = 0;
+
+        {
+            let mut postings = write_txn
+                .open_table(POSTINGS)
+                .map_err(|e| inverted_err("open postings", e))?;
+            let keys: Vec<String> = postings
+                .range(prefix.as_str()..end.as_str())
+                .map_err(|e| inverted_err("postings range", e))?
+                .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
+                .collect();
+            removed += keys.len();
+            for key in &keys {
+                let _ = postings.remove(key.as_str());
+            }
+        }
+
+        {
+            let mut doc_lengths = write_txn
+                .open_table(DOC_LENGTHS)
+                .map_err(|e| inverted_err("open doc_lengths", e))?;
+            let keys: Vec<String> = doc_lengths
+                .range(prefix.as_str()..end.as_str())
+                .map_err(|e| inverted_err("doc_lengths range", e))?
+                .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
+                .collect();
+            removed += keys.len();
+            for key in &keys {
+                let _ = doc_lengths.remove(key.as_str());
+            }
+        }
+
+        write_txn
+            .commit()
+            .map_err(|e| inverted_err("commit purge", e))?;
+        Ok(removed)
     }
 
     /// Index a document's text content.

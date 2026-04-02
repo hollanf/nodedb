@@ -367,6 +367,78 @@ pub fn show_tenant_quota(
     ))])
 }
 
+/// PURGE TENANT <id> CONFIRM
+///
+/// Deletes ALL data for a tenant across every engine and cache.
+/// Requires CONFIRM keyword to prevent accidental data destruction.
+/// Superuser-only. Audit-logged at Forensic level.
+pub async fn purge_tenant(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+) -> PgWireResult<Vec<Response>> {
+    if !identity.is_superuser {
+        return Err(sqlstate_error(
+            "42501",
+            "permission denied: only superuser can purge tenants",
+        ));
+    }
+
+    if parts.len() < 4 {
+        return Err(sqlstate_error("42601", "syntax: PURGE TENANT <id> CONFIRM"));
+    }
+
+    let tid: u32 = parts[2]
+        .parse()
+        .map_err(|_| sqlstate_error("42601", "TENANT ID must be a numeric value"))?;
+
+    if tid == 0 {
+        return Err(sqlstate_error("42501", "cannot purge system tenant (0)"));
+    }
+
+    if !parts[3].eq_ignore_ascii_case("CONFIRM") {
+        return Err(sqlstate_error(
+            "42601",
+            "PURGE TENANT requires CONFIRM keyword to prevent accidental data destruction",
+        ));
+    }
+
+    let tenant_id = TenantId::new(tid);
+
+    state.audit_record(
+        AuditEvent::AdminAction,
+        Some(tenant_id),
+        &identity.username,
+        &format!("PURGE TENANT {tid} CONFIRM — deleting all data across all engines"),
+    );
+
+    // Dispatch purge to the Data Plane.
+    let plan = crate::bridge::envelope::PhysicalPlan::Meta(
+        crate::bridge::physical_plan::MetaOp::PurgeTenant { tenant_id: tid },
+    );
+
+    match super::sync_dispatch::dispatch_async(
+        state,
+        tenant_id,
+        "__system",
+        plan,
+        std::time::Duration::from_secs(300), // 5 minutes for large tenants.
+    )
+    .await
+    {
+        Ok(_) => {
+            state.audit_record(
+                AuditEvent::AdminAction,
+                Some(tenant_id),
+                &identity.username,
+                &format!("PURGE TENANT {tid} completed successfully"),
+            );
+            Ok(vec![Response::Execution(Tag::new("PURGE TENANT"))])
+        }
+        Err(e) => Err(sqlstate_error("XX000", &format!("purge failed: {e}"))),
+    }
+}
+
 /// Parse `FOR <tenant_id>` from DDL parts. Returns `Some(tid)` if present.
 fn parse_tenant_for_clause(parts: &[&str]) -> Option<u32> {
     let for_idx = parts.iter().position(|p| p.eq_ignore_ascii_case("FOR"))?;

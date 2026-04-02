@@ -16,6 +16,7 @@ pub mod join;
 pub mod kv;
 pub mod materialized_view;
 pub mod point;
+pub mod purge;
 pub mod recursive;
 pub mod rls_eval;
 pub mod snapshot;

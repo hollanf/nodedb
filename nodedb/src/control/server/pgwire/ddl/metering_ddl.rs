@@ -137,6 +137,119 @@ pub fn show_quota(
     ))])
 }
 
+/// SHOW USAGE FOR TENANT <id>
+///
+/// Returns real-time usage snapshot for a tenant from TenantUsage counters.
+pub fn show_usage_for_tenant(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+) -> PgWireResult<Vec<Response>> {
+    if !identity.is_superuser {
+        return Err(sqlstate_error(
+            "42501",
+            "permission denied: requires superuser",
+        ));
+    }
+
+    // SHOW USAGE FOR TENANT <id>
+    let tid: u32 = parts
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case("TENANT"))
+        .and_then(|i| parts.get(i + 1))
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| sqlstate_error("42601", "syntax: SHOW USAGE FOR TENANT <id>"))?;
+
+    let schema = Arc::new(vec![text_field("metric"), text_field("value")]);
+
+    let tenants = match state.tenants.lock() {
+        Ok(t) => t,
+        Err(p) => p.into_inner(),
+    };
+
+    let mut rows = Vec::new();
+    if let Some(usage) = tenants.usage(crate::types::TenantId::new(tid)) {
+        let metrics: &[(&str, u64)] = &[
+            ("memory_bytes", usage.memory_bytes),
+            ("storage_bytes", usage.storage_bytes),
+            ("active_requests", usage.active_requests as u64),
+            ("qps_current", usage.requests_this_second as u64),
+            ("total_requests", usage.total_requests),
+            ("rejected_requests", usage.rejected_requests),
+            ("active_connections", usage.active_connections as u64),
+        ];
+        for &(name, val) in metrics {
+            let mut enc = DataRowEncoder::new(schema.clone());
+            let _ = enc.encode_field(&name);
+            let _ = enc.encode_field(&val.to_string());
+            rows.push(Ok(enc.take_row()));
+        }
+    }
+
+    Ok(vec![Response::Query(QueryResponse::new(
+        schema,
+        stream::iter(rows),
+    ))])
+}
+
+/// EXPORT USAGE FOR TENANT <id> [PERIOD '<month>'] FORMAT 'json'
+///
+/// Returns a billing-friendly JSON export of tenant usage from the UsageStore.
+pub fn export_usage(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+) -> PgWireResult<Vec<Response>> {
+    if !identity.is_superuser {
+        return Err(sqlstate_error(
+            "42501",
+            "permission denied: requires superuser",
+        ));
+    }
+
+    // Parse tenant_id.
+    let tid: u32 = parts
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case("TENANT"))
+        .and_then(|i| parts.get(i + 1))
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| {
+            sqlstate_error(
+                "42601",
+                "syntax: EXPORT USAGE FOR TENANT <id> [PERIOD '<month>'] FORMAT 'json'",
+            )
+        })?;
+
+    // Parse optional PERIOD '<month>' (e.g., '2026-03').
+    let since_secs = parts
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case("PERIOD"))
+        .and_then(|i| parts.get(i + 1))
+        .and_then(|s| {
+            let s = s.trim_matches('\'');
+            // Parse YYYY-MM to epoch seconds.
+            let mut iter = s.split('-');
+            let year: i32 = iter.next()?.parse().ok()?;
+            let month: u32 = iter.next()?.parse().ok()?;
+            // Approximate: first day of month at midnight UTC.
+            let days_since_epoch =
+                (year as i64 - 1970) * 365 + (year as i64 - 1969) / 4 + (month as i64 - 1) * 30;
+            Some(days_since_epoch.max(0) as u64 * 86400)
+        })
+        .unwrap_or(0);
+
+    let json = state.usage_store.export_tenant_json(tid, since_secs);
+
+    let schema = Arc::new(vec![text_field("usage_json")]);
+    let mut enc = DataRowEncoder::new(schema.clone());
+    let _ = enc.encode_field(&json);
+
+    Ok(vec![Response::Query(QueryResponse::new(
+        schema,
+        stream::iter(vec![Ok(enc.take_row())]),
+    ))])
+}
+
 /// Parse FOR AUTH USER '<id>' or FOR ORG '<id>' from parts.
 fn parse_for_clause(parts: &[&str]) -> (Option<String>, Option<String>) {
     let for_idx = parts.iter().position(|p| p.to_uppercase() == "FOR");

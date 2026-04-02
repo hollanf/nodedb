@@ -34,6 +34,8 @@ mod test_tenant_isolation_sparse;
 mod test_tenant_isolation_timeseries;
 #[path = "executor_tests/test_tenant_isolation_vector.rs"]
 mod test_tenant_isolation_vector;
+#[path = "executor_tests/test_tenant_purge.rs"]
+mod test_tenant_purge;
 #[path = "executor_tests/test_tenant_quota.rs"]
 mod test_tenant_quota;
 #[path = "executor_tests/test_timeseries.rs"]

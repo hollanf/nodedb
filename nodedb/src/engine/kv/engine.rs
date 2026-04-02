@@ -27,6 +27,9 @@ pub struct KvEngine {
     pub(super) tables: HashMap<u64, KvHashTable>,
     /// Per-collection secondary index sets. Key: "{tenant_id}:{collection}".
     pub(super) indexes: HashMap<u64, KvIndexSet>,
+    /// Reverse mapping: hash → tenant_id. Enables tenant purge without
+    /// reversing the FxHash. Maintained in sync with `tables`.
+    pub(super) hash_to_tenant: HashMap<u64, u32>,
     /// Shared expiry wheel across all collections on this core.
     pub(super) expiry: ExpiryWheel,
     /// Default tuning parameters for new collections.
@@ -53,6 +56,7 @@ impl KvEngine {
         Self {
             tables: HashMap::new(),
             indexes: HashMap::new(),
+            hash_to_tenant: HashMap::new(),
             expiry: ExpiryWheel::new(now_ms, expiry_tick_ms, expiry_reap_budget),
             default_capacity,
             load_factor_threshold,
@@ -86,6 +90,27 @@ impl KvEngine {
     /// Used by PUT handlers to reject new writes with a retriable error.
     pub fn is_over_budget(&self) -> bool {
         self.memory_budget_bytes > 0 && self.total_mem_usage() > self.memory_budget_bytes
+    }
+
+    /// Remove all hash tables and indexes belonging to a specific tenant.
+    ///
+    /// Uses the `hash_to_tenant` reverse map to identify which tables belong
+    /// to the tenant. Returns the number of tables removed.
+    pub fn purge_tenant(&mut self, tenant_id: u32) -> usize {
+        let keys_to_remove: Vec<u64> = self
+            .hash_to_tenant
+            .iter()
+            .filter(|(_, tid)| **tid == tenant_id)
+            .map(|(hash, _)| *hash)
+            .collect();
+
+        let removed = keys_to_remove.len();
+        for key in &keys_to_remove {
+            self.tables.remove(key);
+            self.indexes.remove(key);
+            self.hash_to_tenant.remove(key);
+        }
+        removed
     }
 
     // -----------------------------------------------------------------------
@@ -178,6 +203,7 @@ impl KvEngine {
         let table = if let Some(t) = self.tables.get_mut(&tkey) {
             t
         } else {
+            self.hash_to_tenant.entry(tkey).or_insert(tenant_id);
             self.tables.entry(tkey).or_insert_with(|| {
                 KvHashTable::new(
                     self.default_capacity,

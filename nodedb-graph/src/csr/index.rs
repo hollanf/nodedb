@@ -289,6 +289,22 @@ impl CsrIndex {
         removed
     }
 
+    /// Remove all edges touching any node whose ID starts with `prefix`.
+    ///
+    /// Used for tenant purge: `prefix = "{tenant_id}:"` removes all
+    /// edges belonging to that tenant.
+    pub fn remove_nodes_with_prefix(&mut self, prefix: &str) {
+        let matching_nodes: Vec<String> = self
+            .node_to_id
+            .keys()
+            .filter(|k| k.starts_with(prefix))
+            .cloned()
+            .collect();
+        for node in &matching_nodes {
+            self.remove_node_edges(node);
+        }
+    }
+
     /// Get immediate neighbors.
     pub fn neighbors(
         &self,

@@ -127,6 +127,14 @@ impl DocCache {
         self.hits + self.misses
     }
 
+    /// Evict all cache entries belonging to a specific tenant.
+    ///
+    /// Used during tenant purge to ensure zero residual cached data.
+    pub fn evict_tenant(&mut self, tenant_id: u32) {
+        self.entries.retain(|k, _| k.tenant_id != tenant_id);
+        self.order.retain(|k| k.tenant_id != tenant_id);
+    }
+
     fn make_key(tenant_id: u32, collection: &str, document_id: &str) -> CacheKey {
         CacheKey {
             tenant_id,

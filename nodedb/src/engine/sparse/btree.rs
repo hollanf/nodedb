@@ -359,6 +359,70 @@ impl SparseEngine {
         Ok(removed)
     }
 
+    /// Delete ALL documents and indexes for a tenant across all collections.
+    ///
+    /// Scans both DOCUMENTS and INDEXES tables for keys with the tenant prefix
+    /// `"{tenant_id}:"` and removes them in a single write transaction.
+    /// Returns `(documents_removed, indexes_removed)`.
+    pub fn delete_all_for_tenant(&self, tenant_id: u32) -> crate::Result<(usize, usize)> {
+        let prefix = format!("{tenant_id}:");
+        let end = format!("{tenant_id}:\u{ffff}");
+
+        let write_txn = self
+            .db
+            .begin_write()
+            .map_err(|e| redb_err("write txn", e))?;
+
+        let docs_removed;
+        {
+            let mut table = write_txn
+                .open_table(DOCUMENTS)
+                .map_err(|e| redb_err("open docs", e))?;
+            let keys: Vec<String> = table
+                .range(prefix.as_str()..end.as_str())
+                .map_err(|e| redb_err("doc range", e))?
+                .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
+                .collect();
+            docs_removed = keys.len();
+            for key in &keys {
+                table
+                    .remove(key.as_str())
+                    .map_err(|e| redb_err("remove doc", e))?;
+            }
+        }
+
+        let idx_removed;
+        {
+            let mut table = write_txn
+                .open_table(INDEXES)
+                .map_err(|e| redb_err("open indexes", e))?;
+            let keys: Vec<String> = table
+                .range(prefix.as_str()..end.as_str())
+                .map_err(|e| redb_err("index range", e))?
+                .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
+                .collect();
+            idx_removed = keys.len();
+            for key in &keys {
+                table
+                    .remove(key.as_str())
+                    .map_err(|e| redb_err("remove index", e))?;
+            }
+        }
+
+        write_txn
+            .commit()
+            .map_err(|e| redb_err("commit tenant purge", e))?;
+
+        if docs_removed > 0 || idx_removed > 0 {
+            info!(
+                tenant_id,
+                docs_removed, idx_removed, "tenant data purged from sparse engine"
+            );
+        }
+
+        Ok((docs_removed, idx_removed))
+    }
+
     /// Range scan: retrieve documents in a collection with keys in [lower, upper).
     ///
     /// The `field` parameter scopes the scan prefix. Returns up to `limit` results.

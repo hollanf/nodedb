@@ -282,6 +282,9 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
             | KvOp::FieldSet { .. }
             | KvOp::Truncate { .. },
         ) => Permission::Write,
+
+        // Tenant purge requires superuser (checked at DDL level); map to Write.
+        PhysicalPlan::Meta(MetaOp::PurgeTenant { .. }) => Permission::Write,
     }
 }
 

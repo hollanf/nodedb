@@ -213,6 +213,56 @@ impl EdgeStore {
         Ok(())
     }
 
+    /// Purge all edges belonging to a tenant.
+    ///
+    /// Scans both EDGES and REVERSE_EDGES tables for keys starting with
+    /// `"{tenant_id}:"` (scoped node IDs) and removes them.
+    pub fn purge_tenant(&self, tenant_id: u32) -> crate::Result<usize> {
+        let prefix = format!("{tenant_id}:");
+        let end = format!("{tenant_id}:\u{ffff}");
+
+        let write_txn = self
+            .db
+            .begin_write()
+            .map_err(|e| redb_err("begin_write", e))?;
+        let mut removed = 0;
+
+        {
+            let mut edges = write_txn
+                .open_table(EDGES)
+                .map_err(|e| redb_err("open edges", e))?;
+            let keys: Vec<String> = edges
+                .range(prefix.as_str()..end.as_str())
+                .map_err(|e| redb_err("edge range", e))?
+                .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
+                .collect();
+            removed += keys.len();
+            for key in &keys {
+                let _ = edges.remove(key.as_str());
+            }
+        }
+
+        {
+            let mut rev = write_txn
+                .open_table(REVERSE_EDGES)
+                .map_err(|e| redb_err("open reverse", e))?;
+            let keys: Vec<String> = rev
+                .range(prefix.as_str()..end.as_str())
+                .map_err(|e| redb_err("rev range", e))?
+                .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
+                .collect();
+            removed += keys.len();
+            for key in &keys {
+                let _ = rev.remove(key.as_str());
+            }
+        }
+
+        write_txn
+            .commit()
+            .map_err(|e| redb_err("commit tenant purge", e))?;
+        Ok(removed)
+    }
+
     /// Get a single edge's properties. Returns None if the edge doesn't exist.
     pub fn get_edge(&self, src: &str, label: &str, dst: &str) -> crate::Result<Option<Vec<u8>>> {
         let key = edge_key(src, label, dst);

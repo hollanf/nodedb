@@ -53,6 +53,9 @@ pub async fn dispatch(
     if upper.starts_with("DROP TENANT ") {
         return Some(super::tenant::drop_tenant(state, identity, &parts));
     }
+    if upper.starts_with("PURGE TENANT ") {
+        return Some(super::tenant::purge_tenant(state, identity, &parts).await);
+    }
     if upper.starts_with("SHOW TENANT USAGE") {
         return Some(super::tenant::show_tenant_usage(state, identity, &parts));
     }
@@ -676,6 +679,14 @@ pub async fn dispatch(
         return Some(super::metering_ddl::define_dimension(
             state, identity, &parts,
         ));
+    }
+    if upper.starts_with("SHOW USAGE FOR TENANT ") {
+        return Some(super::metering_ddl::show_usage_for_tenant(
+            state, identity, &parts,
+        ));
+    }
+    if upper.starts_with("EXPORT USAGE ") {
+        return Some(super::metering_ddl::export_usage(state, identity, &parts));
     }
     if upper.starts_with("SHOW USAGE ") {
         return Some(super::metering_ddl::show_usage(state, identity, &parts));

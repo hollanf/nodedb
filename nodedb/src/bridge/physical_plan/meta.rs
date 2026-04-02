@@ -69,4 +69,11 @@ pub enum MetaOp {
         /// Source collection to scan.
         source_collection: String,
     },
+
+    /// Purge ALL data for a tenant across every engine and cache.
+    ///
+    /// Deletes documents, indexes, vectors, graph edges, timeseries,
+    /// KV entries, CRDT state, inverted index terms, and cache entries.
+    /// Idempotent: safe to re-run after a crash.
+    PurgeTenant { tenant_id: u32 },
 }

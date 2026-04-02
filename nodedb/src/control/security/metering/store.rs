@@ -109,6 +109,60 @@ impl UsageStore {
             .join("\n")
     }
 
+    /// Query usage events filtered by tenant_id and optional time range.
+    pub fn query_by_tenant(&self, tenant_id: u32, since_secs: u64) -> Vec<UsageEvent> {
+        let events = self.events.read().unwrap_or_else(|p| p.into_inner());
+        events
+            .iter()
+            .filter(|e| {
+                e.tenant_id == tenant_id && (since_secs == 0 || e.timestamp_secs >= since_secs)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Export usage for a specific tenant as JSON (billing integration format).
+    pub fn export_tenant_json(&self, tenant_id: u32, since_secs: u64) -> String {
+        let events = self.query_by_tenant(tenant_id, since_secs);
+
+        let mut reads_count: u64 = 0;
+        let mut reads_tokens: u64 = 0;
+        let mut writes_count: u64 = 0;
+        let mut writes_tokens: u64 = 0;
+        let mut vector_searches: u64 = 0;
+        let mut graph_traversals: u64 = 0;
+
+        for e in &events {
+            match e.operation.as_str() {
+                "point_get" | "range_scan" | "kv_get" | "kv_scan" | "text_search"
+                | "vector_search" | "timeseries_scan" | "columnar_scan" => {
+                    reads_count += 1;
+                    reads_tokens += e.tokens;
+                }
+                _ => {
+                    writes_count += 1;
+                    writes_tokens += e.tokens;
+                }
+            }
+            if e.operation == "vector_search" {
+                vector_searches += 1;
+            }
+            if e.engine == "graph" {
+                graph_traversals += 1;
+            }
+        }
+
+        serde_json::json!({
+            "tenant_id": tenant_id,
+            "reads": { "count": reads_count, "tokens": reads_tokens },
+            "writes": { "count": writes_count, "tokens": writes_tokens },
+            "vector_searches": vector_searches,
+            "graph_traversals": graph_traversals,
+            "total_events": events.len(),
+        })
+        .to_string()
+    }
+
     /// Total events stored.
     pub fn count(&self) -> usize {
         self.events.read().unwrap_or_else(|p| p.into_inner()).len()

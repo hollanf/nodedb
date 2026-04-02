@@ -524,6 +524,10 @@ impl CoreLoop {
                 source_collection,
             }) => self.execute_refresh_materialized_view(task, tid, view_name, source_collection),
 
+            PhysicalPlan::Meta(MetaOp::PurgeTenant { tenant_id }) => {
+                self.execute_purge_tenant(task, *tenant_id)
+            }
+
             PhysicalPlan::Columnar(ColumnarOp::Scan {
                 collection,
                 projection,
