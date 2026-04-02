@@ -54,6 +54,7 @@ pub mod tenant;
 pub mod timeseries;
 mod timeseries_helpers;
 pub mod topic;
+pub mod tree_ops;
 pub mod trigger;
 pub mod user;
 

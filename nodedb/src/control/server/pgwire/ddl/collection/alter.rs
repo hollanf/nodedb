@@ -176,6 +176,16 @@ pub fn alter_collection_enforcement(
                 ));
             }
         }
+        "append_only" => {
+            // ALTER COLLECTION x SET APPEND_ONLY = TRUE (one-way flag).
+            if coll.append_only {
+                return Err(sqlstate_error(
+                    "42710",
+                    &format!("collection '{name}' is already append-only"),
+                ));
+            }
+            coll.append_only = true;
+        }
         _ => {
             return Err(sqlstate_error(
                 "42601",

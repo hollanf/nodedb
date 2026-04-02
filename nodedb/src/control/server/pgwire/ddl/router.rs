@@ -289,6 +289,17 @@ pub async fn dispatch(
         ));
     }
 
+    // Graph index and tree operations.
+    if upper.starts_with("CREATE GRAPH INDEX ") {
+        return Some(super::tree_ops::create_graph_index(state, identity, sql).await);
+    }
+    if upper.starts_with("SELECT TREE_SUM") || upper.starts_with("TREE_SUM") {
+        return Some(super::tree_ops::tree_sum(state, identity, sql).await);
+    }
+    if upper.starts_with("SELECT TREE_CHILDREN") || upper.starts_with("TREE_CHILDREN") {
+        return Some(super::tree_ops::tree_children(state, identity, sql).await);
+    }
+
     // Collection management.
     if upper.starts_with("CREATE COLLECTION ") {
         let result = super::collection::create_collection(state, identity, &parts, sql);
@@ -439,6 +450,16 @@ pub async fn dispatch(
             identity,
             sql,
             "legal_hold",
+        ));
+    }
+
+    // Set append-only (one-way).
+    if upper.starts_with("ALTER COLLECTION ") && upper.contains("SET APPEND_ONLY") {
+        return Some(super::collection::alter_collection_enforcement(
+            state,
+            identity,
+            sql,
+            "append_only",
         ));
     }
 
