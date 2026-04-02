@@ -300,8 +300,9 @@ impl CoreLoop {
                                 .collect::<Vec<_>>()
                                 .join(" ");
                             if !text_content.is_empty() {
+                                let scoped = format!("{tid}:{collection}");
                                 let _ = self.inverted.index_document(
-                                    collection,
+                                    &scoped,
                                     document_id,
                                     &text_content,
                                 );
@@ -386,7 +387,8 @@ impl CoreLoop {
                 match self.sparse.delete(tid, collection, document_id) {
                     Ok(_) => {
                         // Cascade: inverted index, secondary indexes, graph edges.
-                        let _ = self.inverted.remove_document(collection, document_id);
+                        let scoped = format!("{tid}:{collection}");
+                        let _ = self.inverted.remove_document(&scoped, document_id);
                         let _ =
                             self.sparse
                                 .delete_indexes_for_document(tid, collection, document_id);
@@ -475,7 +477,8 @@ impl CoreLoop {
                 dst_id,
                 properties,
             }) => {
-                let resp = self.execute_edge_put(&dummy_task, src_id, label, dst_id, properties);
+                let resp =
+                    self.execute_edge_put(&dummy_task, tid, src_id, label, dst_id, properties);
                 if resp.status == Status::Error {
                     return Err(resp.error_code.unwrap_or(ErrorCode::Internal {
                         detail: "edge put failed".into(),
@@ -592,8 +595,9 @@ impl CoreLoop {
                         // Document was newly inserted — delete it.
                         let _ = self.sparse.delete(tid, &collection, &document_id);
                     }
-                    // Also revert inverted index.
-                    let _ = self.inverted.remove_document(&collection, &document_id);
+                    // Also revert inverted index (tenant-scoped).
+                    let undo_scoped = format!("{tid}:{collection}");
+                    let _ = self.inverted.remove_document(&undo_scoped, &document_id);
                 }
                 UndoEntry::DeleteDocument {
                     collection,

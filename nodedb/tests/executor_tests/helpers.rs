@@ -111,3 +111,53 @@ pub fn payload_value(payload: &[u8]) -> serde_json::Value {
     let json = payload_json(payload);
     serde_json::from_str(&json).unwrap_or(serde_json::Value::Null)
 }
+
+// ── Tenant-aware helpers ────────────────────────────────────────────
+
+pub fn make_request_for_tenant(tenant_id: u32, plan: PhysicalPlan) -> Request {
+    Request {
+        tenant_id: TenantId::new(tenant_id),
+        ..make_request(plan)
+    }
+}
+
+/// Push a request as a specific tenant, tick, pop response — asserts Ok status.
+pub fn send_ok_as_tenant(
+    core: &mut CoreLoop,
+    req_tx: &mut Producer<BridgeRequest>,
+    resp_rx: &mut Consumer<BridgeResponse>,
+    tenant_id: u32,
+    plan: PhysicalPlan,
+) -> Vec<u8> {
+    req_tx
+        .try_push(BridgeRequest {
+            inner: make_request_for_tenant(tenant_id, plan),
+        })
+        .unwrap();
+    core.tick();
+    let resp = resp_rx.try_pop().unwrap();
+    assert_eq!(
+        resp.inner.status,
+        Status::Ok,
+        "expected Ok for tenant {tenant_id}, got {:?}",
+        resp.inner.error_code
+    );
+    resp.inner.payload.to_vec()
+}
+
+/// Push a request as a specific tenant, tick, pop response — returns raw response.
+pub fn send_raw_as_tenant(
+    core: &mut CoreLoop,
+    req_tx: &mut Producer<BridgeRequest>,
+    resp_rx: &mut Consumer<BridgeResponse>,
+    tenant_id: u32,
+    plan: PhysicalPlan,
+) -> nodedb::bridge::envelope::Response {
+    req_tx
+        .try_push(BridgeRequest {
+            inner: make_request_for_tenant(tenant_id, plan),
+        })
+        .unwrap();
+    core.tick();
+    resp_rx.try_pop().unwrap().inner
+}

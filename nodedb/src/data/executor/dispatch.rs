@@ -195,13 +195,13 @@ impl CoreLoop {
                 label,
                 dst_id,
                 properties,
-            }) => self.execute_edge_put(task, src_id, label, dst_id, properties),
+            }) => self.execute_edge_put(task, tid, src_id, label, dst_id, properties),
 
             PhysicalPlan::Graph(GraphOp::EdgeDelete {
                 src_id,
                 label,
                 dst_id,
-            }) => self.execute_edge_delete(task, src_id, label, dst_id),
+            }) => self.execute_edge_delete(task, tid, src_id, label, dst_id),
 
             PhysicalPlan::Graph(GraphOp::Hop {
                 start_nodes,
@@ -210,14 +210,14 @@ impl CoreLoop {
                 depth,
                 options: _,
                 rls_filters: _,
-            }) => self.execute_graph_hop(task, start_nodes, edge_label, *direction, *depth),
+            }) => self.execute_graph_hop(task, tid, start_nodes, edge_label, *direction, *depth),
 
             PhysicalPlan::Graph(GraphOp::Neighbors {
                 node_id,
                 edge_label,
                 direction,
                 rls_filters: _,
-            }) => self.execute_graph_neighbors(task, node_id, edge_label, *direction),
+            }) => self.execute_graph_neighbors(task, tid, node_id, edge_label, *direction),
 
             PhysicalPlan::Graph(GraphOp::Path {
                 src,
@@ -226,7 +226,7 @@ impl CoreLoop {
                 max_depth,
                 options: _,
                 rls_filters: _,
-            }) => self.execute_graph_path(task, src, dst, edge_label, *max_depth),
+            }) => self.execute_graph_path(task, tid, src, dst, edge_label, *max_depth),
 
             PhysicalPlan::Graph(GraphOp::Subgraph {
                 start_nodes,
@@ -234,7 +234,7 @@ impl CoreLoop {
                 depth,
                 options: _,
                 rls_filters: _,
-            }) => self.execute_graph_subgraph(task, start_nodes, edge_label, *depth),
+            }) => self.execute_graph_subgraph(task, tid, start_nodes, edge_label, *depth),
 
             PhysicalPlan::Graph(GraphOp::RagFusion {
                 collection,
@@ -554,23 +554,29 @@ impl CoreLoop {
                 group_by,
                 aggregates,
                 ..
-            }) => self.execute_timeseries_scan(super::handlers::timeseries::TimeseriesScanParams {
-                task,
-                collection,
-                time_range: *time_range,
-                limit: *limit,
-                filters,
-                bucket_interval_ms: *bucket_interval_ms,
-                group_by,
-                aggregates,
-            }),
+            }) => {
+                let scoped_coll = format!("{tid}:{collection}");
+                self.execute_timeseries_scan(super::handlers::timeseries::TimeseriesScanParams {
+                    task,
+                    collection: &scoped_coll,
+                    time_range: *time_range,
+                    limit: *limit,
+                    filters,
+                    bucket_interval_ms: *bucket_interval_ms,
+                    group_by,
+                    aggregates,
+                })
+            }
 
             PhysicalPlan::Timeseries(TimeseriesOp::Ingest {
                 collection,
                 payload,
                 format,
                 wal_lsn,
-            }) => self.execute_timeseries_ingest(task, collection, payload, format, *wal_lsn),
+            }) => {
+                let scoped_coll = format!("{tid}:{collection}");
+                self.execute_timeseries_ingest(task, &scoped_coll, payload, format, *wal_lsn)
+            }
 
             PhysicalPlan::Spatial(SpatialOp::Scan {
                 collection,

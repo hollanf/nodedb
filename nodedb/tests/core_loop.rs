@@ -16,6 +16,26 @@ mod test_kv;
 mod test_kv_advanced;
 #[path = "executor_tests/test_security_and_isolation.rs"]
 mod test_security_and_isolation;
+#[path = "executor_tests/test_tenant_cache_isolation.rs"]
+mod test_tenant_cache_isolation;
+#[path = "executor_tests/test_tenant_isolation_cdc.rs"]
+mod test_tenant_isolation_cdc;
+#[path = "executor_tests/test_tenant_isolation_fulltext.rs"]
+mod test_tenant_isolation_fulltext;
+#[path = "executor_tests/test_tenant_isolation_graph.rs"]
+mod test_tenant_isolation_graph;
+#[path = "executor_tests/test_tenant_isolation_kv.rs"]
+mod test_tenant_isolation_kv;
+#[path = "executor_tests/test_tenant_isolation_rls.rs"]
+mod test_tenant_isolation_rls;
+#[path = "executor_tests/test_tenant_isolation_sparse.rs"]
+mod test_tenant_isolation_sparse;
+#[path = "executor_tests/test_tenant_isolation_timeseries.rs"]
+mod test_tenant_isolation_timeseries;
+#[path = "executor_tests/test_tenant_isolation_vector.rs"]
+mod test_tenant_isolation_vector;
+#[path = "executor_tests/test_tenant_quota.rs"]
+mod test_tenant_quota;
 #[path = "executor_tests/test_timeseries.rs"]
 mod test_timeseries;
 #[path = "executor_tests/test_transaction.rs"]

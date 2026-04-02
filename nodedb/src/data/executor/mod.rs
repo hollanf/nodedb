@@ -4,6 +4,7 @@ pub(crate) mod doc_format;
 pub mod enforcement;
 mod handlers;
 pub mod response_codec;
+pub(crate) mod scoping;
 mod snapshot;
 mod spatial_checkpoint;
 pub(super) mod strict_format;

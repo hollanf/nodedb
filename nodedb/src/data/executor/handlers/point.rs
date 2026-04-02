@@ -153,8 +153,9 @@ impl CoreLoop {
         debug!(core = self.core_id, %collection, %document_id, "point delete");
         match self.sparse.delete(tid, collection, document_id) {
             Ok(_) => {
-                // Cascade 1: Remove from full-text inverted index.
-                if let Err(e) = self.inverted.remove_document(collection, document_id) {
+                // Cascade 1: Remove from full-text inverted index (tenant-scoped).
+                let scoped_coll = format!("{tid}:{collection}");
+                if let Err(e) = self.inverted.remove_document(&scoped_coll, document_id) {
                     warn!(core = self.core_id, %collection, %document_id, error = %e, "inverted index removal failed");
                 }
 
@@ -411,7 +412,7 @@ impl CoreLoop {
                 if !text_content.is_empty()
                     && let Err(e) = self.inverted.index_document_in_txn(
                         txn,
-                        collection,
+                        &config_key, // "{tid}:{collection}" — tenant-scoped
                         document_id,
                         &text_content,
                     )

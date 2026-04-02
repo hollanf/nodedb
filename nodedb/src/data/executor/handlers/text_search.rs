@@ -5,6 +5,7 @@ use tracing::debug;
 use crate::bridge::envelope::{ErrorCode, Response};
 
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::scoping::scoped_collection;
 use crate::data::executor::task::ExecutionTask;
 
 /// Default hybrid search weight: 0.5 = equal vector + text.
@@ -23,7 +24,8 @@ impl CoreLoop {
         fuzzy: bool,
         rls_filters: &[u8],
     ) -> Response {
-        debug!(core = self.core_id, %collection, %query, top_k, fuzzy, "text search");
+        let scoped_coll = scoped_collection(tid, collection);
+        debug!(core = self.core_id, %scoped_coll, %query, top_k, fuzzy, "text search");
 
         // Fetch extra candidates when RLS is active.
         let fetch_k = if rls_filters.is_empty() {
@@ -32,7 +34,7 @@ impl CoreLoop {
             top_k.saturating_mul(2).max(20)
         };
 
-        match self.inverted.search(collection, query, fetch_k, fuzzy) {
+        match self.inverted.search(&scoped_coll, query, fetch_k, fuzzy) {
             Ok(results) => {
                 // RLS post-score filtering: look up each candidate's document.
                 let hits: Vec<_> = results
@@ -93,9 +95,10 @@ impl CoreLoop {
         filter_bitmap: Option<&std::sync::Arc<[u8]>>,
         rls_filters: &[u8],
     ) -> Response {
+        let scoped_coll = scoped_collection(tid, collection);
         debug!(
             core = self.core_id,
-            %collection,
+            %scoped_coll,
             %query_text,
             top_k,
             vector_weight,
@@ -133,10 +136,10 @@ impl CoreLoop {
             Vec::new()
         };
 
-        // 2. Text search.
+        // 2. Text search (tenant-scoped collection key).
         let text_results = self
             .inverted
-            .search(collection, query_text, fetch_k, fuzzy)
+            .search(&scoped_coll, query_text, fetch_k, fuzzy)
             .unwrap_or_default();
 
         // 3. Build ranked lists for weighted RRF.
