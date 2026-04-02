@@ -1,4 +1,5 @@
 pub mod archiver;
+pub mod audit_archive;
 pub mod audit_segment;
 pub mod manager;
 

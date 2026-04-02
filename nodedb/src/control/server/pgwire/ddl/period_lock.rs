@@ -96,6 +96,14 @@ pub fn add_period_lock(
 
     state.schema_version.bump();
 
+    // Audit: ConfigChange → Standard audit level.
+    state.audit_record(
+        crate::control::security::audit::AuditEvent::ConfigChange,
+        Some(identity.tenant_id),
+        &identity.username,
+        &format!("ADD PERIOD LOCK on {name}"),
+    );
+
     Ok(vec![Response::Execution(Tag::new("ALTER COLLECTION"))])
 }
 
@@ -127,6 +135,14 @@ pub fn drop_period_lock(
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
 
     state.schema_version.bump();
+
+    // Audit: ConfigChange → Standard audit level.
+    state.audit_record(
+        crate::control::security::audit::AuditEvent::ConfigChange,
+        Some(identity.tenant_id),
+        &identity.username,
+        &format!("DROP PERIOD LOCK on {name}"),
+    );
 
     Ok(vec![Response::Execution(Tag::new("ALTER COLLECTION"))])
 }
