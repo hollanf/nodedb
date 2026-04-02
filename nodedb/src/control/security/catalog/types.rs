@@ -490,6 +490,11 @@ pub struct FieldDefinition {
     /// Whether the field is read-only (cannot be set by user).
     #[serde(default)]
     pub readonly: bool,
+    /// Sequence name for auto-generated values on INSERT.
+    /// When set and INSERT doesn't provide this field, `nextval(sequence_name)` is called.
+    /// Created via `SEQUENCE FORMAT '...' RESET ... GAP_FREE` in column definition.
+    #[serde(default)]
+    pub sequence_name: Option<String>,
 }
 
 /// Table event/trigger definition.

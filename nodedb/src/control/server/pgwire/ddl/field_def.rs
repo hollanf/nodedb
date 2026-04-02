@@ -59,6 +59,7 @@ pub fn define_field(
         value_expr: value_expr.unwrap_or_default(),
         assert_expr: assert_expr.unwrap_or_default(),
         readonly,
+        sequence_name: None,
     };
 
     // Store in catalog.

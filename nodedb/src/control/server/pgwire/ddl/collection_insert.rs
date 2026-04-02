@@ -225,14 +225,53 @@ pub async fn insert_document(
         }
     };
 
-    // Rebuild value bytes if BEFORE trigger mutated NEW fields.
-    let value_bytes = if fields_after_before != parsed.fields {
-        let doc = serde_json::Value::Object(fields_after_before.clone());
+    // Auto-generate sequence values for fields with sequence_name where the
+    // INSERT didn't provide an explicit value. This implements column-level
+    // SEQUENCE integration (e.g., `invoice_number STRING SEQUENCE FORMAT '...'`).
+    let mut fields = fields_after_before;
+    if let Some(catalog) = state.credentials.catalog()
+        && let Ok(Some(coll_def)) = catalog.get_collection(tenant_id.as_u32(), &parsed.coll_name)
+    {
+        for field_def in &coll_def.field_defs {
+            if let Some(ref seq_name) = field_def.sequence_name
+                && !fields.contains_key(&field_def.name)
+            {
+                // Field not provided — generate via nextval.
+                match state.sequence_registry.nextval_formatted(
+                    tenant_id.as_u32(),
+                    seq_name,
+                    "",
+                    &std::collections::HashMap::new(),
+                ) {
+                    Ok(val) => {
+                        let json_val = match val {
+                            crate::control::sequence::registry::SequenceValue::Int(i) => {
+                                serde_json::Value::Number(serde_json::Number::from(i))
+                            }
+                            crate::control::sequence::registry::SequenceValue::Formatted(s) => {
+                                serde_json::Value::String(s)
+                            }
+                        };
+                        fields.insert(field_def.name.clone(), json_val);
+                    }
+                    Err(e) => {
+                        return Some(Err(sqlstate_error(
+                            "XX000",
+                            &format!("sequence '{seq_name}' error: {e}"),
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    // Rebuild value bytes (sequence injection or BEFORE trigger may have mutated fields).
+    let value_bytes = if fields != parsed.fields {
+        let doc = serde_json::Value::Object(fields.clone());
         rmp_serde::to_vec_named(&doc).unwrap_or(parsed.value_bytes)
     } else {
         parsed.value_bytes
     };
-    let fields = fields_after_before;
 
     // Store document via PointPut.
     let plan = crate::bridge::envelope::PhysicalPlan::Document(DocumentOp::PointPut {
