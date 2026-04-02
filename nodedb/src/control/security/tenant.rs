@@ -232,6 +232,48 @@ impl TenantIsolation {
     pub fn tenant_count(&self) -> usize {
         self.usage.len()
     }
+
+    /// Snapshot current usage + quota into a [`TenantQuotaMetrics`] for the HTTP
+    /// metrics endpoint. Couples to `control::metrics::tenant` — both must stay
+    /// in sync with the quota/usage field names.
+    pub fn snapshot_metrics(
+        &self,
+        tenant_id: TenantId,
+    ) -> crate::control::metrics::tenant::TenantQuotaMetrics {
+        let quota = self.quota(tenant_id);
+        let usage = self.usage.get(&tenant_id);
+        let (mem_used, stor_used, qps, conns) = match usage {
+            Some(u) => (
+                u.memory_bytes,
+                u.storage_bytes,
+                u.requests_this_second as u64,
+                u.active_connections as u64,
+            ),
+            None => (0, 0, 0, 0),
+        };
+        crate::control::metrics::tenant::TenantQuotaMetrics {
+            tenant_id: tenant_id.as_u32(),
+            memory_bytes_used: mem_used,
+            memory_bytes_limit: quota.max_memory_bytes,
+            storage_bytes_used: stor_used,
+            storage_bytes_limit: quota.max_storage_bytes,
+            qps_current: qps,
+            qps_limit: quota.max_qps as u64,
+            connections_active: conns,
+            connections_limit: quota.max_connections as u64,
+        }
+    }
+
+    /// Iterate over all tenants that have recorded usage statistics.
+    ///
+    /// Returns `(tenant_id, usage, quota)` tuples. Tenants without a custom
+    /// quota receive the default quota. Iteration order is unspecified.
+    pub fn iter_usage(&self) -> impl Iterator<Item = (TenantId, &TenantUsage, &TenantQuota)> {
+        self.usage.iter().map(move |(&tid, usage)| {
+            let quota = self.quotas.get(&tid).unwrap_or(&self.default_quota);
+            (tid, usage, quota)
+        })
+    }
 }
 
 #[cfg(test)]

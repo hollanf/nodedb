@@ -36,30 +36,78 @@ pub async fn metrics(
     output.push_str("# TYPE nodedb_node_id gauge\n");
     output.push_str(&format!("nodedb_node_id {}\n\n", state.shared.node_id));
 
-    // Tenant metrics.
+    // Tenant metrics — usage and quota limits.
     if let Ok(tenants) = state.shared.tenants.lock() {
-        // Collect active tenants from credential store.
-        for user in state.shared.credentials.list_user_details() {
-            let tid = user.tenant_id.as_u32();
-            if let Some(usage) = tenants.usage(user.tenant_id) {
-                output.push_str(&format!(
-                    "nodedb_tenant_active_requests{{tenant_id=\"{tid}\"}} {}\n",
-                    usage.active_requests
-                ));
-                output.push_str(&format!(
-                    "nodedb_tenant_total_requests{{tenant_id=\"{tid}\"}} {}\n",
-                    usage.total_requests
-                ));
-                output.push_str(&format!(
-                    "nodedb_tenant_rejected_requests{{tenant_id=\"{tid}\"}} {}\n",
-                    usage.rejected_requests
-                ));
-                output.push_str(&format!(
-                    "nodedb_tenant_active_connections{{tenant_id=\"{tid}\"}} {}\n",
-                    usage.active_connections
-                ));
-            }
+        output.push_str("# HELP nodedb_tenant_active_requests Current in-flight requests.\n");
+        output.push_str("# TYPE nodedb_tenant_active_requests gauge\n");
+        output.push_str("# HELP nodedb_tenant_total_requests Total requests served.\n");
+        output.push_str("# TYPE nodedb_tenant_total_requests counter\n");
+        output
+            .push_str("# HELP nodedb_tenant_rejected_requests Total requests rejected by quota.\n");
+        output.push_str("# TYPE nodedb_tenant_rejected_requests counter\n");
+        output.push_str("# HELP nodedb_tenant_active_connections Current active connections.\n");
+        output.push_str("# TYPE nodedb_tenant_active_connections gauge\n");
+        output.push_str(
+            "# HELP nodedb_tenant_memory_used_bytes Current memory consumption in bytes.\n",
+        );
+        output.push_str("# TYPE nodedb_tenant_memory_used_bytes gauge\n");
+        output.push_str("# HELP nodedb_tenant_memory_limit_bytes Memory quota limit in bytes.\n");
+        output.push_str("# TYPE nodedb_tenant_memory_limit_bytes gauge\n");
+        output.push_str(
+            "# HELP nodedb_tenant_storage_used_bytes Current storage consumption in bytes.\n",
+        );
+        output.push_str("# TYPE nodedb_tenant_storage_used_bytes gauge\n");
+        output.push_str("# HELP nodedb_tenant_storage_limit_bytes Storage quota limit in bytes.\n");
+        output.push_str("# TYPE nodedb_tenant_storage_limit_bytes gauge\n");
+        output.push_str("# HELP nodedb_tenant_qps_current Requests in current second window.\n");
+        output.push_str("# TYPE nodedb_tenant_qps_current gauge\n");
+        output.push_str("# HELP nodedb_tenant_qps_limit Maximum queries per second.\n");
+        output.push_str("# TYPE nodedb_tenant_qps_limit gauge\n");
+
+        for (tid, usage, quota) in tenants.iter_usage() {
+            let t = tid.as_u32();
+            output.push_str(&format!(
+                "nodedb_tenant_active_requests{{tenant_id=\"{t}\"}} {}\n",
+                usage.active_requests
+            ));
+            output.push_str(&format!(
+                "nodedb_tenant_total_requests{{tenant_id=\"{t}\"}} {}\n",
+                usage.total_requests
+            ));
+            output.push_str(&format!(
+                "nodedb_tenant_rejected_requests{{tenant_id=\"{t}\"}} {}\n",
+                usage.rejected_requests
+            ));
+            output.push_str(&format!(
+                "nodedb_tenant_active_connections{{tenant_id=\"{t}\"}} {}\n",
+                usage.active_connections
+            ));
+            output.push_str(&format!(
+                "nodedb_tenant_memory_used_bytes{{tenant_id=\"{t}\"}} {}\n",
+                usage.memory_bytes
+            ));
+            output.push_str(&format!(
+                "nodedb_tenant_memory_limit_bytes{{tenant_id=\"{t}\"}} {}\n",
+                quota.max_memory_bytes
+            ));
+            output.push_str(&format!(
+                "nodedb_tenant_storage_used_bytes{{tenant_id=\"{t}\"}} {}\n",
+                usage.storage_bytes
+            ));
+            output.push_str(&format!(
+                "nodedb_tenant_storage_limit_bytes{{tenant_id=\"{t}\"}} {}\n",
+                quota.max_storage_bytes
+            ));
+            output.push_str(&format!(
+                "nodedb_tenant_qps_current{{tenant_id=\"{t}\"}} {}\n",
+                usage.requests_this_second
+            ));
+            output.push_str(&format!(
+                "nodedb_tenant_qps_limit{{tenant_id=\"{t}\"}} {}\n",
+                quota.max_qps
+            ));
         }
+        output.push('\n');
     }
 
     // Audit metrics.

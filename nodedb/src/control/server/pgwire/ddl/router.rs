@@ -53,6 +53,12 @@ pub async fn dispatch(
     if upper.starts_with("DROP TENANT ") {
         return Some(super::tenant::drop_tenant(state, identity, &parts));
     }
+    if upper.starts_with("SHOW TENANT USAGE") {
+        return Some(super::tenant::show_tenant_usage(state, identity, &parts));
+    }
+    if upper.starts_with("SHOW TENANT QUOTA") {
+        return Some(super::tenant::show_tenant_quota(state, identity, &parts));
+    }
 
     // GRANT / REVOKE.
     if upper.starts_with("GRANT ") {
