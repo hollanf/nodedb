@@ -98,6 +98,7 @@ impl PgSession {
         );
         // NodeDB-specific defaults.
         parameters.insert("nodedb.consistency".into(), "strong".into());
+        parameters.insert("rounding_mode".into(), "HALF_EVEN".into());
         Self {
             tx_state: TransactionState::Idle,
             parameters,

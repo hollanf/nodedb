@@ -1,3 +1,5 @@
+pub mod alloc_common;
+pub mod allocate;
 pub mod bm25_score;
 pub mod doc_array_contains;
 pub mod doc_exists;
@@ -5,6 +7,7 @@ pub mod doc_get;
 pub mod inline_rewrite;
 pub mod multi_vector_search;
 pub(crate) mod nav;
+pub mod round;
 pub mod rrf_score;
 pub mod sequence;
 pub mod spatial;
@@ -12,12 +15,17 @@ pub mod text_match;
 pub mod user_function;
 pub mod vector_distance;
 
+pub mod distribute;
+
+pub use allocate::Allocate;
 pub use bm25_score::Bm25Score;
+pub use distribute::Distribute;
 pub use doc_array_contains::DocArrayContains;
 pub use doc_exists::DocExists;
 pub use doc_get::DocGet;
 pub use inline_rewrite::InlineUserFunctions;
 pub use multi_vector_search::MultiVectorSearch;
+pub use round::RoundDecimal;
 pub use rrf_score::RrfScore;
 pub use text_match::TextMatch;
 pub use user_function::UserDefinedFunction;

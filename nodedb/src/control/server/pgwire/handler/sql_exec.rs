@@ -538,6 +538,11 @@ impl NodeDbPgHandler {
             tenant_id.as_u32(),
         );
 
+        // Apply session rounding mode to per-query context if set.
+        if let Some(mode) = self.sessions.get_parameter(_addr, "rounding_mode") {
+            query_ctx.set_rounding_mode(&mode);
+        }
+
         let auth_ctx = crate::control::server::session_auth::build_auth_context(identity);
         let sec = crate::control::planner::context::PlanSecurityContext {
             identity,

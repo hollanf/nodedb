@@ -90,6 +90,18 @@ impl QueryContext {
         ctx
     }
 
+    /// Override the default rounding mode for `ROUND()` from a session parameter.
+    ///
+    /// Call after `for_state()` when the connection's `rounding_mode` parameter
+    /// differs from the default `HALF_EVEN`. Re-registers the ROUND UDF with
+    /// the session-specific default.
+    pub fn set_rounding_mode(&self, mode: &str) {
+        use super::udf::RoundDecimal;
+        use datafusion::logical_expr::ScalarUDF;
+        self.session
+            .register_udf(ScalarUDF::new_from_impl(RoundDecimal::new(mode)));
+    }
+
     /// Create a query context with catalog + stream + MV integration.
     ///
     /// Prefer `for_state()` when SharedState is available.
@@ -353,6 +365,10 @@ pub const SYSTEM_FUNCTION_NAMES: &[&str] = &[
     "approx_percentile",
     "approx_topk",
     "approx_count",
+    // Accounting math functions.
+    "round",
+    "distribute",
+    "allocate",
     // Sequence functions (registered per-tenant in for_state).
     "nextval",
     "currval",
@@ -364,8 +380,8 @@ fn register_udfs(session: &SessionContext) {
         GeoDistance, StContains, StDistance, StDwithin, StIntersects, StWithin,
     };
     use super::udf::{
-        Bm25Score, DocArrayContains, DocExists, DocGet, MultiVectorSearch, RrfScore, TextMatch,
-        VectorDistance,
+        Allocate, Bm25Score, Distribute, DocArrayContains, DocExists, DocGet, MultiVectorSearch,
+        RoundDecimal, RrfScore, TextMatch, VectorDistance,
     };
     use datafusion::logical_expr::ScalarUDF;
     session.register_udf(ScalarUDF::new_from_impl(DocGet::new()));
@@ -383,6 +399,10 @@ fn register_udfs(session: &SessionContext) {
     session.register_udf(ScalarUDF::new_from_impl(StWithin::new()));
     session.register_udf(ScalarUDF::new_from_impl(StDistance::new()));
     session.register_udf(ScalarUDF::new_from_impl(GeoDistance::new()));
+    // Accounting math UDFs.
+    session.register_udf(ScalarUDF::new_from_impl(RoundDecimal::new("HALF_EVEN")));
+    session.register_udf(ScalarUDF::new_from_impl(Distribute::new()));
+    session.register_udf(ScalarUDF::new_from_impl(Allocate::new()));
     // Timeseries UDFs (window + aggregate).
     nodedb_query::ts_udfs::register_timeseries_udfs(session);
 }
