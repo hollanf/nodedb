@@ -75,8 +75,7 @@ fn encode_grouped_results(
     // Using rmpv::Value is faster than serde_json::Value (no string interning).
     let mut rows: Vec<rmpv::Value> = Vec::with_capacity(num_groups);
 
-    let mut count = 0;
-    for (key, accums) in &result.groups {
+    for (count, (key, accums)) in result.groups.iter().enumerate() {
         if count >= limit {
             break;
         }
@@ -128,7 +127,6 @@ fn encode_grouped_results(
         }
 
         rows.push(rmpv::Value::Map(fields));
-        count += 1;
     }
 
     let array = rmpv::Value::Array(rows);

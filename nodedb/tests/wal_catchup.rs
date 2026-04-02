@@ -86,7 +86,9 @@ impl TestStack {
         )
         .await
         .expect("dispatch failed");
-        serde_json::from_slice(&resp.payload).unwrap_or(serde_json::Value::Null)
+        let json_str =
+            nodedb::data::executor::response_codec::decode_payload_to_json(&resp.payload);
+        serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null)
     }
 
     async fn query_count(&self, collection: &str) -> u64 {
@@ -497,8 +499,9 @@ fn startup_replay_recovers_all_wal_data() {
         .unwrap();
     core.tick();
     let resp = resp_rx.try_pop().unwrap();
-    let result: Vec<serde_json::Value> =
-        serde_json::from_slice(&resp.inner.payload).unwrap_or_default();
+    let json_str =
+        nodedb::data::executor::response_codec::decode_payload_to_json(&resp.inner.payload);
+    let result: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap_or_default();
     let count = result
         .first()
         .and_then(|r| r["count_all"].as_u64())

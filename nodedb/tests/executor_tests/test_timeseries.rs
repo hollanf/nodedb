@@ -50,7 +50,8 @@ fn ingest_ilp(
             wal_lsn: None,
         }),
     );
-    serde_json::from_slice(&raw).unwrap_or(serde_json::Value::Null)
+    let json_str = nodedb::data::executor::response_codec::decode_payload_to_json(&raw);
+    serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null)
 }
 
 fn ts_scan(
@@ -76,7 +77,9 @@ fn ts_scan(
             rls_filters: Vec::new(),
         }),
     );
-    serde_json::from_slice(&raw).unwrap_or_default()
+    // Payload may be MessagePack (grouped aggregates) or JSON — decode both.
+    let json_str = nodedb::data::executor::response_codec::decode_payload_to_json(&raw);
+    serde_json::from_str(&json_str).unwrap_or_default()
 }
 
 fn ts_scan_filtered(
@@ -108,7 +111,8 @@ fn ts_scan_filtered(
             rls_filters: Vec::new(),
         }),
     );
-    serde_json::from_slice(&raw).unwrap_or_default()
+    let json_str = nodedb::data::executor::response_codec::decode_payload_to_json(&raw);
+    serde_json::from_str(&json_str).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -399,7 +403,10 @@ fn dedup_only_skips_flushed_partitions() {
             wal_lsn: Some(100),
         }),
     );
-    let v1: serde_json::Value = serde_json::from_slice(&resp1.payload).unwrap();
+    let v1: serde_json::Value = serde_json::from_str(
+        &nodedb::data::executor::response_codec::decode_payload_to_json(&resp1.payload),
+    )
+    .unwrap();
     assert_eq!(v1["accepted"], 1);
 
     // Same LSN again — accepted (no flushed partition to dedup against).
@@ -416,7 +423,10 @@ fn dedup_only_skips_flushed_partitions() {
             wal_lsn: Some(100),
         }),
     );
-    let v2: serde_json::Value = serde_json::from_slice(&resp2.payload).unwrap();
+    let v2: serde_json::Value = serde_json::from_str(
+        &nodedb::data::executor::response_codec::decode_payload_to_json(&resp2.payload),
+    )
+    .unwrap();
     assert_eq!(
         v2["accepted"], 1,
         "same LSN re-ingest must be accepted (no flushed partition to dedup against)"
@@ -434,7 +444,10 @@ fn dedup_only_skips_flushed_partitions() {
             wal_lsn: None,
         }),
     );
-    let v3: serde_json::Value = serde_json::from_slice(&resp3.payload).unwrap();
+    let v3: serde_json::Value = serde_json::from_str(
+        &nodedb::data::executor::response_codec::decode_payload_to_json(&resp3.payload),
+    )
+    .unwrap();
     assert_eq!(v3["accepted"], 1);
 }
 
@@ -501,7 +514,10 @@ fn catchup_replays_gaps_in_lsn_coverage() {
                 wal_lsn: Some(lsn as u64),
             }),
         );
-        let v: serde_json::Value = serde_json::from_slice(&resp.payload).unwrap();
+        let v: serde_json::Value = serde_json::from_str(
+            &nodedb::data::executor::response_codec::decode_payload_to_json(&resp.payload),
+        )
+        .unwrap();
         assert_eq!(
             v["accepted"], 1,
             "catch-up batch at LSN {lsn} must be accepted (not deduped)"
@@ -670,7 +686,8 @@ fn large_group_by_returns_single_valid_json() {
     );
 
     // The response should be a single valid JSON array.
-    let results: Vec<serde_json::Value> = serde_json::from_slice(&raw)
+    let json_str = nodedb::data::executor::response_codec::decode_payload_to_json(&raw);
+    let results: Vec<serde_json::Value> = serde_json::from_str(&json_str)
         .expect("Data Plane response should be a single valid JSON array");
     assert_eq!(results.len(), 2_000);
 }
