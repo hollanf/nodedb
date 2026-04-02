@@ -1,6 +1,7 @@
 pub mod append_only;
 pub mod balanced;
 pub mod hash_chain;
+pub mod materialized_sum;
 pub mod period_lock;
 pub mod retention;
 pub mod state_transition;

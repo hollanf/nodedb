@@ -298,6 +298,9 @@ pub struct StoredCollection {
     /// Transition check predicates: OLD/NEW expression evaluated on UPDATE.
     #[serde(default)]
     pub transition_checks: Vec<TransitionCheckDef>,
+    /// Materialized sum definitions: automatic balance maintenance on INSERT to source.
+    #[serde(default)]
+    pub materialized_sums: Vec<MaterializedSumDef>,
 }
 
 /// Double-entry balance constraint: within a single transaction, for each
@@ -380,6 +383,28 @@ pub struct TransitionCheckDef {
     pub predicate: crate::bridge::expr_eval::SqlExpr,
 }
 
+/// Materialized sum: on INSERT to source, atomically add value_expr result to
+/// the target collection's balance column.
+///
+/// Stored on the **target** collection (the one with the balance column).
+/// The Data Plane needs to know which **source** collections trigger updates,
+/// so `MaterializedSumBinding` (bridge type) is stored on the source's
+/// `EnforcementOptions` to enable trigger-on-INSERT.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct MaterializedSumDef {
+    /// Target collection that holds the balance column (e.g. `accounts`).
+    pub target_collection: String,
+    /// Balance column on the target (e.g. `balance`).
+    pub target_column: String,
+    /// Source collection that triggers updates (e.g. `journal_entries`).
+    pub source_collection: String,
+    /// Column on source that joins to target's document ID (e.g. `account_id`).
+    pub join_column: String,
+    /// Expression evaluated against each source INSERT to compute the delta.
+    /// Can be a simple column reference or a CASE expression.
+    pub value_expr: crate::bridge::expr_eval::SqlExpr,
+}
+
 impl StoredCollection {
     /// Create a minimal collection entry (schemaless document, no fields).
     pub fn new(tenant_id: u32, name: &str, owner: &str) -> Self {
@@ -407,6 +432,7 @@ impl StoredCollection {
             legal_holds: Vec::new(),
             state_constraints: Vec::new(),
             transition_checks: Vec::new(),
+            materialized_sums: Vec::new(),
         }
     }
 

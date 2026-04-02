@@ -18,7 +18,10 @@ pub mod vector;
 
 pub use columnar::ColumnarOp;
 pub use crdt::CrdtOp;
-pub use document::{BalancedDef, DocumentOp, EnforcementOptions, PeriodLockConfig, StorageMode};
+pub use document::{
+    BalancedDef, DocumentOp, EnforcementOptions, MaterializedSumBinding, PeriodLockConfig,
+    StorageMode,
+};
 pub use graph::GraphOp;
 pub use kv::KvOp;
 pub use meta::MetaOp;

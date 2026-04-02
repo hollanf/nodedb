@@ -294,8 +294,35 @@ impl CoreLoop {
                         undo_log.push(UndoEntry::PutDocument {
                             collection: collection.clone(),
                             document_id: document_id.clone(),
-                            old_value,
+                            old_value: old_value.clone(),
                         });
+
+                        // Materialized sum trigger: on INSERT (not UPDATE),
+                        // atomically update balance on target collections.
+                        if old_value.is_none() {
+                            let config_key = format!("{tid}:{collection}");
+                            if let Some(config) = self.doc_configs.get(&config_key)
+                                && !config.enforcement.materialized_sum_sources.is_empty()
+                                && let Some(src_doc) =
+                                    super::super::doc_format::decode_document(value)
+                            {
+                                let target_writes =
+                                    super::super::enforcement::materialized_sum::apply_materialized_sums(
+                                        &self.sparse,
+                                        tid,
+                                        &config.enforcement.materialized_sum_sources,
+                                        &src_doc,
+                                    )?;
+                                for tw in target_writes {
+                                    undo_log.push(UndoEntry::PutDocument {
+                                        collection: tw.collection,
+                                        document_id: tw.document_id,
+                                        old_value: tw.old_value,
+                                    });
+                                }
+                            }
+                        }
+
                         Ok(self.response_ok(&dummy_task))
                     }
                     Err(e) => Err(ErrorCode::Internal {

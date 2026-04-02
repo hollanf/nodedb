@@ -42,6 +42,24 @@ pub struct EnforcementOptions {
     pub state_constraints: Vec<crate::control::security::catalog::types::StateTransitionDef>,
     /// Transition check predicates: OLD/NEW expressions evaluated on UPDATE.
     pub transition_checks: Vec<crate::control::security::catalog::types::TransitionCheckDef>,
+    /// Materialized sum bindings where THIS collection is the source.
+    /// On INSERT, each binding triggers an atomic balance update on the target.
+    pub materialized_sum_sources: Vec<MaterializedSumBinding>,
+}
+
+/// A materialized sum binding: when a row is INSERTed into this (source)
+/// collection, evaluate `value_expr` and atomically add the result to
+/// `target_column` on the matching row in `target_collection`.
+#[derive(Debug, Clone)]
+pub struct MaterializedSumBinding {
+    /// Target collection holding the balance column (e.g. `accounts`).
+    pub target_collection: String,
+    /// Column on target to update (e.g. `balance`).
+    pub target_column: String,
+    /// Column on source row that joins to target's document ID (e.g. `account_id`).
+    pub join_column: String,
+    /// Expression evaluated against the source INSERT row to compute the delta.
+    pub value_expr: crate::bridge::expr_eval::SqlExpr,
 }
 
 /// Period lock configuration propagated to Data Plane.

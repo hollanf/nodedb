@@ -274,6 +274,7 @@ mod tests {
             legal_holds: Vec::new(),
             state_constraints: Vec::new(),
             transition_checks: Vec::new(),
+            materialized_sums: Vec::new(),
         };
         let schema = collection_to_arrow_schema(&coll);
         assert_eq!(schema.fields().len(), 2);
@@ -308,6 +309,7 @@ mod tests {
             legal_holds: Vec::new(),
             state_constraints: Vec::new(),
             transition_checks: Vec::new(),
+            materialized_sums: Vec::new(),
         };
         let schema = collection_to_arrow_schema(&coll);
         assert_eq!(schema.fields().len(), 5);

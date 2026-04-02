@@ -407,6 +407,13 @@ pub async fn dispatch(
         return Some(super::constraint::drop_constraint(state, identity, &parts));
     }
 
+    // Materialized sum: ALTER COLLECTION x ADD COLUMN ... AS MATERIALIZED_SUM ...
+    if upper.starts_with("ALTER COLLECTION ") && upper.contains("MATERIALIZED_SUM") {
+        return Some(super::collection::alter::add_materialized_sum(
+            state, identity, sql,
+        ));
+    }
+
     // Period lock management.
     if upper.starts_with("ALTER COLLECTION ") && upper.contains("ADD PERIOD LOCK") {
         return Some(super::period_lock::add_period_lock(state, identity, sql));
