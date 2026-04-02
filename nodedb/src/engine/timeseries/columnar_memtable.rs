@@ -460,6 +460,25 @@ impl ColumnarMemtable {
         &self.schema
     }
 
+    /// Export memtable data for snapshot.
+    ///
+    /// Returns `(column_name, serialized_column_data)` pairs.
+    pub fn export_snapshot(&self) -> Vec<(String, Vec<u8>)> {
+        let mut result = Vec::with_capacity(self.schema.columns.len());
+        for (i, (name, _ty)) in self.schema.columns.iter().enumerate() {
+            if i < self.columns.len() {
+                let bytes = match &self.columns[i] {
+                    ColumnData::Timestamp(v) => rmp_serde::to_vec(v).unwrap_or_default(),
+                    ColumnData::Float64(v) => rmp_serde::to_vec(v).unwrap_or_default(),
+                    ColumnData::Int64(v) => rmp_serde::to_vec(v).unwrap_or_default(),
+                    ColumnData::Symbol(v) => rmp_serde::to_vec(v).unwrap_or_default(),
+                };
+                result.push((name.clone(), bytes));
+            }
+        }
+        result
+    }
+
     pub fn column(&self, idx: usize) -> &ColumnData {
         &self.columns[idx]
     }

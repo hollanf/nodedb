@@ -24,12 +24,15 @@ pub type ScanResult = (Vec<(Vec<u8>, Vec<u8>)>, Vec<u8>);
 /// Dispatched from the Data Plane executor via `PhysicalPlan::Kv(KvOp)`.
 pub struct KvEngine {
     /// Per-collection hash tables. Key: "{tenant_id}:{collection}".
-    pub(super) tables: HashMap<u64, KvHashTable>,
+    pub(crate) tables: HashMap<u64, KvHashTable>,
     /// Per-collection secondary index sets. Key: "{tenant_id}:{collection}".
-    pub(super) indexes: HashMap<u64, KvIndexSet>,
+    pub(crate) indexes: HashMap<u64, KvIndexSet>,
     /// Reverse mapping: hash → tenant_id. Enables tenant purge without
     /// reversing the FxHash. Maintained in sync with `tables`.
-    pub(super) hash_to_tenant: HashMap<u64, u32>,
+    pub(crate) hash_to_tenant: HashMap<u64, u32>,
+    /// Reverse mapping: hash → collection name. Enables snapshot export
+    /// to include human-readable collection names (FxHash is not reversible).
+    pub(crate) hash_to_collection: HashMap<u64, String>,
     /// Shared expiry wheel across all collections on this core.
     pub(super) expiry: ExpiryWheel,
     /// Default tuning parameters for new collections.
@@ -57,6 +60,7 @@ impl KvEngine {
             tables: HashMap::new(),
             indexes: HashMap::new(),
             hash_to_tenant: HashMap::new(),
+            hash_to_collection: HashMap::new(),
             expiry: ExpiryWheel::new(now_ms, expiry_tick_ms, expiry_reap_budget),
             default_capacity,
             load_factor_threshold,
@@ -109,6 +113,7 @@ impl KvEngine {
             self.tables.remove(key);
             self.indexes.remove(key);
             self.hash_to_tenant.remove(key);
+            self.hash_to_collection.remove(key);
         }
         removed
     }
@@ -204,6 +209,9 @@ impl KvEngine {
             t
         } else {
             self.hash_to_tenant.entry(tkey).or_insert(tenant_id);
+            self.hash_to_collection
+                .entry(tkey)
+                .or_insert_with(|| collection.to_string());
             self.tables.entry(tkey).or_insert_with(|| {
                 KvHashTable::new(
                     self.default_capacity,

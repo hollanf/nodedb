@@ -92,6 +92,18 @@ impl KvHashTable {
         self.len == 0
     }
 
+    /// Export all entries for snapshot/backup.
+    ///
+    /// Returns `(key_bytes, value_bytes, expire_at_ms)` for every live entry.
+    pub fn export_entries(&self) -> Vec<(Vec<u8>, Vec<u8>, u64)> {
+        let mut result = Vec::with_capacity(self.len);
+        for entry in self.slots.iter().flatten() {
+            let value_bytes = super::hash_helpers::extract_value_from(&entry.value, &self.overflow);
+            result.push((entry.key.clone(), value_bytes, entry.expire_at_ms));
+        }
+        result
+    }
+
     /// Current load factor of the primary table.
     pub fn load_factor(&self) -> f32 {
         self.len as f32 / self.capacity as f32

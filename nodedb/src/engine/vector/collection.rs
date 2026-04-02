@@ -475,6 +475,47 @@ impl VectorCollection {
     }
 
     /// Total vector count across all segments (including deleted).
+    /// Export all live vectors for snapshot.
+    ///
+    /// Returns `(vector_id, f32_data, doc_id_option)` for every non-deleted
+    /// vector across growing + sealed + building segments.
+    /// HNSW graph topology is NOT exported — it's rebuilt on restore.
+    pub fn export_snapshot(&self) -> Vec<(u32, Vec<f32>, Option<String>)> {
+        let mut result = Vec::new();
+
+        // Growing segment: vectors [0..growing.len()) with base_id offset.
+        for i in 0..self.growing.len() as u32 {
+            let vid = self.growing_base_id + i;
+            if let Some(data) = self.growing.get_vector(i) {
+                let doc_id = self.doc_id_map.get(&vid).cloned();
+                result.push((vid, data.to_vec(), doc_id));
+            }
+        }
+
+        // Sealed segments.
+        for seg in &self.sealed {
+            let vectors = seg.index.export_vectors();
+            for (i, vec_data) in vectors.into_iter().enumerate() {
+                let vid = seg.base_id + i as u32;
+                let doc_id = self.doc_id_map.get(&vid).cloned();
+                result.push((vid, vec_data, doc_id));
+            }
+        }
+
+        // Building segments (in-progress, brute-force searchable).
+        for seg in &self.building {
+            for i in 0..seg.flat.len() as u32 {
+                let vid = seg.base_id + i;
+                if let Some(data) = seg.flat.get_vector(i) {
+                    let doc_id = self.doc_id_map.get(&vid).cloned();
+                    result.push((vid, data.to_vec(), doc_id));
+                }
+            }
+        }
+
+        result
+    }
+
     pub fn len(&self) -> usize {
         let mut total = self.growing.len();
         for seg in &self.sealed {

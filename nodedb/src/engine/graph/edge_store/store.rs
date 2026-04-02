@@ -263,6 +263,51 @@ impl EdgeStore {
         Ok(removed)
     }
 
+    /// Scan all forward edges belonging to a tenant.
+    ///
+    /// Returns `(composite_key, properties)` pairs from the EDGES table
+    /// where the key starts with `"{tenant_id}:"`.
+    pub fn scan_edges_for_tenant(&self, tenant_id: u32) -> crate::Result<Vec<(String, Vec<u8>)>> {
+        let prefix = format!("{tenant_id}:");
+        let end = format!("{tenant_id}:\u{ffff}");
+
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| redb_err("begin_read", e))?;
+        let table = read_txn
+            .open_table(EDGES)
+            .map_err(|e| redb_err("open edges", e))?;
+
+        let mut results = Vec::new();
+        let range = table
+            .range(prefix.as_str()..end.as_str())
+            .map_err(|e| redb_err("edge range", e))?;
+        for entry in range {
+            let entry = entry.map_err(|e| redb_err("edge entry", e))?;
+            results.push((entry.0.value().to_string(), entry.1.value().to_vec()));
+        }
+        Ok(results)
+    }
+
+    /// Insert a raw edge by its full composite key (for snapshot restore).
+    pub fn put_edge_raw(&self, key: &str, properties: &[u8]) -> crate::Result<()> {
+        let write_txn = self
+            .db
+            .begin_write()
+            .map_err(|e| redb_err("begin_write", e))?;
+        {
+            let mut table = write_txn
+                .open_table(EDGES)
+                .map_err(|e| redb_err("open edges", e))?;
+            table
+                .insert(key, properties)
+                .map_err(|e| redb_err("insert edge", e))?;
+        }
+        write_txn.commit().map_err(|e| redb_err("commit edge", e))?;
+        Ok(())
+    }
+
     /// Get a single edge's properties. Returns None if the edge doesn't exist.
     pub fn get_edge(&self, src: &str, label: &str, dst: &str) -> crate::Result<Option<Vec<u8>>> {
         let key = edge_key(src, label, dst);

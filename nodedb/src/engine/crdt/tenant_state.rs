@@ -73,6 +73,11 @@ impl TenantCrdtEngine {
 
     /// Apply a validated delta from Raft commit.
     ///
+    /// Import a full CRDT snapshot (for snapshot restore).
+    pub fn import_snapshot_bytes(&self, bytes: &[u8]) -> crate::Result<()> {
+        self.state.import(bytes).map_err(crate::Error::Crdt)
+    }
+
     /// This is called AFTER Raft consensus — the delta has been committed
     /// to the Raft log and now needs to be applied to the local state.
     pub fn apply_committed_delta(&self, delta: &[u8]) -> crate::Result<()> {

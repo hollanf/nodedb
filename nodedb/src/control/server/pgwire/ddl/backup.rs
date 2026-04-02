@@ -23,7 +23,7 @@ use super::user::extract_quoted_string;
 /// Serializable tenant backup.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct TenantBackup {
-    /// Backup format version.
+    /// Backup format version (v2 = all engines).
     version: u32,
     tenant_id: u32,
     created_at: u64,
@@ -31,10 +31,19 @@ struct TenantBackup {
     documents: Vec<(String, Vec<u8>)>,
     /// Sparse engine indexes: [(key, value), ...]
     indexes: Vec<(String, Vec<u8>)>,
-    /// CRDT snapshots per collection: [(collection, snapshot_bytes), ...]
+    /// CRDT snapshots: [(tenant_key, loro_export_bytes), ...]
     crdt_snapshots: Vec<(String, Vec<u8>)>,
-    /// Vector indexes: [(collection_key, vectors_json), ...]
+    /// Vector collections: [(index_key, serialized_vectors), ...]
     vector_snapshots: Vec<(String, Vec<u8>)>,
+    /// Graph edges: [(composite_key, properties), ...]
+    #[serde(default)]
+    edges: Vec<(String, Vec<u8>)>,
+    /// KV tables: [(hash_key_str, serialized_entries), ...]
+    #[serde(default)]
+    kv_tables: Vec<(String, Vec<u8>)>,
+    /// Timeseries memtables: [(scoped_collection, serialized_columns), ...]
+    #[serde(default)]
+    timeseries: Vec<(String, Vec<u8>)>,
 }
 
 /// BACKUP TENANT <id> TO '<path>'
@@ -93,13 +102,16 @@ pub async fn backup_tenant(
         .map_err(|e| sqlstate_error("XX000", &format!("snapshot decode failed: {e}")))?;
 
     let backup = TenantBackup {
-        version: 1,
+        version: 2,
         tenant_id: tid,
         created_at: now,
         documents: data_snapshot.documents,
         indexes: data_snapshot.indexes,
-        crdt_snapshots: Vec::new(),
-        vector_snapshots: Vec::new(),
+        crdt_snapshots: data_snapshot.crdt_state,
+        vector_snapshots: data_snapshot.vectors,
+        edges: data_snapshot.edges,
+        kv_tables: data_snapshot.kv_tables,
+        timeseries: data_snapshot.timeseries,
     };
     let catalog_data = if let Some(catalog) = state.credentials.catalog() {
         let collections = match catalog.load_collections_for_tenant(tid) {
