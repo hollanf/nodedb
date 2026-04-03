@@ -20,6 +20,15 @@ Welcome to the NodeDB docs. These guides explain what each engine does, when to 
 - [Key-Value](kv.md) — O(1) lookups, TTL, secondary indexes, SQL-queryable
 - [Full-Text Search](full-text-search.md) — BM25, stemming, fuzzy, hybrid vector fusion
 
+## AI/ML Patterns
+
+- [AI Pattern Guides](ai/README.md) — Index of all AI/ML guides
+- [RAG Pipelines](ai/rag-pipelines.md) — Basic, hybrid, filtered, parent-document, conversational RAG
+- [GraphRAG](ai/graphrag.md) — Entity extraction, graph expansion, community summarization
+- [Agent Memory](ai/agent-memory.md) — Episodic, semantic, working memory with scheduled consolidation
+- [On-Device AI](ai/on-device.md) — NodeDB-Lite for offline RAG, CRDT sync, WASM, privacy
+- [Multi-Modal Search](ai/multi-modal-search.md) — Multiple vector columns, cross-modal CLIP, RRF fusion
+
 ## Platform & Operations
 
 - [NodeDB-Lite](lite.md) — Embedded database for phones, browsers, desktops
