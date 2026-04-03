@@ -164,8 +164,17 @@ impl CoreLoop {
                 dest_key,
                 field,
                 amount,
-            } => self
-                .execute_kv_transfer(task, tid, collection, source_key, dest_key, field, *amount),
+            } => self.execute_kv_transfer(
+                task,
+                super::transfer::TransferParams {
+                    tid,
+                    collection,
+                    source_key,
+                    dest_key,
+                    field,
+                    amount: *amount,
+                },
+            ),
             KvOp::TransferItem {
                 source_collection,
                 dest_collection,

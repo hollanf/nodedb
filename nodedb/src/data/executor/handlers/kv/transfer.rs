@@ -11,6 +11,16 @@ use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::kv::current_ms;
 
+/// Parameters for an atomic fungible transfer.
+pub(in crate::data::executor) struct TransferParams<'a> {
+    pub tid: u32,
+    pub collection: &'a str,
+    pub source_key: &'a [u8],
+    pub dest_key: &'a [u8],
+    pub field: &'a str,
+    pub amount: f64,
+}
+
 impl CoreLoop {
     /// Atomic fungible transfer: source.field -= amount, dest.field += amount.
     ///
@@ -18,13 +28,16 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_transfer(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
-        collection: &str,
-        source_key: &[u8],
-        dest_key: &[u8],
-        field: &str,
-        amount: f64,
+        params: TransferParams<'_>,
     ) -> Response {
+        let TransferParams {
+            tid,
+            collection,
+            source_key,
+            dest_key,
+            field,
+            amount,
+        } = params;
         debug!(core = self.core_id, %collection, %field, amount, "kv transfer");
 
         if self.kv_engine.is_over_budget() {
@@ -69,13 +82,29 @@ impl CoreLoop {
         let dest_balance = extract_numeric_field(&dest_bytes, field).unwrap_or(0.0);
 
         // Step 3: Compute new values.
-        let new_source = update_numeric_field(&source_bytes, field, source_balance - amount);
+        let new_source = match update_numeric_field(&source_bytes, field, source_balance - amount) {
+            Ok(v) => v,
+            Err(e) => return self.response_error(task, e),
+        };
         let new_dest = if dest_bytes.is_empty() {
             // Dest key doesn't exist — create with just the field.
             let doc = serde_json::json!({ field: dest_balance + amount });
-            rmp_serde::to_vec(&doc).unwrap_or_default()
+            match rmp_serde::to_vec(&doc) {
+                Ok(v) => v,
+                Err(e) => {
+                    return self.response_error(
+                        task,
+                        ErrorCode::Internal {
+                            detail: format!("serialize destination: {e}"),
+                        },
+                    );
+                }
+            }
         } else {
-            update_numeric_field(&dest_bytes, field, dest_balance + amount)
+            match update_numeric_field(&dest_bytes, field, dest_balance + amount) {
+                Ok(v) => v,
+                Err(e) => return self.response_error(task, e),
+            }
         };
 
         // Step 4: Write both atomically (deterministic order for consistency).
@@ -208,8 +237,11 @@ fn extract_numeric_field(value: &[u8], field: &str) -> Option<f64> {
 }
 
 /// Update a numeric field in a MessagePack-encoded KV value, preserving other fields.
-fn update_numeric_field(value: &[u8], field: &str, new_value: f64) -> Vec<u8> {
-    let mut doc: serde_json::Value = rmp_serde::from_slice(value).unwrap_or_default();
+fn update_numeric_field(value: &[u8], field: &str, new_value: f64) -> Result<Vec<u8>, ErrorCode> {
+    let mut doc: serde_json::Value =
+        rmp_serde::from_slice(value).map_err(|e| ErrorCode::Internal {
+            detail: format!("deserialize value: {e}"),
+        })?;
     if let Some(obj) = doc.as_object_mut() {
         if new_value.fract() == 0.0 && new_value >= i64::MIN as f64 && new_value <= i64::MAX as f64
         {
@@ -218,5 +250,7 @@ fn update_numeric_field(value: &[u8], field: &str, new_value: f64) -> Vec<u8> {
             obj.insert(field.to_string(), serde_json::json!(new_value));
         }
     }
-    rmp_serde::to_vec(&doc).unwrap_or_default()
+    rmp_serde::to_vec(&doc).map_err(|e| ErrorCode::Internal {
+        detail: format!("serialize value: {e}"),
+    })
 }

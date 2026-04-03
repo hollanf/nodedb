@@ -248,12 +248,26 @@ impl KvEngine {
         };
 
         // Cancel old expiry before mutation.
-        if let Some(ref meta) = old_meta {
-            if meta.has_ttl {
-                let composite = expiry_key(tenant_id, collection, key);
-                self.expiry.cancel(&composite, meta.expire_at_ms);
-            }
+        if let Some(ref meta) = old_meta
+            && meta.has_ttl
+        {
+            let composite = expiry_key(tenant_id, collection, key);
+            self.expiry.cancel(&composite, meta.expire_at_ms);
         }
+
+        // Extract old field values BEFORE overwriting — needed so on_put can
+        // remove stale index entries when a field changes.
+        let old_fields =
+            if !is_new_key && self.indexes.get(&tkey).is_some_and(|idx| !idx.is_empty()) {
+                self.tables
+                    .get(&tkey)
+                    .and_then(|t| t.get(key, now_ms))
+                    .map(|old_val| {
+                        super::engine_helpers::extract_all_field_values_from_msgpack(old_val)
+                    })
+            } else {
+                None
+            };
 
         // Write the value.
         let table = self.tables.get_mut(&tkey).expect("table ensured");
@@ -267,16 +281,20 @@ impl KvEngine {
 
         // Secondary index maintenance.
         if self.indexes.get(&tkey).is_some_and(|idx| !idx.is_empty()) {
+            let old_refs: Option<Vec<(&str, &[u8])>> = old_fields.as_ref().map(|fields| {
+                fields
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_slice()))
+                    .collect()
+            });
+
             let new_fields = super::engine_helpers::extract_all_field_values_from_msgpack(value);
             let new_refs: Vec<(&str, &[u8])> = new_fields
                 .iter()
                 .map(|(k, v)| (k.as_str(), v.as_slice()))
                 .collect();
             if let Some(idx_set) = self.indexes.get_mut(&tkey) {
-                // For atomic ops on numeric values, indexes are updated but
-                // old_fields tracking is omitted (atomic values are typically
-                // not indexed by secondary indexes — they're raw numerics).
-                idx_set.on_put(key, &new_refs, None);
+                idx_set.on_put(key, &new_refs, old_refs.as_deref());
             }
         }
     }
