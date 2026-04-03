@@ -15,6 +15,7 @@ pub mod spatial;
 pub mod text_match;
 pub mod user_function;
 pub mod vector_distance;
+pub mod vector_metadata;
 
 pub mod distribute;
 
@@ -32,3 +33,4 @@ pub use rrf_score::RrfScore;
 pub use text_match::TextMatch;
 pub use user_function::UserDefinedFunction;
 pub use vector_distance::VectorDistance;
+pub use vector_metadata::VectorMetadata;

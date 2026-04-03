@@ -383,13 +383,14 @@ fn register_udfs(session: &SessionContext) {
     };
     use super::udf::{
         Allocate, Bm25Score, ConvertCurrency, Distribute, DocArrayContains, DocExists, DocGet,
-        MultiVectorSearch, RoundDecimal, RrfScore, TextMatch, VectorDistance,
+        MultiVectorSearch, RoundDecimal, RrfScore, TextMatch, VectorDistance, VectorMetadata,
     };
     use datafusion::logical_expr::ScalarUDF;
     session.register_udf(ScalarUDF::new_from_impl(DocGet::new()));
     session.register_udf(ScalarUDF::new_from_impl(DocExists::new()));
     session.register_udf(ScalarUDF::new_from_impl(DocArrayContains::new()));
     session.register_udf(ScalarUDF::new_from_impl(VectorDistance::new()));
+    session.register_udf(ScalarUDF::new_from_impl(VectorMetadata::new()));
     session.register_udf(ScalarUDF::new_from_impl(MultiVectorSearch::new()));
     session.register_udf(ScalarUDF::new_from_impl(RrfScore::new()));
     session.register_udf(ScalarUDF::new_from_impl(Bm25Score::new()));

@@ -118,6 +118,10 @@ pub(super) const SCOPES: TableDefinition<&str, &[u8]> = TableDefinition::new("_s
 pub(super) const SCOPE_GRANTS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.scope_grants");
 
+/// Table: "{tenant_id}:{collection}:{column}" -> MessagePack-serialized VectorModelEntry.
+pub(super) const VECTOR_MODEL_METADATA: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("_system.vector_model_metadata");
+
 pub fn catalog_err<E: std::fmt::Display>(ctx: &str, e: E) -> crate::Error {
     crate::Error::Storage {
         engine: "catalog".into(),

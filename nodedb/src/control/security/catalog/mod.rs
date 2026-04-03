@@ -24,6 +24,7 @@ pub mod trigger_types;
 pub mod triggers;
 pub mod types;
 pub mod users;
+pub mod vector_model;
 
 pub use function_types::{
     FunctionLanguage, FunctionParam, FunctionSecurity, FunctionVolatility, StoredFunction,

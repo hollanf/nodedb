@@ -7,6 +7,7 @@ pub mod describe;
 pub mod drop;
 pub mod helpers;
 pub mod index;
+pub mod vector_metadata;
 
 // Re-export all public functions so existing callers via `super::collection::*` continue to work.
 pub use alter::{alter_collection_enforcement, alter_table_add_column};
@@ -14,6 +15,9 @@ pub use create::{create_collection, dispatch_register_if_needed};
 pub use describe::{describe_collection, show_collections};
 pub use drop::drop_collection;
 pub use index::{create_index, drop_index, show_indexes};
+pub use vector_metadata::{
+    handle_set_vector_metadata, handle_show_vector_models, handle_vector_metadata_query,
+};
 
 // Re-export validate_document_schema from schema_validation (was re-exported from old collection.rs).
 pub use super::schema_validation::validate_document_schema;
