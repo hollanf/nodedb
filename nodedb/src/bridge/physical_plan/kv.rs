@@ -122,4 +122,49 @@ pub enum KvOp {
 
     /// Truncate: delete ALL entries in a KV collection.
     Truncate { collection: String },
+
+    /// Atomic increment on a numeric value. Returns new value.
+    ///
+    /// If key doesn't exist, initializes to 0 then adds delta.
+    /// If value is not i64, returns `TypeMismatch`.
+    /// On overflow (i64::MAX + 1), returns `OverflowError`.
+    /// TTL: if `ttl_ms > 0` and key is new, sets TTL; if key exists, resets TTL.
+    /// If `ttl_ms == 0`, preserves existing TTL (no change).
+    Incr {
+        collection: String,
+        key: Vec<u8>,
+        delta: i64,
+        /// TTL in milliseconds. 0 = preserve existing TTL.
+        ttl_ms: u64,
+    },
+
+    /// Atomic float increment on a numeric value. Returns new value.
+    ///
+    /// Same semantics as `Incr` but for f64 values.
+    /// If value is not f64, returns `TypeMismatch`.
+    IncrFloat {
+        collection: String,
+        key: Vec<u8>,
+        delta: f64,
+    },
+
+    /// Compare-and-swap: set value to `new_value` only if current equals `expected`.
+    ///
+    /// Returns JSON `{"success": bool, "current_value": "<base64>"}`.
+    /// If key doesn't exist and `expected` is empty, creates the key (create-if-not-exists).
+    Cas {
+        collection: String,
+        key: Vec<u8>,
+        expected: Vec<u8>,
+        new_value: Vec<u8>,
+    },
+
+    /// Atomic get-and-set: set new value, return old value.
+    ///
+    /// Returns the previous value (or null if key didn't exist).
+    GetSet {
+        collection: String,
+        key: Vec<u8>,
+        new_value: Vec<u8>,
+    },
 }

@@ -1,4 +1,5 @@
 pub mod engine;
+pub mod engine_atomic;
 mod engine_helpers;
 mod engine_index;
 mod engine_stats;
@@ -11,6 +12,7 @@ pub mod scan;
 pub mod slab;
 
 pub use engine::KvEngine;
+pub use engine_atomic::{AtomicError, CasResult};
 pub use engine_stats::{ExpiredKey, KvStats};
 
 /// Get current wall-clock time in milliseconds since Unix epoch.

@@ -24,6 +24,7 @@ pub mod graph_ops;
 pub mod impersonation_ddl;
 pub mod inspect;
 pub mod kv;
+pub mod kv_atomic;
 pub mod maintenance;
 pub mod match_ops;
 pub mod materialized_view;

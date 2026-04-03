@@ -120,6 +120,28 @@ pub enum ReplicatedWrite {
         collection: String,
         key: Vec<u8>,
     },
+    KvIncr {
+        collection: String,
+        key: Vec<u8>,
+        delta: i64,
+        ttl_ms: u64,
+    },
+    KvIncrFloat {
+        collection: String,
+        key: Vec<u8>,
+        delta: f64,
+    },
+    KvCas {
+        collection: String,
+        key: Vec<u8>,
+        expected: Vec<u8>,
+        new_value: Vec<u8>,
+    },
+    KvGetSet {
+        collection: String,
+        key: Vec<u8>,
+        new_value: Vec<u8>,
+    },
 }
 
 /// Metadata carried alongside the write for routing on the receiving node.
@@ -291,6 +313,46 @@ pub fn to_replicated_entry(
             collection: collection.clone(),
             key: key.clone(),
         },
+        PhysicalPlan::Kv(KvOp::Incr {
+            collection,
+            key,
+            delta,
+            ttl_ms,
+        }) => ReplicatedWrite::KvIncr {
+            collection: collection.clone(),
+            key: key.clone(),
+            delta: *delta,
+            ttl_ms: *ttl_ms,
+        },
+        PhysicalPlan::Kv(KvOp::IncrFloat {
+            collection,
+            key,
+            delta,
+        }) => ReplicatedWrite::KvIncrFloat {
+            collection: collection.clone(),
+            key: key.clone(),
+            delta: *delta,
+        },
+        PhysicalPlan::Kv(KvOp::Cas {
+            collection,
+            key,
+            expected,
+            new_value,
+        }) => ReplicatedWrite::KvCas {
+            collection: collection.clone(),
+            key: key.clone(),
+            expected: expected.clone(),
+            new_value: new_value.clone(),
+        },
+        PhysicalPlan::Kv(KvOp::GetSet {
+            collection,
+            key,
+            new_value,
+        }) => ReplicatedWrite::KvGetSet {
+            collection: collection.clone(),
+            key: key.clone(),
+            new_value: new_value.clone(),
+        },
         // Not a write — reads, system ops, etc.
         _ => return None,
     };
@@ -457,6 +519,46 @@ fn to_physical_plan(write: &ReplicatedWrite) -> PhysicalPlan {
         ReplicatedWrite::KvPersist { collection, key } => PhysicalPlan::Kv(KvOp::Persist {
             collection: collection.clone(),
             key: key.clone(),
+        }),
+        ReplicatedWrite::KvIncr {
+            collection,
+            key,
+            delta,
+            ttl_ms,
+        } => PhysicalPlan::Kv(KvOp::Incr {
+            collection: collection.clone(),
+            key: key.clone(),
+            delta: *delta,
+            ttl_ms: *ttl_ms,
+        }),
+        ReplicatedWrite::KvIncrFloat {
+            collection,
+            key,
+            delta,
+        } => PhysicalPlan::Kv(KvOp::IncrFloat {
+            collection: collection.clone(),
+            key: key.clone(),
+            delta: *delta,
+        }),
+        ReplicatedWrite::KvCas {
+            collection,
+            key,
+            expected,
+            new_value,
+        } => PhysicalPlan::Kv(KvOp::Cas {
+            collection: collection.clone(),
+            key: key.clone(),
+            expected: expected.clone(),
+            new_value: new_value.clone(),
+        }),
+        ReplicatedWrite::KvGetSet {
+            collection,
+            key,
+            new_value,
+        } => PhysicalPlan::Kv(KvOp::GetSet {
+            collection: collection.clone(),
+            key: key.clone(),
+            new_value: new_value.clone(),
         }),
     }
 }

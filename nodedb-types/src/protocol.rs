@@ -116,6 +116,12 @@ pub enum OpCode {
 
     // ── Vector DDL operations ───────────────────────────────────
     VectorSetParams = 0x8D,
+
+    // ── KV atomic operations ───────────────────────────────────
+    KvIncr = 0x8E,
+    KvIncrFloat = 0x8F,
+    KvCas = 0x90,
+    KvGetSet = 0x91,
 }
 
 impl OpCode {
@@ -151,6 +157,10 @@ impl OpCode {
                 | OpCode::KvDropIndex
                 | OpCode::KvTruncate
                 | OpCode::VectorSetParams
+                | OpCode::KvIncr
+                | OpCode::KvIncrFloat
+                | OpCode::KvCas
+                | OpCode::KvGetSet
         )
     }
 }
@@ -382,6 +392,20 @@ pub struct TextFields {
     /// Field names for FieldGet.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fields: Option<Vec<String>>,
+
+    // ── KV atomic operations ────────────────────────────────
+    /// Integer delta for KvIncr.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incr_delta: Option<i64>,
+    /// Float delta for KvIncrFloat.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub incr_float_delta: Option<f64>,
+    /// Expected value for KvCas.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected: Option<Vec<u8>>,
+    /// New value for KvCas / KvGetSet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_value: Option<Vec<u8>>,
 
     // ── Document advanced ───────────────────────────────────
     /// Field-level updates: [(field_name, value_bytes), ...].

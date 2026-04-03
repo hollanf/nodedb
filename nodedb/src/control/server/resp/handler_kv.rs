@@ -1,4 +1,4 @@
-//! Core KV RESP command handlers: GET, SET, DEL, EXISTS, MGET, MSET.
+//! Core KV RESP command handlers: GET, SET, DEL, EXISTS, MGET, MSET, INCR, DECR, GETSET.
 
 use crate::bridge::envelope::{PhysicalPlan, Status};
 use crate::bridge::physical_plan::KvOp;
@@ -233,6 +233,175 @@ pub(super) async fn handle_mset(
 
     match dispatch_kv_write(state, session, plan).await {
         Ok(_) => RespValue::ok(),
+        Err(e) => RespValue::err(format!("ERR {e}")),
+    }
+}
+
+/// INCR key / DECR key — increment/decrement by 1.
+///
+/// `default_delta` is +1 for INCR, -1 for DECR.
+pub(super) async fn handle_incr(
+    cmd: &RespCommand,
+    session: &RespSession,
+    state: &SharedState,
+    default_delta: i64,
+) -> RespValue {
+    let Some(key) = cmd.arg(0) else {
+        return RespValue::err("ERR wrong number of arguments for 'incr' command");
+    };
+
+    let plan = PhysicalPlan::Kv(KvOp::Incr {
+        collection: session.collection.clone(),
+        key: key.to_vec(),
+        delta: default_delta,
+        ttl_ms: 0,
+    });
+
+    match dispatch_kv_write(state, session, plan).await {
+        Ok(resp) => {
+            let new_val = parse_json_field_i64(&resp.payload, "value").unwrap_or(0);
+            RespValue::integer(new_val)
+        }
+        Err(e) => RespValue::err(format!("ERR {e}")),
+    }
+}
+
+/// INCRBY key delta
+pub(super) async fn handle_incrby(
+    cmd: &RespCommand,
+    session: &RespSession,
+    state: &SharedState,
+) -> RespValue {
+    if cmd.argc() < 2 {
+        return RespValue::err("ERR wrong number of arguments for 'incrby' command");
+    }
+
+    let key = cmd.args[0].clone();
+    let Some(delta) = cmd.arg_i64(1) else {
+        return RespValue::err("ERR value is not an integer or out of range");
+    };
+
+    let plan = PhysicalPlan::Kv(KvOp::Incr {
+        collection: session.collection.clone(),
+        key,
+        delta,
+        ttl_ms: 0,
+    });
+
+    match dispatch_kv_write(state, session, plan).await {
+        Ok(resp) => {
+            let new_val = parse_json_field_i64(&resp.payload, "value").unwrap_or(0);
+            RespValue::integer(new_val)
+        }
+        Err(e) => RespValue::err(format!("ERR {e}")),
+    }
+}
+
+/// DECRBY key delta
+pub(super) async fn handle_decrby(
+    cmd: &RespCommand,
+    session: &RespSession,
+    state: &SharedState,
+) -> RespValue {
+    if cmd.argc() < 2 {
+        return RespValue::err("ERR wrong number of arguments for 'decrby' command");
+    }
+
+    let key = cmd.args[0].clone();
+    let Some(delta) = cmd.arg_i64(1) else {
+        return RespValue::err("ERR value is not an integer or out of range");
+    };
+
+    let plan = PhysicalPlan::Kv(KvOp::Incr {
+        collection: session.collection.clone(),
+        key,
+        delta: -delta,
+        ttl_ms: 0,
+    });
+
+    match dispatch_kv_write(state, session, plan).await {
+        Ok(resp) => {
+            let new_val = parse_json_field_i64(&resp.payload, "value").unwrap_or(0);
+            RespValue::integer(new_val)
+        }
+        Err(e) => RespValue::err(format!("ERR {e}")),
+    }
+}
+
+/// INCRBYFLOAT key delta
+pub(super) async fn handle_incrbyfloat(
+    cmd: &RespCommand,
+    session: &RespSession,
+    state: &SharedState,
+) -> RespValue {
+    if cmd.argc() < 2 {
+        return RespValue::err("ERR wrong number of arguments for 'incrbyfloat' command");
+    }
+
+    let key = cmd.args[0].clone();
+    let delta_str = match cmd.arg_str(1) {
+        Some(s) => s,
+        None => return RespValue::err("ERR value is not a valid float"),
+    };
+    let delta: f64 = match delta_str.parse() {
+        Ok(v) => v,
+        Err(_) => return RespValue::err("ERR value is not a valid float"),
+    };
+
+    let plan = PhysicalPlan::Kv(KvOp::IncrFloat {
+        collection: session.collection.clone(),
+        key,
+        delta,
+    });
+
+    match dispatch_kv_write(state, session, plan).await {
+        Ok(resp) => {
+            // Return the new value as a bulk string (Redis convention).
+            let payload_text =
+                crate::data::executor::response_codec::decode_payload_to_json(&resp.payload);
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_text)
+                && let Some(v) = json.get("value")
+            {
+                return RespValue::bulk(v.to_string().into_bytes());
+            }
+            RespValue::bulk(payload_text.into_bytes())
+        }
+        Err(e) => RespValue::err(format!("ERR {e}")),
+    }
+}
+
+/// GETSET key value — atomically set new value and return old.
+pub(super) async fn handle_getset(
+    cmd: &RespCommand,
+    session: &RespSession,
+    state: &SharedState,
+) -> RespValue {
+    if cmd.argc() < 2 {
+        return RespValue::err("ERR wrong number of arguments for 'getset' command");
+    }
+
+    let key = cmd.args[0].clone();
+    let new_value = cmd.args[1].clone();
+
+    let plan = PhysicalPlan::Kv(KvOp::GetSet {
+        collection: session.collection.clone(),
+        key,
+        new_value,
+    });
+
+    match dispatch_kv_write(state, session, plan).await {
+        Ok(resp) => {
+            let payload_text =
+                crate::data::executor::response_codec::decode_payload_to_json(&resp.payload);
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload_text)
+                && let Some(serde_json::Value::String(b64)) = json.get("old_value")
+                && let Ok(data) =
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+            {
+                return RespValue::bulk(data);
+            }
+            RespValue::nil()
+        }
         Err(e) => RespValue::err(format!("ERR {e}")),
     }
 }

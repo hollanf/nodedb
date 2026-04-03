@@ -58,6 +58,16 @@ pub enum Error {
     #[error("transition check violation on {collection}: {detail}")]
     TransitionCheckViolation { collection: String, detail: String },
 
+    #[error("type mismatch on {collection} key {key}: {detail}")]
+    TypeMismatch {
+        collection: String,
+        key: String,
+        detail: String,
+    },
+
+    #[error("arithmetic overflow on {collection} key {key}")]
+    OverflowError { collection: String, key: String },
+
     // --- Read path errors ---
     #[error("collection {collection} not found for tenant {tenant_id}")]
     CollectionNotFound {
@@ -241,6 +251,12 @@ impl From<Error> for NodeDbError {
             Error::TransitionCheckViolation {
                 collection, detail, ..
             } => NodeDbError::transition_check_violation(collection, detail),
+            Error::TypeMismatch {
+                collection, detail, ..
+            } => NodeDbError::type_mismatch(collection, detail),
+            Error::OverflowError { collection, key } => {
+                NodeDbError::overflow(collection, format!("key {key}"))
+            }
 
             // Read path
             Error::CollectionNotFound { collection, .. } => {

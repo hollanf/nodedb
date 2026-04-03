@@ -197,3 +197,84 @@ pub(crate) fn build_truncate(collection: &str) -> crate::Result<PhysicalPlan> {
         collection: collection.to_string(),
     }))
 }
+
+pub(crate) fn build_incr(collection: &str, fields: &TextFields) -> crate::Result<PhysicalPlan> {
+    let key = fields
+        .key
+        .as_deref()
+        .ok_or_else(|| crate::Error::BadRequest {
+            detail: "missing 'key'".to_string(),
+        })?;
+    let delta = fields.incr_delta.unwrap_or(1);
+    let ttl_ms = fields.ttl_ms.unwrap_or(0);
+
+    Ok(PhysicalPlan::Kv(KvOp::Incr {
+        collection: collection.to_string(),
+        key: key.as_bytes().to_vec(),
+        delta,
+        ttl_ms,
+    }))
+}
+
+pub(crate) fn build_incr_float(
+    collection: &str,
+    fields: &TextFields,
+) -> crate::Result<PhysicalPlan> {
+    let key = fields
+        .key
+        .as_deref()
+        .ok_or_else(|| crate::Error::BadRequest {
+            detail: "missing 'key'".to_string(),
+        })?;
+    let delta = fields.incr_float_delta.unwrap_or(1.0);
+
+    Ok(PhysicalPlan::Kv(KvOp::IncrFloat {
+        collection: collection.to_string(),
+        key: key.as_bytes().to_vec(),
+        delta,
+    }))
+}
+
+pub(crate) fn build_cas(collection: &str, fields: &TextFields) -> crate::Result<PhysicalPlan> {
+    let key = fields
+        .key
+        .as_deref()
+        .ok_or_else(|| crate::Error::BadRequest {
+            detail: "missing 'key'".to_string(),
+        })?;
+    let expected = fields.expected.clone().unwrap_or_default();
+    let new_value = fields
+        .new_value
+        .clone()
+        .ok_or_else(|| crate::Error::BadRequest {
+            detail: "missing 'new_value'".to_string(),
+        })?;
+
+    Ok(PhysicalPlan::Kv(KvOp::Cas {
+        collection: collection.to_string(),
+        key: key.as_bytes().to_vec(),
+        expected,
+        new_value,
+    }))
+}
+
+pub(crate) fn build_getset(collection: &str, fields: &TextFields) -> crate::Result<PhysicalPlan> {
+    let key = fields
+        .key
+        .as_deref()
+        .ok_or_else(|| crate::Error::BadRequest {
+            detail: "missing 'key'".to_string(),
+        })?;
+    let new_value = fields
+        .new_value
+        .clone()
+        .ok_or_else(|| crate::Error::BadRequest {
+            detail: "missing 'new_value'".to_string(),
+        })?;
+
+    Ok(PhysicalPlan::Kv(KvOp::GetSet {
+        collection: collection.to_string(),
+        key: key.as_bytes().to_vec(),
+        new_value,
+    }))
+}

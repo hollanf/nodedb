@@ -1,0 +1,55 @@
+//! KV batch operation handlers: BatchGet, BatchPut.
+
+use tracing::debug;
+
+use crate::bridge::envelope::Response;
+use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::task::ExecutionTask;
+use crate::engine::kv::current_ms;
+
+impl CoreLoop {
+    pub(in crate::data::executor) fn execute_kv_batch_get(
+        &self,
+        task: &ExecutionTask,
+        tid: u32,
+        collection: &str,
+        keys: &[Vec<u8>],
+    ) -> Response {
+        debug!(core = self.core_id, %collection, count = keys.len(), "kv batch get");
+        let now_ms = current_ms();
+        let results = self.kv_engine.batch_get(tid, collection, keys, now_ms);
+
+        // Serialize as JSON array: [value_or_null, value_or_null, ...]
+        let json_results: Vec<serde_json::Value> = results
+            .into_iter()
+            .map(|opt| match opt {
+                Some(v) => serde_json::Value::String(base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &v,
+                )),
+                None => serde_json::Value::Null,
+            })
+            .collect();
+        let payload = serde_json::to_vec(&json_results).unwrap_or_default();
+        self.response_with_payload(task, payload)
+    }
+
+    pub(in crate::data::executor) fn execute_kv_batch_put(
+        &mut self,
+        task: &ExecutionTask,
+        tid: u32,
+        collection: &str,
+        entries: &[(Vec<u8>, Vec<u8>)],
+        ttl_ms: u64,
+    ) -> Response {
+        debug!(core = self.core_id, %collection, count = entries.len(), "kv batch put");
+        let now_ms = current_ms();
+        let new_count = self
+            .kv_engine
+            .batch_put(tid, collection, entries, ttl_ms, now_ms);
+        let payload = serde_json::json!({ "inserted": new_count })
+            .to_string()
+            .into_bytes();
+        self.response_with_payload(task, payload)
+    }
+}

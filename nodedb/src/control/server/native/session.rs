@@ -311,7 +311,11 @@ impl NativeSession {
             | OpCode::KvRegisterIndex
             | OpCode::KvDropIndex
             | OpCode::KvTruncate
-            | OpCode::VectorSetParams => dispatch::handle_direct_op(&ctx, seq, op, fields).await,
+            | OpCode::VectorSetParams
+            | OpCode::KvIncr
+            | OpCode::KvIncrFloat
+            | OpCode::KvCas
+            | OpCode::KvGetSet => dispatch::handle_direct_op(&ctx, seq, op, fields).await,
 
             // Batch ops: direct Data Plane dispatch.
             OpCode::VectorBatchInsert | OpCode::DocumentBatchInsert => {

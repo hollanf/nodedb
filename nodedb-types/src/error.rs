@@ -60,6 +60,8 @@ impl ErrorCode {
     pub const TRANSITION_CHECK_VIOLATION: Self = Self(1014);
     pub const RETENTION_VIOLATION: Self = Self(1015);
     pub const LEGAL_HOLD_ACTIVE: Self = Self(1016);
+    pub const TYPE_MISMATCH: Self = Self(1020);
+    pub const OVERFLOW: Self = Self(1021);
 
     // Read path (1100–1199)
     pub const COLLECTION_NOT_FOUND: Self = Self(1100);
@@ -163,6 +165,12 @@ pub enum ErrorDetails {
         collection: String,
     },
     LegalHoldActive {
+        collection: String,
+    },
+    TypeMismatch {
+        collection: String,
+    },
+    Overflow {
         collection: String,
     },
 
@@ -365,6 +373,12 @@ impl NodeDbError {
     pub fn is_internal(&self) -> bool {
         matches!(self.details, ErrorDetails::Internal)
     }
+    pub fn is_type_mismatch(&self) -> bool {
+        matches!(self.details, ErrorDetails::TypeMismatch { .. })
+    }
+    pub fn is_overflow(&self) -> bool {
+        matches!(self.details, ErrorDetails::Overflow { .. })
+    }
     pub fn is_cluster(&self) -> bool {
         matches!(
             self.details,
@@ -506,6 +520,26 @@ impl NodeDbError {
             code: ErrorCode::LEGAL_HOLD_ACTIVE,
             message: format!("legal hold active on {collection}: {detail}"),
             details: ErrorDetails::LegalHoldActive { collection },
+            cause: None,
+        }
+    }
+
+    pub fn type_mismatch(collection: impl Into<String>, detail: impl fmt::Display) -> Self {
+        let collection = collection.into();
+        Self {
+            code: ErrorCode::TYPE_MISMATCH,
+            message: format!("type mismatch on {collection}: {detail}"),
+            details: ErrorDetails::TypeMismatch { collection },
+            cause: None,
+        }
+    }
+
+    pub fn overflow(collection: impl Into<String>, detail: impl fmt::Display) -> Self {
+        let collection = collection.into();
+        Self {
+            code: ErrorCode::OVERFLOW,
+            message: format!("arithmetic overflow on {collection}: {detail}"),
+            details: ErrorDetails::Overflow { collection },
             cause: None,
         }
     }

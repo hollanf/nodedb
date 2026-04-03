@@ -271,6 +271,22 @@ fn extract_write_metadata(
         PhysicalPlan::Kv(KvOp::Truncate { collection }) => {
             Some((collection.clone(), "*".into(), ChangeOperation::Delete))
         }
+        PhysicalPlan::Kv(KvOp::Incr {
+            collection, key, ..
+        })
+        | PhysicalPlan::Kv(KvOp::IncrFloat {
+            collection, key, ..
+        })
+        | PhysicalPlan::Kv(KvOp::Cas {
+            collection, key, ..
+        })
+        | PhysicalPlan::Kv(KvOp::GetSet {
+            collection, key, ..
+        }) => Some((
+            collection.clone(),
+            String::from_utf8_lossy(key).into_owned(),
+            ChangeOperation::Update,
+        )),
         _ => None,
     }
 }

@@ -217,6 +217,10 @@ pub enum ErrorCode {
     StateTransitionViolation { collection: String, detail: String },
     /// Transition check predicate returned false.
     TransitionCheckViolation { collection: String },
+    /// Value type does not match expected type for operation (e.g. INCR on a string).
+    TypeMismatch { collection: String, detail: String },
+    /// Arithmetic overflow (e.g. i64::MAX + 1 on INCR).
+    OverflowError { collection: String },
     /// Internal error (io_uring failure, corruption, etc.)
     Internal { detail: String },
 }
@@ -257,6 +261,10 @@ impl From<crate::Error> for ErrorCode {
             crate::Error::TransitionCheckViolation { collection, .. } => {
                 Self::TransitionCheckViolation { collection }
             }
+            crate::Error::TypeMismatch {
+                collection, detail, ..
+            } => Self::TypeMismatch { collection, detail },
+            crate::Error::OverflowError { collection, .. } => Self::OverflowError { collection },
             other => Self::Internal {
                 detail: other.to_string(),
             },

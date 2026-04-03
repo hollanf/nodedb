@@ -1,0 +1,61 @@
+//! KV TTL handlers: Expire, Persist, GetTtl.
+
+use tracing::debug;
+
+use crate::bridge::envelope::{ErrorCode, Response};
+use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::task::ExecutionTask;
+use crate::engine::kv::current_ms;
+
+impl CoreLoop {
+    pub(in crate::data::executor) fn execute_kv_expire(
+        &mut self,
+        task: &ExecutionTask,
+        tid: u32,
+        collection: &str,
+        key: &[u8],
+        ttl_ms: u64,
+    ) -> Response {
+        debug!(core = self.core_id, %collection, ttl_ms, "kv expire");
+        let now_ms = current_ms();
+        if self.kv_engine.expire(tid, collection, key, ttl_ms, now_ms) {
+            self.response_ok(task)
+        } else {
+            self.response_error(task, ErrorCode::NotFound)
+        }
+    }
+
+    pub(in crate::data::executor) fn execute_kv_persist(
+        &mut self,
+        task: &ExecutionTask,
+        tid: u32,
+        collection: &str,
+        key: &[u8],
+    ) -> Response {
+        debug!(core = self.core_id, %collection, "kv persist");
+        if self.kv_engine.persist(tid, collection, key) {
+            self.response_ok(task)
+        } else {
+            self.response_error(task, ErrorCode::NotFound)
+        }
+    }
+
+    pub(in crate::data::executor) fn execute_kv_get_ttl(
+        &self,
+        task: &ExecutionTask,
+        tid: u32,
+        collection: &str,
+        key: &[u8],
+    ) -> Response {
+        debug!(core = self.core_id, %collection, "kv get_ttl");
+        let now_ms = current_ms();
+        let ttl_ms = self
+            .kv_engine
+            .get_ttl_ms(tid, collection, key, now_ms)
+            .unwrap_or(-2); // -2 = key does not exist.
+        let payload = serde_json::json!({ "ttl_ms": ttl_ms })
+            .to_string()
+            .into_bytes();
+        self.response_with_payload(task, payload)
+    }
+}

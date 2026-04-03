@@ -325,6 +325,23 @@ pub async fn dispatch(
         )));
     }
 
+    // KV_INCR / KV_DECR / KV_INCR_FLOAT / KV_CAS / KV_GETSET — atomic KV operations.
+    if upper.starts_with("SELECT KV_INCR(") || upper.starts_with("SELECT KV_INCR (") {
+        return Some(super::kv_atomic::kv_incr(state, identity, sql, false).await);
+    }
+    if upper.starts_with("SELECT KV_DECR(") || upper.starts_with("SELECT KV_DECR (") {
+        return Some(super::kv_atomic::kv_incr(state, identity, sql, true).await);
+    }
+    if upper.starts_with("SELECT KV_INCR_FLOAT(") || upper.starts_with("SELECT KV_INCR_FLOAT (") {
+        return Some(super::kv_atomic::kv_incr_float(state, identity, sql).await);
+    }
+    if upper.starts_with("SELECT KV_CAS(") || upper.starts_with("SELECT KV_CAS (") {
+        return Some(super::kv_atomic::kv_cas(state, identity, sql).await);
+    }
+    if upper.starts_with("SELECT KV_GETSET(") || upper.starts_with("SELECT KV_GETSET (") {
+        return Some(super::kv_atomic::kv_getset(state, identity, sql).await);
+    }
+
     // CHUNK_TEXT table-valued function: SELECT * FROM CHUNK_TEXT(...).
     if (upper.starts_with("SELECT ") && upper.contains("CHUNK_TEXT("))
         || upper.starts_with("SELECT CHUNK_TEXT(")

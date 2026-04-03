@@ -115,6 +115,16 @@ pub fn error_code_to_sqlstate(code: &ErrorCode) -> (&'static str, &'static str, 
             "23605",
             format!("transition check violation on {collection}"),
         ),
+        ErrorCode::TypeMismatch { collection, detail } => (
+            "ERROR",
+            "42846",
+            format!("type mismatch on {collection}: {detail}"),
+        ),
+        ErrorCode::OverflowError { collection } => (
+            "ERROR",
+            "22003",
+            format!("arithmetic overflow on {collection}"),
+        ),
         ErrorCode::Internal { detail } => ("ERROR", "XX000", detail.clone()),
     }
 }

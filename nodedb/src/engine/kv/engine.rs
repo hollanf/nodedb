@@ -36,10 +36,10 @@ pub struct KvEngine {
     /// Shared expiry wheel across all collections on this core.
     pub(super) expiry: ExpiryWheel,
     /// Default tuning parameters for new collections.
-    default_capacity: usize,
-    load_factor_threshold: f32,
-    rehash_batch_size: usize,
-    inline_threshold: usize,
+    pub(super) default_capacity: usize,
+    pub(super) load_factor_threshold: f32,
+    pub(super) rehash_batch_size: usize,
+    pub(super) inline_threshold: usize,
     /// Memory budget in bytes (0 = unlimited). When total_mem_usage() exceeds
     /// this, new PUTs are rejected with a retriable error.
     memory_budget_bytes: usize,

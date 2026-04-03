@@ -324,16 +324,16 @@ pub async fn insert_document(
             };
             if let Ok(Some(entry)) =
                 catalog.get_vector_model(tenant_id.as_u32(), &parsed.coll_name, col)
+                && entry.metadata.strict_dimensions
+                && entry.metadata.dimensions != dim
             {
-                if entry.metadata.strict_dimensions && entry.metadata.dimensions != dim {
-                    return Some(Err(sqlstate_error(
-                        "23514",
-                        &format!(
-                            "strict_dimensions: vector has {} dimensions, model '{}' requires {}",
-                            dim, entry.metadata.model, entry.metadata.dimensions
-                        ),
-                    )));
-                }
+                return Some(Err(sqlstate_error(
+                    "23514",
+                    &format!(
+                        "strict_dimensions: vector has {} dimensions, model '{}' requires {}",
+                        dim, entry.metadata.model, entry.metadata.dimensions
+                    ),
+                )));
             }
         }
         let vec_plan = crate::bridge::envelope::PhysicalPlan::Vector(VectorOp::Insert {

@@ -90,6 +90,11 @@ pub(crate) fn build_plan(
         OpCode::KvRegisterIndex => kv::build_register_index(fields, collection),
         OpCode::KvDropIndex => kv::build_drop_index(fields, collection),
         OpCode::KvTruncate => kv::build_truncate(collection),
+        // KV atomic operations.
+        OpCode::KvIncr => kv::build_incr(collection, fields),
+        OpCode::KvIncrFloat => kv::build_incr_float(collection, fields),
+        OpCode::KvCas => kv::build_cas(collection, fields),
+        OpCode::KvGetSet => kv::build_getset(collection, fields),
         // Vector DDL.
         OpCode::VectorSetParams => vector::build_set_params(fields, collection),
         // Query.

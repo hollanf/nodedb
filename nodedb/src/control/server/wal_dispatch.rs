@@ -283,6 +283,63 @@ pub fn wal_append_if_write_with_creds(
                 })?;
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
+        // Atomic KV operations.
+        PhysicalPlan::Kv(KvOp::Incr {
+            collection,
+            key,
+            delta,
+            ttl_ms,
+        }) => {
+            let entry =
+                rmp_serde::to_vec(&("kv_incr", collection, key, delta, ttl_ms)).map_err(|e| {
+                    crate::Error::Serialization {
+                        format: "msgpack".into(),
+                        detail: format!("wal kv incr: {e}"),
+                    }
+                })?;
+            wal.append_put(tenant_id, vshard_id, &entry)?;
+        }
+        PhysicalPlan::Kv(KvOp::IncrFloat {
+            collection,
+            key,
+            delta,
+        }) => {
+            let entry =
+                rmp_serde::to_vec(&("kv_incr_float", collection, key, delta)).map_err(|e| {
+                    crate::Error::Serialization {
+                        format: "msgpack".into(),
+                        detail: format!("wal kv incr_float: {e}"),
+                    }
+                })?;
+            wal.append_put(tenant_id, vshard_id, &entry)?;
+        }
+        PhysicalPlan::Kv(KvOp::Cas {
+            collection,
+            key,
+            expected,
+            new_value,
+        }) => {
+            let entry = rmp_serde::to_vec(&("kv_cas", collection, key, expected, new_value))
+                .map_err(|e| crate::Error::Serialization {
+                    format: "msgpack".into(),
+                    detail: format!("wal kv cas: {e}"),
+                })?;
+            wal.append_put(tenant_id, vshard_id, &entry)?;
+        }
+        PhysicalPlan::Kv(KvOp::GetSet {
+            collection,
+            key,
+            new_value,
+        }) => {
+            let entry =
+                rmp_serde::to_vec(&("kv_getset", collection, key, new_value)).map_err(|e| {
+                    crate::Error::Serialization {
+                        format: "msgpack".into(),
+                        detail: format!("wal kv getset: {e}"),
+                    }
+                })?;
+            wal.append_put(tenant_id, vshard_id, &entry)?;
+        }
         // Truncate uses append_delete to mark the collection as cleared in the WAL.
         // On recovery, replaying this entry drops all hash table state for the collection.
         PhysicalPlan::Kv(KvOp::Truncate { collection }) => {
