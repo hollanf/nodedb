@@ -2,7 +2,7 @@
 
 use std::sync::Mutex;
 
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::control::security::tenant::QuotaCheck;
 use crate::types::TenantId;
@@ -123,10 +123,13 @@ impl SharedState {
         }
     }
 
-    /// Record an audit event.
+    /// Record an audit event (best-effort).
     ///
     /// Writes to both the in-memory cache and the durable audit WAL (if available).
-    /// The audit WAL write is synchronous — the entry is fsynced before return.
+    /// On audit WAL failure, logs an error but does not propagate it. Use
+    /// [`audit_record_strict`] when the caller must abort on audit failure
+    /// (e.g. data-modifying DDL where the accounting standard requires atomic
+    /// audit + data durability).
     pub fn audit_record(
         &self,
         event: crate::control::security::audit::AuditEvent,
@@ -134,10 +137,26 @@ impl SharedState {
         source: &str,
         detail: &str,
     ) {
+        if let Err(e) = self.audit_record_strict(event, tenant_id, source, detail) {
+            error!(error = %e, "audit WAL write failed — entry recorded in-memory only");
+        }
+    }
+
+    /// Record an audit event with strict durability.
+    ///
+    /// Returns an error if the durable audit WAL write fails. Callers that
+    /// guard data mutations MUST use this and abort on failure — the accounting
+    /// standard requires: "If the audit write fails, the data write also fails."
+    pub fn audit_record_strict(
+        &self,
+        event: crate::control::security::audit::AuditEvent,
+        tenant_id: Option<crate::types::TenantId>,
+        source: &str,
+        detail: &str,
+    ) -> crate::Result<()> {
         let entry = match self.audit.lock() {
             Ok(mut log) => {
                 log.record(event, tenant_id, source, detail);
-                // Clone the last entry for WAL persistence.
                 log.all().back().cloned()
             }
             Err(poisoned) => {
@@ -148,15 +167,16 @@ impl SharedState {
             }
         };
 
-        // Write to durable audit WAL if available.
-        if let Some(ref entry) = entry
-            && let Ok(bytes) = rmp_serde::to_vec_named(entry)
-        {
+        // Write to durable audit WAL — failure is a hard error.
+        if let Some(ref entry) = entry {
+            let bytes = rmp_serde::to_vec_named(entry).map_err(|e| crate::Error::Serialization {
+                format: "msgpack".into(),
+                detail: format!("audit entry serialization failed: {e}"),
+            })?;
             let data_lsn = self.wal.next_lsn().as_u64();
-            if let Err(e) = self.wal.append_audit_durable(&bytes, data_lsn) {
-                warn!(error = %e, "failed to write audit entry to durable WAL");
-            }
+            self.wal.append_audit_durable(&bytes, data_lsn)?;
         }
+        Ok(())
     }
 
     /// Update per-tenant memory estimates.
