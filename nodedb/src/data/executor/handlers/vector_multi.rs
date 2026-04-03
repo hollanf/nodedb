@@ -14,6 +14,7 @@ impl CoreLoop {
     ///
     /// All vectors share the same `doc_id` in the `doc_id_map` and are tracked
     /// in `multi_doc_map` for bulk deletion.
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::data::executor) fn execute_multi_vector_insert(
         &mut self,
         task: &ExecutionTask,
@@ -57,18 +58,18 @@ impl CoreLoop {
         let index_key = CoreLoop::vector_index_key(tid, collection, field_name);
 
         // Validate dimension compatibility before taking mutable reference.
-        if let Some(existing) = self.vector_collections.get(&index_key) {
-            if existing.dim() != dim {
-                return self.response_error(
-                    task,
-                    ErrorCode::RejectedConstraint {
-                        constraint: format!(
-                            "dimension mismatch: index has {}, got {dim}",
-                            existing.dim()
-                        ),
-                    },
-                );
-            }
+        if let Some(existing) = self.vector_collections.get(&index_key)
+            && existing.dim() != dim
+        {
+            return self.response_error(
+                task,
+                ErrorCode::RejectedConstraint {
+                    constraint: format!(
+                        "dimension mismatch: index has {}, got {dim}",
+                        existing.dim()
+                    ),
+                },
+            );
         }
 
         // Get or create the vector collection.
@@ -101,14 +102,12 @@ impl CoreLoop {
         let ids = coll.insert_multi_vector(&vector_slices, doc_id.to_string());
 
         // Auto-seal if needed.
-        if coll.needs_seal() {
-            if let Some(req) = coll.seal(&index_key) {
-                if let Some(tx) = &self.build_tx {
-                    if let Err(e) = tx.send(req) {
-                        warn!(core = self.core_id, error = %e, "failed to send HNSW build after multi-vector insert");
-                    }
-                }
-            }
+        if coll.needs_seal()
+            && let Some(req) = coll.seal(&index_key)
+            && let Some(tx) = &self.build_tx
+            && let Err(e) = tx.send(req)
+        {
+            warn!(core = self.core_id, error = %e, "failed to send HNSW build after multi-vector insert");
         }
 
         self.checkpoint_coordinator.mark_dirty("vector", ids.len());
@@ -200,7 +199,7 @@ impl CoreLoop {
         // Over-fetch: we need enough candidates so that after grouping by doc_id,
         // we still have top_k distinct documents. Factor of 10 is conservative
         // for typical multi-vector docs with 50-500 tokens.
-        let over_fetch = (top_k * 10).max(100).min(10_000);
+        let over_fetch = (top_k * 10).clamp(100, 10_000);
         let ef = if ef_search > 0 {
             ef_search.max(over_fetch)
         } else {
@@ -240,8 +239,7 @@ impl CoreLoop {
         // Build response hits.
         let hits: Vec<super::super::response_codec::VectorSearchHit> = scored_docs
             .iter()
-            .enumerate()
-            .map(|(_, (doc_id, score))| {
+            .map(|(doc_id, score)| {
                 // Try to parse doc_id as u32 for the `id` field; if it's a string doc_id
                 // we use 0 as the numeric id and populate doc_id.
                 let numeric_id = doc_id.parse::<u32>().unwrap_or(0);

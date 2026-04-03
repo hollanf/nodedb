@@ -31,6 +31,12 @@ pub struct SparseInvertedIndex {
     doc_count: usize,
 }
 
+impl Default for SparseInvertedIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SparseInvertedIndex {
     /// Create an empty index.
     pub fn new() -> Self {

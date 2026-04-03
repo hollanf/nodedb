@@ -18,9 +18,7 @@ impl CoreLoop {
         field_name: &str,
     ) -> &mut SparseInvertedIndex {
         let key = Self::sparse_index_key(tid, collection, field_name);
-        self.sparse_vector_indexes
-            .entry(key)
-            .or_insert_with(SparseInvertedIndex::new)
+        self.sparse_vector_indexes.entry(key).or_default()
     }
 
     /// Build the key for sparse vector indexes.
