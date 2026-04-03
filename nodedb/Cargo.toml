@@ -131,9 +131,11 @@ datafusion-physical-plan = { workspace = true }
 tikv-jemallocator = { workspace = true }
 tikv-jemalloc-ctl = { workspace = true }
 
+# Random number generation (weighted pick, provably fair gacha)
+rand = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-rand = "0.8"
 tempfile = "3"
 tokio-postgres = { workspace = true }
 proptest = "1"

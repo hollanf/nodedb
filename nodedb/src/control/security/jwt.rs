@@ -345,7 +345,7 @@ mod tests {
         use rsa::signature::{SignatureEncoding, Signer};
 
         // Generate a test RSA key pair.
-        let mut rng = rand::thread_rng();
+        let mut rng = rsa::rand_core::OsRng;
         let private_key = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
         let public_key = rsa::RsaPublicKey::from(&private_key);
 
@@ -386,7 +386,7 @@ mod tests {
         use rsa::pkcs1v15::SigningKey;
         use rsa::signature::{SignatureEncoding, Signer};
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rsa::rand_core::OsRng;
         let key1 = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
         let key2 = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
         let pub2 = rsa::RsaPublicKey::from(&key2);
