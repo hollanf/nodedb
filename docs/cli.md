@@ -35,28 +35,28 @@ echo "SELECT 1" | ndb
 
 ## CLI Flags
 
-| Flag | Long | Default | Purpose |
-| ---- | ---- | ------- | ------- |
-| `-h` | `--host` | `127.0.0.1` | Server host |
-| `-p` | `--port` | `6433` | Server port (native protocol) |
-| `-u` | `--user` | `admin` | Username |
-| `-w` | `--password` | | Password (prompts if flag given without value) |
-| `-e` | `--execute` | | Execute SQL and exit |
-| `-f` | `--file` | | Execute SQL from file and exit |
-| `-o` | `--output` | | Write output to file |
-| | `--tls` | off | Enable TLS encryption |
-| | `--tls-ca-cert` | | Path to CA certificate (PEM) |
-| | `--format` | `table` | Output format (`table`, `json`, `csv`) |
-| | `--help` | | Print help information |
+| Flag | Long            | Default     | Purpose                                        |
+| ---- | --------------- | ----------- | ---------------------------------------------- |
+| `-h` | `--host`        | `127.0.0.1` | Server host                                    |
+| `-p` | `--port`        | `6433`      | Server port (native protocol)                  |
+| `-u` | `--user`        | `admin`     | Username                                       |
+| `-w` | `--password`    |             | Password (prompts if flag given without value) |
+| `-e` | `--execute`     |             | Execute SQL and exit                           |
+| `-f` | `--file`        |             | Execute SQL from file and exit                 |
+| `-o` | `--output`      |             | Write output to file                           |
+|      | `--tls`         | off         | Enable TLS encryption                          |
+|      | `--tls-ca-cert` |             | Path to CA certificate (PEM)                   |
+|      | `--format`      | `table`     | Output format (`table`, `json`, `csv`)         |
+|      | `--help`        |             | Print help information                         |
 
 ## Environment Variables
 
-| Variable | Purpose | Precedence |
-| -------- | ------- | ---------- |
-| `NODEDB_HOST` | Server host | env > config file > default |
-| `NODEDB_PORT` | Server port | env > config file > default |
-| `NODEDB_USER` | Username | env > config file > default |
-| `NODEDB_PASSWORD` | Password | env > config file > default |
+| Variable          | Purpose     | Precedence                  |
+| ----------------- | ----------- | --------------------------- |
+| `NODEDB_HOST`     | Server host | env > config file > default |
+| `NODEDB_PORT`     | Server port | env > config file > default |
+| `NODEDB_USER`     | Username    | env > config file > default |
+| `NODEDB_PASSWORD` | Password    | env > config file > default |
 
 CLI flags always take highest precedence.
 

@@ -12,14 +12,14 @@ NodeDB splits work across three planes connected by lock-free ring buffers. This
 └─────────────┬──────────────┬──────────────┘
               │ SPSC Bridge  │ Event subscriptions
               │              │
-┌─────────────▼──────────┐  ┌▼──────────────────────────────────┐
-│  Data Plane (TPC)      │  │  Event Plane (Tokio)               │
+┌─────────────▼──────────┐  ┌▼────────────────────────────────────┐
+│  Data Plane (TPC)      │  │  Event Plane (Tokio)                │
 │  Physical execution    ├─►│  AFTER trigger dispatch             │
 │  Storage I/O, SIMD     │  │  CDC change streams                 │
 │  !Send, io_uring       │  │  Cron scheduler                     │
 │  Emits WriteEvent      │  │  Durable pub/sub, webhook delivery  │
 │  (Insert/Update/Delete)│  │  Retry, DLQ, backpressure           │
-└────────────────────────┘  └───────────────────────────────────┘
+└────────────────────────┘  └─────────────────────────────────────┘
 ```
 
 **Control Plane** — Runs on Tokio. Handles connections (pgwire, HTTP, WebSocket), parses SQL via DataFusion, builds logical query plans, and dispatches work to the Data Plane. All types here are `Send + Sync`.
@@ -32,11 +32,11 @@ NodeDB splits work across three planes connected by lock-free ring buffers. This
 
 ### Plane Boundaries
 
-| Plane | Does | Does not do |
-| ----- | ---- | ----------- |
-| Control Plane | SQL parsing, query planning, connection handling | Event processing, trigger execution, storage I/O |
-| Data Plane | Physical I/O, SIMD math, WAL append, BEFORE triggers | Event delivery, cross-shard coordination, AFTER triggers |
-| Event Plane | AFTER trigger dispatch, CDC, cron, webhook delivery, durable pub/sub | Query planning, storage I/O, spawning TPC tasks |
+| Plane         | Does                                                                 | Does not do                                              |
+| ------------- | -------------------------------------------------------------------- | -------------------------------------------------------- |
+| Control Plane | SQL parsing, query planning, connection handling                     | Event processing, trigger execution, storage I/O         |
+| Data Plane    | Physical I/O, SIMD math, WAL append, BEFORE triggers                 | Event delivery, cross-shard coordination, AFTER triggers |
+| Event Plane   | AFTER trigger dispatch, CDC, cron, webhook delivery, durable pub/sub | Query planning, storage I/O, spawning TPC tasks          |
 
 **Mixing planes is a correctness bug.** If code needs to cross a plane boundary, it goes through the SPSC bridge.
 
