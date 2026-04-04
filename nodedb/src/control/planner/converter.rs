@@ -23,10 +23,23 @@ use super::sql_expr_convert::try_convert_projection;
 /// can execute.
 ///
 /// Lives on the Control Plane (Send + Sync).
-#[derive(Default)]
 pub struct PlanConverter {
     /// Optional catalog reference for collection-type-aware routing.
     credentials: Option<std::sync::Arc<CredentialStore>>,
+    /// Optional retention policy registry for AUTO_TIER routing.
+    retention_policy_registry: Option<
+        std::sync::Arc<crate::engine::timeseries::retention_policy::RetentionPolicyRegistry>,
+    >,
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for PlanConverter {
+    fn default() -> Self {
+        Self {
+            credentials: None,
+            retention_policy_registry: None,
+        }
+    }
 }
 
 impl PlanConverter {
@@ -38,6 +51,35 @@ impl PlanConverter {
     pub fn with_credentials(credentials: std::sync::Arc<CredentialStore>) -> Self {
         Self {
             credentials: Some(credentials),
+            retention_policy_registry: None,
+        }
+    }
+
+    /// Create a converter with catalog + retention policy registry for AUTO_TIER.
+    pub fn with_full_context(
+        credentials: std::sync::Arc<CredentialStore>,
+        retention_policy_registry: std::sync::Arc<
+            crate::engine::timeseries::retention_policy::RetentionPolicyRegistry,
+        >,
+    ) -> Self {
+        Self {
+            credentials: Some(credentials),
+            retention_policy_registry: Some(retention_policy_registry),
+        }
+    }
+
+    /// Get the retention policy for a collection (if AUTO_TIER enabled).
+    pub(super) fn auto_tier_policy(
+        &self,
+        tenant_id: TenantId,
+        collection: &str,
+    ) -> Option<crate::engine::timeseries::retention_policy::RetentionPolicyDef> {
+        let registry = self.retention_policy_registry.as_ref()?;
+        let policy = registry.get_for_collection(tenant_id.as_u32(), collection)?;
+        if policy.auto_tier && policy.enabled && policy.tiers.len() > 1 {
+            Some(policy)
+        } else {
+            None
         }
     }
 

@@ -80,6 +80,7 @@ impl QueryContext {
             Arc::clone(&state.stream_registry),
             Arc::clone(&state.cdc_router),
             Arc::clone(&state.mv_registry),
+            Some(Arc::clone(&state.retention_policy_registry)),
         );
         // Register sequence UDFs (nextval, currval, setval) with this tenant's context.
         register_sequence_udfs(
@@ -111,6 +112,9 @@ impl QueryContext {
         stream_registry: Arc<crate::event::cdc::StreamRegistry>,
         cdc_router: Arc<crate::event::cdc::CdcRouter>,
         mv_registry: Arc<crate::event::streaming_mv::MvRegistry>,
+        retention_policy_registry: Option<
+            Arc<crate::engine::timeseries::retention_policy::RetentionPolicyRegistry>,
+        >,
     ) -> Self {
         let config = SessionConfig::new()
             .with_information_schema(false)
@@ -139,7 +143,11 @@ impl QueryContext {
 
         Self {
             session,
-            converter: PlanConverter::with_credentials(credentials),
+            converter: if let Some(rpr) = retention_policy_registry {
+                PlanConverter::with_full_context(Arc::clone(&credentials), rpr)
+            } else {
+                PlanConverter::with_credentials(credentials)
+            },
             inliner,
         }
     }

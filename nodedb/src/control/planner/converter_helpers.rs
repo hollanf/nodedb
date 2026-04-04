@@ -230,6 +230,20 @@ impl PlanConverter {
 
             let (time_range, filter_bytes) = extract_aggregate_filters(&agg.input)?;
 
+            // AUTO_TIER: if the collection has an enabled auto_tier policy,
+            // split the query across tiers instead of scanning raw only.
+            if let Some(policy) = self.auto_tier_policy(tenant_id, &collection) {
+                return Ok(super::auto_tier::plan_tiered_scan(
+                    &policy,
+                    tenant_id,
+                    time_range,
+                    filter_bytes,
+                    group_by,
+                    aggregates,
+                    String::new(),
+                ));
+            }
+
             return Ok(vec![PhysicalTask {
                 tenant_id,
                 vshard_id: vshard,

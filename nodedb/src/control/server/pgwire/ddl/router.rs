@@ -496,6 +496,22 @@ pub async fn dispatch(
         ));
     }
 
+    // Last-value cache queries.
+    if upper.starts_with("SELECT LAST_VALUES(") {
+        // SELECT LAST_VALUES('collection_name')
+        if let Some(collection) = extract_quoted_arg(sql, "LAST_VALUES(") {
+            return Some(super::last_value::query_last_values(state, identity, &collection).await);
+        }
+    }
+    if upper.starts_with("SELECT LAST_VALUE(") && !upper.starts_with("SELECT LAST_VALUES(") {
+        // SELECT LAST_VALUE('collection_name', series_id)
+        if let Some((collection, series_id)) = extract_lv_args(sql) {
+            return Some(
+                super::last_value::query_last_value(state, identity, &collection, series_id).await,
+            );
+        }
+    }
+
     // Alert rules.
     if upper.starts_with("CREATE ALERT ") {
         return Some(super::alert::create_alert(state, identity, sql));
@@ -1425,4 +1441,30 @@ async fn select_from_topic(
     }
 
     super::stream_select::select_from_stream(state, identity, &rewritten).await
+}
+
+/// Extract a single-quoted argument from `FUNC_NAME('value')`.
+fn extract_quoted_arg(sql: &str, prefix: &str) -> Option<String> {
+    let upper = sql.to_uppercase();
+    let pos = upper.find(&prefix.to_uppercase())?;
+    let after = &sql[pos + prefix.len()..];
+    let start = after.find('\'')?;
+    let end = after[start + 1..].find('\'')?;
+    Some(after[start + 1..start + 1 + end].to_string())
+}
+
+/// Extract `('collection', series_id)` from LAST_VALUE call.
+fn extract_lv_args(sql: &str) -> Option<(String, u64)> {
+    let upper = sql.to_uppercase();
+    let pos = upper.find("LAST_VALUE(")?;
+    let after = &sql[pos + 11..];
+    let close = after.find(')')?;
+    let inner = &after[..close];
+    let parts: Vec<&str> = inner.splitn(2, ',').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let collection = parts[0].trim().trim_matches('\'').to_string();
+    let series_id: u64 = parts[1].trim().parse().ok()?;
+    Some((collection, series_id))
 }

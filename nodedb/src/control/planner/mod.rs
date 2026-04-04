@@ -1,3 +1,4 @@
+mod auto_tier;
 pub mod catalog;
 pub mod context;
 pub mod converter;
