@@ -46,6 +46,7 @@ fn timeseries_scan_isolated() {
             bucket_interval_ms: 0,
             group_by: vec![],
             aggregates: vec![],
+            gap_fill: String::new(),
             rls_filters: vec![],
         }),
     );
@@ -70,6 +71,7 @@ fn timeseries_scan_isolated() {
             bucket_interval_ms: 0,
             group_by: vec![],
             aggregates: vec![],
+            gap_fill: String::new(),
             rls_filters: vec![],
         }),
     );

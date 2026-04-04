@@ -103,6 +103,7 @@ impl TestStack {
                     bucket_interval_ms: 0,
                     group_by: Vec::new(),
                     aggregates: vec![("count".into(), "*".into())],
+                    gap_fill: String::new(),
                     rls_filters: Vec::new(),
                 }),
                 collection,
@@ -474,6 +475,7 @@ fn startup_replay_recovers_all_wal_data() {
         bucket_interval_ms: 0,
         group_by: Vec::new(),
         aggregates: vec![("count".into(), "*".into())],
+        gap_fill: String::new(),
         rls_filters: Vec::new(),
     });
 

@@ -74,6 +74,7 @@ fn ts_scan(
             bucket_interval_ms,
             group_by,
             aggregates,
+            gap_fill: String::new(),
             rls_filters: Vec::new(),
         }),
     );
@@ -108,6 +109,7 @@ fn ts_scan_filtered(
             bucket_interval_ms,
             group_by,
             aggregates,
+            gap_fill: String::new(),
             rls_filters: Vec::new(),
         }),
     );
@@ -681,6 +683,7 @@ fn large_group_by_returns_single_valid_json() {
             bucket_interval_ms: 0,
             group_by: vec!["qname".into()],
             aggregates: vec![("count".into(), "*".into())],
+            gap_fill: String::new(),
             rls_filters: Vec::new(),
         }),
     );

@@ -242,6 +242,7 @@ impl PlanConverter {
                     bucket_interval_ms,
                     group_by,
                     aggregates,
+                    gap_fill: String::new(),
                     rls_filters: Vec::new(),
                 }),
             }]);

@@ -37,6 +37,8 @@ pub(in crate::data::executor) struct TimeseriesScanParams<'a> {
     pub bucket_interval_ms: i64,
     pub group_by: &'a [String],
     pub aggregates: &'a [(String, String)],
+    /// Gap-fill strategy. Empty = no gap-fill.
+    pub gap_fill: &'a str,
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +123,11 @@ fn encode_grouped_results(
                 "avg" if accum.count > 0 => rmpv::Value::F64(accum.sum() / accum.count as f64),
                 "min" if accum.count > 0 => rmpv::Value::F64(accum.min),
                 "max" if accum.count > 0 => rmpv::Value::F64(accum.max),
+                "first" if accum.count > 0 => rmpv::Value::F64(accum.first()),
+                "last" if accum.count > 0 => rmpv::Value::F64(accum.last()),
+                "stddev" | "ts_stddev" if accum.count >= 2 => {
+                    rmpv::Value::F64(accum.stddev_population())
+                }
                 _ => rmpv::Value::Nil,
             };
             fields.push((rmpv::Value::String(agg_key.as_str().into()), val));
@@ -161,6 +168,7 @@ impl CoreLoop {
             bucket_interval_ms,
             group_by,
             aggregates,
+            gap_fill,
         } = params;
 
         // Lazy-load partition registry from disk if not yet loaded.
@@ -252,6 +260,7 @@ impl CoreLoop {
                 bucket_interval_ms,
                 group_by,
                 aggregates,
+                gap_fill,
                 &needed_columns,
             )
         } else {
@@ -479,6 +488,7 @@ impl CoreLoop {
         bucket_interval_ms: i64,
         group_by: &[String],
         aggregates: &[(String, String)],
+        gap_fill: &str,
         needed_columns: &[String],
     ) -> Response {
         use crate::engine::timeseries::grouped_scan::{
@@ -583,7 +593,21 @@ impl CoreLoop {
             }
         }
 
-        // ── Phase 3: Encode response (MessagePack, no serde_json intermediate) ──
+        // ── Phase 3: Apply gap-fill if requested (bucketed results only) ──
+        let merged = if !gap_fill.is_empty() && bucket_interval_ms > 0 {
+            super::timeseries_gap_fill::apply_gap_fill_to_grouped(
+                merged,
+                time_range,
+                bucket_interval_ms,
+                gap_fill,
+                group_by,
+                aggregates,
+            )
+        } else {
+            merged
+        };
+
+        // ── Phase 4: Encode response (MessagePack, no serde_json intermediate) ──
         let payload =
             encode_grouped_results(&merged, group_by, aggregates, limit, bucket_interval_ms);
         self.response_with_payload(task, payload)
@@ -773,9 +797,10 @@ impl CoreLoop {
                         },
                     );
                 };
+                let lvc = self.ts_last_value_caches.get_mut(collection);
                 let mut series_keys = HashMap::new();
                 let (mut accepted, rejected) =
-                    ilp_ingest::ingest_batch(mt, &lines, &mut series_keys, now_ms);
+                    ilp_ingest::ingest_batch_with_lvc(mt, &lines, &mut series_keys, now_ms, lvc);
 
                 // If rows were rejected (memtable hit hard limit), flush and
                 // re-ingest the rejected portion. This prevents silent data
@@ -791,8 +816,14 @@ impl CoreLoop {
                     if let Some(mt) = self.columnar_memtables.get_mut(collection) {
                         let mut retry_keys = HashMap::new();
                         let retry_lines = &lines[accepted..];
-                        let (retry_accepted, _) =
-                            ilp_ingest::ingest_batch(mt, retry_lines, &mut retry_keys, now_ms);
+                        let retry_lvc = self.ts_last_value_caches.get_mut(collection);
+                        let (retry_accepted, _) = ilp_ingest::ingest_batch_with_lvc(
+                            mt,
+                            retry_lines,
+                            &mut retry_keys,
+                            now_ms,
+                            retry_lvc,
+                        );
                         accepted += retry_accepted;
                     }
                 }

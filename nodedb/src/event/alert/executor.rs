@@ -169,6 +169,7 @@ async fn execute_aggregate_scan(
             alert.condition.agg_func.clone(),
             alert.condition.column.clone(),
         )],
+        gap_fill: String::new(),
         rls_filters: Vec::new(),
     });
 

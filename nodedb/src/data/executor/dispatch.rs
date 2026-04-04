@@ -714,6 +714,7 @@ impl CoreLoop {
                 bucket_interval_ms,
                 group_by,
                 aggregates,
+                gap_fill,
                 ..
             }) => {
                 let scoped_coll = format!("{tid}:{collection}");
@@ -726,6 +727,7 @@ impl CoreLoop {
                     bucket_interval_ms: *bucket_interval_ms,
                     group_by,
                     aggregates,
+                    gap_fill,
                 })
             }
 

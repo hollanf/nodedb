@@ -188,6 +188,7 @@ fn purge_removes_all_tenant_data() {
             bucket_interval_ms: 0,
             group_by: vec![],
             aggregates: vec![],
+            gap_fill: String::new(),
             rls_filters: vec![],
         }),
     );

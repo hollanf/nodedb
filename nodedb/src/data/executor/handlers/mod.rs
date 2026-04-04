@@ -23,6 +23,7 @@ pub mod snapshot;
 pub mod spatial;
 pub mod text_search;
 pub mod timeseries;
+mod timeseries_gap_fill;
 pub mod timeseries_wal;
 pub mod transaction;
 pub mod vector;

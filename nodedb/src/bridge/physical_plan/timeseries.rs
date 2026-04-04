@@ -22,6 +22,10 @@ pub enum TimeseriesOp {
         /// Aggregate expressions: `(op, field)` e.g. `("count","*")`, `("avg","elapsed_ms")`.
         /// Empty = raw scan (no aggregation).
         aggregates: Vec<(String, String)>,
+        /// Gap-fill strategy for time-bucket aggregation.
+        /// Empty = no gap-fill. Otherwise: "null", "prev", "linear", or literal value.
+        /// Only applied when `bucket_interval_ms > 0`.
+        gap_fill: String,
         /// RLS post-scan filters (applied after time-range pruning).
         rls_filters: Vec<u8>,
     },
