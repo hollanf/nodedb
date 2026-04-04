@@ -656,6 +656,14 @@ pub async fn dispatch(
             "retention",
         ));
     }
+    if upper.starts_with("ALTER COLLECTION ") && upper.contains("LAST_VALUE_CACHE") {
+        return Some(super::collection::alter_collection_enforcement(
+            state,
+            identity,
+            sql,
+            "last_value_cache",
+        ));
+    }
     if upper.starts_with("ALTER COLLECTION ") && upper.contains("LEGAL_HOLD") {
         return Some(super::collection::alter_collection_enforcement(
             state,
@@ -772,6 +780,11 @@ pub async fn dispatch(
     if upper.starts_with("RENEW SCOPE ") {
         return Some(super::scope_ddl::renew_scope(state, identity, &parts));
     }
+    // EXPLAIN TIERS ON <collection> [RANGE <start> <end>]
+    if upper.starts_with("EXPLAIN TIERS ") {
+        return Some(explain_tiers(state, identity, &parts));
+    }
+
     // EXPLAIN PERMISSION / EXPLAIN SCOPE.
     if upper.starts_with("EXPLAIN PERMISSION ") {
         return Some(super::explain_ddl::explain_permission(
@@ -1441,6 +1454,75 @@ async fn select_from_topic(
     }
 
     super::stream_select::select_from_stream(state, identity, &rewritten).await
+}
+
+/// EXPLAIN TIERS ON <collection> — show AUTO_TIER routing plan.
+fn explain_tiers(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    parts: &[&str],
+) -> PgWireResult<Vec<Response>> {
+    use super::super::types::{sqlstate_error, text_field};
+    use futures::stream;
+    use pgwire::api::results::{DataRowEncoder, QueryResponse};
+    use std::sync::Arc;
+
+    // EXPLAIN TIERS ON <collection> [RANGE <start_ms> <end_ms>]
+    if parts.len() < 4 || !parts[2].eq_ignore_ascii_case("ON") {
+        return Err(sqlstate_error(
+            "42601",
+            "syntax: EXPLAIN TIERS ON <collection> [RANGE <start_ms> <end_ms>]",
+        ));
+    }
+    let collection = parts[3].to_lowercase();
+    let tenant_id = identity.tenant_id.as_u32();
+
+    let policy = state
+        .retention_policy_registry
+        .get_for_collection(tenant_id, &collection)
+        .ok_or_else(|| {
+            sqlstate_error(
+                "42704",
+                &format!("no retention policy found for '{collection}'"),
+            )
+        })?;
+
+    if !policy.auto_tier {
+        return Err(sqlstate_error(
+            "42809",
+            &format!("AUTO_TIER is not enabled on '{collection}'"),
+        ));
+    }
+
+    // Optional RANGE clause: EXPLAIN TIERS ON coll RANGE 1700000000 1710000000
+    let time_range = if parts.len() >= 7 && parts[4].eq_ignore_ascii_case("RANGE") {
+        let start = parts[5]
+            .parse::<i64>()
+            .map_err(|_| sqlstate_error("42601", &format!("invalid RANGE start: {}", parts[5])))?;
+        let end = parts[6]
+            .parse::<i64>()
+            .map_err(|_| sqlstate_error("42601", &format!("invalid RANGE end: {}", parts[6])))?;
+        (start, end)
+    } else {
+        (0i64, i64::MAX)
+    };
+    let explanation =
+        crate::control::planner::auto_tier::explain_tier_selection(&policy, time_range);
+
+    let schema = Arc::new(vec![text_field("plan")]);
+    let mut rows = Vec::new();
+    for line in explanation.lines() {
+        let mut encoder = DataRowEncoder::new(schema.clone());
+        encoder
+            .encode_field(&line)
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+        rows.push(Ok(encoder.take_row()));
+    }
+
+    Ok(vec![Response::Query(QueryResponse::new(
+        schema,
+        stream::iter(rows),
+    ))])
 }
 
 /// Extract a single-quoted argument from `FUNC_NAME('value')`.

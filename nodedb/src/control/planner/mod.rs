@@ -1,4 +1,4 @@
-mod auto_tier;
+pub(crate) mod auto_tier;
 pub mod catalog;
 pub mod context;
 pub mod converter;
