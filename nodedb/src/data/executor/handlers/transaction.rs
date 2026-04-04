@@ -290,15 +290,9 @@ impl CoreLoop {
                 };
                 match self.sparse.put(tid, collection, document_id, &stored) {
                     Ok(()) => {
-                        // Auto-index text fields.
-                        if let Some(doc) = super::super::doc_format::decode_document(value)
-                            && let Some(obj) = doc.as_object()
-                        {
-                            let text_content: String = obj
-                                .values()
-                                .filter_map(|v| v.as_str())
-                                .collect::<Vec<_>>()
-                                .join(" ");
+                        // Auto-index text fields (includes nested block content).
+                        if let Some(doc) = super::super::doc_format::decode_document(value) {
+                            let text_content = super::document::extract_indexable_text(&doc);
                             if !text_content.is_empty() {
                                 let scoped = format!("{tid}:{collection}");
                                 let _ = self.inverted.index_document(

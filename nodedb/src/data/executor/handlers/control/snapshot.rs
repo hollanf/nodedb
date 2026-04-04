@@ -1,5 +1,4 @@
-//! Control operation handlers: WalAppend, Cancel, SetCollectionPolicy,
-//! RangeScan, CrdtRead, CrdtApply, Checkpoint.
+//! Snapshot, checkpoint, WAL append, cancel, range scan, and collection policy handlers.
 
 use tracing::{debug, info, warn};
 
@@ -85,7 +84,7 @@ impl CoreLoop {
             .sparse
             .range_scan(tid, collection, field, lower, upper, limit)
         {
-            Ok(results) => match super::super::response_codec::encode(&results) {
+            Ok(results) => match super::super::super::response_codec::encode(&results) {
                 Ok(payload) => self.response_with_payload(task, payload),
                 Err(e) => {
                     warn!(core = self.core_id, error = %e, "range scan serialization failed");
@@ -106,193 +105,6 @@ impl CoreLoop {
                     },
                 )
             }
-        }
-    }
-
-    pub(in crate::data::executor) fn execute_crdt_read(
-        &mut self,
-        task: &ExecutionTask,
-        collection: &str,
-        document_id: &str,
-    ) -> Response {
-        debug!(core = self.core_id, %collection, %document_id, "crdt read");
-        let tenant_id = task.request.tenant_id;
-        let engine = match self.get_crdt_engine(tenant_id) {
-            Ok(e) => e,
-            Err(e) => {
-                warn!(core = self.core_id, error = %e, "failed to create CRDT engine");
-                return self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                );
-            }
-        };
-        match engine.read_snapshot(collection, document_id) {
-            Ok(Some(snapshot)) => self.response_with_payload(task, snapshot),
-            Ok(None) => self.response_error(task, ErrorCode::NotFound),
-            Err(e) => {
-                warn!(core = self.core_id, error = %e, "crdt read snapshot failed");
-                self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                )
-            }
-        }
-    }
-
-    /// Read a CRDT document at a historical version.
-    pub(in crate::data::executor) fn execute_crdt_read_at_version(
-        &mut self,
-        task: &ExecutionTask,
-        collection: &str,
-        document_id: &str,
-        version_vector_json: &str,
-    ) -> Response {
-        debug!(core = self.core_id, %collection, %document_id, "crdt read at version");
-        let tenant_id = task.request.tenant_id;
-        let engine = match self.get_crdt_engine(tenant_id) {
-            Ok(e) => e,
-            Err(e) => {
-                return self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                );
-            }
-        };
-        match engine.read_at_version_json(collection, document_id, version_vector_json) {
-            Ok(Some(json_bytes)) => self.response_with_payload(task, json_bytes),
-            Ok(None) => self.response_error(task, ErrorCode::NotFound),
-            Err(e) => self.response_error(
-                task,
-                ErrorCode::Internal {
-                    detail: e.to_string(),
-                },
-            ),
-        }
-    }
-
-    /// Get the current CRDT version vector.
-    pub(in crate::data::executor) fn execute_crdt_get_version_vector(
-        &mut self,
-        task: &ExecutionTask,
-    ) -> Response {
-        let tenant_id = task.request.tenant_id;
-        let engine = match self.get_crdt_engine(tenant_id) {
-            Ok(e) => e,
-            Err(e) => {
-                return self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                );
-            }
-        };
-        match engine.version_vector_json() {
-            Ok(json) => self.response_with_payload(task, json.into_bytes()),
-            Err(e) => self.response_error(
-                task,
-                ErrorCode::Internal {
-                    detail: e.to_string(),
-                },
-            ),
-        }
-    }
-
-    /// Export CRDT delta from a version to current.
-    pub(in crate::data::executor) fn execute_crdt_export_delta(
-        &mut self,
-        task: &ExecutionTask,
-        from_version_json: &str,
-    ) -> Response {
-        let tenant_id = task.request.tenant_id;
-        let engine = match self.get_crdt_engine(tenant_id) {
-            Ok(e) => e,
-            Err(e) => {
-                return self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                );
-            }
-        };
-        match engine.export_delta(from_version_json) {
-            Ok(delta) => self.response_with_payload(task, delta),
-            Err(e) => self.response_error(
-                task,
-                ErrorCode::Internal {
-                    detail: e.to_string(),
-                },
-            ),
-        }
-    }
-
-    /// Restore a CRDT document to a historical version.
-    pub(in crate::data::executor) fn execute_crdt_restore(
-        &mut self,
-        task: &ExecutionTask,
-        collection: &str,
-        document_id: &str,
-        target_version_json: &str,
-    ) -> Response {
-        debug!(core = self.core_id, %collection, %document_id, "crdt restore");
-        let tenant_id = task.request.tenant_id;
-        let engine = match self.get_crdt_engine(tenant_id) {
-            Ok(e) => e,
-            Err(e) => {
-                return self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                );
-            }
-        };
-        match engine.restore_to_version(collection, document_id, target_version_json) {
-            Ok(delta) => self.response_with_payload(task, delta),
-            Err(e) => self.response_error(
-                task,
-                ErrorCode::Internal {
-                    detail: e.to_string(),
-                },
-            ),
-        }
-    }
-
-    /// Compact CRDT history at a specific version.
-    pub(in crate::data::executor) fn execute_crdt_compact(
-        &mut self,
-        task: &ExecutionTask,
-        target_version_json: &str,
-    ) -> Response {
-        debug!(core = self.core_id, "crdt compact at version");
-        let tenant_id = task.request.tenant_id;
-        let engine = match self.get_crdt_engine(tenant_id) {
-            Ok(e) => e,
-            Err(e) => {
-                return self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                );
-            }
-        };
-        match engine.compact_at_version(target_version_json) {
-            Ok(()) => self.response_ok(task),
-            Err(e) => self.response_error(
-                task,
-                ErrorCode::Internal {
-                    detail: e.to_string(),
-                },
-            ),
         }
     }
 
@@ -396,7 +208,7 @@ impl CoreLoop {
     /// Each tenant's Loro state is exported as a snapshot and written to
     /// `{data_dir}/crdt-ckpt/tenant-{id}.ckpt` with atomic temp+rename.
     ///
-    /// Called from both `control.rs` (explicit checkpoint command) and
+    /// Called from both `snapshot.rs` (explicit checkpoint command) and
     /// `compact.rs` (periodic maintenance via `maybe_run_maintenance`).
     pub(in crate::data::executor) fn checkpoint_crdt_engines(&self) -> usize {
         if self.crdt_engines.is_empty() {
@@ -444,40 +256,5 @@ impl CoreLoop {
             );
         }
         checkpointed
-    }
-
-    pub(in crate::data::executor) fn execute_crdt_apply(
-        &mut self,
-        task: &ExecutionTask,
-        delta: &[u8],
-    ) -> Response {
-        let tenant_id = task.request.tenant_id;
-        let engine = match self.get_crdt_engine(tenant_id) {
-            Ok(e) => e,
-            Err(e) => {
-                warn!(core = self.core_id, error = %e, "failed to create CRDT engine");
-                return self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                );
-            }
-        };
-        match engine.apply_committed_delta(delta) {
-            Ok(()) => {
-                self.checkpoint_coordinator.mark_dirty("crdt", 1);
-                self.response_ok(task)
-            }
-            Err(e) => {
-                warn!(core = self.core_id, error = %e, "crdt apply failed");
-                self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                )
-            }
-        }
     }
 }
