@@ -65,6 +65,23 @@ impl<B: FtsBackend> FtsIndex<B> {
             None => Ok(analyze(text)),
         }
     }
+
+    /// Tokenize text WITHOUT stemming for fuzzy matching.
+    ///
+    /// Returns raw (unstemmed but normalized) tokens so that fuzzy edit
+    /// distance is computed on original word forms, not stemmed forms.
+    pub fn tokenize_raw_for_collection(
+        &self,
+        collection: &str,
+        text: &str,
+    ) -> Result<Vec<String>, B::Error> {
+        let lang = self.get_collection_language(collection)?;
+        let lang_code = lang.as_deref().unwrap_or("en");
+        let stop_list = crate::analyzer::language::stop_words::stop_words(lang_code);
+        Ok(crate::analyzer::pipeline::tokenize_raw(
+            text, lang_code, stop_list,
+        ))
+    }
 }
 
 /// Resolve an analyzer name to a `Box<dyn TextAnalyzer>`.

@@ -45,6 +45,14 @@ impl<B: FtsBackend> FtsIndex<B> {
         }
         let num_query_terms = query_tokens.len();
 
+        // Raw (unstemmed) tokens for fuzzy matching — edit distance should be
+        // computed on original word forms, not after stemming distorts them.
+        let raw_tokens = if fuzzy_enabled {
+            self.tokenize_raw_for_collection(collection, query)?
+        } else {
+            Vec::new()
+        };
+
         let (total_docs, avg_doc_len) = self.index_stats(collection)?;
         if total_docs == 0 {
             return Ok(Vec::new());
@@ -53,6 +61,7 @@ impl<B: FtsBackend> FtsIndex<B> {
         // Try BMW for OR-mode or as the first pass of AND-with-fallback.
         let bmw_params = super::bmw::query::BmwParams {
             query_tokens: &query_tokens,
+            raw_tokens: &raw_tokens,
             fuzzy_enabled,
             top_k: if mode == QueryMode::And && num_query_terms > 1 {
                 top_k.saturating_mul(3).max(20)
@@ -98,15 +107,21 @@ impl<B: FtsBackend> FtsIndex<B> {
             return Ok(sorted);
         }
 
-        // Fallback: exhaustive BM25 scoring (no DocIdMap, or BMW returned None).
-        // Collect posting lists for all query tokens.
+        // Fallback: exhaustive BM25 scoring.
+        // Read directly from backend posting store (handles Origin's transaction-based writes
+        // which bypass the LSM memtable/segment path).
         let mut term_postings: Vec<(Vec<Posting>, bool)> = Vec::with_capacity(num_query_terms);
-        for token in &query_tokens {
-            let exact = self.backend.read_postings(collection, token)?;
-            if !exact.is_empty() {
-                term_postings.push((exact, false));
+        for (i, token) in query_tokens.iter().enumerate() {
+            let postings = self.backend.read_postings(collection, token)?;
+            if !postings.is_empty() {
+                term_postings.push((postings, false));
             } else if fuzzy_enabled {
-                let (fuzzy_posts, is_fuzzy) = self.fuzzy_lookup(collection, token)?;
+                // Use raw (unstemmed) token for fuzzy matching — stemming distorts edit distance.
+                let raw = raw_tokens
+                    .get(i)
+                    .map(String::as_str)
+                    .unwrap_or(token.as_str());
+                let (fuzzy_posts, is_fuzzy) = self.fuzzy_lookup(collection, raw)?;
                 term_postings.push((fuzzy_posts, is_fuzzy));
             } else {
                 term_postings.push((Vec::new(), false));
@@ -196,9 +211,23 @@ impl<B: FtsBackend> FtsIndex<B> {
         candidates: &[TextSearchResult],
         num_terms: usize,
     ) -> Result<Vec<TextSearchResult>, B::Error> {
+        let doc_map = self.load_doc_id_map(collection)?;
+        let term_blocks = crate::lsm::query::collect_merged_term_blocks(
+            &self.backend,
+            collection,
+            self.memtable(),
+            query_tokens,
+        )?;
+
         let mut results = Vec::new();
         for candidate in candidates {
-            let matched = self.count_term_matches(collection, query_tokens, &candidate.doc_id);
+            let int_id = doc_map.to_u32(&candidate.doc_id);
+            let matched = term_blocks
+                .iter()
+                .filter(|tb| {
+                    int_id.is_some_and(|id| tb.blocks.iter().any(|b| b.doc_ids.contains(&id)))
+                })
+                .count();
             if matched >= num_terms {
                 results.push(candidate.clone());
             }
@@ -206,16 +235,27 @@ impl<B: FtsBackend> FtsIndex<B> {
         Ok(results)
     }
 
-    /// Count how many query terms appear in a document's posting lists.
+    /// Count how many query terms appear in a document's posting lists (via LSM).
     fn count_term_matches(&self, collection: &str, query_tokens: &[String], doc_id: &str) -> usize {
-        query_tokens
+        let doc_map = match self.load_doc_id_map(collection) {
+            Ok(m) => m,
+            Err(_) => return 0,
+        };
+        let Some(int_id) = doc_map.to_u32(doc_id) else {
+            return 0;
+        };
+        let term_blocks = match crate::lsm::query::collect_merged_term_blocks(
+            &self.backend,
+            collection,
+            self.memtable(),
+            query_tokens,
+        ) {
+            Ok(tb) => tb,
+            Err(_) => return 0,
+        };
+        term_blocks
             .iter()
-            .filter(|token| {
-                self.backend
-                    .read_postings(collection, token)
-                    .ok()
-                    .is_some_and(|posts| posts.iter().any(|p| p.doc_id == doc_id))
-            })
+            .filter(|tb| tb.blocks.iter().any(|b| b.doc_ids.contains(&int_id)))
             .count()
     }
 
@@ -362,6 +402,8 @@ mod tests {
         idx.index_document("docs", "d1", "distributed database systems")
             .unwrap();
 
+        // "databse" (7 chars raw) fuzzy-matches "databas" (stemmed from "database").
+        // Fuzzy uses raw tokens: levenshtein("databse", "databas") = 2, max_dist(7) = 2 → match.
         let results = idx.search("docs", "databse", 10, true).unwrap();
         assert!(!results.is_empty());
         assert!(results[0].fuzzy);

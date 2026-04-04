@@ -126,6 +126,10 @@ impl<B: FtsBackend> FtsIndex<B> {
         self.memtable.record_doc(int_id, doc_len);
 
         // Write document length, fieldnorm, and update incremental stats.
+        // Note: postings are NOT written to the backend — they live in the LSM
+        // memtable (and segments after flush). The backend stores only metadata
+        // (doc lengths, stats, DocIdMap, fieldnorms). Origin's transaction-based
+        // writes bypass FtsIndex entirely and write directly to redb tables.
         self.backend.write_doc_length(collection, doc_id, doc_len)?;
         self.write_fieldnorm(collection, int_id, doc_len)?;
         self.backend.increment_stats(collection, doc_len)?;

@@ -14,6 +14,8 @@ use super::scorer::bmw_score;
 /// Corpus-level parameters for BMW search.
 pub struct BmwParams<'a> {
     pub query_tokens: &'a [String],
+    /// Raw (unstemmed) tokens for fuzzy matching. Same length as query_tokens.
+    pub raw_tokens: &'a [String],
     pub fuzzy_enabled: bool,
     pub top_k: usize,
     pub total_docs: u32,
@@ -49,10 +51,11 @@ pub fn bmw_search<B: FtsBackend>(
         p.query_tokens,
     )?;
 
-    // For terms with no LSM postings, attempt fuzzy lookup.
-    for (i, token) in p.query_tokens.iter().enumerate() {
+    // For terms with no LSM postings, attempt fuzzy lookup using raw (unstemmed) tokens.
+    for (i, _token) in p.query_tokens.iter().enumerate() {
         if lsm_term_blocks[i].df == 0 && p.fuzzy_enabled {
-            let (posts, is_fuzzy) = index.fuzzy_lookup(collection, token)?;
+            let raw = p.raw_tokens.get(i).unwrap_or(_token);
+            let (posts, is_fuzzy) = index.fuzzy_lookup(collection, raw)?;
             has_fuzzy[i] = is_fuzzy;
             if !posts.is_empty() {
                 let compact = to_compact(&posts, &doc_map, index, collection)?;
@@ -134,6 +137,7 @@ mod tests {
     ) -> BmwParams<'a> {
         BmwParams {
             query_tokens: tokens,
+            raw_tokens: tokens, // In non-fuzzy tests, raw == stemmed is fine.
             fuzzy_enabled: fuzzy,
             top_k,
             total_docs: total,
@@ -196,13 +200,36 @@ mod tests {
         idx.index_document("docs", "d1", "distributed database systems")
             .unwrap();
 
-        let tokens = crate::analyze("databse");
+        // Fuzzy uses raw (unstemmed) tokens: "databse" (7 chars) fuzzy-matches
+        // index term "databas" (stemmed from "database", 7 chars).
+        // levenshtein("databse", "databas") = 2, max_dist(7) = 2 → match.
+        let stemmed = crate::analyze("databse");
+        let raw = crate::analyzer::pipeline::tokenize_no_stem("databse");
         let (total, avg) = idx.index_stats("docs").unwrap();
         let bm25 = Bm25Params::default();
-        let p = make_params(&tokens, total, avg, 10, true, &bm25);
+        let p = BmwParams {
+            query_tokens: &stemmed,
+            raw_tokens: &raw,
+            fuzzy_enabled: true,
+            top_k: 10,
+            total_docs: total,
+            avg_doc_len: avg,
+            bm25: &bm25,
+        };
 
-        let results = bmw_search(&idx, "docs", &p).unwrap().unwrap();
-        assert!(!results.is_empty());
+        let result = bmw_search(&idx, "docs", &p);
+        match &result {
+            Ok(Some(r)) => assert!(!r.is_empty(), "BMW returned empty results"),
+            Ok(None) => panic!("BMW returned None (no DocIdMap?)"),
+            Err(e) => panic!("BMW returned Err: {e}"),
+        }
+
+        let result = bmw_search(&idx, "docs", &p);
+        match &result {
+            Ok(Some(r)) => assert!(!r.is_empty(), "BMW returned empty results"),
+            Ok(None) => panic!("BMW returned None (no DocIdMap?)"),
+            Err(e) => panic!("BMW returned Err: {e}"),
+        }
     }
 
     #[test]
