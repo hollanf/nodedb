@@ -110,12 +110,14 @@ async fn execute_planned(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeRe
     let clean_sql =
         crate::control::server::session_auth::extract_and_apply_on_deny(sql, &mut auth_ctx);
 
+    let perm_cache = ctx.state.permission_cache.read().await;
     let sec = crate::control::planner::context::PlanSecurityContext {
         identity: ctx.identity,
         auth: &auth_ctx,
         rls_store: &ctx.state.rls,
         permissions: &ctx.state.permissions,
         roles: &ctx.state.roles,
+        permission_cache: Some(&*perm_cache),
     };
     let tasks = match ctx
         .query_ctx
@@ -416,12 +418,14 @@ async fn handle_explain(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeRes
         };
     }
 
+    let perm_cache = ctx.state.permission_cache.read().await;
     let sec = crate::control::planner::context::PlanSecurityContext {
         identity: ctx.identity,
         auth: ctx.auth_context,
         rls_store: &ctx.state.rls,
         permissions: &ctx.state.permissions,
         roles: &ctx.state.roles,
+        permission_cache: Some(&*perm_cache),
     };
     match ctx
         .query_ctx

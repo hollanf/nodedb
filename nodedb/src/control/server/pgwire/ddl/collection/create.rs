@@ -154,6 +154,7 @@ pub fn create_collection(
         transition_checks: Vec::new(),
         materialized_sums: Vec::new(),
         lvc_enabled: false,
+        permission_tree_def: None,
     };
 
     // Persist to catalog.

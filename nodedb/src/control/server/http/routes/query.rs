@@ -63,12 +63,14 @@ pub async fn query(
     let mut auth_ctx = crate::control::server::session_auth::build_auth_context(&identity);
     let clean_sql =
         crate::control::server::session_auth::extract_and_apply_on_deny(sql, &mut auth_ctx);
+    let perm_cache = state.shared.permission_cache.read().await;
     let sec = crate::control::planner::context::PlanSecurityContext {
         identity: &identity,
         auth: &auth_ctx,
         rls_store: &state.shared.rls,
         permissions: &state.shared.permissions,
         roles: &state.shared.roles,
+        permission_cache: Some(&*perm_cache),
     };
     let tasks = state
         .query_ctx
@@ -274,12 +276,14 @@ pub async fn query_ndjson(
     let query_ctx = &state.query_ctx;
 
     let auth_ctx = crate::control::server::session_auth::build_auth_context(&identity);
+    let perm_cache = state.shared.permission_cache.read().await;
     let sec = crate::control::planner::context::PlanSecurityContext {
         identity: &identity,
         auth: &auth_ctx,
         rls_store: &state.shared.rls,
         permissions: &state.shared.permissions,
         roles: &state.shared.roles,
+        permission_cache: Some(&*perm_cache),
     };
     let tasks = match query_ctx.plan_sql_with_rls(sql, tenant_id, &sec).await {
         Ok(t) => t,

@@ -2,56 +2,108 @@
 //!
 //! Lives entirely in the Control Plane (Tokio, `Send + Sync`). No persistence,
 //! no WAL, no SPSC bridge — presence is ephemeral, in-memory only.
+//!
+//! **Lock strategy**: mutations (upsert/remove) return `OutboundFrames`
+//! instead of broadcasting inline. The caller drops the write lock, then
+//! sends frames outside the critical section. This keeps lock hold time O(1).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use nodedb_types::sync::wire::{
-    PresenceBroadcastMsg, PresenceLeaveMsg, PresenceUpdateMsg, SyncFrame, SyncMessageType,
-};
+use nodedb_types::sync::wire::{PresenceUpdateMsg, SyncFrame, SyncMessageType};
 
 use super::channel::ChannelState;
 use super::types::{PeerState, PresenceConfig};
 
+/// Serialized frame bytes shared across subscribers (serialize once).
+type SharedBytes = Arc<Vec<u8>>;
+
 /// Handle for sending outbound frames to a specific WebSocket session.
-///
-/// The manager holds one sender per connected session. When presence state
-/// changes, the manager fans out broadcast frames through these senders.
 #[derive(Debug, Clone)]
 pub struct SessionSender {
-    /// Bounded channel sender — if the buffer is full, the oldest presence
-    /// update is dropped (acceptable for ephemeral data).
-    tx: mpsc::Sender<SyncFrame>,
+    tx: mpsc::Sender<SharedBytes>,
 }
 
 impl SessionSender {
-    pub fn new(tx: mpsc::Sender<SyncFrame>) -> Self {
+    pub fn new(tx: mpsc::Sender<SharedBytes>) -> Self {
         Self { tx }
     }
 
-    /// Try to send a frame. Returns `false` if the channel is full or closed.
-    pub fn try_send(&self, frame: SyncFrame) -> bool {
-        self.tx.try_send(frame).is_ok()
+    /// Try to send serialized frame bytes. Returns `false` if buffer full or closed.
+    pub fn try_send(&self, bytes: &SharedBytes) -> bool {
+        self.tx.try_send(Arc::clone(bytes)).is_ok()
+    }
+}
+
+/// Frames to send after releasing the write lock.
+///
+/// The caller collects these from mutation methods, drops the lock,
+/// then calls `send_all()` to fan out without holding the lock.
+pub struct OutboundFrames {
+    /// (session_id, serialized_frame_bytes) pairs to deliver.
+    targets: Vec<(String, SharedBytes)>,
+}
+
+impl OutboundFrames {
+    fn new() -> Self {
+        Self {
+            targets: Vec::new(),
+        }
+    }
+
+    fn add_broadcast(
+        &mut self,
+        channel: &ChannelState,
+        exclude_session: &str,
+        frame_bytes: SharedBytes,
+    ) {
+        for session_id in channel.session_ids() {
+            if session_id != exclude_session {
+                self.targets
+                    .push((session_id.to_owned(), Arc::clone(&frame_bytes)));
+            }
+        }
+    }
+
+    fn add_broadcast_all(&mut self, channel: &ChannelState, frame_bytes: SharedBytes) {
+        for session_id in channel.session_ids() {
+            self.targets
+                .push((session_id.to_owned(), Arc::clone(&frame_bytes)));
+        }
+    }
+
+    /// Send all queued frames via registered senders.
+    /// Call this AFTER dropping the PresenceManager write lock.
+    pub fn send_all(self, senders: &HashMap<String, SessionSender>) {
+        for (session_id, bytes) in &self.targets {
+            if let Some(sender) = senders.get(session_id)
+                && !sender.try_send(bytes)
+            {
+                debug!(
+                    session = session_id.as_str(),
+                    "presence: send buffer full, dropping"
+                );
+            }
+        }
+    }
+
+    /// Whether there are any frames to send.
+    pub fn is_empty(&self) -> bool {
+        self.targets.is_empty()
     }
 }
 
 /// Central presence manager for all channels on this node.
-///
-/// Thread-safe: wrapped in `Arc<tokio::sync::RwLock<_>>` by the caller
-/// (the sync listener). The RwLock allows concurrent reads (broadcast fan-out)
-/// with exclusive writes (upsert/remove/sweep).
 pub struct PresenceManager {
-    /// All active channels: `channel_name → ChannelState`.
     channels: HashMap<String, ChannelState>,
-    /// Reverse index: `session_id → set of channel names` the session is in.
-    /// Used for efficient cleanup on disconnect.
     session_channels: HashMap<String, HashSet<String>>,
-    /// Outbound frame senders: `session_id → SessionSender`.
+    /// Senders are public so `OutboundFrames::send_all` can access them
+    /// after the caller drops the write lock.
     senders: HashMap<String, SessionSender>,
-    /// Configuration.
     config: PresenceConfig,
 }
 
@@ -65,56 +117,61 @@ impl PresenceManager {
         }
     }
 
-    /// Register a session's outbound sender. Called when a WebSocket connects.
+    /// Get the configured sweep interval (for the timer task).
+    pub fn sweep_interval_ms(&self) -> u64 {
+        self.config.sweep_interval_ms
+    }
+
+    /// Access senders map (for `OutboundFrames::send_all` after lock release).
+    pub fn senders(&self) -> &HashMap<String, SessionSender> {
+        &self.senders
+    }
+
+    /// Register a session's outbound sender.
     pub fn register_session(&mut self, session_id: String, sender: SessionSender) {
         self.senders.insert(session_id, sender);
     }
 
     /// Unregister a session and remove it from all channels.
-    ///
-    /// Returns `PresenceLeaveMsg`s to broadcast for each channel the session
-    /// was in. The caller is responsible for broadcasting these (or they can
-    /// be ignored if the caller uses `broadcast_leave` internally).
-    pub fn unregister_session(&mut self, session_id: &str) -> Vec<PresenceLeaveMsg> {
+    /// Returns outbound leave frames to send after releasing the lock.
+    pub fn unregister_session(&mut self, session_id: &str) -> OutboundFrames {
         self.senders.remove(session_id);
+        let mut outbound = OutboundFrames::new();
+
         let channel_names = match self.session_channels.remove(session_id) {
             Some(names) => names,
-            None => return Vec::new(),
+            None => return outbound,
         };
 
-        // Collect leaves and empty channels first (avoids borrow conflict).
-        let mut leaves = Vec::new();
         let mut empty_channels = Vec::new();
         for channel_name in &channel_names {
             if let Some(channel) = self.channels.get_mut(channel_name) {
                 if let Some(leave) = channel.remove_peer(session_id) {
-                    leaves.push((channel_name.clone(), leave));
+                    let bytes = serialize_frame(SyncMessageType::PresenceLeave, &leave);
+                    outbound.add_broadcast_all(channel, bytes);
                 }
                 if channel.is_empty() {
                     empty_channels.push(channel_name.clone());
                 }
             }
         }
-
-        // Broadcast leaves after releasing mutable borrow on individual channels.
-        for (channel_name, leave) in &leaves {
-            self.broadcast_leave_to_channel(channel_name, leave);
-        }
-
-        // Garbage collect empty channels.
         for name in &empty_channels {
             self.channels.remove(name);
         }
 
-        leaves.into_iter().map(|(_, leave)| leave).collect()
+        outbound
     }
 
     /// Handle a `PresenceUpdate` from a client.
-    ///
-    /// Upserts the peer in the channel and broadcasts the updated peer list
-    /// to all other subscribers.
-    pub fn handle_update(&mut self, session_id: &str, user_id: &str, msg: &PresenceUpdateMsg) {
-        // Enforce max channels per session.
+    /// Returns outbound broadcast frames to send after releasing the lock.
+    pub fn handle_update(
+        &mut self,
+        session_id: &str,
+        user_id: &str,
+        msg: &PresenceUpdateMsg,
+    ) -> OutboundFrames {
+        let mut outbound = OutboundFrames::new();
+
         let session_channel_count = self.session_channels.get(session_id).map_or(0, |s| s.len());
         let is_new_channel = !self
             .session_channels
@@ -128,10 +185,9 @@ impl PresenceManager {
                 limit = self.config.max_channels_per_session,
                 "presence: max channels per session exceeded, ignoring"
             );
-            return;
+            return outbound;
         }
 
-        // Enforce max subscribers per channel.
         if is_new_channel
             && let Some(ch) = self.channels.get(&msg.channel)
             && ch.peer_count() >= self.config.max_subscribers_per_channel
@@ -142,7 +198,7 @@ impl PresenceManager {
                 limit = self.config.max_subscribers_per_channel,
                 "presence: max subscribers per channel exceeded, ignoring"
             );
-            return;
+            return outbound;
         }
 
         let peer = PeerState {
@@ -152,21 +208,19 @@ impl PresenceManager {
             last_seen: Instant::now(),
         };
 
-        // Upsert into channel.
         let channel = self
             .channels
             .entry(msg.channel.clone())
             .or_insert_with(|| ChannelState::new(msg.channel.clone()));
         let broadcast = channel.upsert_peer(session_id, peer);
 
-        // Track reverse mapping.
         self.session_channels
             .entry(session_id.to_owned())
             .or_default()
             .insert(msg.channel.clone());
 
-        // Fan out broadcast to all subscribers EXCEPT the sender.
-        self.broadcast_to_channel(&msg.channel, session_id, &broadcast);
+        let bytes = serialize_frame(SyncMessageType::PresenceBroadcast, &broadcast);
+        outbound.add_broadcast(channel, session_id, bytes);
 
         debug!(
             session = session_id,
@@ -174,125 +228,108 @@ impl PresenceManager {
             peers = broadcast.peers.len(),
             "presence: update broadcast"
         );
+
+        outbound
     }
 
-    /// Sweep all channels for expired peers (TTL exceeded).
+    /// Subscribe a session to a presence channel without sending state.
     ///
-    /// Called periodically by a Tokio timer task. Returns the total number
-    /// of peers evicted.
-    pub fn sweep_expired(&mut self) -> usize {
+    /// Called from ShapeSubscribe to auto-join the presence channel for the
+    /// shape's collection+doc. The session will receive broadcasts from other
+    /// peers but won't appear as present until it sends a PresenceUpdate.
+    pub fn subscribe_to_channel(&mut self, session_id: &str, channel: &str) {
+        let session_channel_count = self.session_channels.get(session_id).map_or(0, |s| s.len());
+        if session_channel_count >= self.config.max_channels_per_session {
+            return;
+        }
+
+        // Ensure channel exists.
+        self.channels
+            .entry(channel.to_owned())
+            .or_insert_with(|| ChannelState::new(channel.to_owned()));
+
+        self.session_channels
+            .entry(session_id.to_owned())
+            .or_default()
+            .insert(channel.to_owned());
+    }
+
+    /// Sweep expired peers. Returns outbound leave frames.
+    pub fn sweep_expired(&mut self) -> OutboundFrames {
         let ttl = self.config.ttl_ms;
+        let mut outbound = OutboundFrames::new();
         let mut total_evicted = 0;
         let mut empty_channels = Vec::new();
-        let mut all_leaves: Vec<(String, PresenceLeaveMsg)> = Vec::new();
+
+        // Collect leaves and their targets during mutable iteration.
+        // We have `channel` from the iterator — use it directly for targets.
+        let mut pending_leaves: Vec<(Vec<String>, SharedBytes)> = Vec::new();
 
         for (channel_name, channel) in &mut self.channels {
             let leaves = channel.sweep_expired(ttl);
             total_evicted += leaves.len();
-            for leave in leaves {
-                all_leaves.push((channel_name.clone(), leave));
+            for leave in &leaves {
+                let bytes = serialize_frame(SyncMessageType::PresenceLeave, leave);
+                // Collect remaining session IDs from the channel.
+                let targets: Vec<String> = channel.session_ids().map(|s| s.to_owned()).collect();
+                pending_leaves.push((targets, bytes));
             }
             if channel.is_empty() {
                 empty_channels.push(channel_name.clone());
             }
         }
 
-        // Broadcast leaves after releasing mutable borrow on channels.
-        for (channel_name, leave) in &all_leaves {
-            self.broadcast_leave_to_channel(channel_name, leave);
+        // Build outbound from collected targets.
+        for (targets, bytes) in pending_leaves {
+            for session_id in targets {
+                outbound.targets.push((session_id, Arc::clone(&bytes)));
+            }
         }
 
-        // Garbage collect empty channels.
         for name in &empty_channels {
             self.channels.remove(name);
         }
 
-        // Clean up session_channels for sessions that no longer appear in any channel.
         if total_evicted > 0 {
             let channels_ref = &self.channels;
-            self.session_channels.retain(|session_id, session_chs| {
+            self.session_channels.retain(|sid, session_chs| {
                 session_chs.retain(|ch_name| {
                     channels_ref
                         .get(ch_name)
-                        .is_some_and(|ch| ch.has_session(session_id))
+                        .is_some_and(|ch| ch.has_session(sid))
                 });
                 !session_chs.is_empty()
             });
-        }
-
-        if total_evicted > 0 {
             info!(evicted = total_evicted, "presence: TTL sweep complete");
         }
 
-        total_evicted
+        outbound
     }
 
-    /// Number of active channels.
     pub fn channel_count(&self) -> usize {
         self.channels.len()
     }
 
-    /// Total peers across all channels.
     pub fn total_peers(&self) -> usize {
         self.channels.values().map(|ch| ch.peer_count()).sum()
     }
+}
 
-    /// Broadcast a `PresenceBroadcastMsg` to all subscribers of a channel
-    /// except the sender.
-    fn broadcast_to_channel(
-        &self,
-        channel_name: &str,
-        exclude_session: &str,
-        msg: &PresenceBroadcastMsg,
-    ) {
-        let Some(channel) = self.channels.get(channel_name) else {
-            return;
-        };
-        let frame = SyncFrame::encode_or_empty(SyncMessageType::PresenceBroadcast, msg);
-        for session_id in channel.session_ids() {
-            if session_id == exclude_session {
-                continue;
-            }
-            if let Some(sender) = self.senders.get(session_id)
-                && !sender.try_send(frame.clone())
-            {
-                debug!(
-                    session = session_id,
-                    channel = channel_name,
-                    "presence: send buffer full, dropping broadcast"
-                );
-            }
-        }
-    }
-
-    /// Broadcast a `PresenceLeaveMsg` to all remaining subscribers of a channel.
-    fn broadcast_leave_to_channel(&self, channel_name: &str, leave: &PresenceLeaveMsg) {
-        let Some(channel) = self.channels.get(channel_name) else {
-            return;
-        };
-        let frame = SyncFrame::encode_or_empty(SyncMessageType::PresenceLeave, leave);
-        for session_id in channel.session_ids() {
-            if let Some(sender) = self.senders.get(session_id)
-                && !sender.try_send(frame.clone())
-            {
-                debug!(
-                    session = session_id,
-                    channel = channel_name,
-                    "presence: send buffer full, dropping leave"
-                );
-            }
-        }
-    }
+/// Serialize a frame once and wrap in Arc for zero-copy fan-out.
+fn serialize_frame<T: serde::Serialize>(msg_type: SyncMessageType, msg: &T) -> SharedBytes {
+    let frame = SyncFrame::encode_or_empty(msg_type, msg);
+    Arc::new(frame.to_bytes())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nodedb_types::sync::wire::{PresenceBroadcastMsg, PresenceLeaveMsg};
 
     fn setup() -> (
         PresenceManager,
-        mpsc::Receiver<SyncFrame>,
-        mpsc::Receiver<SyncFrame>,
+        mpsc::Receiver<SharedBytes>,
+        mpsc::Receiver<SharedBytes>,
     ) {
         let config = PresenceConfig::default();
         let mut mgr = PresenceManager::new(config);
@@ -309,29 +346,42 @@ mod tests {
     fn update_broadcasts_to_others() {
         let (mut mgr, _rx1, mut rx2) = setup();
 
-        let msg = PresenceUpdateMsg {
-            channel: "doc:d1".into(),
-            state: vec![0x01],
-        };
-        mgr.handle_update("s1", "alice", &msg);
-
-        // s2 should NOT receive a broadcast yet (s2 is not in the channel).
+        // s1 joins channel.
+        let outbound = mgr.handle_update(
+            "s1",
+            "alice",
+            &PresenceUpdateMsg {
+                channel: "doc:d1".into(),
+                state: vec![0x01],
+            },
+        );
+        // s2 not in channel yet, no targets.
+        outbound.send_all(mgr.senders());
         assert!(rx2.try_recv().is_err());
 
-        // Now s2 joins.
-        let msg2 = PresenceUpdateMsg {
-            channel: "doc:d1".into(),
-            state: vec![0x02],
-        };
-        mgr.handle_update("s2", "bob", &msg2);
+        // s2 joins.
+        let outbound = mgr.handle_update(
+            "s2",
+            "bob",
+            &PresenceUpdateMsg {
+                channel: "doc:d1".into(),
+                state: vec![0x02],
+            },
+        );
+        outbound.send_all(mgr.senders());
 
-        // s1 should NOT receive because the broadcast from s2's update goes
-        // to all EXCEPT s2. But s1 IS in the channel now, so s1 gets it.
-        // (rx1 was captured as _rx1, we can't read it — that's fine for this test.)
-
-        // Update s1 again — s2 should now receive.
-        mgr.handle_update("s1", "alice", &msg);
-        let frame = rx2.try_recv().unwrap();
+        // s1 updates — s2 receives broadcast.
+        let outbound = mgr.handle_update(
+            "s1",
+            "alice",
+            &PresenceUpdateMsg {
+                channel: "doc:d1".into(),
+                state: vec![0x01],
+            },
+        );
+        outbound.send_all(mgr.senders());
+        let bytes = rx2.try_recv().unwrap();
+        let frame = SyncFrame::from_bytes(&bytes).unwrap();
         assert_eq!(frame.msg_type, SyncMessageType::PresenceBroadcast);
         let broadcast: PresenceBroadcastMsg = frame.decode_body().unwrap();
         assert_eq!(broadcast.channel, "doc:d1");
@@ -342,8 +392,7 @@ mod tests {
     fn unregister_broadcasts_leave() {
         let (mut mgr, _rx1, mut rx2) = setup();
 
-        // Both join the same channel.
-        mgr.handle_update(
+        let out = mgr.handle_update(
             "s1",
             "alice",
             &PresenceUpdateMsg {
@@ -351,7 +400,8 @@ mod tests {
                 state: vec![],
             },
         );
-        mgr.handle_update(
+        out.send_all(mgr.senders());
+        let out = mgr.handle_update(
             "s2",
             "bob",
             &PresenceUpdateMsg {
@@ -359,16 +409,14 @@ mod tests {
                 state: vec![],
             },
         );
-        // Drain any broadcast frames from joining.
+        out.send_all(mgr.senders());
         while rx2.try_recv().is_ok() {}
 
-        // Disconnect s1.
-        let leaves = mgr.unregister_session("s1");
-        assert_eq!(leaves.len(), 1);
-        assert_eq!(leaves[0].user_id, "alice");
+        let outbound = mgr.unregister_session("s1");
+        outbound.send_all(mgr.senders());
 
-        // s2 should receive a PresenceLeave.
-        let frame = rx2.try_recv().unwrap();
+        let bytes = rx2.try_recv().unwrap();
+        let frame = SyncFrame::from_bytes(&bytes).unwrap();
         assert_eq!(frame.msg_type, SyncMessageType::PresenceLeave);
         let leave: PresenceLeaveMsg = frame.decode_body().unwrap();
         assert_eq!(leave.user_id, "alice");
@@ -409,21 +457,19 @@ mod tests {
             },
         );
 
-        // Only 2 channels should exist for this session.
         assert_eq!(mgr.session_channels.get("s1").unwrap().len(), 2);
     }
 
     #[test]
     fn sweep_expired_peers() {
         let config = PresenceConfig {
-            ttl_ms: 100, // Very short TTL for testing.
+            ttl_ms: 100,
             ..Default::default()
         };
         let mut mgr = PresenceManager::new(config);
         let (tx, _rx) = mpsc::channel(64);
         mgr.register_session("s1".into(), SessionSender::new(tx));
 
-        // Insert a peer with old timestamp.
         let channel = mgr
             .channels
             .entry("doc:d1".into())
@@ -443,16 +489,28 @@ mod tests {
             .insert("doc:d1".into());
 
         assert_eq!(mgr.total_peers(), 1);
-        let evicted = mgr.sweep_expired();
-        assert_eq!(evicted, 1);
+        let outbound = mgr.sweep_expired();
+        outbound.send_all(mgr.senders());
         assert_eq!(mgr.total_peers(), 0);
-        assert_eq!(mgr.channel_count(), 0); // Empty channel garbage collected.
+        assert_eq!(mgr.channel_count(), 0);
+    }
+
+    #[test]
+    fn subscribe_to_channel_auto_join() {
+        let config = PresenceConfig::default();
+        let mut mgr = PresenceManager::new(config);
+        let (tx, _rx) = mpsc::channel(64);
+        mgr.register_session("s1".into(), SessionSender::new(tx));
+
+        mgr.subscribe_to_channel("s1", "doc:d1");
+        assert!(mgr.channels.contains_key("doc:d1"));
+        assert!(mgr.session_channels.get("s1").unwrap().contains("doc:d1"));
     }
 
     #[test]
     fn empty_after_all_disconnect() {
         let (mut mgr, _, _) = setup();
-        mgr.handle_update(
+        let out = mgr.handle_update(
             "s1",
             "alice",
             &PresenceUpdateMsg {
@@ -460,7 +518,8 @@ mod tests {
                 state: vec![],
             },
         );
-        mgr.handle_update(
+        out.send_all(mgr.senders());
+        let out = mgr.handle_update(
             "s2",
             "bob",
             &PresenceUpdateMsg {
@@ -468,6 +527,7 @@ mod tests {
                 state: vec![],
             },
         );
+        out.send_all(mgr.senders());
 
         mgr.unregister_session("s1");
         mgr.unregister_session("s2");

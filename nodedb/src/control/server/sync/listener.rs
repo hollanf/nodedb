@@ -94,16 +94,17 @@ pub async fn start_sync_listener(
     // Spawn presence TTL sweep timer (before moving `shared` into accept loop).
     if let Some(ref shared) = shared {
         let presence = Arc::clone(&shared.presence);
-        let sweep_interval_ms = {
-            // Use default sweep interval from config.
-            super::presence::PresenceConfig::default().sweep_interval_ms
-        };
+        let sweep_interval_ms = presence.read().await.sweep_interval_ms();
         tokio::spawn(async move {
             let mut interval =
                 tokio::time::interval(std::time::Duration::from_millis(sweep_interval_ms));
             loop {
                 interval.tick().await;
-                presence.write().await.sweep_expired();
+                let mut mgr = presence.write().await;
+                let outbound = mgr.sweep_expired();
+                let senders = mgr.senders().clone();
+                drop(mgr); // Release lock before fan-out.
+                outbound.send_all(&senders);
             }
         });
     }
@@ -184,7 +185,7 @@ async fn handle_sync_session(
 
     // Presence: register a bounded outbound channel for this session.
     // Presence broadcasts arrive here and are drained alongside CRDT deltas.
-    let mut presence_rx: Option<tokio::sync::mpsc::Receiver<super::wire::SyncFrame>> = None;
+    let mut presence_rx: Option<tokio::sync::mpsc::Receiver<std::sync::Arc<Vec<u8>>>> = None;
     let mut presence_registered = false;
 
     while let Some(msg_result) = ws.next().await {
@@ -199,6 +200,21 @@ async fn handle_sync_session(
                         )
                         .await
                     {
+                        // Auto-join presence channel for this shape's collection.
+                        if session.authenticated
+                            && presence_registered
+                            && let Some(sub_msg) =
+                                frame.decode_body::<super::wire::ShapeSubscribeMsg>()
+                            && let Some(coll) = sub_msg.shape.collection()
+                        {
+                            let channel = format!("shape:{coll}");
+                            shared
+                                .presence
+                                .write()
+                                .await
+                                .subscribe_to_channel(&session_id, &channel);
+                        }
+
                         if ws
                             .send(Message::Binary(response.to_bytes().into()))
                             .await
@@ -216,11 +232,11 @@ async fn handle_sync_session(
                     {
                         if let Some(msg) = frame.decode_body::<PresenceUpdateMsg>() {
                             let user_id = session.username.as_deref().unwrap_or("anonymous");
-                            shared
-                                .presence
-                                .write()
-                                .await
-                                .handle_update(&session_id, user_id, &msg);
+                            let mut mgr = shared.presence.write().await;
+                            let outbound = mgr.handle_update(&session_id, user_id, &msg);
+                            let senders = mgr.senders().clone();
+                            drop(mgr); // Release lock before fan-out.
+                            outbound.send_all(&senders);
                         }
                         continue;
                     }
@@ -347,11 +363,11 @@ async fn handle_sync_session(
 
         // Drain outbound presence broadcasts and push to client.
         if let Some(ref mut rx) = presence_rx {
-            while let Ok(frame) = rx.try_recv() {
+            while let Ok(bytes) = rx.try_recv() {
                 use futures::SinkExt;
                 use tokio_tungstenite::tungstenite::Message;
                 if ws
-                    .send(Message::Binary(frame.to_bytes().into()))
+                    .send(Message::Binary((*bytes).clone().into()))
                     .await
                     .is_err()
                 {
@@ -401,11 +417,11 @@ async fn handle_sync_session(
 
     // Unregister from presence: removes from all channels, broadcasts leave.
     if presence_registered && let Some(shared) = shared {
-        shared
-            .presence
-            .write()
-            .await
-            .unregister_session(&session_id);
+        let mut mgr = shared.presence.write().await;
+        let outbound = mgr.unregister_session(&session_id);
+        let senders = mgr.senders().clone();
+        drop(mgr);
+        outbound.send_all(&senders);
     }
 
     info!(
