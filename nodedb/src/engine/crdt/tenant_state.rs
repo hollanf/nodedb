@@ -42,6 +42,11 @@ impl TenantCrdtEngine {
         self.state.peer_id()
     }
 
+    /// Access the underlying CrdtState (for advanced operations like list ops).
+    pub fn state(&self) -> &CrdtState {
+        &self.state
+    }
+
     /// Export the full CRDT state as binary bytes (for snapshot transfer).
     pub fn export_snapshot_bytes(&self) -> crate::Result<Vec<u8>> {
         self.state.export_snapshot().map_err(crate::Error::Crdt)

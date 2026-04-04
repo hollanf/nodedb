@@ -210,9 +210,13 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
         PhysicalPlan::Timeseries(TimeseriesOp::Scan { .. }) => Permission::Read,
 
         // Write operations.
-        PhysicalPlan::Crdt(CrdtOp::Apply { .. } | CrdtOp::RestoreToVersion { .. }) => {
-            Permission::Write
-        }
+        PhysicalPlan::Crdt(
+            CrdtOp::Apply { .. }
+            | CrdtOp::RestoreToVersion { .. }
+            | CrdtOp::ListInsert { .. }
+            | CrdtOp::ListDelete { .. }
+            | CrdtOp::ListMove { .. },
+        ) => Permission::Write,
 
         PhysicalPlan::Vector(
             VectorOp::Insert { .. }

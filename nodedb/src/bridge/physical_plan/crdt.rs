@@ -60,4 +60,32 @@ pub enum CrdtOp {
         /// JSON-serialized version vector. Oplog before this is discarded.
         target_version_json: String,
     },
+
+    // ─── Block Document (LoroList) Operations ───────────────────────
+    /// Insert a block (LoroMap) into a document's block list.
+    /// `fields_json` contains the block's fields as a JSON object.
+    ListInsert {
+        collection: String,
+        document_id: String,
+        list_path: String,
+        index: usize,
+        fields_json: String,
+    },
+
+    /// Delete a block from a document's block list.
+    ListDelete {
+        collection: String,
+        document_id: String,
+        list_path: String,
+        index: usize,
+    },
+
+    /// Move a block within a document's block list (reorder).
+    ListMove {
+        collection: String,
+        document_id: String,
+        list_path: String,
+        from_index: usize,
+        to_index: usize,
+    },
 }

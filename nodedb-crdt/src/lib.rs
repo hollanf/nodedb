@@ -44,6 +44,7 @@ pub mod constraint_checks;
 pub mod dead_letter;
 pub mod deferred;
 pub mod error;
+pub mod list_ops;
 pub mod policy;
 pub mod pre_validate;
 pub mod signing;
