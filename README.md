@@ -15,7 +15,7 @@ NodeDB provides Vector, Graph, Document (schemaless + strict), Columnar (with Ti
 | [Timeseries](docs/timeseries.md)             | Columnar profile with ILP ingest, continuous aggregation, PromQL, 12 SQL functions |
 | [Spatial](docs/spatial.md)                   | R\*-tree, geohash, H3, OGC predicates, hybrid spatial-vector search                |
 | [Key-Value](docs/kv.md)                      | Hash-indexed O(1) lookups, TTL, secondary indexes, SQL-queryable                   |
-| [Full-Text Search](docs/full-text-search.md) | BM25 + 15-language stemming + fuzzy + hybrid vector fusion                         |
+| [Full-Text Search](docs/full-text-search.md) | BMW-optimized BM25, 16 stemmers, 27-language stop words, CJK bigrams, fuzzy, hybrid vector fusion |
 
 ## Architecture
 
