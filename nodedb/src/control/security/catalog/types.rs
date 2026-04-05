@@ -1,13 +1,16 @@
-//! System catalog — redb-backed persistent storage for auth metadata.
+//! System catalog type definitions: table constants, collection metadata,
+//! constraint types, and field definitions.
 //!
-//! Stores users, roles, and permissions in `{data_dir}/system.redb`.
-//! Lives on the Control Plane (Send + Sync). Uses redb's ACID transactions
-//! for crash-safe writes, same technology as the sparse engine.
+//! Auth types (users, roles, permissions) are in `auth_types.rs`.
+//! SystemCatalog struct is in `system_catalog.rs`.
 
-use std::path::Path;
+use redb::TableDefinition;
 
-use redb::{Database, TableDefinition};
-use tracing::info;
+// Re-export types from split modules so internal `use super::types::*` still works.
+pub use super::auth_types::*;
+pub use super::system_catalog::SystemCatalog;
+
+// ── Table definitions ─────────────────────────────────────────────────
 
 /// Table: username (string) -> MessagePack-serialized user record.
 pub(super) const USERS: TableDefinition<&str, &[u8]> = TableDefinition::new("_system.users");
@@ -80,7 +83,6 @@ pub(super) const PROCEDURES: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.procedures");
 
 /// Table: "{source_type}:{tenant_id}:{source_name}" -> MessagePack-serialized dependency list.
-/// Tracks what objects a function/trigger/procedure references in its body.
 pub(super) const DEPENDENCIES: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.dependencies");
 
@@ -100,7 +102,6 @@ pub(super) const COLUMN_STATS: TableDefinition<&str, &[u8]> =
 pub(super) const METADATA: TableDefinition<&str, &[u8]> = TableDefinition::new("_system.metadata");
 
 /// Table: "wasm_module:{sha256_hex}" -> raw WASM binary bytes.
-/// Content-addressed: same binary stored once regardless of how many functions reference it.
 pub(super) const WASM_MODULES: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.wasm_modules");
 
@@ -130,43 +131,11 @@ pub(super) const SCOPE_GRANTS: TableDefinition<&str, &[u8]> =
 pub(super) const VECTOR_MODEL_METADATA: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.vector_model_metadata");
 
-/// Table: "{tenant_id}:{collection}:{doc_id}:{checkpoint_name}" -> MessagePack-serialized CheckpointRecord.
+/// Table: "{tenant_id}:{collection}:{doc_id}:{checkpoint_name}" -> MessagePack CheckpointRecord.
 pub(super) const CHECKPOINTS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.checkpoints");
 
-/// A named checkpoint: captures a version vector at a point in time.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct CheckpointRecord {
-    /// Tenant scope.
-    pub tenant_id: u32,
-    /// Collection the document belongs to.
-    pub collection: String,
-    /// Document ID.
-    pub doc_id: String,
-    /// User-defined checkpoint name (e.g., "v2-final", "launch-ready").
-    pub checkpoint_name: String,
-    /// Serialized version vector as JSON string: `{"peer_hex": counter, ...}`.
-    pub version_vector_json: String,
-    /// Who created this checkpoint.
-    pub created_by: String,
-    /// When this checkpoint was created (unix epoch seconds).
-    pub created_at: u64,
-}
-
-impl CheckpointRecord {
-    /// Catalog key for this checkpoint.
-    pub fn catalog_key(&self) -> String {
-        format!(
-            "{}:{}:{}:{}",
-            self.tenant_id, self.collection, self.doc_id, self.checkpoint_name
-        )
-    }
-
-    /// Prefix for scanning all checkpoints of a document.
-    pub fn doc_prefix(tenant_id: u32, collection: &str, doc_id: &str) -> String {
-        format!("{tenant_id}:{collection}:{doc_id}:")
-    }
-}
+// ── Helpers ───────────────────────────────────────────────────────────
 
 pub fn catalog_err<E: std::fmt::Display>(ctx: &str, e: E) -> crate::Error {
     crate::Error::Storage {
@@ -180,116 +149,35 @@ pub fn owner_key(object_type: &str, tenant_id: u32, object_name: &str) -> String
     format!("{object_type}:{tenant_id}:{object_name}")
 }
 
-/// Serializable user record for redb storage.
-#[derive(serde::Serialize, serde::Deserialize)]
-pub struct StoredUser {
-    pub user_id: u64,
-    pub username: String,
-    pub tenant_id: u32,
-    pub password_hash: String,
-    pub scram_salt: Vec<u8>,
-    pub scram_salted_password: Vec<u8>,
-    pub roles: Vec<String>,
-    pub is_superuser: bool,
-    pub is_active: bool,
-    /// True if this is a service account (no password, API key auth only).
-    #[serde(default)]
-    pub is_service_account: bool,
-    /// Unix timestamp (seconds) when the user was created.
-    #[serde(default)]
-    pub created_at: u64,
-    /// Unix timestamp (seconds) when the user was last modified.
-    #[serde(default)]
-    pub updated_at: u64,
-    /// Unix timestamp (seconds) when the password expires. 0 = no expiry.
-    #[serde(default)]
-    pub password_expires_at: u64,
-    /// MD5 hash for pgwire MD5 auth: `md5(password + username)` as hex.
-    #[serde(default)]
-    pub md5_hash: String,
-}
+// ── Checkpoint ────────────────────────────────────────────────────────
 
-/// Serializable API key record for redb storage.
+/// A named checkpoint: captures a version vector at a point in time.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct StoredApiKey {
-    /// Unique key identifier (used as prefix in the token).
-    pub key_id: String,
-    /// SHA-256 hash of the secret portion.
-    pub secret_hash: Vec<u8>,
-    /// User this key belongs to.
-    pub username: String,
-    pub user_id: u64,
+pub struct CheckpointRecord {
     pub tenant_id: u32,
-    /// Unix timestamp (seconds) when the key expires. 0 = no expiry.
-    pub expires_at: u64,
-    /// Whether this key has been revoked.
-    pub is_revoked: bool,
-    /// Unix timestamp (seconds) when the key was created.
-    pub created_at: u64,
-    /// Permission scope restriction. Empty = inherit all user permissions.
-    /// Format: ["read:collection_name", "write:collection_name", ...]
-    #[serde(default)]
-    pub scope: Vec<String>,
-}
-
-/// Serializable tenant record for redb storage.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct StoredTenant {
-    pub tenant_id: u32,
-    pub name: String,
-    pub created_at: u64,
-    pub is_active: bool,
-}
-
-/// Serializable audit entry for redb storage.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct StoredAuditEntry {
-    pub seq: u64,
-    pub timestamp_us: u64,
-    pub event: String,
-    pub tenant_id: Option<u32>,
-    pub source: String,
-    pub detail: String,
-    /// SHA-256 hash of the previous entry (hex). Empty for first entry.
-    #[serde(default)]
-    pub prev_hash: String,
-}
-
-/// Serializable custom role for redb storage.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct StoredRole {
-    pub name: String,
-    pub tenant_id: u32,
-    /// Parent role name for inheritance. Empty = no parent.
-    pub parent: String,
+    pub collection: String,
+    pub doc_id: String,
+    pub checkpoint_name: String,
+    pub version_vector_json: String,
+    pub created_by: String,
     pub created_at: u64,
 }
 
-/// Serializable permission grant for redb storage.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct StoredPermission {
-    /// What the grant applies to: "cluster", "tenant:1", "collection:1:users"
-    pub target: String,
-    /// Who receives the grant: role name or "user:username"
-    pub grantee: String,
-    /// Permission type: "read", "write", "create", "drop", "alter", "admin", "monitor"
-    pub permission: String,
-    pub granted_by: String,
-    pub granted_at: u64,
+impl CheckpointRecord {
+    pub fn catalog_key(&self) -> String {
+        format!(
+            "{}:{}:{}:{}",
+            self.tenant_id, self.collection, self.doc_id, self.checkpoint_name
+        )
+    }
+
+    pub fn doc_prefix(tenant_id: u32, collection: &str, doc_id: &str) -> String {
+        format!("{tenant_id}:{collection}:{doc_id}:")
+    }
 }
 
-/// Serializable ownership record.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct StoredOwner {
-    /// "collection", "index"
-    pub object_type: String,
-    /// Object name (e.g. collection name).
-    pub object_name: String,
-    pub tenant_id: u32,
-    pub owner_username: String,
-}
+// ── Collection metadata ───────────────────────────────────────────────
 
-/// Persistent system catalog backed by redb.
 /// Serializable collection metadata for redb storage.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct StoredCollection {
@@ -298,11 +186,9 @@ pub struct StoredCollection {
     pub owner: String,
     pub created_at: u64,
     /// Optional field type declarations. Empty = schemaless.
-    /// Format: [("field_name", "type_name"), ...]
     #[serde(default)]
     pub fields: Vec<(String, String)>,
     /// Extended field definitions with DEFAULT, VALUE (computed), ASSERT, TYPE.
-    /// Keyed by field name. Stored alongside `fields` for backward compatibility.
     #[serde(default)]
     pub field_defs: Vec<FieldDefinition>,
     /// Event/trigger definitions (DEFINE EVENT).
@@ -311,157 +197,46 @@ pub struct StoredCollection {
     /// Collection type: determines storage engine and query routing.
     #[serde(default)]
     pub collection_type: nodedb_types::CollectionType,
-    /// Timeseries-specific configuration (JSON-serialized `TieredPartitionConfig`).
-    ///
-    /// Only populated when `collection_type == "timeseries"`. Contains
-    /// partition interval, retention, merge settings, and compression config.
-    /// Example: `{"partition_by":"3d","retention_period":"30d"}`.
+    /// Timeseries-specific configuration (JSON-serialized).
     #[serde(default)]
     pub timeseries_config: Option<String>,
     pub is_active: bool,
-    /// Append-only: UPDATE/DELETE rejected. One-way flag (cannot be reversed without superuser).
+    /// Append-only: UPDATE/DELETE rejected.
     #[serde(default)]
     pub append_only: bool,
-    /// Hash chain: each INSERT computes SHA-256 over (previous_hash, row_id, row_contents).
-    /// Hidden `_chain_hash` column maintained. Requires `append_only = true`.
+    /// Hash chain: each INSERT computes SHA-256 chain hash. Requires append_only.
     #[serde(default)]
     pub hash_chain: bool,
-    /// Balanced constraint: at commit time, debit/credit sums must match per group_key.
+    /// Balanced constraint: debit/credit sums must match per group_key at commit.
     #[serde(default)]
     pub balanced: Option<BalancedConstraintDef>,
-    /// Last hash in the chain (updated atomically with each INSERT). `None` = empty chain.
+    /// Last hash in the chain.
     #[serde(default)]
     pub last_chain_hash: Option<String>,
-    /// Period lock: binds a collection's period column to a fiscal_periods status table.
-    /// When a period is CLOSED/LOCKED, writes to rows in that period are rejected.
+    /// Period lock: binds a period column to a fiscal_periods status table.
     #[serde(default)]
     pub period_lock: Option<PeriodLockDef>,
-    /// Data retention period (e.g. "7 years", "90 days"). DELETE rejected if row age < period.
+    /// Data retention period. DELETE rejected if row age < period.
     #[serde(default)]
     pub retention_period: Option<String>,
-    /// Active legal holds. DELETE rejected while any hold is active. Each tag is unique.
+    /// Active legal holds. DELETE rejected while any hold is active.
     #[serde(default)]
     pub legal_holds: Vec<LegalHold>,
-    /// State transition constraints: column value can only change along declared paths.
+    /// State transition constraints.
     #[serde(default)]
     pub state_constraints: Vec<StateTransitionDef>,
     /// Transition check predicates: OLD/NEW expression evaluated on UPDATE.
     #[serde(default)]
     pub transition_checks: Vec<TransitionCheckDef>,
-    /// Materialized sum definitions: automatic balance maintenance on INSERT to source.
+    /// Materialized sum definitions.
     #[serde(default)]
     pub materialized_sums: Vec<MaterializedSumDef>,
-    /// Enable last-value cache for O(1) per-series recent value lookups.
-    /// Only applicable to timeseries collections.
+    /// Enable last-value cache for timeseries.
     #[serde(default)]
     pub lvc_enabled: bool,
-    /// Permission tree definition (JSON-serialized `PermissionTreeDef`).
-    /// When set, queries on this collection are filtered by hierarchical
-    /// permission inheritance resolved via the specified graph index.
+    /// Permission tree definition (JSON-serialized).
     #[serde(default)]
     pub permission_tree_def: Option<String>,
-}
-
-/// Double-entry balance constraint: within a single transaction, for each
-/// distinct `group_key_column` value, `SUM(amount WHERE entry_type = debit_value)`
-/// must equal `SUM(amount WHERE entry_type = credit_value)`.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct BalancedConstraintDef {
-    /// Column that groups entries into a logical journal (e.g. `journal_id`).
-    pub group_key_column: String,
-    /// Value of entry_type that indicates a debit (e.g. `"DEBIT"`).
-    pub debit_value: String,
-    /// Value of entry_type that indicates a credit (e.g. `"CREDIT"`).
-    pub credit_value: String,
-    /// Column containing the monetary amount.
-    pub amount_column: String,
-    /// Column containing the entry type (`"DEBIT"` or `"CREDIT"`).
-    pub entry_type_column: String,
-}
-
-/// Period lock definition: binds a collection's period column to a reference table
-/// that holds period statuses (e.g. fiscal_periods).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct PeriodLockDef {
-    /// Column in this collection that identifies the period (e.g. `fiscal_period`).
-    pub period_column: String,
-    /// Reference collection that holds period statuses (e.g. `fiscal_periods`).
-    pub ref_table: String,
-    /// Primary key column in the reference table (e.g. `period_key`).
-    pub ref_pk: String,
-    /// Status column in the reference table (e.g. `status`).
-    pub status_column: String,
-    /// Status values that allow writes (e.g. `["OPEN", "ADJUSTING"]`).
-    pub allowed_statuses: Vec<String>,
-}
-
-/// A legal hold tag preventing deletion of data in a collection.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct LegalHold {
-    /// Unique tag identifying this hold (e.g. `"case-001"`).
-    pub tag: String,
-    /// Timestamp when the hold was placed (millis since epoch).
-    pub created_at: u64,
-    /// User who placed the hold.
-    pub created_by: String,
-}
-
-/// State transition constraint: column value can only change along declared paths.
-///
-/// Example: `status` can go `'draft' → 'submitted'`, `'submitted' → 'approved' BY ROLE 'manager'`.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct StateTransitionDef {
-    /// Constraint name (for DROP CONSTRAINT).
-    pub name: String,
-    /// Column this constraint applies to.
-    pub column: String,
-    /// Allowed transitions: (from_value, to_value, optional required_role).
-    pub transitions: Vec<TransitionRule>,
-}
-
-/// A single allowed state transition, optionally guarded by a role.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct TransitionRule {
-    /// Value the column is transitioning FROM.
-    pub from: String,
-    /// Value the column is transitioning TO.
-    pub to: String,
-    /// If set, the user must hold this role to perform this transition.
-    pub required_role: Option<String>,
-}
-
-/// Transition check predicate: evaluated on UPDATE with access to OLD and NEW row values.
-///
-/// If the predicate returns FALSE, the UPDATE is rejected.
-/// Not evaluated on INSERT (only CHECK constraints apply to inserts).
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct TransitionCheckDef {
-    /// Constraint name (for DROP CONSTRAINT).
-    pub name: String,
-    /// Serialized predicate expression with OLD.* and NEW.* column references.
-    pub predicate: crate::bridge::expr_eval::SqlExpr,
-}
-
-/// Materialized sum: on INSERT to source, atomically add value_expr result to
-/// the target collection's balance column.
-///
-/// Stored on the **target** collection (the one with the balance column).
-/// The Data Plane needs to know which **source** collections trigger updates,
-/// so `MaterializedSumBinding` (bridge type) is stored on the source's
-/// `EnforcementOptions` to enable trigger-on-INSERT.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct MaterializedSumDef {
-    /// Target collection that holds the balance column (e.g. `accounts`).
-    pub target_collection: String,
-    /// Balance column on the target (e.g. `balance`).
-    pub target_column: String,
-    /// Source collection that triggers updates (e.g. `journal_entries`).
-    pub source_collection: String,
-    /// Column on source that joins to target's document ID (e.g. `account_id`).
-    pub join_column: String,
-    /// Expression evaluated against each source INSERT to compute the delta.
-    /// Can be a simple column reference or a CASE expression.
-    pub value_expr: crate::bridge::expr_eval::SqlExpr,
 }
 
 impl StoredCollection {
@@ -505,41 +280,16 @@ impl StoredCollection {
     }
 }
 
-/// A materialized view: strict → columnar CDC bridge.
-///
-/// Created via `CREATE MATERIALIZED VIEW <name> ON <source> AS SELECT ...`.
-/// The source must be a strict (or document) collection. The target is
-/// an implicitly-created columnar collection with the view's schema.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
-pub struct StoredMaterializedView {
-    pub tenant_id: u32,
-    /// View name (also the target columnar collection name).
-    pub name: String,
-    /// Source collection name.
-    pub source: String,
-    /// SQL body: the SELECT ... FROM ... part (used for schema + refresh).
-    pub query_sql: String,
-    /// Refresh mode: "auto" (on every write to source) or "manual".
-    #[serde(default = "default_refresh_mode")]
-    pub refresh_mode: String,
-    pub owner: String,
-    pub created_at: u64,
-}
-
-fn default_refresh_mode() -> String {
-    "auto".into()
-}
+// ── Field + event definitions ─────────────────────────────────────────
 
 /// Extended field definition supporting DEFAULT, VALUE, ASSERT, and TYPE constraints.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FieldDefinition {
     pub name: String,
-    /// Type constraint: "int", "float", "string", "bool", "array", "object", "datetime", etc.
-    /// Empty = any type (schemaless).
+    /// Type constraint: "int", "float", "string", etc. Empty = any.
     #[serde(default)]
     pub field_type: String,
     /// Default expression (evaluated when field is missing on insert).
-    /// Stored as SqlExpr JSON string for deserialization on the Data Plane.
     #[serde(default)]
     pub default_expr: String,
     /// Computed value expression (evaluated on every read, not stored).
@@ -552,361 +302,102 @@ pub struct FieldDefinition {
     #[serde(default)]
     pub readonly: bool,
     /// Sequence name for auto-generated values on INSERT.
-    /// When set and INSERT doesn't provide this field, `nextval(sequence_name)` is called.
-    /// Created via `SEQUENCE FORMAT '...' RESET ... GAP_FREE` in column definition.
     #[serde(default)]
     pub sequence_name: Option<String>,
+    /// If true, this field is a stored generated column (materialized on write).
+    /// `value_expr` contains the serialized SqlExpr for write-time evaluation.
+    #[serde(default)]
+    pub is_generated: bool,
+    /// Column names this generated column depends on (for UPDATE recomputation).
+    #[serde(default)]
+    pub generated_deps: Vec<String>,
 }
 
 /// Table event/trigger definition.
-///
-/// Stored in the catalog alongside field definitions. Evaluated after
-/// write operations (INSERT, UPDATE, DELETE) when the WHEN condition matches.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EventDefinition {
     pub name: String,
-    /// Collection this event is attached to.
     pub collection: String,
-    /// WHEN condition: "INSERT", "UPDATE", "DELETE", or arbitrary expression.
     pub when_condition: String,
-    /// THEN action: SQL statement(s) to execute when triggered.
     pub then_action: String,
 }
 
-/// Serializable blacklist entry for redb storage.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct StoredBlacklistEntry {
-    /// Blacklist entry key: `"user:{user_id}"` or `"ip:{addr_or_cidr}"`.
-    pub key: String,
-    /// Entry kind: "user" or "ip".
-    pub kind: String,
-    /// Human-readable reason for blacklisting.
-    pub reason: String,
-    /// Who created this entry (admin username).
-    pub created_by: String,
-    /// Unix timestamp (seconds) when blacklisted.
-    pub created_at: u64,
-    /// Unix timestamp (seconds) when this entry expires. 0 = permanent.
-    pub expires_at: u64,
-}
-
-/// Serializable JIT-provisioned auth user record for redb storage.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct StoredAuthUser {
-    /// Unique identifier (from JWT `sub` or `user_id` claim).
-    pub id: String,
-    /// Username (display name).
-    pub username: String,
-    /// Email address (from JWT `email` claim).
-    #[serde(default)]
-    pub email: String,
-    /// Tenant this user belongs to.
+/// A materialized view: strict → columnar CDC bridge.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct StoredMaterializedView {
     pub tenant_id: u32,
-    /// Identity provider name that provisioned this user.
-    pub provider: String,
-    /// Unix timestamp (seconds) of first authentication.
-    pub first_seen: u64,
-    /// Unix timestamp (seconds) of most recent authentication.
-    pub last_seen: u64,
-    /// Whether this user is active (can authenticate).
-    pub is_active: bool,
-    /// Account status: active, suspended, banned, restricted, read_only.
-    #[serde(default = "default_status")]
-    pub status: String,
-    /// Whether this user was externally provisioned (no local password).
-    #[serde(default = "default_true")]
-    pub is_external: bool,
-    /// Last synced JWT claims (for claim sync on each request).
-    #[serde(default)]
-    pub synced_claims: std::collections::HashMap<String, String>,
+    pub name: String,
+    pub source: String,
+    pub query_sql: String,
+    #[serde(default = "default_refresh_mode")]
+    pub refresh_mode: String,
+    pub owner: String,
+    pub created_at: u64,
 }
 
-fn default_status() -> String {
-    "active".into()
-}
-fn default_true() -> bool {
-    true
+fn default_refresh_mode() -> String {
+    "auto".into()
 }
 
-pub struct SystemCatalog {
-    pub(super) db: Database,
+// ── Constraint types ──────────────────────────────────────────────────
+
+/// Double-entry balance constraint.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct BalancedConstraintDef {
+    pub group_key_column: String,
+    pub debit_value: String,
+    pub credit_value: String,
+    pub amount_column: String,
+    pub entry_type_column: String,
 }
 
-impl SystemCatalog {
-    /// Open or create the system catalog at the given path.
-    pub fn open(path: &Path) -> crate::Result<Self> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let db = Database::create(path).map_err(|e| catalog_err("open", e))?;
-
-        // Ensure tables exist.
-        let write_txn = db.begin_write().map_err(|e| catalog_err("init txn", e))?;
-        {
-            let _ = write_txn
-                .open_table(USERS)
-                .map_err(|e| catalog_err("init users table", e))?;
-            let _ = write_txn
-                .open_table(API_KEYS)
-                .map_err(|e| catalog_err("init api_keys table", e))?;
-            let _ = write_txn
-                .open_table(ROLES)
-                .map_err(|e| catalog_err("init roles table", e))?;
-            let _ = write_txn
-                .open_table(PERMISSIONS)
-                .map_err(|e| catalog_err("init permissions table", e))?;
-            let _ = write_txn
-                .open_table(OWNERS)
-                .map_err(|e| catalog_err("init owners table", e))?;
-            let _ = write_txn
-                .open_table(TENANTS)
-                .map_err(|e| catalog_err("init tenants table", e))?;
-            let _ = write_txn
-                .open_table(AUDIT_LOG)
-                .map_err(|e| catalog_err("init audit_log table", e))?;
-            let _ = write_txn
-                .open_table(COLLECTIONS)
-                .map_err(|e| catalog_err("init collections table", e))?;
-            let _ = write_txn
-                .open_table(METADATA)
-                .map_err(|e| catalog_err("init metadata table", e))?;
-            let _ = write_txn
-                .open_table(BLACKLIST)
-                .map_err(|e| catalog_err("init blacklist table", e))?;
-            let _ = write_txn
-                .open_table(AUTH_USERS)
-                .map_err(|e| catalog_err("init auth_users table", e))?;
-            let _ = write_txn
-                .open_table(ORGS)
-                .map_err(|e| catalog_err("init orgs table", e))?;
-            let _ = write_txn
-                .open_table(ORG_MEMBERS)
-                .map_err(|e| catalog_err("init org_members table", e))?;
-            let _ = write_txn
-                .open_table(SCOPES)
-                .map_err(|e| catalog_err("init scopes table", e))?;
-            let _ = write_txn
-                .open_table(SCOPE_GRANTS)
-                .map_err(|e| catalog_err("init scope_grants table", e))?;
-            let _ = write_txn
-                .open_table(MATERIALIZED_VIEWS)
-                .map_err(|e| catalog_err("init materialized_views table", e))?;
-            let _ = write_txn
-                .open_table(FUNCTIONS)
-                .map_err(|e| catalog_err("init functions table", e))?;
-            let _ = write_txn
-                .open_table(TRIGGERS)
-                .map_err(|e| catalog_err("init triggers table", e))?;
-            let _ = write_txn
-                .open_table(PROCEDURES)
-                .map_err(|e| catalog_err("init procedures table", e))?;
-            let _ = write_txn
-                .open_table(DEPENDENCIES)
-                .map_err(|e| catalog_err("init dependencies table", e))?;
-            let _ = write_txn
-                .open_table(WASM_MODULES)
-                .map_err(|e| catalog_err("init wasm_modules table", e))?;
-            let _ = write_txn
-                .open_table(CHANGE_STREAMS)
-                .map_err(|e| catalog_err("init change_streams table", e))?;
-            let _ = write_txn
-                .open_table(CONSUMER_GROUPS)
-                .map_err(|e| catalog_err("init consumer_groups table", e))?;
-            let _ = write_txn
-                .open_table(SCHEDULES)
-                .map_err(|e| catalog_err("init schedules table", e))?;
-            let _ = write_txn
-                .open_table(TOPICS_EP)
-                .map_err(|e| catalog_err("init topics_ep table", e))?;
-            let _ = write_txn
-                .open_table(STREAMING_MVS)
-                .map_err(|e| catalog_err("init streaming_mvs table", e))?;
-        }
-        write_txn
-            .commit()
-            .map_err(|e| catalog_err("init commit", e))?;
-
-        info!(path = %path.display(), "system catalog opened");
-
-        Ok(Self { db })
-    }
-
-    /// Execute a write transaction on the WASM_MODULES table.
-    fn wasm_write<F, T>(&self, op: &str, f: F) -> crate::Result<T>
-    where
-        F: FnOnce(&mut redb::Table<&str, &[u8]>) -> crate::Result<T>,
-    {
-        let txn = self
-            .db
-            .begin_write()
-            .map_err(|e| catalog_err(&format!("{op} txn"), e))?;
-        let result = {
-            let mut table = txn
-                .open_table(WASM_MODULES)
-                .map_err(|e| catalog_err(&format!("{op} open"), e))?;
-            f(&mut table)?
-        };
-        txn.commit()
-            .map_err(|e| catalog_err(&format!("{op} commit"), e))?;
-        Ok(result)
-    }
-
-    /// Store raw bytes under a string key in the WASM_MODULES table.
-    pub fn put_raw(&self, key: &[u8], value: &[u8]) -> crate::Result<()> {
-        let key_str = std::str::from_utf8(key).map_err(|e| catalog_err("put_raw key", e))?;
-        self.wasm_write("put_raw", |table| {
-            table
-                .insert(key_str, value)
-                .map_err(|e| catalog_err("put_raw insert", e))?;
-            Ok(())
-        })
-    }
-
-    /// Load raw bytes by string key from the WASM_MODULES table.
-    pub fn get_raw(&self, key: &[u8]) -> crate::Result<Option<Vec<u8>>> {
-        let key_str = std::str::from_utf8(key).map_err(|e| catalog_err("get_raw key", e))?;
-        let txn = self
-            .db
-            .begin_read()
-            .map_err(|e| catalog_err("get_raw txn", e))?;
-        let table = txn
-            .open_table(WASM_MODULES)
-            .map_err(|e| catalog_err("get_raw open", e))?;
-        match table
-            .get(key_str)
-            .map_err(|e| catalog_err("get_raw get", e))?
-        {
-            Some(v) => Ok(Some(v.value().to_vec())),
-            None => Ok(None),
-        }
-    }
-
-    /// Delete raw bytes by string key from the WASM_MODULES table.
-    pub fn delete_raw(&self, key: &[u8]) -> crate::Result<()> {
-        let key_str = std::str::from_utf8(key).map_err(|e| catalog_err("delete_raw key", e))?;
-        self.wasm_write("delete_raw", |table| {
-            table
-                .remove(key_str)
-                .map_err(|e| catalog_err("delete_raw remove", e))?;
-            Ok(())
-        })
-    }
+/// Period lock: binds a period column to a reference table for status checks.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct PeriodLockDef {
+    pub period_column: String,
+    pub ref_table: String,
+    pub ref_pk: String,
+    pub status_column: String,
+    pub allowed_statuses: Vec<String>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// A legal hold tag preventing deletion.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct LegalHold {
+    pub tag: String,
+    pub created_at: u64,
+    pub created_by: String,
+}
 
-    #[test]
-    fn open_and_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("system.redb");
-        let catalog = SystemCatalog::open(&path).unwrap();
+/// State transition constraint: column value can only change along declared paths.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct StateTransitionDef {
+    pub name: String,
+    pub column: String,
+    pub transitions: Vec<TransitionRule>,
+}
 
-        let user = StoredUser {
-            user_id: 1,
-            username: "alice".into(),
-            tenant_id: 1,
-            password_hash: "$argon2id$test".into(),
-            scram_salt: vec![1, 2, 3, 4],
-            scram_salted_password: vec![5, 6, 7, 8],
-            roles: vec!["readwrite".into()],
-            is_superuser: false,
-            is_active: true,
-            is_service_account: false,
-            created_at: 0,
-            updated_at: 0,
-            password_expires_at: 0,
-            md5_hash: String::new(),
-        };
+/// A single allowed state transition, optionally guarded by a role.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct TransitionRule {
+    pub from: String,
+    pub to: String,
+    pub required_role: Option<String>,
+}
 
-        catalog.put_user(&user).unwrap();
+/// Transition check predicate: evaluated on UPDATE with OLD and NEW access.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct TransitionCheckDef {
+    pub name: String,
+    pub predicate: crate::bridge::expr_eval::SqlExpr,
+}
 
-        let loaded = catalog.load_all_users().unwrap();
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].username, "alice");
-        assert_eq!(loaded[0].tenant_id, 1);
-    }
-
-    #[test]
-    fn delete_user() {
-        let dir = tempfile::tempdir().unwrap();
-        let catalog = SystemCatalog::open(&dir.path().join("system.redb")).unwrap();
-
-        let user = StoredUser {
-            user_id: 1,
-            username: "bob".into(),
-            tenant_id: 1,
-            password_hash: "hash".into(),
-            scram_salt: vec![],
-            scram_salted_password: vec![],
-            roles: vec![],
-            is_superuser: false,
-            is_active: true,
-            is_service_account: false,
-            created_at: 0,
-            updated_at: 0,
-            password_expires_at: 0,
-            md5_hash: String::new(),
-        };
-
-        catalog.put_user(&user).unwrap();
-        catalog.delete_user("bob").unwrap();
-
-        let loaded = catalog.load_all_users().unwrap();
-        assert!(loaded.is_empty());
-    }
-
-    #[test]
-    fn next_user_id_persists() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("system.redb");
-
-        {
-            let catalog = SystemCatalog::open(&path).unwrap();
-            assert_eq!(catalog.load_next_user_id().unwrap(), 1); // Default.
-            catalog.save_next_user_id(42).unwrap();
-        }
-
-        // Reopen — ID should persist.
-        let catalog = SystemCatalog::open(&path).unwrap();
-        assert_eq!(catalog.load_next_user_id().unwrap(), 42);
-    }
-
-    #[test]
-    fn survives_restart() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("system.redb");
-
-        {
-            let catalog = SystemCatalog::open(&path).unwrap();
-            catalog
-                .put_user(&StoredUser {
-                    user_id: 5,
-                    username: "persistent".into(),
-                    tenant_id: 3,
-                    password_hash: "hash".into(),
-                    scram_salt: vec![1],
-                    scram_salted_password: vec![2],
-                    roles: vec!["readonly".into(), "monitor".into()],
-                    is_superuser: false,
-                    is_active: true,
-                    is_service_account: false,
-                    created_at: 0,
-                    updated_at: 0,
-                    password_expires_at: 0,
-                    md5_hash: String::new(),
-                })
-                .unwrap();
-        }
-
-        // Reopen — user should survive.
-        let catalog = SystemCatalog::open(&path).unwrap();
-        let users = catalog.load_all_users().unwrap();
-        assert_eq!(users.len(), 1);
-        assert_eq!(users[0].username, "persistent");
-        assert_eq!(users[0].user_id, 5);
-        assert_eq!(users[0].roles, vec!["readonly", "monitor"]);
-    }
+/// Materialized sum: on INSERT to source, atomically add value_expr to target balance.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct MaterializedSumDef {
+    pub target_collection: String,
+    pub target_column: String,
+    pub source_collection: String,
+    pub join_column: String,
+    pub value_expr: crate::bridge::expr_eval::SqlExpr,
 }
