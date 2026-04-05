@@ -77,6 +77,20 @@ pub enum ColumnData {
     Float64(Vec<f64>),
     Int64(Vec<i64>),
     Symbol(Vec<u32>),
+    /// Dictionary-encoded string column for low-cardinality tags.
+    ///
+    /// Predicates operate on compact integer IDs rather than string bytes —
+    /// an `O(dict_size * string_len + N)` win over `O(N * string_len)`.
+    DictEncoded {
+        /// Row-level symbol IDs (index into `dictionary`).
+        ids: Vec<u32>,
+        /// ID → string value.
+        dictionary: Vec<String>,
+        /// Reverse lookup: string → ID.
+        reverse: std::collections::HashMap<String, u32>,
+        /// Validity bitmap: false = null row.
+        valid: Vec<bool>,
+    },
 }
 
 impl ColumnData {
@@ -95,6 +109,7 @@ impl ColumnData {
             Self::Float64(v) => v.len(),
             Self::Int64(v) => v.len(),
             Self::Symbol(v) => v.len(),
+            Self::DictEncoded { ids, .. } => ids.len(),
         }
     }
 
@@ -109,6 +124,17 @@ impl ColumnData {
             Self::Float64(v) => v.capacity() * 8,
             Self::Int64(v) => v.capacity() * 8,
             Self::Symbol(v) => v.capacity() * 4,
+            Self::DictEncoded {
+                ids,
+                dictionary,
+                reverse,
+                valid,
+            } => {
+                ids.capacity() * 4
+                    + dictionary.iter().map(|s| s.len() + 24).sum::<usize>()
+                    + reverse.len() * 56 // rough HashMap entry cost
+                    + valid.capacity()
+            }
         }
     }
 
@@ -119,6 +145,17 @@ impl ColumnData {
             Self::Float64(v) => Self::Float64(v.clone()),
             Self::Int64(v) => Self::Int64(v.clone()),
             Self::Symbol(v) => Self::Symbol(v.clone()),
+            Self::DictEncoded {
+                ids,
+                dictionary,
+                reverse,
+                valid,
+            } => Self::DictEncoded {
+                ids: ids.clone(),
+                dictionary: dictionary.clone(),
+                reverse: reverse.clone(),
+                valid: valid.clone(),
+            },
         }
     }
 
@@ -361,6 +398,10 @@ impl ColumnarMemtable {
                 ColumnData::Symbol(v) => {
                     v.pop();
                 }
+                ColumnData::DictEncoded { ids, valid, .. } => {
+                    ids.pop();
+                    valid.pop();
+                }
             }
         }
     }
@@ -391,11 +432,15 @@ impl ColumnarMemtable {
     pub fn drain(&mut self) -> ColumnarDrainResult {
         let mut drained_columns = Vec::with_capacity(self.columns.len());
         for col in &mut self.columns {
+            // DictEncoded columns are drained by swapping in a fresh Symbol
+            // placeholder. The flusher converts Symbol → DictEncoded during
+            // segment encoding once it has enough cardinality data.
             let col_type = match col {
                 ColumnData::Timestamp(_) => ColumnType::Timestamp,
                 ColumnData::Float64(_) => ColumnType::Float64,
                 ColumnData::Int64(_) => ColumnType::Int64,
                 ColumnData::Symbol(_) => ColumnType::Symbol,
+                ColumnData::DictEncoded { .. } => ColumnType::Symbol,
             };
             let mut empty = ColumnData::new(col_type);
             std::mem::swap(col, &mut empty);
@@ -472,6 +517,10 @@ impl ColumnarMemtable {
                     ColumnData::Float64(v) => zerompk::to_msgpack_vec(v).unwrap_or_default(),
                     ColumnData::Int64(v) => zerompk::to_msgpack_vec(v).unwrap_or_default(),
                     ColumnData::Symbol(v) => zerompk::to_msgpack_vec(v).unwrap_or_default(),
+                    // Snapshot the raw IDs; the dictionary is in symbol_dicts.
+                    ColumnData::DictEncoded { ids, .. } => {
+                        zerompk::to_msgpack_vec(ids).unwrap_or_default()
+                    }
                 };
                 result.push((name.clone(), bytes));
             }

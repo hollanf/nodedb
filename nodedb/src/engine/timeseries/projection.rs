@@ -54,6 +54,17 @@ pub fn apply_permutation(data: &ColumnData, perm: &[usize]) -> ColumnData {
         ColumnData::Float64(v) => ColumnData::Float64(perm.iter().map(|&i| v[i]).collect()),
         ColumnData::Int64(v) => ColumnData::Int64(perm.iter().map(|&i| v[i]).collect()),
         ColumnData::Symbol(v) => ColumnData::Symbol(perm.iter().map(|&i| v[i]).collect()),
+        ColumnData::DictEncoded {
+            ids,
+            dictionary,
+            reverse,
+            valid,
+        } => ColumnData::DictEncoded {
+            ids: perm.iter().map(|&i| ids[i]).collect(),
+            dictionary: dictionary.clone(),
+            reverse: reverse.clone(),
+            valid: perm.iter().map(|&i| valid[i]).collect(),
+        },
     }
 }
 
@@ -64,6 +75,8 @@ fn compare_column_values(col: &ColumnData, a: usize, b: usize) -> std::cmp::Orde
         ColumnData::Float64(v) => v[a].partial_cmp(&v[b]).unwrap_or(std::cmp::Ordering::Equal),
         ColumnData::Int64(v) => v[a].cmp(&v[b]),
         ColumnData::Symbol(v) => v[a].cmp(&v[b]),
+        // Compare dict-encoded rows by their string IDs (lexicographic by ID, not string value).
+        ColumnData::DictEncoded { ids, .. } => ids[a].cmp(&ids[b]),
     }
 }
 

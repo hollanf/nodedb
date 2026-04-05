@@ -395,6 +395,10 @@ impl ColumnData {
             Self::Float64(v) => v.extend(std::iter::repeat_n(f64::NAN, count)),
             Self::Int64(v) => v.extend(std::iter::repeat_n(0i64, count)),
             Self::Symbol(v) => v.extend(std::iter::repeat_n(u32::MAX, count)),
+            Self::DictEncoded { ids, valid, .. } => {
+                ids.extend(std::iter::repeat_n(u32::MAX, count));
+                valid.extend(std::iter::repeat_n(false, count));
+            }
         }
     }
 
@@ -404,6 +408,10 @@ impl ColumnData {
             Self::Float64(v) => permute_vec(v, indices),
             Self::Int64(v) => permute_vec(v, indices),
             Self::Symbol(v) => permute_vec(v, indices),
+            Self::DictEncoded { ids, valid, .. } => {
+                permute_vec(ids, indices);
+                permute_vec(valid, indices);
+            }
         }
     }
 }

@@ -160,6 +160,7 @@ pub fn aggregate_partition(
                     ColumnData::Float64(v) => v.len(),
                     ColumnData::Int64(v) => v.len(),
                     ColumnData::Symbol(v) => v.len(),
+                    ColumnData::DictEncoded { ids, .. } => ids.len(),
                 })
             })
             .unwrap_or(0)

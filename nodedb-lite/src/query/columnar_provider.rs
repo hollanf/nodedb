@@ -293,6 +293,26 @@ fn decoded_to_arrow(
                 }
             }
         }
+        DecodedColumn::DictEncoded {
+            ids,
+            dictionary,
+            valid,
+        } => {
+            // Resolve IDs to strings and produce a StringArray.
+            let strs: Vec<Option<&str>> = ids
+                .iter()
+                .zip(valid.iter())
+                .map(|(&id, &is_valid)| {
+                    if is_valid {
+                        dictionary.get(id as usize).map(|s| s.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let arr = StringArray::from(strs);
+            Ok(Arc::new(arr))
+        }
     }
 }
 

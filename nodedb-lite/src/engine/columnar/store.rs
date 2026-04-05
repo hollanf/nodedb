@@ -428,8 +428,8 @@ impl<S: StorageEngine> ColumnarEngine<S> {
         let segment_id = state.next_segment_id;
         state.next_segment_id += 1;
 
-        // Drain the memtable and write a segment.
-        let (schema, columns, row_count) = state.mutation.memtable_mut().drain();
+        // Drain with auto dict-encoding for low-cardinality String columns.
+        let (schema, columns, row_count) = state.mutation.memtable_mut().drain_optimized();
 
         let profile_tag = match &state.profile {
             ColumnarProfile::Plain => 0,

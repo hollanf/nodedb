@@ -108,6 +108,7 @@ pub fn refresh_from_drain(
                 ColumnData::Int64(v) => v[row] as f64,
                 ColumnData::Timestamp(v) => v[row] as f64,
                 ColumnData::Symbol(_) => 0.0,
+                ColumnData::DictEncoded { .. } => 0.0,
             })
             .unwrap_or(1.0); // COUNT(*)
 
