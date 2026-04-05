@@ -30,8 +30,6 @@ pub struct PlanConverter {
     retention_policy_registry: Option<
         std::sync::Arc<crate::engine::timeseries::retention_policy::RetentionPolicyRegistry>,
     >,
-    /// Whether the current query has a RETURNING clause (set per-query).
-    returning: std::sync::atomic::AtomicBool,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -40,7 +38,6 @@ impl Default for PlanConverter {
         Self {
             credentials: None,
             retention_policy_registry: None,
-            returning: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -55,7 +52,6 @@ impl PlanConverter {
         Self {
             credentials: Some(credentials),
             retention_policy_registry: None,
-            returning: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -69,14 +65,7 @@ impl PlanConverter {
         Self {
             credentials: Some(credentials),
             retention_policy_registry: Some(retention_policy_registry),
-            returning: std::sync::atomic::AtomicBool::new(false),
         }
-    }
-
-    /// Set whether the current query has a RETURNING clause.
-    pub fn set_returning(&self, returning: bool) {
-        self.returning
-            .store(returning, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Get the retention policy for a collection (if AUTO_TIER enabled).
@@ -112,18 +101,33 @@ impl PlanConverter {
     }
 
     /// Convert a DataFusion logical plan into one or more physical tasks.
-    ///
-    /// Simple queries (point gets, scans) produce a single task.
-    /// Complex queries (joins, aggregations) may produce multiple tasks
-    /// targeting different vShards.
     pub fn convert(
         &self,
         plan: &LogicalPlan,
         tenant_id: TenantId,
     ) -> crate::Result<Vec<PhysicalTask>> {
+        self.convert_inner(plan, tenant_id, false)
+    }
+
+    /// Convert with a RETURNING flag propagated to DML plans.
+    pub fn convert_returning(
+        &self,
+        plan: &LogicalPlan,
+        tenant_id: TenantId,
+        returning: bool,
+    ) -> crate::Result<Vec<PhysicalTask>> {
+        self.convert_inner(plan, tenant_id, returning)
+    }
+
+    fn convert_inner(
+        &self,
+        plan: &LogicalPlan,
+        tenant_id: TenantId,
+        returning: bool,
+    ) -> crate::Result<Vec<PhysicalTask>> {
         match plan {
             LogicalPlan::Projection(proj) => {
-                let mut tasks = self.convert(&proj.input, tenant_id)?;
+                let mut tasks = self.convert_inner(&proj.input, tenant_id, returning)?;
 
                 // Try to convert computed expressions (e.g., price * qty AS total).
                 if let Some(computed) = try_convert_projection(&proj.expr) {
@@ -341,7 +345,7 @@ impl PlanConverter {
                 }
                 // Filter wrapping Aggregate = HAVING clause.
                 if matches!(filter.input.as_ref(), LogicalPlan::Aggregate(_)) {
-                    let mut tasks = self.convert(&filter.input, tenant_id)?;
+                    let mut tasks = self.convert_inner(&filter.input, tenant_id, returning)?;
                     let having_filters = expr_to_scan_filters(&filter.predicate);
                     let having_bytes = rmp_serde::to_vec_named(&having_filters).map_err(|e| {
                         crate::Error::Serialization {
@@ -360,7 +364,7 @@ impl PlanConverter {
                 }
 
                 // Filter wrapping something else — recurse and apply filters.
-                let mut tasks = self.convert(&filter.input, tenant_id)?;
+                let mut tasks = self.convert_inner(&filter.input, tenant_id, returning)?;
                 let filters = expr_to_scan_filters(&filter.predicate);
                 let filter_bytes =
                     rmp_serde::to_vec_named(&filters).map_err(|e| crate::Error::Serialization {
@@ -509,7 +513,7 @@ impl PlanConverter {
             }
 
             LogicalPlan::Limit(limit_plan) => {
-                let mut tasks = self.convert(&limit_plan.input, tenant_id)?;
+                let mut tasks = self.convert_inner(&limit_plan.input, tenant_id, returning)?;
 
                 // Extract LIMIT (fetch) value — propagate to all scan types.
                 if let Ok(FetchType::Literal(Some(n))) = limit_plan.get_fetch_type() {
@@ -542,17 +546,15 @@ impl PlanConverter {
                 Ok(tasks)
             }
 
-            LogicalPlan::SubqueryAlias(alias) => self.convert(&alias.input, tenant_id),
+            LogicalPlan::SubqueryAlias(alias) => {
+                self.convert_inner(&alias.input, tenant_id, returning)
+            }
 
             LogicalPlan::Sort(sort) => self.convert_sort(sort, tenant_id),
 
             LogicalPlan::Aggregate(agg) => self.convert_aggregate(agg, tenant_id),
 
-            LogicalPlan::Dml(dml) => self.convert_dml(
-                dml,
-                tenant_id,
-                self.returning.load(std::sync::atomic::Ordering::Relaxed),
-            ),
+            LogicalPlan::Dml(dml) => self.convert_dml(dml, tenant_id, returning),
 
             LogicalPlan::Join(join) => super::join::convert_join(join, tenant_id),
 
@@ -571,7 +573,7 @@ impl PlanConverter {
 
             // Window functions: convert inner plan + extract window specs.
             LogicalPlan::Window(window) => {
-                let mut tasks = self.convert(&window.input, tenant_id)?;
+                let mut tasks = self.convert_inner(&window.input, tenant_id, returning)?;
 
                 // Convert window expressions to WindowFuncSpec.
                 let specs = super::sql_expr_convert::convert_window_exprs(&window.window_expr);
@@ -597,7 +599,9 @@ impl PlanConverter {
             // works for uncorrelated subqueries (IN, EXISTS, scalar).
             // Correlated subqueries that reference outer columns will fail
             // at execution time if the Data Plane can't resolve them.
-            LogicalPlan::Subquery(subquery) => self.convert(&subquery.subquery, tenant_id),
+            LogicalPlan::Subquery(subquery) => {
+                self.convert_inner(&subquery.subquery, tenant_id, returning)
+            }
 
             // UNION / UNION ALL: convert each input plan and concatenate tasks.
             // The Data Plane executes each sub-plan independently; the Control

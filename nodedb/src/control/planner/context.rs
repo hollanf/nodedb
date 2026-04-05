@@ -214,6 +214,19 @@ impl QueryContext {
         tenant_id: crate::types::TenantId,
         sec: &PlanSecurityContext<'_>,
     ) -> crate::Result<Vec<super::physical::PhysicalTask>> {
+        self.plan_sql_with_rls_returning(sql, tenant_id, sec, false)
+            .await
+    }
+
+    /// Plan SQL with RLS injection, optionally propagating a RETURNING flag
+    /// to DML physical plans.
+    pub async fn plan_sql_with_rls_returning(
+        &self,
+        sql: &str,
+        tenant_id: crate::types::TenantId,
+        sec: &PlanSecurityContext<'_>,
+        returning: bool,
+    ) -> crate::Result<Vec<super::physical::PhysicalTask>> {
         // Step 1: Parse + analyze (UDFs still as ScalarFunction nodes, not inlined).
         let df = self
             .session
@@ -254,7 +267,9 @@ impl QueryContext {
             })?;
 
         // Step 6: Convert to physical plan.
-        let mut tasks = self.converter.convert(&optimized, tenant_id)?;
+        let mut tasks = self
+            .converter
+            .convert_returning(&optimized, tenant_id, returning)?;
 
         // Step 7: Inject RLS (applies to inlined body expressions too).
         super::rls_injection::inject_rls(&mut tasks, sec.rls_store, sec.auth)?;
@@ -265,15 +280,6 @@ impl QueryContext {
         }
 
         Ok(tasks)
-    }
-
-    /// Set whether the current query has a RETURNING clause.
-    ///
-    /// Must be called before `plan_sql_with_rls` or `convert_plan`.
-    /// The flag is consumed by `PlanConverter::convert_dml` to set
-    /// `returning: true` on UPDATE/DELETE physical plans.
-    pub fn set_returning(&self, returning: bool) {
-        self.converter.set_returning(returning);
     }
 
     /// Access the underlying DataFusion session for advanced configuration

@@ -46,10 +46,9 @@ impl NodeDbPgHandler {
             crate::control::server::session_auth::extract_and_apply_on_deny(sql, &mut auth_ctx);
 
         // Strip RETURNING clause before DataFusion planning (DataFusion doesn't
-        // support RETURNING for DML). The flag is set on the converter so physical
-        // plans carry `returning: true` for UPDATE/DELETE operations.
+        // support RETURNING for DML). The flag is passed per-query through the
+        // planning call chain — no shared mutable state.
         let (clean_sql, has_returning) = super::returning::strip_returning(&clean_sql);
-        self.query_ctx.set_returning(has_returning);
 
         // Register session temp tables in the DataFusion context (name shadowing).
         // These are registered before planning and deregistered after to prevent
@@ -82,7 +81,7 @@ impl NodeDbPgHandler {
             };
             let planned = self
                 .query_ctx
-                .plan_sql_with_rls(&clean_sql, tenant_id, &sec)
+                .plan_sql_with_rls_returning(&clean_sql, tenant_id, &sec, has_returning)
                 .await
                 .map_err(|e| {
                     let (severity, code, message) = error_to_sqlstate(&e);
