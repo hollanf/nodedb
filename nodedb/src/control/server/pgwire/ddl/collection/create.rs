@@ -308,6 +308,7 @@ pub async fn dispatch_register_if_needed(
             tenant_id.as_u32(),
             &name,
         ),
+        generated_columns: build_generated_column_specs(&coll),
     };
 
     let vshard = crate::types::VShardId::from_collection(&name);
@@ -432,4 +433,51 @@ fn find_materialized_sum_bindings(
         }
     }
     bindings
+}
+
+/// Build generated column specs from the stored collection's schema.
+///
+/// Checks both strict-schema `ColumnDef` entries (via `timeseries_config`,
+/// which is reused for schema storage) and schemaless `FieldDefinition`
+/// entries (via `field_defs`).
+fn build_generated_column_specs(
+    coll: &crate::control::security::catalog::StoredCollection,
+) -> Vec<crate::bridge::physical_plan::GeneratedColumnSpec> {
+    let mut specs = Vec::new();
+
+    // Strict/columnar collections store their schema JSON in timeseries_config
+    // (reused for schema storage until StoredCollection gets a dedicated field).
+    let schema_json = coll.timeseries_config.as_deref().unwrap_or("");
+    if let Ok(schema) = serde_json::from_str::<nodedb_types::columnar::StrictSchema>(schema_json) {
+        for col in &schema.columns {
+            if let Some(ref expr_json) = col.generated_expr
+                && let Ok(expr) =
+                    serde_json::from_str::<crate::bridge::expr_eval::SqlExpr>(expr_json)
+            {
+                specs.push(crate::bridge::physical_plan::GeneratedColumnSpec {
+                    name: col.name.clone(),
+                    expr,
+                    depends_on: col.generated_deps.clone(),
+                });
+            }
+        }
+    }
+
+    // Schemaless/document collections: generated columns live in FieldDefinitions.
+    for field_def in &coll.field_defs {
+        if field_def.is_generated
+            && !field_def.value_expr.is_empty()
+            && let Ok(expr) =
+                serde_json::from_str::<crate::bridge::expr_eval::SqlExpr>(&field_def.value_expr)
+            && !specs.iter().any(|s| s.name == field_def.name)
+        {
+            specs.push(crate::bridge::physical_plan::GeneratedColumnSpec {
+                name: field_def.name.clone(),
+                expr,
+                depends_on: field_def.generated_deps.clone(),
+            });
+        }
+    }
+
+    specs
 }

@@ -45,6 +45,21 @@ pub struct EnforcementOptions {
     /// Materialized sum bindings where THIS collection is the source.
     /// On INSERT, each binding triggers an atomic balance update on the target.
     pub materialized_sum_sources: Vec<MaterializedSumBinding>,
+    /// Stored generated (computed) columns materialized on write.
+    /// On INSERT: evaluate expression, store result alongside other columns.
+    /// On UPDATE: re-evaluate if any `depends_on` column changed.
+    pub generated_columns: Vec<GeneratedColumnSpec>,
+}
+
+/// A stored generated column: expression evaluated at write time.
+#[derive(Debug, Clone)]
+pub struct GeneratedColumnSpec {
+    /// Column name for the generated field.
+    pub name: String,
+    /// Expression to evaluate against the document.
+    pub expr: crate::bridge::expr_eval::SqlExpr,
+    /// Column names this expression depends on (for UPDATE recomputation).
+    pub depends_on: Vec<String>,
 }
 
 /// A materialized sum binding: when a row is INSERTed into this (source)

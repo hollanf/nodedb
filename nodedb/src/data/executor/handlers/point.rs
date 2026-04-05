@@ -243,6 +243,16 @@ impl CoreLoop {
             )
         });
 
+        // Reject direct updates to generated columns.
+        if let Some(config) = self.doc_configs.get(&config_key)
+            && let Err(e) = super::generated::check_generated_readonly(
+                updates,
+                &config.enforcement.generated_columns,
+            )
+        {
+            return self.response_error(task, e);
+        }
+
         match self.sparse.get(tid, collection, document_id) {
             Ok(Some(current_bytes)) => {
                 // Decode current value — format depends on storage mode.
@@ -298,6 +308,21 @@ impl CoreLoop {
                         };
                         obj.insert(field.clone(), val);
                     }
+                }
+
+                // Recompute generated columns if any dependency changed.
+                if let Some(config) = self.doc_configs.get(&config_key)
+                    && !config.enforcement.generated_columns.is_empty()
+                    && super::generated::needs_recomputation(
+                        updates,
+                        &config.enforcement.generated_columns,
+                    )
+                    && let Err(e) = super::generated::evaluate_generated_columns(
+                        &mut doc,
+                        &config.enforcement.generated_columns,
+                    )
+                {
+                    return self.response_error(task, e);
                 }
 
                 // Re-encode — format depends on storage mode.
@@ -398,8 +423,31 @@ impl CoreLoop {
         document_id: &str,
         value: &[u8],
     ) -> crate::Result<()> {
-        // Check if this collection uses strict (Binary Tuple) encoding.
+        // Evaluate generated columns before encoding.
         let config_key = format!("{tid}:{collection}");
+        let value = if let Some(config) = self.doc_configs.get(&config_key)
+            && !config.enforcement.generated_columns.is_empty()
+        {
+            if let Some(mut doc) = super::super::doc_format::decode_document(value) {
+                if let Err(e) = super::generated::evaluate_generated_columns(
+                    &mut doc,
+                    &config.enforcement.generated_columns,
+                ) {
+                    return Err(crate::Error::Storage {
+                        engine: "generated".into(),
+                        detail: format!("generated column evaluation failed: {e:?}"),
+                    });
+                }
+                serde_json::to_vec(&doc).unwrap_or_else(|_| value.to_vec())
+            } else {
+                value.to_vec()
+            }
+        } else {
+            value.to_vec()
+        };
+        let value = &value;
+
+        // Check if this collection uses strict (Binary Tuple) encoding.
         let stored = if let Some(config) = self.doc_configs.get(&config_key)
             && let crate::bridge::physical_plan::StorageMode::Strict { ref schema } =
                 config.storage_mode

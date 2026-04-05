@@ -191,6 +191,8 @@ mod tests {
             default: None,
             primary_key: true,
             modifiers: Vec::new(),
+            generated_expr: None,
+            generated_deps: Vec::new(),
         }];
         assert!(matches!(
             StrictSchema::new(cols),

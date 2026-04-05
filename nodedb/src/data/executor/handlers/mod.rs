@@ -9,6 +9,7 @@ pub mod control;
 pub mod convert;
 pub mod document;
 pub mod facet;
+pub mod generated;
 pub mod graph;
 pub mod graph_algo;
 pub mod graph_match;

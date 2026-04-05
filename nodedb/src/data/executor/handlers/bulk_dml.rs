@@ -72,6 +72,17 @@ impl CoreLoop {
     ) -> Response {
         debug!(core = self.core_id, %collection, returning, "bulk update");
 
+        // Reject direct updates to generated columns.
+        let config_key = format!("{tid}:{collection}");
+        if let Some(config) = self.doc_configs.get(&config_key)
+            && let Err(e) = super::generated::check_generated_readonly(
+                updates,
+                &config.enforcement.generated_columns,
+            )
+        {
+            return self.response_error(task, e);
+        }
+
         let filters: Vec<ScanFilter> = match rmp_serde::from_slice(filter_bytes) {
             Ok(f) => f,
             Err(e) => {
@@ -121,6 +132,25 @@ impl CoreLoop {
                             };
                             obj.insert(field.clone(), val);
                         }
+                    }
+                    // Recompute generated columns if any dependency changed.
+                    if let Some(config) = self.doc_configs.get(&config_key)
+                        && !config.enforcement.generated_columns.is_empty()
+                        && super::generated::needs_recomputation(
+                            updates,
+                            &config.enforcement.generated_columns,
+                        )
+                        && let Err(e) = super::generated::evaluate_generated_columns(
+                            &mut doc,
+                            &config.enforcement.generated_columns,
+                        )
+                    {
+                        tracing::warn!(
+                            %doc_id,
+                            error = ?e,
+                            "generated column recomputation failed, skipping document"
+                        );
+                        continue;
                     }
                     let updated_bytes = super::super::doc_format::encode_to_msgpack(&doc);
                     if self

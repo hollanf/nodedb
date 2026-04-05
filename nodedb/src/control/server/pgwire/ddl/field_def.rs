@@ -60,6 +60,8 @@ pub fn define_field(
         assert_expr: assert_expr.unwrap_or_default(),
         readonly,
         sequence_name: None,
+        is_generated: false,
+        generated_deps: Vec::new(),
     };
 
     // Store in catalog.

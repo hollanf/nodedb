@@ -166,6 +166,13 @@ pub struct ColumnDef {
     /// Column-level modifiers (TIME_KEY, SPATIAL_INDEX, etc.).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modifiers: Vec<ColumnModifier>,
+    /// GENERATED ALWAYS AS expression (serialized SqlExpr JSON).
+    /// When set, this column is computed at write time, not supplied by the user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated_expr: Option<String>,
+    /// Column names this generated column depends on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub generated_deps: Vec<String>,
 }
 
 impl ColumnDef {
@@ -177,6 +184,8 @@ impl ColumnDef {
             default: None,
             primary_key: false,
             modifiers: Vec::new(),
+            generated_expr: None,
+            generated_deps: Vec::new(),
         }
     }
 
@@ -188,6 +197,8 @@ impl ColumnDef {
             default: None,
             primary_key: false,
             modifiers: Vec::new(),
+            generated_expr: None,
+            generated_deps: Vec::new(),
         }
     }
 

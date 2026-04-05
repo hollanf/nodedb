@@ -1,6 +1,7 @@
 pub mod cast;
 pub mod chunk_text;
 pub mod expr;
+pub mod expr_parse;
 pub mod functions;
 pub mod fusion;
 pub mod geo_functions;

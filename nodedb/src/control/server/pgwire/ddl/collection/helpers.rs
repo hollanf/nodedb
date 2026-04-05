@@ -123,6 +123,7 @@ pub(super) fn parse_origin_column_def(
         " NULL",
         " PRIMARY ",
         " DEFAULT ",
+        " GENERATED ",
         " TIME_KEY",
         " SPATIAL_INDEX",
     ];
@@ -169,6 +170,48 @@ pub(super) fn parse_origin_column_def(
     }
     if let Some(d) = default {
         col = col.with_default(d);
+    }
+
+    // GENERATED ALWAYS AS (expr): stored computed column.
+    if upper.contains("GENERATED ALWAYS AS") || upper.contains("GENERATED AS") {
+        let gen_kw = if upper.contains("GENERATED ALWAYS AS") {
+            "GENERATED ALWAYS AS"
+        } else {
+            "GENERATED AS"
+        };
+        if let Some(gen_pos) = upper.find(gen_kw) {
+            let after_gen = s[gen_pos + gen_kw.len()..].trim();
+            // Extract parenthesized expression.
+            if after_gen.starts_with('(') {
+                let mut depth = 0;
+                let mut end = 0;
+                for (i, ch) in after_gen.char_indices() {
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = i;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if end > 1 {
+                    let expr_text = &after_gen[1..end];
+                    let (parsed_expr, deps) =
+                        nodedb_query::expr_parse::parse_generated_expr(expr_text)
+                            .map_err(|e| format!("invalid GENERATED expression: {e}"))?;
+                    let expr_json = serde_json::to_string(&parsed_expr)
+                        .map_err(|e| format!("failed to serialize expression: {e}"))?;
+                    col.generated_expr = Some(expr_json);
+                    col.generated_deps = deps;
+                    // Generated columns are nullable (computed value may be null).
+                    col.nullable = true;
+                }
+            }
+        }
     }
 
     // Column modifiers: TIME_KEY, SPATIAL_INDEX.
