@@ -19,6 +19,29 @@ use crate::engine::timeseries::columnar_memtable::{ColumnData, ColumnType, Colum
 
 use super::columnar_filter;
 
+/// Iterate over every set bit in a packed `u64` bitmask, calling `f(row_idx)`.
+///
+/// Skips all-zero words and uses hardware `TZCNT` to locate set bits, which is
+/// faster than scanning a `Vec<bool>` when the filter selectivity is low.
+#[inline]
+fn for_each_set_bit(mask: &[u64], row_count: usize, mut f: impl FnMut(usize)) {
+    for (word_idx, &word) in mask.iter().enumerate() {
+        if word == 0 {
+            continue;
+        }
+        let base = word_idx * 64;
+        let mut bits = word;
+        while bits != 0 {
+            let bit_pos = bits.trailing_zeros() as usize;
+            let row_idx = base + bit_pos;
+            if row_idx < row_count {
+                f(row_idx);
+            }
+            bits &= bits - 1; // clear lowest set bit
+        }
+    }
+}
+
 /// Accumulator for running aggregate computation per group.
 #[derive(Debug, Clone)]
 struct AggAccum {
@@ -134,6 +157,80 @@ fn resolve_key_part(
     }
 }
 
+/// Dense-array GROUP BY for a single Symbol column with cardinality ≤ 65536.
+///
+/// Indexes accumulators directly by symbol ID, avoiding HashMap entirely.
+/// Returns `(sym_id, accumulators)` for every non-empty group.
+fn aggregate_dense_symbol(
+    mt: &ColumnarMemtable,
+    group_col_idx: usize,
+    agg_col_data: &[Option<(usize, &ColumnData)>],
+    aggregates: &[(String, String)],
+    bitmask: Option<&[u64]>,
+    bool_mask: Option<&[bool]>,
+    row_count: usize,
+    cardinality: usize,
+) -> Vec<(u32, Vec<AggAccum>)> {
+    let num_aggs = aggregates.len();
+    let ids = match mt.column(group_col_idx) {
+        ColumnData::Symbol(v) => v,
+        _ => return Vec::new(),
+    };
+
+    // Allocate one accumulator vector per possible symbol ID.
+    let mut table: Vec<Vec<AggAccum>> = (0..cardinality)
+        .map(|_| (0..num_aggs).map(|_| AggAccum::new()).collect())
+        .collect();
+
+    let accumulate = |row_idx: usize, table: &mut Vec<Vec<AggAccum>>| {
+        let sym_id = ids[row_idx] as usize;
+        if sym_id >= cardinality {
+            return;
+        }
+        let accums = &mut table[sym_id];
+        for (agg_idx, (op, _)) in aggregates.iter().enumerate() {
+            match &agg_col_data[agg_idx] {
+                None => accums[agg_idx].feed_count_only(),
+                Some((_, col_data)) => {
+                    let val = match col_data {
+                        ColumnData::Float64(vals) => vals[row_idx],
+                        ColumnData::Int64(vals) => vals[row_idx] as f64,
+                        ColumnData::Timestamp(vals) => vals[row_idx] as f64,
+                        _ => return,
+                    };
+                    if op == "count" {
+                        accums[agg_idx].feed_count_only();
+                    } else {
+                        accums[agg_idx].feed(val);
+                    }
+                }
+            }
+        }
+    };
+
+    if let Some(bm) = bitmask {
+        for_each_set_bit(bm, row_count, |row_idx| accumulate(row_idx, &mut table));
+    } else if let Some(mask) = bool_mask {
+        for (row_idx, &passes) in mask.iter().enumerate().take(row_count) {
+            if passes {
+                accumulate(row_idx, &mut table);
+            }
+        }
+    } else {
+        for row_idx in 0..row_count {
+            accumulate(row_idx, &mut table);
+        }
+    }
+
+    // Collect only non-empty groups.
+    table
+        .into_iter()
+        .enumerate()
+        .filter(|(_, accums)| accums.iter().any(|a| a.count > 0))
+        .map(|(id, accums)| (id as u32, accums))
+        .collect()
+}
+
 /// Try to execute an aggregate query natively on a columnar memtable.
 ///
 /// Returns `None` if the query can't be handled natively (complex filters,
@@ -189,34 +286,26 @@ pub(super) fn try_columnar_aggregate(
         }
     }
 
-    // --- Phase 2: Build filter bitmask ---
+    // --- Phase 2: Build filter mask ---
 
-    let (row_mask, has_mask) = if filters.is_empty() {
-        (vec![true; row_count], false)
+    // Try SIMD bitmask path first; fall back to dense bool mask; fail on complex filters.
+    enum FilterResult {
+        Bitmask(Vec<u64>),
+        BoolMask(Vec<bool>),
+        None,
+    }
+
+    let filter_result = if filters.is_empty() {
+        FilterResult::None
     } else {
-        match columnar_filter::eval_filters_dense(mt, filters, row_count) {
-            Some(mask) => {
-                let any_filtered = mask.iter().any(|&b| !b);
-                (mask, any_filtered)
-            }
-            None => return None, // Complex filters — fall back to generic path
+        match columnar_filter::eval_filters_bitmask(mt, filters, row_count) {
+            Some(bm) => FilterResult::Bitmask(bm),
+            None => match columnar_filter::eval_filters_dense(mt, filters, row_count) {
+                Some(mask) => FilterResult::BoolMask(mask),
+                None => return None, // Complex filters — fall back to generic path
+            },
         }
     };
-
-    // --- Phase 3: Group and accumulate ---
-
-    // Per-aggregate-field accumulator maps.
-    // Key: group key. Value: per-aggregate-op accumulator.
-    let mut groups: HashMap<GroupKey, Vec<AggAccum>> =
-        HashMap::with_capacity(if has_mask { 1024 } else { row_count / 10 });
-
-    let num_aggs = aggregates.len();
-
-    // Pre-fetch column data references for group-by columns.
-    let group_col_data: Vec<_> = group_col_info
-        .iter()
-        .map(|&(idx, ty)| (idx, ty, mt.column(idx)))
-        .collect();
 
     // Pre-fetch aggregate column data. For count(*), we don't need column data.
     let agg_col_data: Vec<Option<(usize, &ColumnData)>> = aggregates
@@ -235,49 +324,112 @@ pub(super) fn try_columnar_aggregate(
         })
         .collect();
 
-    for row_idx in 0..row_count {
-        if has_mask && !row_mask[row_idx] {
-            continue;
-        }
+    // --- Phase 3: Group and accumulate ---
 
-        // Build group key from symbol IDs / integers — no string allocation.
-        let key: GroupKey = if group_by.is_empty() {
-            Vec::new() // single group for all rows
+    // Fast path: single Symbol GROUP BY column with cardinality ≤ 65536.
+    // Replaces HashMap with a dense array indexed by symbol ID.
+    let dense_result: Option<Vec<(u32, Vec<AggAccum>)>> =
+        if group_col_info.len() == 1 && group_col_info[0].1 == ColumnType::Symbol {
+            let col_idx = group_col_info[0].0;
+            if let Some(dict) = mt.symbol_dict(col_idx) {
+                let cardinality = dict.len();
+                if cardinality <= 65_536 {
+                    let (bm, boolm) = match &filter_result {
+                        FilterResult::Bitmask(bm) => (Some(bm.as_slice()), None),
+                        FilterResult::BoolMask(m) => (None, Some(m.as_slice())),
+                        FilterResult::None => (None, None),
+                    };
+                    Some(aggregate_dense_symbol(
+                        mt,
+                        col_idx,
+                        &agg_col_data,
+                        aggregates,
+                        bm,
+                        boolm,
+                        row_count,
+                        cardinality,
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         } else {
-            group_col_data
-                .iter()
-                .map(|(_, col_type, col_data)| extract_group_key_part(col_type, col_data, row_idx))
-                .collect()
+            None
         };
 
-        // Get or create accumulators for this group.
-        let accums = groups
-            .entry(key)
-            .or_insert_with(|| (0..num_aggs).map(|_| AggAccum::new()).collect());
+    let groups: HashMap<GroupKey, Vec<AggAccum>> = if let Some(dense) = dense_result {
+        dense
+            .into_iter()
+            .map(|(sym_id, accums)| (vec![GroupKeyPart::SymbolId(sym_id)], accums))
+            .collect()
+    } else {
+        // HashMap path: multi-column GROUP BY, numeric keys, or high-cardinality symbols.
+        let num_aggs = aggregates.len();
+        let group_col_data: Vec<_> = group_col_info
+            .iter()
+            .map(|&(idx, ty)| (idx, ty, mt.column(idx)))
+            .collect();
 
-        // Feed values into accumulators.
-        for (agg_idx, (op, _)) in aggregates.iter().enumerate() {
-            match agg_col_data[agg_idx] {
-                None => {
-                    // count(*) — just increment count.
-                    accums[agg_idx].feed_count_only();
-                }
-                Some((_, col_data)) => {
-                    let val = match col_data {
-                        ColumnData::Float64(vals) => vals[row_idx],
-                        ColumnData::Int64(vals) => vals[row_idx] as f64,
-                        ColumnData::Timestamp(vals) => vals[row_idx] as f64,
-                        _ => continue,
-                    };
-                    if op == "count" {
-                        accums[agg_idx].feed_count_only();
-                    } else {
-                        accums[agg_idx].feed(val);
+        let mut groups: HashMap<GroupKey, Vec<AggAccum>> = HashMap::with_capacity(1024);
+
+        let mut process_row = |row_idx: usize| {
+            let key: GroupKey = if group_by.is_empty() {
+                Vec::new()
+            } else {
+                group_col_data
+                    .iter()
+                    .map(|(_, col_type, col_data)| {
+                        extract_group_key_part(col_type, col_data, row_idx)
+                    })
+                    .collect()
+            };
+
+            let accums = groups
+                .entry(key)
+                .or_insert_with(|| (0..num_aggs).map(|_| AggAccum::new()).collect());
+
+            for (agg_idx, (op, _)) in aggregates.iter().enumerate() {
+                match &agg_col_data[agg_idx] {
+                    None => accums[agg_idx].feed_count_only(),
+                    Some((_, col_data)) => {
+                        let val = match col_data {
+                            ColumnData::Float64(vals) => vals[row_idx],
+                            ColumnData::Int64(vals) => vals[row_idx] as f64,
+                            ColumnData::Timestamp(vals) => vals[row_idx] as f64,
+                            _ => return,
+                        };
+                        if op == "count" {
+                            accums[agg_idx].feed_count_only();
+                        } else {
+                            accums[agg_idx].feed(val);
+                        }
                     }
                 }
             }
+        };
+
+        match &filter_result {
+            FilterResult::Bitmask(bm) => {
+                for_each_set_bit(bm, row_count, |row_idx| process_row(row_idx));
+            }
+            FilterResult::BoolMask(mask) => {
+                for (row_idx, &passes) in mask.iter().enumerate().take(row_count) {
+                    if passes {
+                        process_row(row_idx);
+                    }
+                }
+            }
+            FilterResult::None => {
+                for row_idx in 0..row_count {
+                    process_row(row_idx);
+                }
+            }
         }
-    }
+
+        groups
+    };
 
     // --- Phase 4: Build result rows (resolve symbols only here) ---
 
