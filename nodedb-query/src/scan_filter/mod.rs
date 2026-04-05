@@ -15,6 +15,116 @@ pub use parse::parse_simple_predicates;
 
 use crate::json_ops::{coerced_eq, compare_json_optional as compare_json_values};
 
+/// Filter operator enum for O(1) dispatch instead of string comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FilterOp {
+    Eq,
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Contains,
+    Like,
+    NotLike,
+    Ilike,
+    NotIlike,
+    In,
+    NotIn,
+    IsNull,
+    IsNotNull,
+    ArrayContains,
+    ArrayContainsAll,
+    ArrayOverlap,
+    #[default]
+    MatchAll,
+    Exists,
+    NotExists,
+    Or,
+}
+
+impl FilterOp {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "eq" => Self::Eq,
+            "ne" | "neq" => Self::Ne,
+            "gt" => Self::Gt,
+            "gte" | "ge" => Self::Gte,
+            "lt" => Self::Lt,
+            "lte" | "le" => Self::Lte,
+            "contains" => Self::Contains,
+            "like" => Self::Like,
+            "not_like" => Self::NotLike,
+            "ilike" => Self::Ilike,
+            "not_ilike" => Self::NotIlike,
+            "in" => Self::In,
+            "not_in" => Self::NotIn,
+            "is_null" => Self::IsNull,
+            "is_not_null" => Self::IsNotNull,
+            "array_contains" => Self::ArrayContains,
+            "array_contains_all" => Self::ArrayContainsAll,
+            "array_overlap" => Self::ArrayOverlap,
+            "match_all" => Self::MatchAll,
+            "exists" => Self::Exists,
+            "not_exists" => Self::NotExists,
+            "or" => Self::Or,
+            _ => Self::MatchAll,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Eq => "eq",
+            Self::Ne => "ne",
+            Self::Gt => "gt",
+            Self::Gte => "gte",
+            Self::Lt => "lt",
+            Self::Lte => "lte",
+            Self::Contains => "contains",
+            Self::Like => "like",
+            Self::NotLike => "not_like",
+            Self::Ilike => "ilike",
+            Self::NotIlike => "not_ilike",
+            Self::In => "in",
+            Self::NotIn => "not_in",
+            Self::IsNull => "is_null",
+            Self::IsNotNull => "is_not_null",
+            Self::ArrayContains => "array_contains",
+            Self::ArrayContainsAll => "array_contains_all",
+            Self::ArrayOverlap => "array_overlap",
+            Self::MatchAll => "match_all",
+            Self::Exists => "exists",
+            Self::NotExists => "not_exists",
+            Self::Or => "or",
+        }
+    }
+}
+
+impl From<&str> for FilterOp {
+    fn from(s: &str) -> Self {
+        Self::from_str(s)
+    }
+}
+
+impl From<String> for FilterOp {
+    fn from(s: String) -> Self {
+        Self::from_str(&s)
+    }
+}
+
+impl serde::Serialize for FilterOp {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for FilterOp {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(FilterOp::from_str(&s))
+    }
+}
+
 /// A single filter predicate for document scan evaluation.
 ///
 /// Supports simple comparison operators (eq, ne, gt, gte, lt, lte, contains,
@@ -27,7 +137,7 @@ use crate::json_ops::{coerced_eq, compare_json_optional as compare_json_values};
 pub struct ScanFilter {
     #[serde(default)]
     pub field: String,
-    pub op: String,
+    pub op: FilterOp,
     #[serde(default)]
     pub value: serde_json::Value,
     /// Disjunctive clause groups for OR predicates.
@@ -40,7 +150,7 @@ impl zerompk::ToMessagePack for ScanFilter {
     fn write<W: zerompk::Write>(&self, writer: &mut W) -> zerompk::Result<()> {
         writer.write_array_len(4)?;
         self.field.write(writer)?;
-        self.op.write(writer)?;
+        writer.write_string(self.op.as_str())?;
         nodedb_types::JsonValue(self.value.clone()).write(writer)?;
         self.clauses.write(writer)
     }
@@ -50,12 +160,12 @@ impl<'a> zerompk::FromMessagePack<'a> for ScanFilter {
     fn read<R: zerompk::Read<'a>>(reader: &mut R) -> zerompk::Result<Self> {
         reader.check_array_len(4)?;
         let field = String::read(reader)?;
-        let op = String::read(reader)?;
+        let op_str = String::read(reader)?;
         let jv = nodedb_types::JsonValue::read(reader)?;
         let clauses = Vec::<Vec<ScanFilter>>::read(reader)?;
         Ok(Self {
             field,
-            op,
+            op: FilterOp::from_str(&op_str),
             value: jv.0,
             clauses,
         })
@@ -64,108 +174,102 @@ impl<'a> zerompk::FromMessagePack<'a> for ScanFilter {
 
 impl ScanFilter {
     /// Evaluate this filter against a JSON document.
+    ///
+    /// Uses `FilterOp` enum for O(1) dispatch instead of string comparison.
     pub fn matches(&self, doc: &serde_json::Value) -> bool {
-        if self.op == "match_all" {
-            return true;
-        }
-
-        if self.op == "exists" || self.op == "not_exists" {
-            return true;
-        }
-
-        if self.op == "or" {
-            return self
-                .clauses
-                .iter()
-                .any(|clause| clause.iter().all(|f| f.matches(doc)));
+        match self.op {
+            FilterOp::MatchAll | FilterOp::Exists | FilterOp::NotExists => return true,
+            FilterOp::Or => {
+                return self
+                    .clauses
+                    .iter()
+                    .any(|clause| clause.iter().all(|f| f.matches(doc)));
+            }
+            _ => {}
         }
 
         let field_val = match doc.get(&self.field) {
             Some(v) => v,
-            None => return self.op == "is_null",
+            None => return self.op == FilterOp::IsNull,
         };
 
-        match self.op.as_str() {
-            "eq" => coerced_eq(field_val, &self.value),
-            "ne" | "neq" => !coerced_eq(field_val, &self.value),
-            "gt" => {
+        match self.op {
+            FilterOp::Eq => coerced_eq(field_val, &self.value),
+            FilterOp::Ne => !coerced_eq(field_val, &self.value),
+            FilterOp::Gt => {
                 compare_json_values(Some(field_val), Some(&self.value))
                     == std::cmp::Ordering::Greater
             }
-            "gte" | "ge" => {
+            FilterOp::Gte => {
                 let cmp = compare_json_values(Some(field_val), Some(&self.value));
                 cmp == std::cmp::Ordering::Greater || cmp == std::cmp::Ordering::Equal
             }
-            "lt" => {
+            FilterOp::Lt => {
                 compare_json_values(Some(field_val), Some(&self.value)) == std::cmp::Ordering::Less
             }
-            "lte" | "le" => {
+            FilterOp::Lte => {
                 let cmp = compare_json_values(Some(field_val), Some(&self.value));
                 cmp == std::cmp::Ordering::Less || cmp == std::cmp::Ordering::Equal
             }
-            "contains" => {
+            FilterOp::Contains => {
                 if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
                     s.contains(pattern)
                 } else {
                     false
                 }
             }
-            "like" => {
+            FilterOp::Like => {
                 if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
                     like::sql_like_match(s, pattern, false)
                 } else {
                     false
                 }
             }
-            "not_like" => {
+            FilterOp::NotLike => {
                 if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
                     !like::sql_like_match(s, pattern, false)
                 } else {
                     false
                 }
             }
-            "ilike" => {
+            FilterOp::Ilike => {
                 if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
                     like::sql_like_match(s, pattern, true)
                 } else {
                     false
                 }
             }
-            "not_ilike" => {
+            FilterOp::NotIlike => {
                 if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
                     !like::sql_like_match(s, pattern, true)
                 } else {
                     false
                 }
             }
-            "in" => {
+            FilterOp::In => {
                 if let Some(arr) = self.value.as_array() {
                     arr.iter().any(|v| field_val == v)
                 } else {
                     false
                 }
             }
-            "not_in" => {
+            FilterOp::NotIn => {
                 if let Some(arr) = self.value.as_array() {
                     !arr.iter().any(|v| field_val == v)
                 } else {
                     true
                 }
             }
-            "is_null" => field_val.is_null(),
-            "is_not_null" => !field_val.is_null(),
-
-            // ── Array operators ──
-            // field is an array, value is a scalar: true if array contains the value.
-            "array_contains" => {
+            FilterOp::IsNull => field_val.is_null(),
+            FilterOp::IsNotNull => !field_val.is_null(),
+            FilterOp::ArrayContains => {
                 if let Some(arr) = field_val.as_array() {
                     arr.iter().any(|v| coerced_eq(v, &self.value))
                 } else {
                     false
                 }
             }
-            // field is an array, value is an array: true if field contains ALL values.
-            "array_contains_all" => {
+            FilterOp::ArrayContainsAll => {
                 if let (Some(field_arr), Some(needle_arr)) =
                     (field_val.as_array(), self.value.as_array())
                 {
@@ -176,8 +280,7 @@ impl ScanFilter {
                     false
                 }
             }
-            // field is an array, value is an array: true if any element is shared.
-            "array_overlap" => {
+            FilterOp::ArrayOverlap => {
                 if let (Some(field_arr), Some(needle_arr)) =
                     (field_val.as_array(), self.value.as_array())
                 {
@@ -188,6 +291,7 @@ impl ScanFilter {
                     false
                 }
             }
+            // MatchAll/Exists/NotExists/Or handled above.
             _ => false,
         }
     }

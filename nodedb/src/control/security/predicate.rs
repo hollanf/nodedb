@@ -231,7 +231,7 @@ mod tests {
         let filters = substitute_to_scan_filters(&pred, &auth).unwrap();
         assert_eq!(filters.len(), 1);
         assert_eq!(filters[0].field, "user_id");
-        assert_eq!(filters[0].op, "eq");
+        assert_eq!(filters[0].op, crate::bridge::scan_filter::FilterOp::Eq);
         assert_eq!(filters[0].value, serde_json::json!("123"));
     }
 
@@ -255,7 +255,10 @@ mod tests {
         };
         let auth = make_auth();
         let filters = substitute_to_scan_filters(&pred, &auth).unwrap();
-        assert_eq!(filters[0].op, "match_all");
+        assert_eq!(
+            filters[0].op,
+            crate::bridge::scan_filter::FilterOp::MatchAll
+        );
     }
 
     #[test]
@@ -267,7 +270,10 @@ mod tests {
         let auth = make_auth();
         let filters = substitute_to_scan_filters(&pred, &auth).unwrap();
         assert_eq!(filters[0].field, "allowed_users");
-        assert_eq!(filters[0].op, "contains");
+        assert_eq!(
+            filters[0].op,
+            crate::bridge::scan_filter::FilterOp::Contains
+        );
         assert_eq!(filters[0].value, serde_json::json!("123"));
     }
 
@@ -307,7 +313,7 @@ mod tests {
         let auth = make_auth();
         let filters = substitute_to_scan_filters(&pred, &auth).unwrap();
         assert_eq!(filters.len(), 1);
-        assert_eq!(filters[0].op, "or");
+        assert_eq!(filters[0].op, crate::bridge::scan_filter::FilterOp::Or);
         assert_eq!(filters[0].clauses.len(), 2);
     }
 
@@ -427,6 +433,6 @@ mod tests {
         }));
         let auth = make_auth();
         let filters = substitute_to_scan_filters(&pred, &auth).unwrap();
-        assert_eq!(filters[0].op, "ne");
+        assert_eq!(filters[0].op, crate::bridge::scan_filter::FilterOp::Ne);
     }
 }

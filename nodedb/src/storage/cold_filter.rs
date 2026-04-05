@@ -170,10 +170,11 @@ fn row_group_might_match(rg: &RowGroupMetaData, filter: &ScanFilter) -> bool {
     };
 
     // Use min/max statistics to prune.
-    match (&filter.op[..], &filter.value) {
-        ("eq", v) => stat_might_contain(stats, v),
-        ("gt", v) | ("gte", v) => stat_max_gte(stats, v),
-        ("lt", v) | ("lte", v) => stat_min_lte(stats, v),
+    use nodedb_query::scan_filter::FilterOp;
+    match (&filter.op, &filter.value) {
+        (FilterOp::Eq, v) => stat_might_contain(stats, v),
+        (FilterOp::Gt | FilterOp::Gte, v) => stat_max_gte(stats, v),
+        (FilterOp::Lt | FilterOp::Lte, v) => stat_min_lte(stats, v),
         _ => true, // Complex operators (contains, like, etc.) — can't prune.
     }
 }

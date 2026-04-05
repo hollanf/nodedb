@@ -39,7 +39,7 @@ fn parse_single_predicate(clause: &str) -> Option<ScanFilter> {
             };
             return Some(ScanFilter {
                 field,
-                op: op.to_string(),
+                op: super::FilterOp::from_str(op),
                 value: parse_predicate_value(raw_value),
                 clauses: Vec::new(),
             });
@@ -52,7 +52,7 @@ fn parse_single_predicate(clause: &str) -> Option<ScanFilter> {
         let raw_value = clause[pos + 6..].trim();
         return Some(ScanFilter {
             field,
-            op: "like".to_string(),
+            op: super::FilterOp::Like,
             value: parse_predicate_value(raw_value),
             clauses: Vec::new(),
         });
@@ -62,7 +62,7 @@ fn parse_single_predicate(clause: &str) -> Option<ScanFilter> {
         let raw_value = clause[pos + 7..].trim();
         return Some(ScanFilter {
             field,
-            op: "ilike".to_string(),
+            op: super::FilterOp::Ilike,
             value: parse_predicate_value(raw_value),
             clauses: Vec::new(),
         });

@@ -17,11 +17,13 @@
 /// OR representation: `{"op": "or", "clauses": [[filter1, filter2], [filter3]]}`
 /// means `(filter1 AND filter2) OR filter3`. Each clause is an AND-group;
 /// the document matches if ANY clause group fully matches.
+pub use nodedb_query::scan_filter::FilterOp;
+
 #[derive(Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct ScanFilter {
     #[serde(default)]
     pub field: String,
-    pub op: String,
+    pub op: FilterOp,
     #[serde(default)]
     pub value: serde_json::Value,
     /// Disjunctive clause groups for OR predicates.
@@ -32,106 +34,94 @@ pub struct ScanFilter {
 
 impl ScanFilter {
     /// Evaluate this filter against a JSON document.
+    ///
+    /// Uses `FilterOp` enum for O(1) dispatch instead of string comparison.
     pub fn matches(&self, doc: &serde_json::Value) -> bool {
-        // match_all: always true (unsupported expression fallback).
-        if self.op == "match_all" {
-            return true;
-        }
-
-        // exists / not_exists: check if sub-query has results.
-        // The `value` field contains a JSON object: {"collection": "t", "filters": [...]}
-        // This is evaluated by the caller (Data Plane handler) which has access
-        // to the sparse engine. At the ScanFilter level, we always return true
-        // and let the handler do the actual sub-scan. This is a marker op.
-        if self.op == "exists" || self.op == "not_exists" {
-            // Marker: actual evaluation happens in the DocumentScan handler.
-            // Returning true here means the filter doesn't block; the handler
-            // post-filters using the exists result.
-            return true;
-        }
-
-        // OR predicate: document matches if ANY clause group fully matches.
-        if self.op == "or" {
-            return self
-                .clauses
-                .iter()
-                .any(|clause| clause.iter().all(|f| f.matches(doc)));
+        match self.op {
+            FilterOp::MatchAll | FilterOp::Exists | FilterOp::NotExists => return true,
+            FilterOp::Or => {
+                return self
+                    .clauses
+                    .iter()
+                    .any(|clause| clause.iter().all(|f| f.matches(doc)));
+            }
+            _ => {}
         }
 
         let field_val = match doc.get(&self.field) {
             Some(v) => v,
-            None => return self.op == "is_null",
+            None => return self.op == FilterOp::IsNull,
         };
 
-        match self.op.as_str() {
-            "eq" => coerced_eq(field_val, &self.value),
-            "ne" | "neq" => !coerced_eq(field_val, &self.value),
-            "gt" => {
+        match self.op {
+            FilterOp::Eq => coerced_eq(field_val, &self.value),
+            FilterOp::Ne => !coerced_eq(field_val, &self.value),
+            FilterOp::Gt => {
                 compare_json_values(Some(field_val), Some(&self.value))
                     == std::cmp::Ordering::Greater
             }
-            "gte" | "ge" => {
+            FilterOp::Gte => {
                 let cmp = compare_json_values(Some(field_val), Some(&self.value));
                 cmp == std::cmp::Ordering::Greater || cmp == std::cmp::Ordering::Equal
             }
-            "lt" => {
+            FilterOp::Lt => {
                 compare_json_values(Some(field_val), Some(&self.value)) == std::cmp::Ordering::Less
             }
-            "lte" | "le" => {
+            FilterOp::Lte => {
                 let cmp = compare_json_values(Some(field_val), Some(&self.value));
                 cmp == std::cmp::Ordering::Less || cmp == std::cmp::Ordering::Equal
             }
-            "contains" => {
+            FilterOp::Contains => {
                 if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
                     s.contains(pattern)
                 } else {
                     false
                 }
             }
-            "like" => {
+            FilterOp::Like => {
                 if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
                     sql_like_match(s, pattern, false)
                 } else {
                     false
                 }
             }
-            "not_like" => {
+            FilterOp::NotLike => {
                 if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
                     !sql_like_match(s, pattern, false)
                 } else {
                     false
                 }
             }
-            "ilike" => {
+            FilterOp::Ilike => {
                 if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
                     sql_like_match(s, pattern, true)
                 } else {
                     false
                 }
             }
-            "not_ilike" => {
+            FilterOp::NotIlike => {
                 if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
                     !sql_like_match(s, pattern, true)
                 } else {
                     false
                 }
             }
-            "in" => {
+            FilterOp::In => {
                 if let Some(arr) = self.value.as_array() {
                     arr.iter().any(|v| field_val == v)
                 } else {
                     false
                 }
             }
-            "not_in" => {
+            FilterOp::NotIn => {
                 if let Some(arr) = self.value.as_array() {
                     !arr.iter().any(|v| field_val == v)
                 } else {
                     true
                 }
             }
-            "is_null" => field_val.is_null(),
-            "is_not_null" => !field_val.is_null(),
+            FilterOp::IsNull => field_val.is_null(),
+            FilterOp::IsNotNull => !field_val.is_null(),
             _ => false,
         }
     }

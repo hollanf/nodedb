@@ -9,7 +9,7 @@
 //! patterns that can't be evaluated on columnar data (OR clauses, string
 //! ordering, unsupported operators).
 
-use crate::bridge::scan_filter::ScanFilter;
+use crate::bridge::scan_filter::{FilterOp, ScanFilter};
 use crate::engine::timeseries::columnar_memtable::{ColumnData, ColumnType, ColumnarMemtable};
 use nodedb_types::timeseries::SymbolDictionary;
 
@@ -68,7 +68,7 @@ pub(super) fn eval_filters_sparse(
     let mut mask = vec![true; indices.len()];
 
     for f in filters {
-        if f.op == "match_all" {
+        if f.op == FilterOp::MatchAll {
             continue;
         }
         if !f.clauses.is_empty() {
@@ -85,7 +85,7 @@ pub(super) fn eval_filters_sparse(
                         if !mask[mi] {
                             continue;
                         }
-                        mask[mi] = eval_numeric_f64(vals[idx as usize], &f.op, fv)?;
+                        mask[mi] = eval_numeric_f64(vals[idx as usize], f.op.as_str(), fv)?;
                     }
                 }
             }
@@ -96,7 +96,7 @@ pub(super) fn eval_filters_sparse(
                         if !mask[mi] {
                             continue;
                         }
-                        mask[mi] = eval_numeric_i64(vals[idx as usize], &f.op, fv)?;
+                        mask[mi] = eval_numeric_i64(vals[idx as usize], f.op.as_str(), fv)?;
                     }
                 }
             }
@@ -107,7 +107,7 @@ pub(super) fn eval_filters_sparse(
                         if !mask[mi] {
                             continue;
                         }
-                        mask[mi] = eval_numeric_i64(vals[idx as usize], &f.op, fv)?;
+                        mask[mi] = eval_numeric_i64(vals[idx as usize], f.op.as_str(), fv)?;
                     }
                 }
             }
@@ -129,7 +129,7 @@ pub(super) fn eval_filters_dense(
     let mut mask = vec![true; row_count];
 
     for f in filters {
-        if f.op == "match_all" {
+        if f.op == FilterOp::MatchAll {
             continue;
         }
         if !f.clauses.is_empty() {
@@ -146,7 +146,7 @@ pub(super) fn eval_filters_dense(
                         if !mask[i] {
                             continue;
                         }
-                        mask[i] = eval_numeric_f64(vals[i], &f.op, fv)?;
+                        mask[i] = eval_numeric_f64(vals[i], f.op.as_str(), fv)?;
                     }
                 }
             }
@@ -157,7 +157,7 @@ pub(super) fn eval_filters_dense(
                         if !mask[i] {
                             continue;
                         }
-                        mask[i] = eval_numeric_i64(vals[i], &f.op, fv)?;
+                        mask[i] = eval_numeric_i64(vals[i], f.op.as_str(), fv)?;
                     }
                 }
             }
@@ -168,7 +168,7 @@ pub(super) fn eval_filters_dense(
                         if !mask[i] {
                             continue;
                         }
-                        mask[i] = eval_numeric_i64(vals[i], &f.op, fv)?;
+                        mask[i] = eval_numeric_i64(vals[i], f.op.as_str(), fv)?;
                     }
                 }
             }
@@ -213,7 +213,7 @@ pub(super) fn eval_filters_bitmask(
     let mut mask = simd_filter::bitmask_all(row_count);
 
     for f in filters {
-        if f.op == "match_all" {
+        if f.op == FilterOp::MatchAll {
             continue;
         }
         if !f.clauses.is_empty() {

@@ -26,7 +26,7 @@ pub fn eval_filters_to_bitmask<'a>(
     let mut mask = simd_filter::bitmask_all(row_count);
 
     for f in filters {
-        if f.op == "match_all" {
+        if f.op == nodedb_query::scan_filter::FilterOp::MatchAll {
             continue;
         }
         if !f.clauses.is_empty() {

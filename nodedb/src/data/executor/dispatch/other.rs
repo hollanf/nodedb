@@ -6,6 +6,7 @@ use crate::bridge::physical_plan::{
 };
 
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
 
 impl CoreLoop {
@@ -186,8 +187,15 @@ impl CoreLoop {
 
             PhysicalPlan::Meta(MetaOp::ListContinuousAggregates) => {
                 let infos = self.continuous_agg_mgr.list_aggregates();
-                let json = sonic_rs::to_vec(&infos).unwrap_or_default();
-                self.response_with_payload(task, json)
+                match response_codec::encode_serde(&infos) {
+                    Ok(payload) => self.response_with_payload(task, payload),
+                    Err(e) => self.response_error(
+                        task,
+                        crate::bridge::envelope::ErrorCode::Internal {
+                            detail: e.to_string(),
+                        },
+                    ),
+                }
             }
 
             PhysicalPlan::Meta(MetaOp::CreateTenantSnapshot { tenant_id }) => {
@@ -299,8 +307,15 @@ impl CoreLoop {
                     .get_watermark(aggregate_name)
                     .cloned()
                     .unwrap_or_default();
-                let json = sonic_rs::to_vec(&wm).unwrap_or_default();
-                self.response_with_payload(task, json)
+                match response_codec::encode_serde(&wm) {
+                    Ok(payload) => self.response_with_payload(task, payload),
+                    Err(e) => self.response_error(
+                        task,
+                        crate::bridge::envelope::ErrorCode::Internal {
+                            detail: e.to_string(),
+                        },
+                    ),
+                }
             }
 
             PhysicalPlan::Meta(MetaOp::QueryLastValues { collection }) => {
@@ -315,8 +330,15 @@ impl CoreLoop {
                     } else {
                         Vec::new()
                     };
-                let json = sonic_rs::to_vec(&entries).unwrap_or_default();
-                self.response_with_payload(task, json)
+                match response_codec::encode_serde(&entries) {
+                    Ok(payload) => self.response_with_payload(task, payload),
+                    Err(e) => self.response_error(
+                        task,
+                        crate::bridge::envelope::ErrorCode::Internal {
+                            detail: e.to_string(),
+                        },
+                    ),
+                }
             }
 
             PhysicalPlan::Meta(MetaOp::QueryLastValue {
@@ -329,8 +351,15 @@ impl CoreLoop {
                     .get(&scoped)
                     .and_then(|lvc| lvc.get(*series_id))
                     .map(|e| (e.ts, e.value));
-                let json = sonic_rs::to_vec(&entry).unwrap_or_default();
-                self.response_with_payload(task, json)
+                match response_codec::encode_serde(&entry) {
+                    Ok(payload) => self.response_with_payload(task, payload),
+                    Err(e) => self.response_error(
+                        task,
+                        crate::bridge::envelope::ErrorCode::Internal {
+                            detail: e.to_string(),
+                        },
+                    ),
+                }
             }
 
             PhysicalPlan::Columnar(ColumnarOp::Scan {

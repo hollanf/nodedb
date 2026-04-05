@@ -7,7 +7,7 @@
 
 use super::auth_context::AuthContext;
 use super::predicate::{CompareOp, PolicyMode, PredicateValue, RlsPredicate};
-use crate::bridge::scan_filter::ScanFilter;
+use crate::bridge::scan_filter::{FilterOp, ScanFilter};
 
 /// Substitute `$auth.*` references in a predicate tree and produce
 /// concrete `ScanFilter` values for the Data Plane.
@@ -78,7 +78,7 @@ pub fn substitute_to_scan_filters(
             for child in children {
                 if let Some(filters) = substitute_to_scan_filters(child, auth) {
                     // Check for match_all (always-true) — short-circuit.
-                    if filters.len() == 1 && filters[0].op == "match_all" {
+                    if filters.len() == 1 && filters[0].op == FilterOp::MatchAll {
                         return Some(filters);
                     }
                     clause_groups.push(filters);

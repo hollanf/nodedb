@@ -154,7 +154,7 @@ pub fn create_rls_policy(
 
         let filter = crate::bridge::scan_filter::ScanFilter {
             field: field.to_string(),
-            op: op.to_string(),
+            op: op.into(),
             value: serde_json::json!(value_str),
             clauses: Vec::new(),
         };

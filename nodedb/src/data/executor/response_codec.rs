@@ -43,6 +43,18 @@ pub(super) fn encode_json(value: &serde_json::Value) -> crate::Result<Vec<u8>> {
     })
 }
 
+/// Encode any `Serialize` type as MessagePack bytes.
+///
+/// Serializes via serde to an intermediate `serde_json::Value`, then converts
+/// to MessagePack. Use `encode()` for types that implement `ToMessagePack`
+/// directly (faster, no intermediate).
+pub(super) fn encode_serde<T: serde::Serialize>(value: &T) -> crate::Result<Vec<u8>> {
+    let json_value = serde_json::to_value(value).map_err(|e| crate::Error::Codec {
+        detail: format!("serde serialization: {e}"),
+    })?;
+    encode_json(&json_value)
+}
+
 /// Encode a Vec of serde_json::Value as MessagePack bytes.
 pub(super) fn encode_json_vec(values: &[serde_json::Value]) -> crate::Result<Vec<u8>> {
     let wrapped: Vec<nodedb_types::JsonValue> = values

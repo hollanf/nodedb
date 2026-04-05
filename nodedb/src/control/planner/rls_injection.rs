@@ -9,6 +9,7 @@ use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::{
     ColumnarOp, DocumentOp, GraphOp, KvOp, QueryOp, SpatialOp, TextOp, TimeseriesOp, VectorOp,
 };
+use crate::bridge::scan_filter::FilterOp;
 use crate::control::planner::physical::PhysicalTask;
 use crate::control::security::auth_context::AuthContext;
 use crate::control::security::rls::RlsPolicyStore;
@@ -343,7 +344,7 @@ fn inject_permission_tree_for_plan(
 
     let in_filter = crate::bridge::scan_filter::ScanFilter {
         field: def.resource_column.clone(),
-        op: "in".to_owned(),
+        op: FilterOp::In,
         value: serde_json::Value::Array(
             accessible
                 .into_iter()
