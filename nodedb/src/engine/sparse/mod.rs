@@ -1,4 +1,5 @@
 pub mod btree;
+pub mod btree_index;
 pub mod btree_scan;
 pub mod doc_cache;
 pub mod fts_redb;
