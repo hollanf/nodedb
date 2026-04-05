@@ -4,6 +4,7 @@ use tracing::debug;
 
 use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::kv::AtomicError;
 use crate::engine::kv::current_ms;
@@ -43,10 +44,15 @@ impl CoreLoop {
                     Some(&new_bytes),
                     None,
                 );
-                let payload = serde_json::json!({ "value": new_value })
-                    .to_string()
-                    .into_bytes();
-                self.response_with_payload(task, payload)
+                match response_codec::encode_json(&serde_json::json!({ "value": new_value })) {
+                    Ok(payload) => self.response_with_payload(task, payload),
+                    Err(e) => self.response_error(
+                        task,
+                        ErrorCode::Internal {
+                            detail: e.to_string(),
+                        },
+                    ),
+                }
             }
             Err(AtomicError::TypeMismatch { detail }) => self.response_error(
                 task,
@@ -97,10 +103,15 @@ impl CoreLoop {
                     Some(&new_bytes),
                     None,
                 );
-                let payload = serde_json::json!({ "value": new_value })
-                    .to_string()
-                    .into_bytes();
-                self.response_with_payload(task, payload)
+                match response_codec::encode_json(&serde_json::json!({ "value": new_value })) {
+                    Ok(payload) => self.response_with_payload(task, payload),
+                    Err(e) => self.response_error(
+                        task,
+                        ErrorCode::Internal {
+                            detail: e.to_string(),
+                        },
+                    ),
+                }
             }
             Err(AtomicError::TypeMismatch { detail }) => self.response_error(
                 task,
@@ -157,13 +168,18 @@ impl CoreLoop {
             .current_value
             .as_ref()
             .map(|v| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, v));
-        let payload = serde_json::json!({
+        match response_codec::encode_json(&serde_json::json!({
             "success": result.success,
             "current_value": current_b64,
-        })
-        .to_string()
-        .into_bytes();
-        self.response_with_payload(task, payload)
+        })) {
+            Ok(payload) => self.response_with_payload(task, payload),
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: e.to_string(),
+                },
+            ),
+        }
     }
 
     pub(in crate::data::executor) fn execute_kv_getset(
@@ -201,9 +217,14 @@ impl CoreLoop {
         let old_b64 = old
             .as_ref()
             .map(|v| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, v));
-        let payload = serde_json::json!({ "old_value": old_b64 })
-            .to_string()
-            .into_bytes();
-        self.response_with_payload(task, payload)
+        match response_codec::encode_json(&serde_json::json!({ "old_value": old_b64 })) {
+            Ok(payload) => self.response_with_payload(task, payload),
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: e.to_string(),
+                },
+            ),
+        }
     }
 }

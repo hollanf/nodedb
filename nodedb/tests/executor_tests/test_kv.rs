@@ -49,7 +49,7 @@ fn kv_put_get_delete() {
             keys: vec![b"key1".to_vec()],
         }),
     );
-    let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let json = payload_value(&payload);
     assert_eq!(json["deleted"], 1);
 
     // GET after DELETE → NotFound
@@ -128,7 +128,7 @@ fn kv_batch_put_and_get() {
             ttl_ms: 0,
         }),
     );
-    let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let json = payload_value(&payload);
     assert_eq!(json["inserted"], 5);
 
     // BatchGet
@@ -179,7 +179,7 @@ fn kv_scan_returns_entries() {
         }),
     );
 
-    let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let json = payload_value(&payload);
     let entries = json["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 5);
 }
@@ -217,7 +217,7 @@ fn kv_scan_with_match_pattern() {
         }),
     );
 
-    let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let json = payload_value(&payload);
     let entries = json["entries"].as_array().unwrap();
     // "user:0", "user:1", "user:2" — 3 entries (second batch overwrites first).
     assert_eq!(entries.len(), 3);
@@ -336,7 +336,7 @@ fn kv_register_index_and_lookup() {
             backfill: true,
         }),
     );
-    let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let json = payload_value(&payload);
     assert_eq!(json["backfilled"], 2);
 }
 
@@ -381,7 +381,7 @@ fn kv_drop_index() {
             field: "status".into(),
         }),
     );
-    let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let json = payload_value(&payload);
     assert_eq!(json["entries_removed"], 1);
 }
 

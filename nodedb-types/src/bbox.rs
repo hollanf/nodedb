@@ -13,7 +13,19 @@ use zerompk::{FromMessagePack, ToMessagePack};
 /// **Anti-meridian convention:** When `min_lng > max_lng`, the bbox wraps
 /// across the ±180° date line. For example, a geometry spanning 170°E to
 /// 170°W has `min_lng = 170.0, max_lng = -170.0`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    ToMessagePack,
+    FromMessagePack,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub struct BoundingBox {
     pub min_lng: f64,
     pub min_lat: f64,

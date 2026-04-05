@@ -5,7 +5,16 @@
 
 use super::merge::{ShardSearchResult, VectorHit, VectorMerger};
 use crate::wire::{VShardEnvelope, VShardMessageType};
-use sonic_rs;
+
+/// Wire message for vector scatter request payload (zerompk).
+#[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
+pub struct VectorScatterPayload {
+    pub collection: String,
+    pub query_vector: Vec<f32>,
+    pub top_k: u32,
+    pub ef_search: u32,
+    pub has_filter: bool,
+}
 
 /// Scatter-gather coordinator for distributed k-NN vector search.
 pub struct VectorScatterGather {
@@ -39,14 +48,15 @@ impl VectorScatterGather {
         ef_search: usize,
         filter_bitmap: Option<&[u8]>,
     ) -> Vec<(u16, VShardEnvelope)> {
-        let payload = serde_json::json!({
-            "collection": collection,
-            "query_vector": query_vector,
-            "top_k": top_k,
-            "ef_search": ef_search,
-            "has_filter": filter_bitmap.is_some(),
-        });
-        let mut payload_bytes = sonic_rs::to_vec(&payload).expect("json! is always serializable");
+        let msg = VectorScatterPayload {
+            collection: collection.to_string(),
+            query_vector: query_vector.to_vec(),
+            top_k: top_k as u32,
+            ef_search: ef_search as u32,
+            has_filter: filter_bitmap.is_some(),
+        };
+        let mut payload_bytes =
+            zerompk::to_msgpack_vec(&msg).expect("VectorScatterPayload is always serializable");
 
         // Append filter bitmap as raw bytes after JSON (length-prefixed).
         if let Some(bitmap) = filter_bitmap {

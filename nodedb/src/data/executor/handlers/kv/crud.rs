@@ -4,6 +4,7 @@ use tracing::debug;
 
 use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::kv::current_ms;
 
@@ -108,10 +109,15 @@ impl CoreLoop {
             }
         }
 
-        let payload = serde_json::json!({ "deleted": count })
-            .to_string()
-            .into_bytes();
-        self.response_with_payload(task, payload)
+        match response_codec::encode_count("deleted", count) {
+            Ok(payload) => self.response_with_payload(task, payload),
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: e.to_string(),
+                },
+            ),
+        }
     }
 
     pub(in crate::data::executor) fn execute_kv_truncate(
@@ -122,9 +128,14 @@ impl CoreLoop {
     ) -> Response {
         debug!(core = self.core_id, %collection, "kv truncate");
         let count = self.kv_engine.truncate(tid, collection);
-        let payload = serde_json::json!({ "deleted": count })
-            .to_string()
-            .into_bytes();
-        self.response_with_payload(task, payload)
+        match response_codec::encode_count("deleted", count) {
+            Ok(payload) => self.response_with_payload(task, payload),
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: e.to_string(),
+                },
+            ),
+        }
     }
 }

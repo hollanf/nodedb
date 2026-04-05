@@ -11,7 +11,24 @@ use std::collections::HashMap;
 use super::merge::{PartialAgg, PartialAggMerger};
 use super::retention::RetentionCommand;
 use crate::wire::{VShardEnvelope, VShardMessageType};
-use sonic_rs;
+
+/// Wire message for timeseries scatter request payload (zerompk).
+#[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
+pub struct TsScatterPayload {
+    pub collection: String,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub value_column: String,
+    pub bucket_interval_ms: i64,
+}
+
+/// Wire message for S3 archive command payload (zerompk).
+#[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
+pub struct TsArchivePayload {
+    pub collection: String,
+    pub archive_before_ts: i64,
+    pub s3_prefix: String,
+}
 
 /// Scatter-gather coordinator for cross-shard timeseries aggregation.
 pub struct TsCoordinator {
@@ -48,15 +65,15 @@ impl TsCoordinator {
         value_column: &str,
         bucket_interval_ms: i64,
     ) -> Vec<(u16, VShardEnvelope)> {
-        let payload = serde_json::json!({
-            "collection": collection,
-            "start_ms": start_ms,
-            "end_ms": end_ms,
-            "value_column": value_column,
-            "bucket_interval_ms": bucket_interval_ms,
-        });
-        let payload_bytes = // Safety: json!() macro output is always serializable.
-            sonic_rs::to_vec(&payload).expect("json! is always serializable");
+        let msg = TsScatterPayload {
+            collection: collection.to_string(),
+            start_ms,
+            end_ms,
+            value_column: value_column.to_string(),
+            bucket_interval_ms,
+        };
+        let payload_bytes =
+            zerompk::to_msgpack_vec(&msg).expect("TsScatterPayload is always serializable");
 
         self.shard_ids
             .iter()
@@ -106,7 +123,7 @@ impl TsCoordinator {
         command: &RetentionCommand,
     ) -> Vec<(u16, VShardEnvelope)> {
         let payload_bytes =
-            sonic_rs::to_vec(command).expect("RetentionCommand is always serializable");
+            zerompk::to_msgpack_vec(command).expect("RetentionCommand is always serializable");
 
         self.shard_ids
             .iter()
@@ -130,13 +147,13 @@ impl TsCoordinator {
         archive_before_ts: i64,
         s3_prefix: &str,
     ) -> Vec<(u16, VShardEnvelope)> {
-        let payload = serde_json::json!({
-            "collection": collection,
-            "archive_before_ts": archive_before_ts,
-            "s3_prefix": s3_prefix,
-        });
-        let payload_bytes = // Safety: json!() macro output is always serializable.
-            sonic_rs::to_vec(&payload).expect("json! is always serializable");
+        let msg = TsArchivePayload {
+            collection: collection.to_string(),
+            archive_before_ts,
+            s3_prefix: s3_prefix.to_string(),
+        };
+        let payload_bytes =
+            zerompk::to_msgpack_vec(&msg).expect("TsArchivePayload is always serializable");
 
         self.shard_ids
             .iter()

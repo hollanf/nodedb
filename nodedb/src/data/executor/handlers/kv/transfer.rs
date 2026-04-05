@@ -8,6 +8,7 @@ use tracing::debug;
 
 use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::kv::current_ms;
 
@@ -150,17 +151,22 @@ impl CoreLoop {
             },
         );
 
-        let payload = serde_json::json!({
+        match response_codec::encode_json(&serde_json::json!({
             "source_key": src_str,
             "dest_key": dst_str,
             "field": field,
             "amount": amount,
             "source_balance": source_balance - amount,
             "dest_balance": dest_balance + amount,
-        })
-        .to_string()
-        .into_bytes();
-        self.response_with_payload(task, payload)
+        })) {
+            Ok(payload) => self.response_with_payload(task, payload),
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: e.to_string(),
+                },
+            ),
+        }
     }
 
     /// Atomic non-fungible item transfer: verify + delete + insert in one pass.
@@ -217,15 +223,20 @@ impl CoreLoop {
             None,
         );
 
-        let payload = serde_json::json!({
+        match response_codec::encode_json(&serde_json::json!({
             "item_key": item_str,
             "dest_key": dest_str,
             "source_collection": source_collection,
             "dest_collection": dest_collection,
-        })
-        .to_string()
-        .into_bytes();
-        self.response_with_payload(task, payload)
+        })) {
+            Ok(payload) => self.response_with_payload(task, payload),
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: e.to_string(),
+                },
+            ),
+        }
     }
 }
 

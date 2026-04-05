@@ -2,8 +2,9 @@
 
 use tracing::debug;
 
-use crate::bridge::envelope::Response;
+use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::kv::current_ms;
 
@@ -22,14 +23,19 @@ impl CoreLoop {
         let backfilled =
             self.kv_engine
                 .register_index(tid, collection, field, field_position, backfill, now_ms);
-        let payload = serde_json::json!({
+        match response_codec::encode_json(&serde_json::json!({
             "index": field,
             "backfilled": backfilled,
             "write_amp_estimate": format!("{:.0}%", 15.0 + 10.0 * self.kv_engine.index_count(tid, collection) as f64),
-        })
-        .to_string()
-        .into_bytes();
-        self.response_with_payload(task, payload)
+        })) {
+            Ok(payload) => self.response_with_payload(task, payload),
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: e.to_string(),
+                },
+            ),
+        }
     }
 
     pub(in crate::data::executor) fn execute_kv_drop_index(
@@ -41,12 +47,17 @@ impl CoreLoop {
     ) -> Response {
         debug!(core = self.core_id, %collection, %field, "kv drop index");
         let removed = self.kv_engine.drop_index(tid, collection, field);
-        let payload = serde_json::json!({
+        match response_codec::encode_json(&serde_json::json!({
             "index": field,
             "entries_removed": removed,
-        })
-        .to_string()
-        .into_bytes();
-        self.response_with_payload(task, payload)
+        })) {
+            Ok(payload) => self.response_with_payload(task, payload),
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: e.to_string(),
+                },
+            ),
+        }
     }
 }

@@ -35,28 +35,32 @@ impl CoreLoop {
             filter_value.as_deref(),
         );
 
-        // Encode as JSON: { "cursor": "<base64>", "entries": [{"key":"...","value":"..."}] }
         let cursor_b64 = if next_cursor.is_empty() {
             "0".to_string()
         } else {
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &next_cursor)
         };
-        let json_entries: Vec<serde_json::Value> = entries
-            .iter()
-            .map(|(k, v)| {
+        let result = serde_json::json!({
+            "cursor": cursor_b64,
+            "count": entries.len(),
+            "entries": entries.iter().map(|(k, v)| {
                 serde_json::json!({
                     "key": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, k),
                     "value": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, v),
                 })
-            })
-            .collect();
-        let payload = serde_json::json!({
-            "cursor": cursor_b64,
-            "count": json_entries.len(),
-            "entries": json_entries,
-        })
-        .to_string()
-        .into_bytes();
+            }).collect::<Vec<_>>(),
+        });
+        let payload = match super::super::super::response_codec::encode_json(&result) {
+            Ok(p) => p,
+            Err(e) => {
+                return self.response_error(
+                    task,
+                    crate::bridge::envelope::ErrorCode::Internal {
+                        detail: e.to_string(),
+                    },
+                );
+            }
+        };
         if let Some(ref m) = self.metrics {
             m.record_kv_scan();
         }

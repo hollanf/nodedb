@@ -12,7 +12,10 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 /// A coordinated retention command broadcast to all shards.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
+#[msgpack(map)]
 pub struct RetentionCommand {
     /// Collection to apply retention to.
     pub collection: String,

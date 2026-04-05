@@ -14,7 +14,17 @@ pub const REINSERT_COUNT_LEAF: usize = LEAF_CAPACITY * 3 / 10;
 pub type EntryId = u64;
 
 /// A spatial entry stored in an R-tree leaf.
-#[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    ToMessagePack,
+    FromMessagePack,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 pub struct RTreeEntry {
     pub id: EntryId,
     pub bbox: BoundingBox,

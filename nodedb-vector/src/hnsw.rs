@@ -32,6 +32,29 @@ pub(crate) struct Node {
 ///
 /// Production HNSW per Malkov & Yashunin (2018):
 /// - Multi-layer graph with exponential layer assignment
+/// Magic header for rkyv-serialized HNSW snapshots (6 bytes).
+const HNSW_RKYV_MAGIC: &[u8; 6] = b"RKHNS\0";
+
+/// rkyv-serialized HNSW snapshot. SoA layout for better rkyv compatibility
+/// (flat Vecs instead of Vec<struct>).
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+struct HnswSnapshotRkyv {
+    dim: usize,
+    m: usize,
+    m0: usize,
+    ef_construction: usize,
+    metric: u8,
+    entry_point: Option<u32>,
+    max_layer: usize,
+    rng_state: u64,
+    /// Per-node vectors (SoA).
+    node_vectors: Vec<Vec<f32>>,
+    /// Per-node neighbor lists (SoA).
+    node_neighbors: Vec<Vec<Vec<u32>>>,
+    /// Per-node deleted flags (SoA).
+    node_deleted: Vec<bool>,
+}
+
 /// - FP32 construction for structural integrity
 /// - Heuristic neighbor selection (Algorithm 4)
 /// - Beam search with configurable ef parameter
@@ -175,35 +198,12 @@ impl HnswIndex {
     /// Serialize the index to MessagePack bytes for storage.
     ///
     /// NOTE: The checklist mandates rkyv for engine blobs, but HNSW's
-    /// recursive Vec<Vec<u32>> structure doesn't support rkyv derive
-    /// (same issue as Value). We use MessagePack here — the cold-start
-    /// budget is met because HNSW rebuild from checkpoint is a single
-    /// deserialization, not per-node allocation. For CSR (flat arrays),
-    /// rkyv zero-copy is used.
+    /// Serialize the index to rkyv bytes (with magic header) for storage.
+    ///
+    /// rkyv 0.8 supports `Vec<Vec<u32>>` with the `alloc` feature.
+    /// Magic header `RKHNS\0` allows `from_checkpoint` to detect format.
     pub fn checkpoint_to_bytes(&self) -> Vec<u8> {
-        use zerompk::{FromMessagePack, ToMessagePack};
-
-        #[derive(ToMessagePack, FromMessagePack)]
-        struct Snapshot {
-            dim: usize,
-            m: usize,
-            m0: usize,
-            ef_construction: usize,
-            metric: u8,
-            entry_point: Option<u32>,
-            max_layer: usize,
-            rng_state: u64,
-            nodes: Vec<NodeSnap>,
-        }
-
-        #[derive(ToMessagePack, FromMessagePack)]
-        struct NodeSnap {
-            vector: Vec<f32>,
-            neighbors: Vec<Vec<u32>>,
-            deleted: bool,
-        }
-
-        let snapshot = Snapshot {
+        let snapshot = HnswSnapshotRkyv {
             dim: self.dim,
             m: self.params.m,
             m0: self.params.m0,
@@ -212,27 +212,40 @@ impl HnswIndex {
             entry_point: self.entry_point,
             max_layer: self.max_layer,
             rng_state: self.rng.0,
-            nodes: self
-                .nodes
-                .iter()
-                .map(|n| NodeSnap {
-                    vector: n.vector.clone(),
-                    neighbors: n.neighbors.clone(),
-                    deleted: n.deleted,
-                })
-                .collect(),
+            node_vectors: self.nodes.iter().map(|n| n.vector.clone()).collect(),
+            node_neighbors: self.nodes.iter().map(|n| n.neighbors.clone()).collect(),
+            node_deleted: self.nodes.iter().map(|n| n.deleted).collect(),
         };
-        match zerompk::to_msgpack_vec(&snapshot) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                tracing::error!(error = %e, "HNSW checkpoint serialization failed");
-                Vec::new()
-            }
-        }
+        let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&snapshot)
+            .expect("HNSW rkyv serialization should not fail");
+        let mut buf = Vec::with_capacity(HNSW_RKYV_MAGIC.len() + rkyv_bytes.len());
+        buf.extend_from_slice(HNSW_RKYV_MAGIC);
+        buf.extend_from_slice(&rkyv_bytes);
+        buf
     }
 
     /// Restore an index from a checkpoint snapshot.
+    ///
+    /// Auto-detects format: rkyv (magic `RKHNS\0`) or legacy MessagePack.
     pub fn from_checkpoint(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() > HNSW_RKYV_MAGIC.len() && &bytes[..HNSW_RKYV_MAGIC.len()] == HNSW_RKYV_MAGIC
+        {
+            return Self::from_rkyv_checkpoint(&bytes[HNSW_RKYV_MAGIC.len()..]);
+        }
+        Self::from_msgpack_checkpoint(bytes)
+    }
+
+    /// Restore from rkyv-serialized bytes.
+    fn from_rkyv_checkpoint(bytes: &[u8]) -> Option<Self> {
+        let mut aligned = rkyv::util::AlignedVec::<16>::with_capacity(bytes.len());
+        aligned.extend_from_slice(bytes);
+        let snap: HnswSnapshotRkyv =
+            rkyv::from_bytes::<HnswSnapshotRkyv, rkyv::rancor::Error>(&aligned).ok()?;
+        Self::from_hnsw_snapshot(snap)
+    }
+
+    /// Restore from legacy MessagePack bytes.
+    fn from_msgpack_checkpoint(bytes: &[u8]) -> Option<Self> {
         use zerompk::{FromMessagePack, ToMessagePack};
 
         #[derive(ToMessagePack, FromMessagePack)]
@@ -256,6 +269,23 @@ impl HnswIndex {
         }
 
         let snap: Snapshot = zerompk::from_msgpack(bytes).ok()?;
+        Self::from_hnsw_snapshot(HnswSnapshotRkyv {
+            dim: snap.dim,
+            m: snap.m,
+            m0: snap.m0,
+            ef_construction: snap.ef_construction,
+            metric: snap.metric,
+            entry_point: snap.entry_point,
+            max_layer: snap.max_layer,
+            rng_state: snap.rng_state,
+            node_vectors: snap.nodes.iter().map(|n| n.vector.clone()).collect(),
+            node_neighbors: snap.nodes.iter().map(|n| n.neighbors.clone()).collect(),
+            node_deleted: snap.nodes.iter().map(|n| n.deleted).collect(),
+        })
+    }
+
+    /// Reconstruct HnswIndex from deserialized snapshot fields.
+    fn from_hnsw_snapshot(snap: HnswSnapshotRkyv) -> Option<Self> {
         let metric = match snap.metric {
             0 => DistanceMetric::L2,
             1 => DistanceMetric::Cosine,
@@ -264,12 +294,14 @@ impl HnswIndex {
         };
 
         let nodes: Vec<Node> = snap
-            .nodes
+            .node_vectors
             .into_iter()
-            .map(|n| Node {
-                vector: n.vector,
-                neighbors: n.neighbors,
-                deleted: n.deleted,
+            .zip(snap.node_neighbors)
+            .zip(snap.node_deleted)
+            .map(|((vector, neighbors), deleted)| Node {
+                vector,
+                neighbors,
+                deleted,
             })
             .collect();
 

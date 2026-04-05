@@ -13,6 +13,7 @@ homepage.workspace = true
 nodedb-types = { workspace = true }
 serde = { workspace = true }
 zerompk = { workspace = true }
+rkyv = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 

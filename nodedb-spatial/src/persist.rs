@@ -55,29 +55,52 @@ impl std::fmt::Display for SpatialIndexType {
     }
 }
 
-/// Serialized R-tree snapshot for checkpoint.
+/// Magic header for rkyv-serialized R-tree snapshots (6 bytes).
+const RTREE_RKYV_MAGIC: &[u8; 6] = b"RKSPT\0";
+
+/// Serialized R-tree snapshot (legacy MessagePack).
 #[derive(Debug, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct RTreeSnapshot {
     pub entries: Vec<RTreeEntry>,
 }
 
+/// rkyv-serialized R-tree snapshot.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+struct RTreeSnapshotRkyv {
+    entries: Vec<RTreeEntry>,
+}
+
 impl RTree {
-    /// Serialize the R-tree to bytes for checkpointing.
-    ///
-    /// Collects all entries and serializes via MessagePack. On restore,
-    /// `from_checkpoint` bulk-loads entries for optimal packing.
+    /// Serialize the R-tree to rkyv bytes (with magic header) for checkpointing.
     pub fn checkpoint_to_bytes(&self) -> Result<Vec<u8>, RTreeCheckpointError> {
-        let snapshot = RTreeSnapshot {
+        let snapshot = RTreeSnapshotRkyv {
             entries: self.entries().into_iter().cloned().collect(),
         };
-        zerompk::to_msgpack_vec(&snapshot).map_err(RTreeCheckpointError::Serialize)
+        let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&snapshot)
+            .map_err(|e| RTreeCheckpointError::RkyvSerialize(e.to_string()))?;
+        let mut buf = Vec::with_capacity(RTREE_RKYV_MAGIC.len() + rkyv_bytes.len());
+        buf.extend_from_slice(RTREE_RKYV_MAGIC);
+        buf.extend_from_slice(&rkyv_bytes);
+        Ok(buf)
     }
 
     /// Restore an R-tree from checkpoint bytes.
     ///
-    /// Uses bulk_load (STR packing) for better node packing than
-    /// sequential insert. Returns None if bytes are corrupted.
+    /// Auto-detects format: rkyv (magic `RKSPT\0`) or legacy MessagePack.
+    /// Uses bulk_load (STR packing) for optimal node packing.
     pub fn from_checkpoint(bytes: &[u8]) -> Result<Self, RTreeCheckpointError> {
+        if bytes.len() > RTREE_RKYV_MAGIC.len()
+            && &bytes[..RTREE_RKYV_MAGIC.len()] == RTREE_RKYV_MAGIC
+        {
+            let rkyv_bytes = &bytes[RTREE_RKYV_MAGIC.len()..];
+            let mut aligned = rkyv::util::AlignedVec::<16>::with_capacity(rkyv_bytes.len());
+            aligned.extend_from_slice(rkyv_bytes);
+            let snapshot: RTreeSnapshotRkyv =
+                rkyv::from_bytes::<RTreeSnapshotRkyv, rkyv::rancor::Error>(&aligned)
+                    .map_err(|e| RTreeCheckpointError::RkyvDeserialize(e.to_string()))?;
+            return Ok(RTree::bulk_load(snapshot.entries));
+        }
+        // Legacy MessagePack fallback.
         let snapshot: RTreeSnapshot =
             zerompk::from_msgpack(bytes).map_err(RTreeCheckpointError::Deserialize)?;
         Ok(RTree::bulk_load(snapshot.entries))
@@ -127,6 +150,10 @@ pub enum RTreeCheckpointError {
     Serialize(zerompk::Error),
     #[error("R-tree checkpoint deserialization failed: {0}")]
     Deserialize(zerompk::Error),
+    #[error("R-tree rkyv serialization failed: {0}")]
+    RkyvSerialize(String),
+    #[error("R-tree rkyv deserialization failed: {0}")]
+    RkyvDeserialize(String),
 }
 
 #[cfg(test)]

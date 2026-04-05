@@ -4,6 +4,7 @@ use tracing::debug;
 
 use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::kv::current_ms;
 
@@ -53,9 +54,14 @@ impl CoreLoop {
             .kv_engine
             .get_ttl_ms(tid, collection, key, now_ms)
             .unwrap_or(-2); // -2 = key does not exist.
-        let payload = serde_json::json!({ "ttl_ms": ttl_ms })
-            .to_string()
-            .into_bytes();
-        self.response_with_payload(task, payload)
+        match response_codec::encode_json(&serde_json::json!({ "ttl_ms": ttl_ms })) {
+            Ok(payload) => self.response_with_payload(task, payload),
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: e.to_string(),
+                },
+            ),
+        }
     }
 }

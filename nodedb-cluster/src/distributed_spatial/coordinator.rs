@@ -5,7 +5,18 @@
 
 use super::merge::{ShardSpatialResult, SpatialResultMerger};
 use crate::wire::{VShardEnvelope, VShardMessageType};
-use sonic_rs;
+
+/// Wire message for spatial scatter request payload (zerompk).
+#[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
+pub struct SpatialScatterPayload {
+    pub collection: String,
+    pub field: String,
+    pub predicate: String,
+    /// Raw query geometry bytes (GeoJSON, passed through as-is).
+    pub query_geometry: Vec<u8>,
+    pub distance_meters: f64,
+    pub limit: u32,
+}
 
 /// Scatter-gather coordinator for distributed spatial queries.
 pub struct SpatialScatterGather {
@@ -37,17 +48,16 @@ impl SpatialScatterGather {
         distance_meters: f64,
         limit: usize,
     ) -> Vec<(u16, VShardEnvelope)> {
-        let payload = serde_json::json!({
-            "collection": collection,
-            "field": field,
-            "predicate": predicate,
-            "query_geometry": sonic_rs::from_slice::<serde_json::Value>(query_geometry_json)
-                .unwrap_or(serde_json::Value::Null),
-            "distance_meters": distance_meters,
-            "limit": limit,
-        });
-        // Safety: json!() macro output is always serializable.
-        let payload_bytes = sonic_rs::to_vec(&payload).expect("json! is always serializable");
+        let msg = SpatialScatterPayload {
+            collection: collection.to_string(),
+            field: field.to_string(),
+            predicate: predicate.to_string(),
+            query_geometry: query_geometry_json.to_vec(),
+            distance_meters,
+            limit: limit as u32,
+        };
+        let payload_bytes =
+            zerompk::to_msgpack_vec(&msg).expect("SpatialScatterPayload is always serializable");
 
         self.shard_ids
             .iter()

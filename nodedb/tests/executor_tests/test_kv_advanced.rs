@@ -89,7 +89,7 @@ fn kv_protocol_command_sequence() {
             keys: vec![b"key1".to_vec()],
         }),
     );
-    let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let json: serde_json::Value = payload_value(&payload);
     assert_eq!(json["deleted"], 1);
 
     // GET key1 → not found
@@ -147,7 +147,7 @@ fn kv_protocol_command_sequence() {
             keys: vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()],
         }),
     );
-    let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let json: serde_json::Value = payload_value(&payload);
     assert_eq!(json["deleted"], 3);
 }
 
@@ -330,7 +330,7 @@ fn kv_field_get_and_set() {
             fields: vec!["name".into(), "age".into()],
         }),
     );
-    let result: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let result: serde_json::Value = payload_value(&payload);
     assert_eq!(result["name"], "alice");
     assert_eq!(result["age"], 30);
 
@@ -360,7 +360,7 @@ fn kv_field_get_and_set() {
             fields: vec!["region".into()],
         }),
     );
-    let result: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let result: serde_json::Value = payload_value(&payload);
     assert_eq!(result["region"], "eu-west");
 }
 
@@ -395,7 +395,7 @@ fn kv_truncate_clears_all() {
             collection: "ephemeral".into(),
         }),
     );
-    let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let json: serde_json::Value = payload_value(&payload);
     assert_eq!(json["deleted"], 10);
 
     // Verify all keys gone.
@@ -470,7 +470,7 @@ fn kv_index_write_amp_ratio_matches() {
             match_pattern: None,
         }),
     );
-    let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let json: serde_json::Value = payload_value(&payload);
     let count = json["entries"].as_array().unwrap().len();
     assert_eq!(count, 100);
 }

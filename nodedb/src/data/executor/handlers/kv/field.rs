@@ -5,6 +5,7 @@ use tracing::debug;
 
 use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::kv::current_ms;
 
@@ -98,9 +99,14 @@ impl CoreLoop {
 
         self.kv_engine
             .put(tid, collection, key, &new_value, 0, now_ms);
-        let payload = serde_json::json!({ "fields_added": fields_added })
-            .to_string()
-            .into_bytes();
-        self.response_with_payload(task, payload)
+        match response_codec::encode_json(&serde_json::json!({ "fields_added": fields_added })) {
+            Ok(payload) => self.response_with_payload(task, payload),
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: e.to_string(),
+                },
+            ),
+        }
     }
 }

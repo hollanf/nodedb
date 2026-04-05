@@ -1,8 +1,11 @@
 //! CSR checkpoint serialization/deserialization.
 //!
-//! Serializes the full CSR state (including weights) to MessagePack for
-//! persistence. Used by both Origin (via redb storage) and Lite (via
-//! embedded checkpoint).
+//! Supports two serialization formats:
+//! - **MessagePack** (zerompk): Legacy format, backwards-compatible.
+//! - **rkyv**: ~3x faster serialization/deserialization. Detected on load
+//!   by magic bytes (`RKCSR\0` header). Future: mmap zero-copy access.
+//!
+//! Used by both Origin (via redb storage) and Lite (via embedded checkpoint).
 
 use std::collections::HashMap;
 
@@ -10,8 +13,32 @@ use zerompk::{FromMessagePack, ToMessagePack};
 
 use super::index::CsrIndex;
 
+/// Magic header for rkyv-serialized CSR snapshots (6 bytes).
+const RKYV_MAGIC: &[u8; 6] = b"RKCSR\0";
+
 #[derive(ToMessagePack, FromMessagePack)]
-struct CsrSnapshot {
+struct CsrSnapshotMsgpack {
+    nodes: Vec<String>,
+    labels: Vec<String>,
+    out_offsets: Vec<u32>,
+    out_targets: Vec<u32>,
+    out_labels: Vec<u16>,
+    in_offsets: Vec<u32>,
+    in_targets: Vec<u32>,
+    in_labels: Vec<u16>,
+    buffer_out: Vec<Vec<(u16, u32)>>,
+    buffer_in: Vec<Vec<(u16, u32)>>,
+    deleted: Vec<(u32, u16, u32)>,
+    has_weights: bool,
+    out_weights: Option<Vec<f64>>,
+    in_weights: Option<Vec<f64>>,
+    buffer_out_weights: Vec<Vec<f64>>,
+    buffer_in_weights: Vec<Vec<f64>>,
+}
+
+/// rkyv-serialized CSR snapshot for fast save/load.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+struct CsrSnapshotRkyv {
     nodes: Vec<String>,
     labels: Vec<String>,
     out_offsets: Vec<u32>,
@@ -31,9 +58,13 @@ struct CsrSnapshot {
 }
 
 impl CsrIndex {
-    /// Serialize the index to MessagePack bytes for storage.
+    /// Serialize the index to rkyv bytes (with magic header) for storage.
+    ///
+    /// rkyv is ~3x faster than MessagePack for both serialization and
+    /// deserialization. The magic header allows `from_checkpoint` to
+    /// auto-detect the format for backward compatibility.
     pub fn checkpoint_to_bytes(&self) -> Vec<u8> {
-        let snapshot = CsrSnapshot {
+        let snapshot = CsrSnapshotRkyv {
             nodes: self.id_to_node.clone(),
             labels: self.id_to_label.clone(),
             out_offsets: self.out_offsets.clone(),
@@ -51,22 +82,60 @@ impl CsrIndex {
             buffer_out_weights: self.buffer_out_weights.clone(),
             buffer_in_weights: self.buffer_in_weights.clone(),
         };
-        match zerompk::to_msgpack_vec(&snapshot) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                tracing::error!(error = %e, "CSR checkpoint serialization failed");
-                Vec::new()
-            }
-        }
+        let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&snapshot)
+            .expect("CSR rkyv serialization should not fail");
+        let mut buf = Vec::with_capacity(RKYV_MAGIC.len() + rkyv_bytes.len());
+        buf.extend_from_slice(RKYV_MAGIC);
+        buf.extend_from_slice(&rkyv_bytes);
+        buf
     }
 
     /// Restore an index from a checkpoint snapshot.
     ///
-    /// Backwards-compatible: old checkpoints without weight fields are
-    /// deserialized with `has_weights = false` and empty weight arrays.
+    /// Auto-detects format: rkyv (magic header `RKCSR\0`) or legacy MessagePack.
+    /// Backwards-compatible with old checkpoints.
     pub fn from_checkpoint(bytes: &[u8]) -> Option<Self> {
-        let snap: CsrSnapshot = zerompk::from_msgpack(bytes).ok()?;
+        if bytes.len() > RKYV_MAGIC.len() && &bytes[..RKYV_MAGIC.len()] == RKYV_MAGIC {
+            return Self::from_rkyv_checkpoint(&bytes[RKYV_MAGIC.len()..]);
+        }
+        Self::from_msgpack_checkpoint(bytes)
+    }
 
+    /// Restore from rkyv-serialized bytes.
+    fn from_rkyv_checkpoint(bytes: &[u8]) -> Option<Self> {
+        // rkyv requires aligned data for zero-copy access.
+        let mut aligned = rkyv::util::AlignedVec::<16>::with_capacity(bytes.len());
+        aligned.extend_from_slice(bytes);
+        let snap: CsrSnapshotRkyv =
+            rkyv::from_bytes::<CsrSnapshotRkyv, rkyv::rancor::Error>(&aligned).ok()?;
+        Some(Self::from_snapshot_fields(snap))
+    }
+
+    /// Restore from legacy MessagePack bytes.
+    fn from_msgpack_checkpoint(bytes: &[u8]) -> Option<Self> {
+        let snap: CsrSnapshotMsgpack = zerompk::from_msgpack(bytes).ok()?;
+        Some(Self::from_snapshot_fields(CsrSnapshotRkyv {
+            nodes: snap.nodes,
+            labels: snap.labels,
+            out_offsets: snap.out_offsets,
+            out_targets: snap.out_targets,
+            out_labels: snap.out_labels,
+            in_offsets: snap.in_offsets,
+            in_targets: snap.in_targets,
+            in_labels: snap.in_labels,
+            buffer_out: snap.buffer_out,
+            buffer_in: snap.buffer_in,
+            deleted: snap.deleted,
+            has_weights: snap.has_weights,
+            out_weights: snap.out_weights,
+            in_weights: snap.in_weights,
+            buffer_out_weights: snap.buffer_out_weights,
+            buffer_in_weights: snap.buffer_in_weights,
+        }))
+    }
+
+    /// Reconstruct CsrIndex from deserialized snapshot fields.
+    fn from_snapshot_fields(snap: CsrSnapshotRkyv) -> Self {
         let node_to_id: HashMap<String, u32> = snap
             .nodes
             .iter()
@@ -83,7 +152,6 @@ impl CsrIndex {
         let node_count = snap.nodes.len();
         let access_counts = (0..node_count).map(|_| std::cell::Cell::new(0)).collect();
 
-        // Ensure weight buffers have the right length even if absent in old checkpoints.
         let buffer_out_weights = if snap.buffer_out_weights.len() == node_count {
             snap.buffer_out_weights
         } else {
@@ -95,7 +163,7 @@ impl CsrIndex {
             vec![Vec::new(); node_count]
         };
 
-        Some(Self {
+        Self {
             node_to_id,
             id_to_node: snap.nodes,
             label_to_id,
@@ -116,7 +184,7 @@ impl CsrIndex {
             has_weights: snap.has_weights,
             access_counts,
             query_epoch: 0,
-        })
+        }
     }
 }
 

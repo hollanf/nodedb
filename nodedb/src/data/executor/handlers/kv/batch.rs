@@ -1,10 +1,10 @@
 //! KV batch operation handlers: BatchGet, BatchPut.
 
-use sonic_rs;
 use tracing::debug;
 
-use crate::bridge::envelope::Response;
+use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::kv::current_ms;
 
@@ -20,7 +20,6 @@ impl CoreLoop {
         let now_ms = current_ms();
         let results = self.kv_engine.batch_get(tid, collection, keys, now_ms);
 
-        // Serialize as JSON array: [value_or_null, value_or_null, ...]
         let json_results: Vec<serde_json::Value> = results
             .into_iter()
             .map(|opt| match opt {
@@ -31,8 +30,15 @@ impl CoreLoop {
                 None => serde_json::Value::Null,
             })
             .collect();
-        let payload = sonic_rs::to_vec(&json_results).unwrap_or_default();
-        self.response_with_payload(task, payload)
+        match response_codec::encode_json_vec(&json_results) {
+            Ok(payload) => self.response_with_payload(task, payload),
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: e.to_string(),
+                },
+            ),
+        }
     }
 
     pub(in crate::data::executor) fn execute_kv_batch_put(
@@ -48,9 +54,14 @@ impl CoreLoop {
         let new_count = self
             .kv_engine
             .batch_put(tid, collection, entries, ttl_ms, now_ms);
-        let payload = serde_json::json!({ "inserted": new_count })
-            .to_string()
-            .into_bytes();
-        self.response_with_payload(task, payload)
+        match response_codec::encode_count("inserted", new_count) {
+            Ok(payload) => self.response_with_payload(task, payload),
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: e.to_string(),
+                },
+            ),
+        }
     }
 }
