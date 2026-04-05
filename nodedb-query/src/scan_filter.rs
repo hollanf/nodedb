@@ -120,6 +120,40 @@ impl ScanFilter {
             }
             "is_null" => field_val.is_null(),
             "is_not_null" => !field_val.is_null(),
+
+            // ── Array operators ──
+            // field is an array, value is a scalar: true if array contains the value.
+            "array_contains" => {
+                if let Some(arr) = field_val.as_array() {
+                    arr.iter().any(|v| coerced_eq(v, &self.value))
+                } else {
+                    false
+                }
+            }
+            // field is an array, value is an array: true if field contains ALL values.
+            "array_contains_all" => {
+                if let (Some(field_arr), Some(needle_arr)) =
+                    (field_val.as_array(), self.value.as_array())
+                {
+                    needle_arr
+                        .iter()
+                        .all(|needle| field_arr.iter().any(|v| coerced_eq(v, needle)))
+                } else {
+                    false
+                }
+            }
+            // field is an array, value is an array: true if any element is shared.
+            "array_overlap" => {
+                if let (Some(field_arr), Some(needle_arr)) =
+                    (field_val.as_array(), self.value.as_array())
+                {
+                    needle_arr
+                        .iter()
+                        .any(|needle| field_arr.iter().any(|v| coerced_eq(v, needle)))
+                } else {
+                    false
+                }
+            }
             _ => false,
         }
     }
@@ -284,8 +318,11 @@ pub fn compute_aggregate(op: &str, field: &str, docs: &[serde_json::Value]) -> s
         }
 
         "array_agg" => {
-            let values: Vec<serde_json::Value> =
-                docs.iter().filter_map(|d| d.get(field).cloned()).collect();
+            let values: Vec<serde_json::Value> = docs
+                .iter()
+                .filter_map(|d| d.get(field).cloned())
+                .filter(|v| !v.is_null())
+                .collect();
             serde_json::Value::Array(values)
         }
 
@@ -318,6 +355,20 @@ pub fn compute_aggregate(op: &str, field: &str, docs: &[serde_json::Value]) -> s
             let frac = idx - lower as f64;
             let result = values[lower] * (1.0 - frac) + values[upper] * frac;
             serde_json::json!(result)
+        }
+
+        // Collect distinct field values into a JSON array (deduplicated).
+        "array_agg_distinct" => {
+            let mut seen = Vec::new();
+            for d in docs {
+                if let Some(v) = d.get(field)
+                    && !v.is_null()
+                    && !seen.contains(v)
+                {
+                    seen.push(v.clone());
+                }
+            }
+            serde_json::Value::Array(seen)
         }
 
         _ => serde_json::Value::Null,

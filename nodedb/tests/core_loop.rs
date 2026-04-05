@@ -2,6 +2,8 @@
 
 #[path = "executor_tests/helpers.rs"]
 mod helpers;
+#[path = "executor_tests/test_array_ops.rs"]
+mod test_array_ops;
 #[path = "executor_tests/test_conditional_update.rs"]
 mod test_conditional_update;
 #[path = "executor_tests/test_cross_engine_validation.rs"]
