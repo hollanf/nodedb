@@ -4,6 +4,7 @@
 //! RLS policies are scoped by `(tenant_id, collection)` by construction.
 
 use nodedb::control::security::rls::{PolicyType, RlsPolicy, RlsPolicyStore};
+use nodedb_types;
 
 const TENANT_A: u32 = 10;
 const TENANT_B: u32 = 20;
@@ -16,7 +17,7 @@ fn rls_policies_isolated_between_tenants() {
     let filter = nodedb::bridge::scan_filter::ScanFilter {
         field: "status".into(),
         op: "eq".into(),
-        value: serde_json::json!("approved"),
+        value: nodedb_types::Value::String("approved".into()),
         clauses: Vec::new(),
     };
     let predicate = zerompk::to_msgpack_vec(&vec![filter]).unwrap();
@@ -70,7 +71,7 @@ fn rls_policy_listing_scoped() {
         let filter = nodedb::bridge::scan_filter::ScanFilter {
             field: "role".into(),
             op: "eq".into(),
-            value: serde_json::json!("admin"),
+            value: nodedb_types::Value::String("admin".into()),
             clauses: Vec::new(),
         };
         store

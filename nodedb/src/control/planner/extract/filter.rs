@@ -63,11 +63,17 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
             let (field, value) = match (&*binary.left, &*binary.right) {
                 (Expr::Column(col), Expr::Literal(lit, meta)) => (
                     col.name.clone(),
-                    expr_to_json_value(&Expr::Literal(lit.clone(), meta.clone())),
+                    nodedb_types::Value::from(expr_to_json_value(&Expr::Literal(
+                        lit.clone(),
+                        meta.clone(),
+                    ))),
                 ),
                 (Expr::Literal(lit, meta), Expr::Column(col)) => (
                     col.name.clone(),
-                    expr_to_json_value(&Expr::Literal(lit.clone(), meta.clone())),
+                    nodedb_types::Value::from(expr_to_json_value(&Expr::Literal(
+                        lit.clone(),
+                        meta.clone(),
+                    ))),
                 ),
                 _ => return Vec::new(),
             };
@@ -81,7 +87,7 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
         }
         Expr::Like(like) => {
             if let Expr::Column(col) = &*like.expr {
-                let pattern = expr_to_json_value(&like.pattern);
+                let pattern = nodedb_types::Value::from(expr_to_json_value(&like.pattern));
                 let op = if like.case_insensitive {
                     if like.negated { "not_ilike" } else { "ilike" }
                 } else if like.negated {
@@ -104,7 +110,7 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
                 vec![ScanFilter {
                     field: col.name.clone(),
                     op: "is_null".into(),
-                    value: serde_json::Value::Null,
+                    value: nodedb_types::Value::Null,
                     clauses: Vec::new(),
                 }]
             } else {
@@ -116,7 +122,7 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
                 vec![ScanFilter {
                     field: col.name.clone(),
                     op: "is_not_null".into(),
-                    value: serde_json::Value::Null,
+                    value: nodedb_types::Value::Null,
                     clauses: Vec::new(),
                 }]
             } else {
@@ -125,8 +131,8 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
         }
         Expr::Between(between) => {
             if let Expr::Column(col) = &*between.expr {
-                let low = expr_to_json_value(&between.low);
-                let high = expr_to_json_value(&between.high);
+                let low = nodedb_types::Value::from(expr_to_json_value(&between.low));
+                let high = nodedb_types::Value::from(expr_to_json_value(&between.high));
                 if between.negated {
                     vec![ScanFilter {
                         op: "or".into(),
@@ -172,11 +178,14 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
             negated,
         }) => {
             if let Expr::Column(col) = expr.as_ref() {
-                let values: Vec<serde_json::Value> = list.iter().map(expr_to_json_value).collect();
+                let values: Vec<nodedb_types::Value> = list
+                    .iter()
+                    .map(|e| nodedb_types::Value::from(expr_to_json_value(e)))
+                    .collect();
                 vec![ScanFilter {
                     field: col.name.clone(),
                     op: if *negated { "not_in" } else { "in" }.into(),
-                    value: serde_json::Value::Array(values),
+                    value: nodedb_types::Value::Array(values),
                     clauses: Vec::new(),
                 }]
             } else {
@@ -188,7 +197,7 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
                 vec![ScanFilter {
                     field: "__text_match".into(),
                     op: "text_match".into(),
-                    value: expr_to_json_value(&func.args[1]),
+                    value: nodedb_types::Value::from(expr_to_json_value(&func.args[1])),
                     clauses: Vec::new(),
                 }]
             } else {
@@ -233,7 +242,7 @@ fn subquery_to_scan_filter(
         vec![ScanFilter {
             field: String::new(),
             op: op.into(),
-            value: serde_json::json!({
+            value: nodedb_types::Value::from(serde_json::json!({
                 "collection": coll,
                 "filters": match serde_json::from_slice::<serde_json::Value>(&filters) {
                     Ok(v) => v,
@@ -242,7 +251,7 @@ fn subquery_to_scan_filter(
                         serde_json::Value::Object(Default::default())
                     }
                 },
-            }),
+            })),
             clauses: Vec::new(),
         }]
     } else {

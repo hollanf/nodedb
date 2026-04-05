@@ -9,6 +9,7 @@ use nodedb::bridge::dispatch::BridgeRequest;
 use nodedb::bridge::envelope::{ErrorCode, PhysicalPlan, Status};
 use nodedb::bridge::physical_plan::{DocumentOp, GraphOp, TextOp, VectorOp};
 use nodedb::engine::graph::edge_store::Direction;
+use nodedb_types;
 
 use crate::helpers::*;
 
@@ -121,7 +122,7 @@ fn cross_model_query_vector_graph_relational() {
     let filter = vec![nodedb::bridge::scan_filter::ScanFilter {
         field: "year".into(),
         op: "gte".into(),
-        value: serde_json::json!(2023),
+        value: nodedb_types::Value::Integer(2023),
         clauses: Vec::new(),
     }];
     let filter_bytes = zerompk::to_msgpack_vec(&filter).unwrap();

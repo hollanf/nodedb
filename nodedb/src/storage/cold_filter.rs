@@ -171,10 +171,11 @@ fn row_group_might_match(rg: &RowGroupMetaData, filter: &ScanFilter) -> bool {
 
     // Use min/max statistics to prune.
     use nodedb_query::scan_filter::FilterOp;
-    match (&filter.op, &filter.value) {
-        (FilterOp::Eq, v) => stat_might_contain(stats, v),
-        (FilterOp::Gt | FilterOp::Gte, v) => stat_max_gte(stats, v),
-        (FilterOp::Lt | FilterOp::Lte, v) => stat_min_lte(stats, v),
+    let json_val: serde_json::Value = filter.value.clone().into();
+    match &filter.op {
+        FilterOp::Eq => stat_might_contain(stats, &json_val),
+        FilterOp::Gt | FilterOp::Gte => stat_max_gte(stats, &json_val),
+        FilterOp::Lt | FilterOp::Lte => stat_min_lte(stats, &json_val),
         _ => true, // Complex operators (contains, like, etc.) — can't prune.
     }
 }
@@ -416,7 +417,7 @@ mod tests {
         let filters = vec![ScanFilter {
             field: "age".into(),
             op: "gt".into(),
-            value: serde_json::json!(25),
+            value: nodedb_types::Value::Integer(25),
             clauses: vec![],
         }];
 

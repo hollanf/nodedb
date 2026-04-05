@@ -12,8 +12,9 @@ use crate::geometry::Geometry;
 
 /// A dynamic value that can represent any field type in a document
 /// or any parameter in a SQL query.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum Value {
+    #[default]
     /// SQL NULL / missing value.
     Null,
     /// Boolean.
@@ -204,6 +205,79 @@ impl Value {
             Value::Regex(_) => "regex",
             Value::Range { .. } => "range",
             Value::Record { .. } => "record",
+        }
+    }
+}
+
+/// Cross-type comparison with `serde_json::Value` (for ScanFilter evaluation).
+impl Value {
+    /// Coerced equality against a serde_json::Value (from a document field).
+    ///
+    /// Applies numeric coercion: string "5" == integer 5, etc.
+    pub fn eq_json(&self, other: &serde_json::Value) -> bool {
+        match (self, other) {
+            (Value::Null, serde_json::Value::Null) => true,
+            (Value::Bool(a), serde_json::Value::Bool(b)) => a == b,
+            (Value::Integer(a), serde_json::Value::Number(b)) => {
+                b.as_i64().is_some_and(|b| *a == b) || b.as_f64().is_some_and(|b| *a as f64 == b)
+            }
+            (Value::Float(a), serde_json::Value::Number(b)) => b.as_f64().is_some_and(|b| *a == b),
+            (Value::String(a), serde_json::Value::String(b)) => a == b,
+            // Coercion: numeric string vs number.
+            (Value::Integer(a), serde_json::Value::String(s)) => {
+                s.parse::<i64>().is_ok_and(|n| *a == n)
+                    || s.parse::<f64>().is_ok_and(|n| *a as f64 == n)
+            }
+            (Value::Float(a), serde_json::Value::String(s)) => {
+                s.parse::<f64>().is_ok_and(|n| *a == n)
+            }
+            (Value::String(a), serde_json::Value::Number(b)) => {
+                if let Some(bi) = b.as_i64() {
+                    a.parse::<i64>().is_ok_and(|n| n == bi)
+                } else if let Some(bf) = b.as_f64() {
+                    a.parse::<f64>().is_ok_and(|n| n == bf)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Ordering comparison against a serde_json::Value.
+    pub fn cmp_json(&self, other: &serde_json::Value) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        let self_f64 = match self {
+            Value::Integer(i) => Some(*i as f64),
+            Value::Float(f) => Some(*f),
+            Value::String(s) => s.parse::<f64>().ok(),
+            _ => None,
+        };
+        let other_f64 = match other {
+            serde_json::Value::Number(n) => n.as_f64(),
+            serde_json::Value::String(s) => s.parse::<f64>().ok(),
+            _ => None,
+        };
+        if let (Some(a), Some(b)) = (self_f64, other_f64) {
+            return a.partial_cmp(&b).unwrap_or(Ordering::Equal);
+        }
+        // String comparison fallback.
+        let a_str = match self {
+            Value::String(s) => s.as_str(),
+            _ => return Ordering::Equal,
+        };
+        let b_str = match other {
+            serde_json::Value::String(s) => s.as_str(),
+            _ => return Ordering::Equal,
+        };
+        a_str.cmp(b_str)
+    }
+
+    /// Get array elements (for IN/array operations).
+    pub fn as_array_iter(&self) -> Option<impl Iterator<Item = &Value>> {
+        match self {
+            Value::Array(arr) | Value::Set(arr) => Some(arr.iter()),
+            _ => None,
         }
     }
 }

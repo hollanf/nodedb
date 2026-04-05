@@ -155,7 +155,7 @@ pub fn create_rls_policy(
         let filter = crate::bridge::scan_filter::ScanFilter {
             field: field.to_string(),
             op: op.into(),
-            value: serde_json::json!(value_str),
+            value: nodedb_types::Value::String(value_str),
             clauses: Vec::new(),
         };
         let predicate = zerompk::to_msgpack_vec(&vec![filter])

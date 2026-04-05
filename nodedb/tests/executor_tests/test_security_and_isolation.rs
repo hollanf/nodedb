@@ -7,6 +7,7 @@
 
 use nodedb::bridge::envelope::{ErrorCode, PhysicalPlan, Status};
 use nodedb::bridge::physical_plan::{DocumentOp, GraphOp, VectorOp};
+use nodedb_types;
 
 use crate::helpers::*;
 
@@ -60,7 +61,7 @@ fn security_rls_policy_enforcement() {
     let filter = nodedb::bridge::scan_filter::ScanFilter {
         field: "status".into(),
         op: "eq".into(),
-        value: serde_json::json!("approved"),
+        value: nodedb_types::Value::String("approved".into()),
         clauses: Vec::new(),
     };
     let predicate = zerompk::to_msgpack_vec(&vec![filter]).unwrap();

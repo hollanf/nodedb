@@ -55,7 +55,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn make_rls_bytes(field: &str, op: &str, value: serde_json::Value) -> Vec<u8> {
+    fn make_rls_bytes(field: &str, op: &str, value: nodedb_types::Value) -> Vec<u8> {
         let filter = ScanFilter {
             field: field.into(),
             op: op.into(),
@@ -73,21 +73,21 @@ mod tests {
 
     #[test]
     fn matching_filter_allows() {
-        let rls = make_rls_bytes("user_id", "eq", json!("42"));
+        let rls = make_rls_bytes("user_id", "eq", nodedb_types::Value::String("42".into()));
         let doc = json!({"user_id": "42", "name": "alice"});
         assert!(rls_check_document(&rls, &doc));
     }
 
     #[test]
     fn non_matching_filter_denies() {
-        let rls = make_rls_bytes("user_id", "eq", json!("42"));
+        let rls = make_rls_bytes("user_id", "eq", nodedb_types::Value::String("42".into()));
         let doc = json!({"user_id": "99", "name": "bob"});
         assert!(!rls_check_document(&rls, &doc));
     }
 
     #[test]
     fn missing_field_denies() {
-        let rls = make_rls_bytes("user_id", "eq", json!("42"));
+        let rls = make_rls_bytes("user_id", "eq", nodedb_types::Value::String("42".into()));
         let doc = json!({"name": "alice"});
         assert!(!rls_check_document(&rls, &doc));
     }
@@ -105,13 +105,13 @@ mod tests {
             ScanFilter {
                 field: "user_id".into(),
                 op: "eq".into(),
-                value: json!("42"),
+                value: nodedb_types::Value::String("42".into()),
                 clauses: Vec::new(),
             },
             ScanFilter {
                 field: "status".into(),
                 op: "eq".into(),
-                value: json!("active"),
+                value: nodedb_types::Value::String("active".into()),
                 clauses: Vec::new(),
             },
         ];

@@ -435,7 +435,7 @@ mod tests {
         let filter = crate::bridge::scan_filter::ScanFilter {
             field: "value".into(),
             op: "gt".into(),
-            value: serde_json::json!(5000.0),
+            value: nodedb_types::Value::Float(5000.0),
             clauses: vec![],
         };
         let result = try_columnar_aggregate(

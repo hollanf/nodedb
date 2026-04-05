@@ -10,6 +10,7 @@
 use nodedb::bridge::envelope::PhysicalPlan;
 use nodedb::bridge::physical_plan::{DocumentOp, QueryOp};
 use nodedb::bridge::scan_filter::ScanFilter;
+use nodedb_types;
 
 use crate::helpers::*;
 
@@ -63,7 +64,7 @@ fn seed_products(
     insert_product(core, tx, rx, "p6", "Puma", "white", "11", 80.0);
 }
 
-fn filter(field: &str, op: &str, value: serde_json::Value) -> ScanFilter {
+fn filter(field: &str, op: &str, value: nodedb_types::Value) -> ScanFilter {
     ScanFilter {
         field: field.into(),
         op: op.into(),
@@ -117,7 +118,11 @@ fn filtered_facet_counts() {
     seed_products(&mut core, &mut tx, &mut rx);
 
     // Filter: brand = 'Nike' — should only count Nike products.
-    let filters = vec![filter("brand", "eq", serde_json::json!("Nike"))];
+    let filters = vec![filter(
+        "brand",
+        "eq",
+        nodedb_types::Value::String("Nike".into()),
+    )];
     let filter_bytes = zerompk::to_msgpack_vec(&filters).unwrap();
 
     let payload = send_ok(
@@ -153,7 +158,11 @@ fn zero_match_filter_returns_empty_facets() {
     seed_products(&mut core, &mut tx, &mut rx);
 
     // Filter: brand = 'NonExistent'.
-    let filters = vec![filter("brand", "eq", serde_json::json!("NonExistent"))];
+    let filters = vec![filter(
+        "brand",
+        "eq",
+        nodedb_types::Value::String("NonExistent".into()),
+    )];
     let filter_bytes = zerompk::to_msgpack_vec(&filters).unwrap();
 
     let payload = send_ok(

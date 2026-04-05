@@ -10,10 +10,11 @@
 use nodedb::bridge::envelope::{PhysicalPlan, Status};
 use nodedb::bridge::physical_plan::{DocumentOp, MetaOp};
 use nodedb::bridge::scan_filter::ScanFilter;
+use nodedb_types;
 
 use crate::helpers::*;
 
-fn filter(field: &str, op: &str, value: serde_json::Value) -> ScanFilter {
+fn filter(field: &str, op: &str, value: nodedb_types::Value) -> ScanFilter {
     ScanFilter {
         field: field.into(),
         op: op.into(),
@@ -73,7 +74,7 @@ fn bulk_update_returns_affected_count() {
     insert_product(&mut core, &mut tx, &mut rx, "p3", 0);
 
     // Bulk update: SET stock = 99 WHERE stock > 0 (should match p1 and p2).
-    let filters = vec![filter("stock", "gt", serde_json::json!(0))];
+    let filters = vec![filter("stock", "gt", nodedb_types::Value::Integer(0))];
     let filter_bytes = zerompk::to_msgpack_vec(&filters).unwrap();
     let updates = vec![(
         "stock".to_string(),
@@ -110,7 +111,7 @@ fn conditional_decrement_stops_at_zero() {
     for i in 0..10 {
         let current_stock = get_stock(&mut core, &mut tx, &mut rx, "flash-deal");
 
-        let filters = vec![filter("stock", "gte", serde_json::json!(1))];
+        let filters = vec![filter("stock", "gte", nodedb_types::Value::Integer(1))];
         let filter_bytes = zerompk::to_msgpack_vec(&filters).unwrap();
 
         let new_stock = current_stock.saturating_sub(1);
@@ -155,7 +156,7 @@ fn bulk_update_zero_match_returns_zero_affected() {
 
     insert_product(&mut core, &mut tx, &mut rx, "p1", 0);
 
-    let filters = vec![filter("stock", "gte", serde_json::json!(100))];
+    let filters = vec![filter("stock", "gte", nodedb_types::Value::Integer(100))];
     let filter_bytes = zerompk::to_msgpack_vec(&filters).unwrap();
     let updates = vec![(
         "stock".to_string(),
@@ -185,7 +186,7 @@ fn bulk_update_returning_returns_updated_documents() {
     insert_product(&mut core, &mut tx, &mut rx, "r1", 10);
     insert_product(&mut core, &mut tx, &mut rx, "r2", 20);
 
-    let filters = vec![filter("stock", "gt", serde_json::json!(0))];
+    let filters = vec![filter("stock", "gt", nodedb_types::Value::Integer(0))];
     let filter_bytes = zerompk::to_msgpack_vec(&filters).unwrap();
     let updates = vec![(
         "stock".to_string(),
@@ -220,7 +221,7 @@ fn bulk_update_returning_zero_match_returns_affected_zero() {
 
     insert_product(&mut core, &mut tx, &mut rx, "p1", 0);
 
-    let filters = vec![filter("stock", "gte", serde_json::json!(100))];
+    let filters = vec![filter("stock", "gte", nodedb_types::Value::Integer(100))];
     let filter_bytes = zerompk::to_msgpack_vec(&filters).unwrap();
     let updates = vec![(
         "stock".to_string(),
@@ -310,11 +311,19 @@ fn transaction_batch_does_not_abort_on_zero_row_update() {
 
     // Transaction: first update matches (stock >= 1), second doesn't (stock >= 100).
     // Batch should NOT auto-abort on 0-row update.
-    let filters_match =
-        zerompk::to_msgpack_vec(&vec![filter("stock", "gte", serde_json::json!(1))]).unwrap();
+    let filters_match = zerompk::to_msgpack_vec(&vec![filter(
+        "stock",
+        "gte",
+        nodedb_types::Value::Integer(1),
+    )])
+    .unwrap();
 
-    let filters_nomatch =
-        zerompk::to_msgpack_vec(&vec![filter("stock", "gte", serde_json::json!(100))]).unwrap();
+    let filters_nomatch = zerompk::to_msgpack_vec(&vec![filter(
+        "stock",
+        "gte",
+        nodedb_types::Value::Integer(100),
+    )])
+    .unwrap();
 
     let resp = send_raw(
         &mut core,

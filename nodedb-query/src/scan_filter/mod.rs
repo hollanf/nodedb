@@ -139,7 +139,7 @@ pub struct ScanFilter {
     pub field: String,
     pub op: FilterOp,
     #[serde(default)]
-    pub value: serde_json::Value,
+    pub value: nodedb_types::Value,
     /// Disjunctive clause groups for OR predicates.
     /// Each inner Vec is an AND-group. The document matches if ANY group matches.
     #[serde(default)]
@@ -151,7 +151,9 @@ impl zerompk::ToMessagePack for ScanFilter {
         writer.write_array_len(4)?;
         self.field.write(writer)?;
         writer.write_string(self.op.as_str())?;
-        nodedb_types::JsonValue(self.value.clone()).write(writer)?;
+        // Convert nodedb_types::Value → serde_json::Value for wire compat.
+        let json_val: serde_json::Value = self.value.clone().into();
+        nodedb_types::JsonValue(json_val).write(writer)?;
         self.clauses.write(writer)
     }
 }
@@ -166,7 +168,8 @@ impl<'a> zerompk::FromMessagePack<'a> for ScanFilter {
         Ok(Self {
             field,
             op: FilterOp::from_str(&op_str),
-            value: jv.0,
+            // Convert serde_json::Value → nodedb_types::Value at wire boundary.
+            value: nodedb_types::Value::from(jv.0),
             clauses,
         })
     }
@@ -194,22 +197,17 @@ impl ScanFilter {
         };
 
         match self.op {
-            FilterOp::Eq => coerced_eq(field_val, &self.value),
-            FilterOp::Ne => !coerced_eq(field_val, &self.value),
-            FilterOp::Gt => {
-                compare_json_values(Some(field_val), Some(&self.value))
-                    == std::cmp::Ordering::Greater
-            }
+            FilterOp::Eq => self.value.eq_json(field_val),
+            FilterOp::Ne => !self.value.eq_json(field_val),
+            FilterOp::Gt => self.value.cmp_json(field_val) == std::cmp::Ordering::Less,
             FilterOp::Gte => {
-                let cmp = compare_json_values(Some(field_val), Some(&self.value));
-                cmp == std::cmp::Ordering::Greater || cmp == std::cmp::Ordering::Equal
-            }
-            FilterOp::Lt => {
-                compare_json_values(Some(field_val), Some(&self.value)) == std::cmp::Ordering::Less
-            }
-            FilterOp::Lte => {
-                let cmp = compare_json_values(Some(field_val), Some(&self.value));
+                let cmp = self.value.cmp_json(field_val);
                 cmp == std::cmp::Ordering::Less || cmp == std::cmp::Ordering::Equal
+            }
+            FilterOp::Lt => self.value.cmp_json(field_val) == std::cmp::Ordering::Greater,
+            FilterOp::Lte => {
+                let cmp = self.value.cmp_json(field_val);
+                cmp == std::cmp::Ordering::Greater || cmp == std::cmp::Ordering::Equal
             }
             FilterOp::Contains => {
                 if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
@@ -247,15 +245,15 @@ impl ScanFilter {
                 }
             }
             FilterOp::In => {
-                if let Some(arr) = self.value.as_array() {
-                    arr.iter().any(|v| field_val == v)
+                if let Some(mut iter) = self.value.as_array_iter() {
+                    iter.any(|v| v.eq_json(field_val))
                 } else {
                     false
                 }
             }
             FilterOp::NotIn => {
-                if let Some(arr) = self.value.as_array() {
-                    !arr.iter().any(|v| field_val == v)
+                if let Some(mut iter) = self.value.as_array_iter() {
+                    !iter.any(|v| v.eq_json(field_val))
                 } else {
                     true
                 }
@@ -264,29 +262,25 @@ impl ScanFilter {
             FilterOp::IsNotNull => !field_val.is_null(),
             FilterOp::ArrayContains => {
                 if let Some(arr) = field_val.as_array() {
-                    arr.iter().any(|v| coerced_eq(v, &self.value))
+                    arr.iter().any(|v| self.value.eq_json(v))
                 } else {
                     false
                 }
             }
             FilterOp::ArrayContainsAll => {
-                if let (Some(field_arr), Some(needle_arr)) =
-                    (field_val.as_array(), self.value.as_array())
+                if let (Some(field_arr), Some(mut needles)) =
+                    (field_val.as_array(), self.value.as_array_iter())
                 {
-                    needle_arr
-                        .iter()
-                        .all(|needle| field_arr.iter().any(|v| coerced_eq(v, needle)))
+                    needles.all(|needle| field_arr.iter().any(|v| needle.eq_json(v)))
                 } else {
                     false
                 }
             }
             FilterOp::ArrayOverlap => {
-                if let (Some(field_arr), Some(needle_arr)) =
-                    (field_val.as_array(), self.value.as_array())
+                if let (Some(field_arr), Some(mut needles)) =
+                    (field_val.as_array(), self.value.as_array_iter())
                 {
-                    needle_arr
-                        .iter()
-                        .any(|needle| field_arr.iter().any(|v| coerced_eq(v, needle)))
+                    needles.any(|needle| field_arr.iter().any(|v| needle.eq_json(v)))
                 } else {
                     false
                 }
@@ -308,7 +302,7 @@ mod tests {
         let filter = ScanFilter {
             field: "age".into(),
             op: "eq".into(),
-            value: json!("25"),
+            value: nodedb_types::Value::String("25".into()),
             clauses: vec![],
         };
         assert!(filter.matches(&doc));
@@ -320,7 +314,7 @@ mod tests {
         let filter = ScanFilter {
             field: "score".into(),
             op: "gt".into(),
-            value: json!(80),
+            value: nodedb_types::Value::Integer(80),
             clauses: vec![],
         };
         assert!(filter.matches(&doc));

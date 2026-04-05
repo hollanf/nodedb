@@ -25,7 +25,7 @@ pub struct ScanFilter {
     pub field: String,
     pub op: FilterOp,
     #[serde(default)]
-    pub value: serde_json::Value,
+    pub value: nodedb_types::Value,
     /// Disjunctive clause groups for OR predicates.
     /// Each inner Vec is an AND-group. The document matches if ANY group matches.
     #[serde(default)]
@@ -33,6 +33,13 @@ pub struct ScanFilter {
 }
 
 impl ScanFilter {
+    /// Convert the filter's `nodedb_types::Value` to `serde_json::Value` for
+    /// comparison against document fields (which are always serde_json::Value
+    /// at the bridge layer).
+    fn value_as_json(&self) -> serde_json::Value {
+        serde_json::Value::from(self.value.clone())
+    }
+
     /// Evaluate this filter against a JSON document.
     ///
     /// Uses `FilterOp` enum for O(1) dispatch instead of string comparison.
@@ -53,68 +60,71 @@ impl ScanFilter {
             None => return self.op == FilterOp::IsNull,
         };
 
+        // Convert self.value once for all comparison branches that need serde_json::Value.
+        let cmp_val = self.value_as_json();
+
         match self.op {
-            FilterOp::Eq => coerced_eq(field_val, &self.value),
-            FilterOp::Ne => !coerced_eq(field_val, &self.value),
+            FilterOp::Eq => coerced_eq(field_val, &cmp_val),
+            FilterOp::Ne => !coerced_eq(field_val, &cmp_val),
             FilterOp::Gt => {
-                compare_json_values(Some(field_val), Some(&self.value))
+                compare_json_values(Some(field_val), Some(&cmp_val))
                     == std::cmp::Ordering::Greater
             }
             FilterOp::Gte => {
-                let cmp = compare_json_values(Some(field_val), Some(&self.value));
+                let cmp = compare_json_values(Some(field_val), Some(&cmp_val));
                 cmp == std::cmp::Ordering::Greater || cmp == std::cmp::Ordering::Equal
             }
             FilterOp::Lt => {
-                compare_json_values(Some(field_val), Some(&self.value)) == std::cmp::Ordering::Less
+                compare_json_values(Some(field_val), Some(&cmp_val)) == std::cmp::Ordering::Less
             }
             FilterOp::Lte => {
-                let cmp = compare_json_values(Some(field_val), Some(&self.value));
+                let cmp = compare_json_values(Some(field_val), Some(&cmp_val));
                 cmp == std::cmp::Ordering::Less || cmp == std::cmp::Ordering::Equal
             }
             FilterOp::Contains => {
-                if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
+                if let (Some(s), Some(pattern)) = (field_val.as_str(), cmp_val.as_str()) {
                     s.contains(pattern)
                 } else {
                     false
                 }
             }
             FilterOp::Like => {
-                if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
+                if let (Some(s), Some(pattern)) = (field_val.as_str(), cmp_val.as_str()) {
                     sql_like_match(s, pattern, false)
                 } else {
                     false
                 }
             }
             FilterOp::NotLike => {
-                if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
+                if let (Some(s), Some(pattern)) = (field_val.as_str(), cmp_val.as_str()) {
                     !sql_like_match(s, pattern, false)
                 } else {
                     false
                 }
             }
             FilterOp::Ilike => {
-                if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
+                if let (Some(s), Some(pattern)) = (field_val.as_str(), cmp_val.as_str()) {
                     sql_like_match(s, pattern, true)
                 } else {
                     false
                 }
             }
             FilterOp::NotIlike => {
-                if let (Some(s), Some(pattern)) = (field_val.as_str(), self.value.as_str()) {
+                if let (Some(s), Some(pattern)) = (field_val.as_str(), cmp_val.as_str()) {
                     !sql_like_match(s, pattern, true)
                 } else {
                     false
                 }
             }
             FilterOp::In => {
-                if let Some(arr) = self.value.as_array() {
+                if let Some(arr) = cmp_val.as_array() {
                     arr.iter().any(|v| field_val == v)
                 } else {
                     false
                 }
             }
             FilterOp::NotIn => {
-                if let Some(arr) = self.value.as_array() {
+                if let Some(arr) = cmp_val.as_array() {
                     !arr.iter().any(|v| field_val == v)
                 } else {
                     true
@@ -421,7 +431,7 @@ mod tests {
         let filter = ScanFilter {
             field: "age".into(),
             op: "eq".into(),
-            value: json!("25"),
+            value: nodedb_types::Value::String("25".into()),
             clauses: vec![],
         };
         assert!(filter.matches(&doc));
@@ -433,7 +443,7 @@ mod tests {
         let filter = ScanFilter {
             field: "score".into(),
             op: "gt".into(),
-            value: json!(80),
+            value: nodedb_types::Value::Integer(80),
             clauses: vec![],
         };
         assert!(filter.matches(&doc));
@@ -445,7 +455,7 @@ mod tests {
         let filter = ScanFilter {
             field: "price".into(),
             op: "lt".into(),
-            value: json!("20"),
+            value: nodedb_types::Value::String("20".into()),
             clauses: vec![],
         };
         assert!(filter.matches(&doc));
@@ -457,7 +467,7 @@ mod tests {
         let filter = ScanFilter {
             field: "status".into(),
             op: "ne".into(),
-            value: json!("1"),
+            value: nodedb_types::Value::String("1".into()),
             clauses: vec![],
         };
         // 1 == "1" after coercion, so ne should be false.

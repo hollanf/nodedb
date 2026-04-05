@@ -5,6 +5,7 @@
 
 use nodedb::bridge::envelope::PhysicalPlan;
 use nodedb::bridge::physical_plan::TimeseriesOp;
+use nodedb_types;
 
 use crate::helpers::*;
 
@@ -286,7 +287,7 @@ fn where_predicate_filters_count() {
         vec![nodedb::bridge::scan_filter::ScanFilter {
             field: "qtype".into(),
             op: "eq".into(),
-            value: serde_json::json!("A"),
+            value: nodedb_types::Value::String("A".into()),
             clauses: vec![],
         }],
     );

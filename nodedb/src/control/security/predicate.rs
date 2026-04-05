@@ -232,7 +232,7 @@ mod tests {
         assert_eq!(filters.len(), 1);
         assert_eq!(filters[0].field, "user_id");
         assert_eq!(filters[0].op, crate::bridge::scan_filter::FilterOp::Eq);
-        assert_eq!(filters[0].value, serde_json::json!("123"));
+        assert_eq!(filters[0].value, nodedb_types::Value::String("123".into()));
     }
 
     #[test]
@@ -244,7 +244,10 @@ mod tests {
         };
         let auth = make_auth();
         let filters = substitute_to_scan_filters(&pred, &auth).unwrap();
-        assert_eq!(filters[0].value, serde_json::json!("active"));
+        assert_eq!(
+            filters[0].value,
+            nodedb_types::Value::String("active".into())
+        );
     }
 
     #[test]
@@ -274,7 +277,7 @@ mod tests {
             filters[0].op,
             crate::bridge::scan_filter::FilterOp::Contains
         );
-        assert_eq!(filters[0].value, serde_json::json!("123"));
+        assert_eq!(filters[0].value, nodedb_types::Value::String("123".into()));
     }
 
     #[test]

@@ -28,7 +28,7 @@ pub fn substitute_to_scan_filters(
         RlsPredicate::AlwaysTrue => Some(vec![ScanFilter {
             field: String::new(),
             op: "match_all".into(),
-            value: serde_json::Value::Null,
+            value: nodedb_types::Value::Null,
             clauses: Vec::new(),
         }]),
 
@@ -37,7 +37,7 @@ pub fn substitute_to_scan_filters(
             Some(vec![ScanFilter {
                 field: "__rls_deny__".into(),
                 op: "is_not_null".into(),
-                value: serde_json::Value::Null,
+                value: nodedb_types::Value::Null,
                 clauses: Vec::new(),
             }])
         }
@@ -56,7 +56,7 @@ pub fn substitute_to_scan_filters(
             Some(vec![ScanFilter {
                 field: field.clone(),
                 op: op.as_filter_op().into(),
-                value: resolved,
+                value: nodedb_types::Value::from(resolved),
                 clauses: Vec::new(),
             }])
         }
@@ -89,7 +89,7 @@ pub fn substitute_to_scan_filters(
                 return Some(vec![ScanFilter {
                     field: "__rls_deny__".into(),
                     op: "is_not_null".into(),
-                    value: serde_json::Value::Null,
+                    value: nodedb_types::Value::Null,
                     clauses: Vec::new(),
                 }]);
             }
@@ -101,7 +101,7 @@ pub fn substitute_to_scan_filters(
             Some(vec![ScanFilter {
                 field: String::new(),
                 op: "or".into(),
-                value: serde_json::Value::Null,
+                value: nodedb_types::Value::Null,
                 clauses: clause_groups,
             }])
         }
@@ -171,14 +171,14 @@ fn substitute_contains(
                     Some(vec![ScanFilter {
                         field: String::new(),
                         op: "match_all".into(),
-                        value: serde_json::Value::Null,
+                        value: nodedb_types::Value::Null,
                         clauses: Vec::new(),
                     }])
                 } else {
                     Some(vec![ScanFilter {
                         field: "__rls_deny__".into(),
                         op: "is_not_null".into(),
-                        value: serde_json::Value::Null,
+                        value: nodedb_types::Value::Null,
                         clauses: Vec::new(),
                     }])
                 }
@@ -195,14 +195,14 @@ fn substitute_contains(
                     Some(vec![ScanFilter {
                         field: String::new(),
                         op: "match_all".into(),
-                        value: serde_json::Value::Null,
+                        value: nodedb_types::Value::Null,
                         clauses: Vec::new(),
                     }])
                 } else {
                     Some(vec![ScanFilter {
                         field: "__rls_deny__".into(),
                         op: "is_not_null".into(),
-                        value: serde_json::Value::Null,
+                        value: nodedb_types::Value::Null,
                         clauses: Vec::new(),
                     }])
                 }
@@ -217,7 +217,7 @@ fn substitute_contains(
             Some(vec![ScanFilter {
                 field: doc_field.clone(),
                 op: "contains".into(),
-                value: auth_val,
+                value: nodedb_types::Value::from(auth_val),
                 clauses: Vec::new(),
             }])
         }
@@ -228,7 +228,7 @@ fn substitute_contains(
             Some(vec![ScanFilter {
                 field: doc_field.clone(),
                 op: "contains".into(),
-                value: auth_val,
+                value: nodedb_types::Value::from(auth_val),
                 clauses: Vec::new(),
             }])
         }
@@ -238,7 +238,7 @@ fn substitute_contains(
             Some(vec![ScanFilter {
                 field: doc_field.clone(),
                 op: "contains".into(),
-                value: lit.clone(),
+                value: nodedb_types::Value::from(lit.clone()),
                 clauses: Vec::new(),
             }])
         }
@@ -260,7 +260,7 @@ fn substitute_intersects(
             Some(vec![ScanFilter {
                 field: doc_field.clone(),
                 op: "any_in".into(),
-                value: auth_val,
+                value: nodedb_types::Value::from(auth_val),
                 clauses: Vec::new(),
             }])
         }
@@ -271,7 +271,7 @@ fn substitute_intersects(
             Some(vec![ScanFilter {
                 field: doc_field.clone(),
                 op: "any_in".into(),
-                value: auth_val,
+                value: nodedb_types::Value::from(auth_val),
                 clauses: Vec::new(),
             }])
         }
@@ -280,7 +280,7 @@ fn substitute_intersects(
             Some(vec![ScanFilter {
                 field: doc_field.clone(),
                 op: "any_in".into(),
-                value: auth_val,
+                value: nodedb_types::Value::from(auth_val),
                 clauses: Vec::new(),
             }])
         }
@@ -300,14 +300,14 @@ fn substitute_intersects(
                 Some(vec![ScanFilter {
                     field: String::new(),
                     op: "match_all".into(),
-                    value: serde_json::Value::Null,
+                    value: nodedb_types::Value::Null,
                     clauses: Vec::new(),
                 }])
             } else {
                 Some(vec![ScanFilter {
                     field: "__rls_deny__".into(),
                     op: "is_not_null".into(),
-                    value: serde_json::Value::Null,
+                    value: nodedb_types::Value::Null,
                     clauses: Vec::new(),
                 }])
             }
@@ -330,14 +330,14 @@ fn substitute_intersects(
                 Some(vec![ScanFilter {
                     field: String::new(),
                     op: "match_all".into(),
-                    value: serde_json::Value::Null,
+                    value: nodedb_types::Value::Null,
                     clauses: Vec::new(),
                 }])
             } else {
                 Some(vec![ScanFilter {
                     field: "__rls_deny__".into(),
                     op: "is_not_null".into(),
-                    value: serde_json::Value::Null,
+                    value: nodedb_types::Value::Null,
                     clauses: Vec::new(),
                 }])
             }

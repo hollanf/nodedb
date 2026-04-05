@@ -456,7 +456,7 @@ mod tests {
         let f = ScanFilter {
             field: "value".into(),
             op: "gt".into(),
-            value: serde_json::json!(200.0),
+            value: nodedb_types::Value::Float(200.0),
             clauses: vec![],
         };
         let mask = eval_filters_dense(&mt, &[f], 30).unwrap();
@@ -471,7 +471,7 @@ mod tests {
         let f = ScanFilter {
             field: "host".into(),
             op: "eq".into(),
-            value: serde_json::json!("db-1"),
+            value: nodedb_types::Value::String("db-1".into()),
             clauses: vec![],
         };
         let mask = eval_filters_sparse(&mt, &[f], &indices).unwrap();
@@ -486,7 +486,7 @@ mod tests {
         let f = ScanFilter {
             field: "host".into(),
             op: "eq".into(),
-            value: serde_json::json!("nonexistent"),
+            value: nodedb_types::Value::String("nonexistent".into()),
             clauses: vec![],
         };
         let mask = eval_filters_sparse(&mt, &[f], &indices).unwrap();
@@ -502,13 +502,13 @@ mod tests {
             ScanFilter {
                 field: "value".into(),
                 op: "gte".into(),
-                value: serde_json::json!(100.0),
+                value: nodedb_types::Value::Float(100.0),
                 clauses: vec![],
             },
             ScanFilter {
                 field: "host".into(),
                 op: "eq".into(),
-                value: serde_json::json!("web-1"),
+                value: nodedb_types::Value::String("web-1".into()),
                 clauses: vec![],
             },
         ];
@@ -523,11 +523,11 @@ mod tests {
         let f = ScanFilter {
             field: "value".into(),
             op: "or".into(),
-            value: serde_json::Value::Null,
+            value: nodedb_types::Value::Null,
             clauses: vec![vec![ScanFilter {
                 field: "value".into(),
                 op: "gt".into(),
-                value: serde_json::json!(100.0),
+                value: nodedb_types::Value::Float(100.0),
                 clauses: vec![],
             }]],
         };
@@ -570,7 +570,7 @@ mod tests {
         let f = ScanFilter {
             field: "value".into(),
             op: "gt".into(),
-            value: serde_json::json!(500.0),
+            value: nodedb_types::Value::Float(500.0),
             clauses: vec![],
         };
         let mask = eval_filters_sparse(&src, &[f], &indices).unwrap();
@@ -581,7 +581,7 @@ mod tests {
         let f2 = ScanFilter {
             field: "host".into(),
             op: "eq".into(),
-            value: serde_json::json!("alpha"),
+            value: nodedb_types::Value::String("alpha".into()),
             clauses: vec![],
         };
         let mask2 = eval_filters_sparse(&src, &[f2], &indices).unwrap();

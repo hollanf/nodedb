@@ -40,7 +40,7 @@ fn parse_single_predicate(clause: &str) -> Option<ScanFilter> {
             return Some(ScanFilter {
                 field,
                 op: super::FilterOp::from_str(op),
-                value: parse_predicate_value(raw_value),
+                value: nodedb_types::Value::from(parse_predicate_value(raw_value)),
                 clauses: Vec::new(),
             });
         }
@@ -53,7 +53,7 @@ fn parse_single_predicate(clause: &str) -> Option<ScanFilter> {
         return Some(ScanFilter {
             field,
             op: super::FilterOp::Like,
-            value: parse_predicate_value(raw_value),
+            value: nodedb_types::Value::from(parse_predicate_value(raw_value)),
             clauses: Vec::new(),
         });
     }
@@ -63,7 +63,7 @@ fn parse_single_predicate(clause: &str) -> Option<ScanFilter> {
         return Some(ScanFilter {
             field,
             op: super::FilterOp::Ilike,
-            value: parse_predicate_value(raw_value),
+            value: nodedb_types::Value::from(parse_predicate_value(raw_value)),
             clauses: Vec::new(),
         });
     }

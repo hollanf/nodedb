@@ -345,10 +345,10 @@ fn inject_permission_tree_for_plan(
     let in_filter = crate::bridge::scan_filter::ScanFilter {
         field: def.resource_column.clone(),
         op: FilterOp::In,
-        value: serde_json::Value::Array(
+        value: nodedb_types::Value::Array(
             accessible
                 .into_iter()
-                .map(serde_json::Value::String)
+                .map(nodedb_types::Value::String)
                 .collect(),
         ),
         clauses: Vec::new(),

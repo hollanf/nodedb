@@ -535,7 +535,7 @@ mod tests {
         let filter = crate::bridge::scan_filter::ScanFilter {
             field: "status".into(),
             op: "eq".into(),
-            value: serde_json::json!("active"),
+            value: nodedb_types::Value::String("active".into()),
             clauses: Vec::new(),
         };
         let predicate = zerompk::to_msgpack_vec(&vec![filter]).unwrap();
