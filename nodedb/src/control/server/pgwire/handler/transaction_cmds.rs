@@ -91,7 +91,7 @@ impl NodeDbPgHandler {
             }
 
             if !sub_records.is_empty() {
-                let tx_payload = rmp_serde::to_vec_named(&sub_records).map_err(|e| {
+                let tx_payload = zerompk::to_msgpack_vec(&sub_records).map_err(|e| {
                     PgWireError::UserError(Box::new(ErrorInfo::new(
                         "ERROR".to_owned(),
                         "XX000".to_owned(),

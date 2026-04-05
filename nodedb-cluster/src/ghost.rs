@@ -2,7 +2,14 @@ use std::collections::HashMap;
 use tracing::{debug, info};
 
 /// Serializable ghost stub for persistence.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 struct PersistedGhostStub {
     target_shard: u16,
     refcount: u32,
@@ -234,7 +241,7 @@ impl GhostTable {
                 )
             })
             .collect();
-        match rmp_serde::to_vec(&persisted) {
+        match zerompk::to_msgpack_vec(&persisted) {
             Ok(bytes) => bytes,
             Err(e) => {
                 tracing::error!(error = %e, "ghost table serialization failed — state will not persist");
@@ -247,7 +254,7 @@ impl GhostTable {
     ///
     /// Called on startup to recover ghost state from the cluster catalog.
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
-        let persisted: HashMap<String, PersistedGhostStub> = rmp_serde::from_slice(data).ok()?;
+        let persisted: HashMap<String, PersistedGhostStub> = zerompk::from_msgpack(data).ok()?;
         let stubs: HashMap<String, GhostStub> = persisted
             .into_iter()
             .map(|(k, v)| {

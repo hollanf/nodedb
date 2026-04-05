@@ -47,7 +47,7 @@ impl CoreLoop {
                     seal_threshold: 0,
                     mmap_segment_count: 0,
                 };
-                return match rmp_serde::to_vec_named(&stats) {
+                return match zerompk::to_msgpack_vec(&stats) {
                     Ok(bytes) => self.response_with_payload(task, bytes),
                     Err(e) => self.response_error(
                         task,
@@ -61,7 +61,7 @@ impl CoreLoop {
         };
 
         let stats = coll.stats();
-        match rmp_serde::to_vec_named(&stats) {
+        match zerompk::to_msgpack_vec(&stats) {
             Ok(bytes) => self.response_with_payload(task, bytes),
             Err(e) => self.response_error(
                 task,

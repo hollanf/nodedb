@@ -329,7 +329,7 @@ pub fn broadcast_notify_to_cluster(
         lsn: event.lsn.as_u64(),
     };
 
-    let payload = match rmp_serde::to_vec(&msg) {
+    let payload = match zerompk::to_msgpack_vec(&msg) {
         Ok(p) => p,
         Err(e) => {
             warn!(error = %e, "failed to serialize NotifyBroadcast");

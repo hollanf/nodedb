@@ -43,7 +43,7 @@ impl CoreLoop {
     /// payload with compaction statistics.
     pub(in crate::data::executor) fn execute_compact(&mut self, task: &ExecutionTask) -> Response {
         let result = self.run_compaction(true);
-        let payload = match rmp_serde::to_vec_named(&result) {
+        let payload = match zerompk::to_msgpack_vec(&result) {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!(error = %e, "failed to encode compaction stats");
@@ -311,7 +311,15 @@ impl CoreLoop {
 }
 
 /// Statistics from a compaction cycle.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct CompactionStats {
     /// Number of tombstoned vectors removed across all collections.
     pub vectors_compacted: usize,

@@ -8,9 +8,10 @@
 //! Records are serialized as MessagePack for compact wire representation.
 
 use serde::{Deserialize, Serialize};
+use zerompk::{FromMessagePack, ToMessagePack};
 
 /// A WAL record for a columnar collection operation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub enum ColumnarWalRecord {
     /// A row was inserted into the memtable.
     ///
@@ -73,13 +74,13 @@ impl ColumnarWalRecord {
 
     /// Serialize the record to bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>, crate::error::ColumnarError> {
-        rmp_serde::to_vec_named(self)
+        zerompk::to_msgpack_vec(self)
             .map_err(|e| crate::error::ColumnarError::Serialization(e.to_string()))
     }
 
     /// Deserialize a record from bytes.
     pub fn from_bytes(data: &[u8]) -> Result<Self, crate::error::ColumnarError> {
-        rmp_serde::from_slice(data)
+        zerompk::from_msgpack(data)
             .map_err(|e| crate::error::ColumnarError::Serialization(e.to_string()))
     }
 }

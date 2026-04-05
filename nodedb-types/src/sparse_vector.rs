@@ -9,7 +9,15 @@ use serde::{Deserialize, Serialize};
 ///
 /// Entries are sorted by dimension index for efficient intersection during
 /// dot-product scoring. Dimension indices are non-negative, weights are finite.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct SparseVector {
     /// Sorted by dimension index (ascending). No duplicate dimensions.
     entries: Vec<(u32, f32)>,
@@ -194,8 +202,8 @@ mod tests {
     #[test]
     fn serde_roundtrip() {
         let sv = SparseVector::from_entries(vec![(10, 0.5), (20, 0.8)]).unwrap();
-        let bytes = rmp_serde::to_vec_named(&sv).unwrap();
-        let restored: SparseVector = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&sv).unwrap();
+        let restored: SparseVector = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(sv, restored);
     }
 }

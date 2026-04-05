@@ -1,7 +1,14 @@
 //! Type definitions for user-defined function catalog storage.
 
 /// Parameter definition for a user-defined function.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct FunctionParam {
     pub name: String,
     /// SQL type name: "TEXT", "INT", "FLOAT", "BOOLEAN", "BIGINT", "DOUBLE", etc.
@@ -22,12 +29,25 @@ pub struct FunctionParam {
 /// by default, or explicitly overridden). It is stored in the catalog and used both
 /// by the `ScalarUDF` registration (DataFusion respects it for constant folding) and
 /// by the inlining `AnalyzerRule` (see `inline_rewrite.rs` for details).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum FunctionVolatility {
     #[default]
-    Immutable,
-    Stable,
-    Volatile,
+    Immutable = 0,
+    Stable = 1,
+    Volatile = 2,
 }
 
 impl FunctionVolatility {
@@ -55,21 +75,47 @@ impl FunctionVolatility {
 /// - `Invoker` (default): body executes with the **caller's** credentials.
 ///   Subqueries are subject to the caller's GRANT/DENY and RLS policies.
 /// - `Definer`: body executes with the **function owner's** credentials.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum FunctionSecurity {
     #[default]
-    Invoker,
-    Definer,
+    Invoker = 0,
+    Definer = 1,
 }
 
 /// Function implementation language.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum FunctionLanguage {
     /// SQL expression or procedural SQL (default).
     #[default]
-    Sql,
+    Sql = 0,
     /// WebAssembly module (Tier 5).
-    Wasm,
+    Wasm = 1,
 }
 
 impl FunctionLanguage {
@@ -82,7 +128,14 @@ impl FunctionLanguage {
 }
 
 /// Serializable user-defined function record for redb storage.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct StoredFunction {
     pub tenant_id: u32,
     pub name: String,

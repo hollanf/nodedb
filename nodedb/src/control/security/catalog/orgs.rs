@@ -3,7 +3,14 @@
 use super::types::{ORG_MEMBERS, ORGS, SystemCatalog, catalog_err};
 
 /// Serializable organization record for redb storage.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct StoredOrg {
     pub org_id: String,
     pub name: String,
@@ -17,7 +24,14 @@ pub struct StoredOrg {
 }
 
 /// Serializable org membership record for redb storage.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct StoredOrgMember {
     pub auth_user_id: String,
     pub org_id: String,
@@ -32,7 +46,7 @@ fn default_active() -> String {
 
 impl SystemCatalog {
     pub fn put_org(&self, org: &StoredOrg) -> crate::Result<()> {
-        let bytes = rmp_serde::to_vec(org).map_err(|e| catalog_err("serialize org", e))?;
+        let bytes = zerompk::to_msgpack_vec(org).map_err(|e| catalog_err("serialize org", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -61,7 +75,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("open orgs", e))?;
         match table.get(org_id).map_err(|e| catalog_err("get org", e))? {
             Some(val) => {
-                let org: StoredOrg = rmp_serde::from_slice(val.value())
+                let org: StoredOrg = zerompk::from_msgpack(val.value())
                     .map_err(|e| catalog_err("deserialize org", e))?;
                 Ok(Some(org))
             }
@@ -103,7 +117,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("range orgs", e))?
         {
             let (_, val) = item.map_err(|e| catalog_err("read org", e))?;
-            if let Ok(org) = rmp_serde::from_slice::<StoredOrg>(val.value()) {
+            if let Ok(org) = zerompk::from_msgpack::<StoredOrg>(val.value()) {
                 orgs.push(org);
             }
         }
@@ -118,7 +132,7 @@ impl SystemCatalog {
 
     pub fn put_org_member(&self, member: &StoredOrgMember) -> crate::Result<()> {
         let bytes =
-            rmp_serde::to_vec(member).map_err(|e| catalog_err("serialize org member", e))?;
+            zerompk::to_msgpack_vec(member).map_err(|e| catalog_err("serialize org member", e))?;
         let key = Self::member_key(&member.org_id, &member.auth_user_id);
         let write_txn = self
             .db
@@ -175,7 +189,7 @@ impl SystemCatalog {
         {
             let (key, val) = item.map_err(|e| catalog_err("read member", e))?;
             if key.value().starts_with(&prefix)
-                && let Ok(m) = rmp_serde::from_slice::<StoredOrgMember>(val.value())
+                && let Ok(m) = zerompk::from_msgpack::<StoredOrgMember>(val.value())
             {
                 members.push(m);
             }
@@ -199,7 +213,7 @@ impl SystemCatalog {
         {
             let (key, val) = item.map_err(|e| catalog_err("read member", e))?;
             if key.value().ends_with(&suffix)
-                && let Ok(m) = rmp_serde::from_slice::<StoredOrgMember>(val.value())
+                && let Ok(m) = zerompk::from_msgpack::<StoredOrgMember>(val.value())
             {
                 memberships.push(m);
             }

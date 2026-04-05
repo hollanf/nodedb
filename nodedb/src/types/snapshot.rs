@@ -8,7 +8,9 @@
 /// of `(key, serialized_value)` pairs. This uniform format allows
 /// engines to evolve their internal storage without breaking the
 /// snapshot format (the key/value semantics are engine-defined).
-#[derive(serde::Serialize, serde::Deserialize, Default)]
+#[derive(
+    serde::Serialize, serde::Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack, Default,
+)]
 pub struct TenantDataSnapshot {
     /// Sparse engine documents: `[("{tid}:{collection}:{doc_id}", value_bytes), ...]`
     pub documents: Vec<(String, Vec<u8>)>,

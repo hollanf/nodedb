@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use crate::event::cdc::stream_def::RetentionConfig;
 
 /// Persistent definition of a durable topic. Stored in the system catalog.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct TopicDef {
     /// Tenant that owns this topic.
     pub tenant_id: u32,

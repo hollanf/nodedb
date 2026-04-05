@@ -35,7 +35,14 @@ fn default_ivf_nprobe() -> usize {
 ///
 /// Mirrors the write variants of [`PhysicalPlan`] but uses only types that
 /// are trivially serializable (no `Arc`, no `Instant`).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum ReplicatedWrite {
     PointPut {
         collection: String,
@@ -158,7 +165,14 @@ pub enum ReplicatedWrite {
 }
 
 /// Metadata carried alongside the write for routing on the receiving node.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct ReplicatedEntry {
     pub tenant_id: u32,
     pub vshard_id: u16,
@@ -168,12 +182,12 @@ pub struct ReplicatedEntry {
 impl ReplicatedEntry {
     /// Serialize to bytes for Raft log entry data.
     pub fn to_bytes(&self) -> Vec<u8> {
-        rmp_serde::to_vec(self).expect("ReplicatedEntry serialization cannot fail")
+        zerompk::to_msgpack_vec(self).expect("ReplicatedEntry serialization cannot fail")
     }
 
     /// Deserialize from Raft log entry data bytes.
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
-        rmp_serde::from_slice(data).ok()
+        zerompk::from_msgpack(data).ok()
     }
 }
 

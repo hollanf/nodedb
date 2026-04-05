@@ -21,7 +21,9 @@ use tracing::{debug, info};
 pub const METADATA_GROUP_ID: u64 = 0;
 
 /// Types of metadata entries replicated via the metadata Raft group.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub enum MetadataEntry {
     /// Routing table update (vShard assignment change).
     RoutingUpdate {
@@ -47,14 +49,18 @@ pub enum MetadataEntry {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub enum DdlAction {
     Create { fields: Vec<(String, String)> },
     Drop,
     AlterAddField { name: String, field_type: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub enum SecurityChangeType {
     CreateUser { username: String },
     DropUser { username: String },
@@ -62,7 +68,9 @@ pub enum SecurityChangeType {
     RevokePermission { role: String, resource: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub enum MembershipAction {
     Join { addr: String },
     Leave,
@@ -152,14 +160,14 @@ impl MetadataCache {
 
     /// Serialize a metadata entry for Raft proposal.
     pub fn serialize_entry(entry: &MetadataEntry) -> crate::Result<Vec<u8>> {
-        rmp_serde::to_vec_named(entry).map_err(|e| crate::ClusterError::Codec {
+        zerompk::to_msgpack_vec(entry).map_err(|e| crate::ClusterError::Codec {
             detail: format!("metadata serialize: {e}"),
         })
     }
 
     /// Deserialize a metadata entry from Raft log data.
     pub fn deserialize_entry(data: &[u8]) -> crate::Result<MetadataEntry> {
-        rmp_serde::from_slice(data).map_err(|e| crate::ClusterError::Codec {
+        zerompk::from_msgpack(data).map_err(|e| crate::ClusterError::Codec {
             detail: format!("metadata deserialize: {e}"),
         })
     }

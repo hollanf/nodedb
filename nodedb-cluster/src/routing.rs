@@ -15,7 +15,14 @@ pub const VSHARD_COUNT: u16 = 1024;
 /// - A shard migration completes (Phase 3 atomic cut-over)
 /// - A Raft group membership changes
 /// - A node joins or decommissions
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct RoutingTable {
     /// vshard_id → raft_group_id.
     vshard_to_group: Vec<u64>,
@@ -23,7 +30,14 @@ pub struct RoutingTable {
     group_members: HashMap<u64, GroupInfo>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct GroupInfo {
     /// Current leader node ID (0 = no leader known).
     pub leader: u64,

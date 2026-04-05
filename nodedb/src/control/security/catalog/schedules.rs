@@ -9,7 +9,8 @@ impl SystemCatalog {
     /// Key format: `"{tenant_id}:{schedule_name}"`.
     pub fn put_schedule(&self, def: &ScheduleDef) -> crate::Result<()> {
         let key = schedule_key(def.tenant_id, &def.name);
-        let bytes = rmp_serde::to_vec(def).map_err(|e| catalog_err("serialize schedule", e))?;
+        let bytes =
+            zerompk::to_msgpack_vec(def).map_err(|e| catalog_err("serialize schedule", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -61,7 +62,7 @@ impl SystemCatalog {
             .range::<&str>(..)
             .map_err(|e| catalog_err("range schedules", e))?;
         while let Some(Ok((_key, value))) = range.next() {
-            if let Ok(def) = rmp_serde::from_slice::<ScheduleDef>(value.value()) {
+            if let Ok(def) = zerompk::from_msgpack::<ScheduleDef>(value.value()) {
                 schedules.push(def);
             }
         }

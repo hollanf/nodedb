@@ -152,7 +152,14 @@ pub fn owner_key(object_type: &str, tenant_id: u32, object_name: &str) -> String
 // ── Checkpoint ────────────────────────────────────────────────────────
 
 /// A named checkpoint: captures a version vector at a point in time.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct CheckpointRecord {
     pub tenant_id: u32,
     pub collection: String,
@@ -283,7 +290,14 @@ impl StoredCollection {
 // ── Field + event definitions ─────────────────────────────────────────
 
 /// Extended field definition supporting DEFAULT, VALUE, ASSERT, and TYPE constraints.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct FieldDefinition {
     pub name: String,
     /// Type constraint: "int", "float", "string", etc. Empty = any.
@@ -314,7 +328,14 @@ pub struct FieldDefinition {
 }
 
 /// Table event/trigger definition.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct EventDefinition {
     pub name: String,
     pub collection: String,
@@ -323,7 +344,14 @@ pub struct EventDefinition {
 }
 
 /// A materialized view: strict → columnar CDC bridge.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct StoredMaterializedView {
     pub tenant_id: u32,
     pub name: String,
@@ -342,7 +370,14 @@ fn default_refresh_mode() -> String {
 // ── Constraint types ──────────────────────────────────────────────────
 
 /// Double-entry balance constraint.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct BalancedConstraintDef {
     pub group_key_column: String,
     pub debit_value: String,
@@ -352,7 +387,14 @@ pub struct BalancedConstraintDef {
 }
 
 /// Period lock: binds a period column to a reference table for status checks.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct PeriodLockDef {
     pub period_column: String,
     pub ref_table: String,
@@ -362,7 +404,14 @@ pub struct PeriodLockDef {
 }
 
 /// A legal hold tag preventing deletion.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct LegalHold {
     pub tag: String,
     pub created_at: u64,
@@ -370,7 +419,14 @@ pub struct LegalHold {
 }
 
 /// State transition constraint: column value can only change along declared paths.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct StateTransitionDef {
     pub name: String,
     pub column: String,
@@ -378,7 +434,14 @@ pub struct StateTransitionDef {
 }
 
 /// A single allowed state transition, optionally guarded by a role.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct TransitionRule {
     pub from: String,
     pub to: String,

@@ -145,6 +145,7 @@ sonic-rs = "0.5"
 # MessagePack
 rmp-serde = "1"
 rmpv = "1"
+zerompk = { version = "0.3", features = ["std", "derive"] }
 
 # Bitmap
 roaring = "0.11"

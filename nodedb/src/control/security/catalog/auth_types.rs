@@ -1,7 +1,9 @@
 //! Authentication and authorization type definitions for redb catalog storage.
 
 /// Serializable user record for redb storage.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(
+    serde::Serialize, serde::Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct StoredUser {
     pub user_id: u64,
     pub username: String,
@@ -30,7 +32,14 @@ pub struct StoredUser {
 }
 
 /// Serializable API key record for redb storage.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct StoredApiKey {
     /// Unique key identifier (used as prefix in the token).
     pub key_id: String,
@@ -53,7 +62,14 @@ pub struct StoredApiKey {
 }
 
 /// Serializable tenant record for redb storage.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct StoredTenant {
     pub tenant_id: u32,
     pub name: String,
@@ -62,7 +78,14 @@ pub struct StoredTenant {
 }
 
 /// Serializable audit entry for redb storage.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct StoredAuditEntry {
     pub seq: u64,
     pub timestamp_us: u64,
@@ -76,7 +99,14 @@ pub struct StoredAuditEntry {
 }
 
 /// Serializable custom role for redb storage.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct StoredRole {
     pub name: String,
     pub tenant_id: u32,
@@ -86,7 +116,14 @@ pub struct StoredRole {
 }
 
 /// Serializable permission grant for redb storage.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct StoredPermission {
     /// What the grant applies to: "cluster", "tenant:1", "collection:1:users"
     pub target: String,
@@ -99,7 +136,14 @@ pub struct StoredPermission {
 }
 
 /// Serializable ownership record.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Debug,
+    Clone,
+)]
 pub struct StoredOwner {
     /// "collection", "index"
     pub object_type: String,
@@ -110,7 +154,14 @@ pub struct StoredOwner {
 }
 
 /// Serializable blacklist entry for redb storage.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct StoredBlacklistEntry {
     /// Blacklist entry key: `"user:{user_id}"` or `"ip:{addr_or_cidr}"`.
     pub key: String,
@@ -127,7 +178,14 @@ pub struct StoredBlacklistEntry {
 }
 
 /// Serializable JIT-provisioned auth user record for redb storage.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct StoredAuthUser {
     /// Unique identifier (from JWT `sub` or `user_id` claim).
     pub id: String,

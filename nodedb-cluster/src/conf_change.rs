@@ -12,20 +12,39 @@
 pub const CONF_CHANGE_PREFIX: u8 = 0xFF;
 
 /// Type of configuration change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum ConfChangeType {
     /// Add a voting member to the Raft group.
-    AddNode,
+    AddNode = 0,
     /// Remove a voting member from the Raft group.
-    RemoveNode,
+    RemoveNode = 1,
     /// Add a non-voting learner (catches up before becoming voter).
-    AddLearner,
+    AddLearner = 2,
     /// Promote a learner to a full voting member.
-    PromoteLearner,
+    PromoteLearner = 3,
 }
 
 /// A configuration change for a Raft group.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct ConfChange {
     pub change_type: ConfChangeType,
     /// The node being added or removed.
@@ -36,7 +55,7 @@ impl ConfChange {
     /// Serialize to bytes for a Raft log entry (prefixed with CONF_CHANGE_PREFIX).
     pub fn to_entry_data(&self) -> Vec<u8> {
         let mut data = vec![CONF_CHANGE_PREFIX];
-        let payload = rmp_serde::to_vec(self).expect("ConfChange serialization cannot fail");
+        let payload = zerompk::to_msgpack_vec(self).expect("ConfChange serialization cannot fail");
         data.extend_from_slice(&payload);
         data
     }
@@ -48,7 +67,7 @@ impl ConfChange {
         if data.first() != Some(&CONF_CHANGE_PREFIX) {
             return None;
         }
-        rmp_serde::from_slice(&data[1..]).ok()
+        zerompk::from_msgpack(&data[1..]).ok()
     }
 
     /// Check if a log entry's data is a configuration change (without full deserialization).

@@ -9,7 +9,8 @@ impl SystemCatalog {
     /// Key format: `"{tenant_id}:{trigger_name}"`.
     pub fn put_trigger(&self, trigger: &StoredTrigger) -> crate::Result<()> {
         let key = trigger_key(trigger.tenant_id, &trigger.name);
-        let bytes = rmp_serde::to_vec(trigger).map_err(|e| catalog_err("serialize trigger", e))?;
+        let bytes =
+            zerompk::to_msgpack_vec(trigger).map_err(|e| catalog_err("serialize trigger", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -37,7 +38,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("open triggers", e))?;
         match table.get(key.as_str()) {
             Ok(Some(value)) => {
-                let t: StoredTrigger = rmp_serde::from_slice(value.value())
+                let t: StoredTrigger = zerompk::from_msgpack(value.value())
                     .map_err(|e| catalog_err("deser trigger", e))?;
                 Ok(Some(t))
             }
@@ -84,7 +85,7 @@ impl SystemCatalog {
         {
             let (key, value) = entry.map_err(|e| catalog_err("read trigger", e))?;
             if key.value().starts_with(&prefix) {
-                let t: StoredTrigger = rmp_serde::from_slice(value.value())
+                let t: StoredTrigger = zerompk::from_msgpack(value.value())
                     .map_err(|e| catalog_err("deser trigger", e))?;
                 triggers.push(t);
             }
@@ -107,7 +108,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("range triggers", e))?
         {
             let (_, value) = entry.map_err(|e| catalog_err("read trigger", e))?;
-            let t: StoredTrigger = rmp_serde::from_slice(value.value())
+            let t: StoredTrigger = zerompk::from_msgpack(value.value())
                 .map_err(|e| catalog_err("deser trigger", e))?;
             triggers.push(t);
         }

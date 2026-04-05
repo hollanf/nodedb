@@ -66,7 +66,7 @@ impl CrossShardReceiver {
 
     /// Process a CrossShardEvent write request.
     async fn handle_write(&self, envelope: VShardEnvelope) -> Vec<u8> {
-        let request: CrossShardWriteRequest = match rmp_serde::from_slice(&envelope.payload) {
+        let request: CrossShardWriteRequest = match zerompk::from_msgpack(&envelope.payload) {
             Ok(req) => req,
             Err(e) => {
                 return self.error_response(
@@ -131,7 +131,7 @@ impl CrossShardReceiver {
     /// Deserializes the `NotifyBroadcastMsg` and delivers it to the local
     /// `ChangeStream` so LISTEN sessions on this node receive the event.
     fn handle_notify_broadcast(&self, envelope: VShardEnvelope) -> Vec<u8> {
-        let msg: super::types::NotifyBroadcastMsg = match rmp_serde::from_slice(&envelope.payload) {
+        let msg: super::types::NotifyBroadcastMsg = match zerompk::from_msgpack(&envelope.payload) {
             Ok(m) => m,
             Err(e) => {
                 return self.error_response(
@@ -199,7 +199,7 @@ impl CrossShardReceiver {
         vshard_id: u16,
         response: &CrossShardWriteResponse,
     ) -> Vec<u8> {
-        let payload = rmp_serde::to_vec(response).unwrap_or_default();
+        let payload = zerompk::to_msgpack_vec(response).unwrap_or_default();
         let env = VShardEnvelope {
             version: WIRE_VERSION,
             msg_type: VShardMessageType::CrossShardEventAck,
@@ -251,13 +251,13 @@ mod tests {
     #[test]
     fn build_response_roundtrip() {
         let resp = CrossShardWriteResponse::ok(1500);
-        let payload = rmp_serde::to_vec(&resp).unwrap();
+        let payload = zerompk::to_msgpack_vec(&resp).unwrap();
         let env = VShardEnvelope::new(VShardMessageType::CrossShardEventAck, 1, 2, 7, payload);
         let bytes = env.to_bytes();
         let decoded = VShardEnvelope::from_bytes(&bytes).unwrap();
         assert_eq!(decoded.msg_type, VShardMessageType::CrossShardEventAck);
         let decoded_resp: CrossShardWriteResponse =
-            rmp_serde::from_slice(&decoded.payload).unwrap();
+            zerompk::from_msgpack(&decoded.payload).unwrap();
         assert!(decoded_resp.success);
         assert_eq!(decoded_resp.source_lsn, 1500);
     }

@@ -54,53 +54,58 @@ pub use raw::{RawDecoder, RawEncoder};
 pub use zstd_codec::{ZstdDecoder, ZstdEncoder};
 
 use serde::{Deserialize, Serialize};
+use zerompk::{FromMessagePack, ToMessagePack};
 
 /// Codec identifier for per-column compression selection.
 ///
 /// Stored in partition schema metadata so the reader knows which decoder
 /// to use for each column file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToMessagePack, FromMessagePack,
+)]
 #[serde(rename_all = "snake_case")]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum ColumnCodec {
     /// Engine selects codec automatically based on column type and data
     /// distribution (analyzed at flush time).
-    Auto,
+    Auto = 0,
 
     // -- Cascading chains: hot/warm (lz4 terminal) --
     /// f64 metrics: ALP (decimal→int) → FastLanes → lz4.
-    AlpFastLanesLz4,
+    AlpFastLanesLz4 = 1,
     /// f64 true doubles: ALP-RD (front-bit dict) → lz4.
-    AlpRdLz4,
+    AlpRdLz4 = 2,
     /// f64/i64 complex: Pcodec → lz4.
-    PcodecLz4,
+    PcodecLz4 = 3,
     /// i64 timestamps/counters: Delta → FastLanes → lz4.
-    DeltaFastLanesLz4,
+    DeltaFastLanesLz4 = 4,
     /// i64/u32 raw integers: FastLanes → lz4.
-    FastLanesLz4,
+    FastLanesLz4 = 5,
     /// Strings/logs: FSST (substring dict) → lz4.
-    FsstLz4,
+    FsstLz4 = 6,
 
     // -- Cascading chains: cold/S3 (rANS terminal) --
     /// f64 metrics cold: ALP → FastLanes → rANS.
-    AlpFastLanesRans,
+    AlpFastLanesRans = 7,
     /// i64 cold: Delta → FastLanes → rANS.
-    DeltaFastLanesRans,
+    DeltaFastLanesRans = 8,
     /// Strings cold: FSST → rANS.
-    FsstRans,
+    FsstRans = 9,
 
     // -- Legacy single-step codecs (small partitions, backward compat) --
     /// Gorilla XOR encoding — legacy f64 codec.
-    Gorilla,
+    Gorilla = 10,
     /// DoubleDelta — legacy timestamp codec.
-    DoubleDelta,
+    DoubleDelta = 11,
     /// Delta + varint — legacy counter codec.
-    Delta,
+    Delta = 12,
     /// LZ4 block compression — for string/log columns.
-    Lz4,
+    Lz4 = 13,
     /// Zstd — for cold/archived partitions.
-    Zstd,
+    Zstd = 14,
     /// No compression — for pre-compressed or symbol columns.
-    Raw,
+    Raw = 15,
 }
 
 impl ColumnCodec {

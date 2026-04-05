@@ -299,7 +299,7 @@ impl WalManager {
         checkpoint_lsn: u64,
     ) -> crate::Result<Lsn> {
         let payload =
-            rmp_serde::to_vec(&checkpoint_lsn).map_err(|e| crate::Error::Serialization {
+            zerompk::to_msgpack_vec(&checkpoint_lsn).map_err(|e| crate::Error::Serialization {
                 format: "msgpack".into(),
                 detail: format!("checkpoint: {e}"),
             })?;

@@ -10,7 +10,15 @@ use serde::{Deserialize, Serialize};
 /// Used for ColBERT/ColPali-style late interaction where each document
 /// produces one embedding per token. All vectors share a doc_id and are
 /// inserted as separate HNSW nodes with shared doc_id metadata.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct MultiVector {
     /// Contiguous f32 data: `count × dim` elements.
     data: Vec<f32>,
@@ -219,8 +227,8 @@ mod tests {
     #[test]
     fn serde_roundtrip() {
         let mv = MultiVector::from_vectors(vec![vec![1.0, 2.0], vec![3.0, 4.0]]).unwrap();
-        let bytes = rmp_serde::to_vec_named(&mv).unwrap();
-        let restored: MultiVector = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&mv).unwrap();
+        let restored: MultiVector = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(mv, restored);
     }
 

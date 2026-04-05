@@ -46,7 +46,7 @@ impl CoreLoop {
 
             if is_vector_params {
                 if let Ok((collection, m, ef_construction, metric)) =
-                    rmp_serde::from_slice::<(String, usize, usize, String)>(&record.payload)
+                    zerompk::from_msgpack::<(String, usize, usize, String)>(&record.payload)
                 {
                     let index_key = CoreLoop::vector_index_key(tenant_id, &collection, "");
                     use crate::engine::vector::distance::DistanceMetric;
@@ -82,7 +82,7 @@ impl CoreLoop {
 
             if is_vector_put {
                 if let Ok((collection, vector, dim)) =
-                    rmp_serde::from_slice::<(String, Vec<f32>, usize)>(&record.payload)
+                    zerompk::from_msgpack::<(String, Vec<f32>, usize)>(&record.payload)
                 {
                     if vector.len() != dim {
                         tracing::warn!(
@@ -124,7 +124,7 @@ impl CoreLoop {
                     index.insert(vector);
                     inserted += 1;
                 } else if let Ok((collection, vectors, dim)) =
-                    rmp_serde::from_slice::<(String, Vec<Vec<f32>>, usize)>(&record.payload)
+                    zerompk::from_msgpack::<(String, Vec<Vec<f32>>, usize)>(&record.payload)
                 {
                     let index_key = CoreLoop::vector_index_key(tenant_id, &collection, "");
                     let params = self
@@ -150,7 +150,7 @@ impl CoreLoop {
                 }
             } else if is_vector_delete
                 && let Ok((collection, vector_id)) =
-                    rmp_serde::from_slice::<(String, u32)>(&record.payload)
+                    zerompk::from_msgpack::<(String, u32)>(&record.payload)
             {
                 let index_key = CoreLoop::vector_index_key(tenant_id, &collection, "");
                 if let Some(index) = self.vector_collections.get_mut(&index_key) {
@@ -214,7 +214,7 @@ impl CoreLoop {
             if is_put {
                 // kv_put: ("kv_put", collection, key, value, ttl_ms)
                 if let Ok((disc, collection, key, value, ttl_ms)) =
-                    rmp_serde::from_slice::<(&str, String, Vec<u8>, Vec<u8>, u64)>(&record.payload)
+                    zerompk::from_msgpack::<(&str, String, Vec<u8>, Vec<u8>, u64)>(&record.payload)
                     && disc == "kv_put"
                 {
                     self.kv_engine
@@ -225,7 +225,7 @@ impl CoreLoop {
 
                 // kv_batch_put: ("kv_batch_put", collection, entries, ttl_ms)
                 if let Ok((disc, collection, entries, ttl_ms)) =
-                    rmp_serde::from_slice::<(&str, String, Vec<(Vec<u8>, Vec<u8>)>, u64)>(
+                    zerompk::from_msgpack::<(&str, String, Vec<(Vec<u8>, Vec<u8>)>, u64)>(
                         &record.payload,
                     )
                     && disc == "kv_batch_put"
@@ -245,7 +245,7 @@ impl CoreLoop {
             if is_delete {
                 // kv_delete: ("kv_delete", collection, keys)
                 if let Ok((disc, collection, keys)) =
-                    rmp_serde::from_slice::<(&str, String, Vec<Vec<u8>>)>(&record.payload)
+                    zerompk::from_msgpack::<(&str, String, Vec<Vec<u8>>)>(&record.payload)
                     && disc == "kv_delete"
                 {
                     self.kv_engine.delete(tenant_id, &collection, &keys, now_ms);
@@ -255,7 +255,7 @@ impl CoreLoop {
 
                 // kv_truncate: ("kv_truncate", collection)
                 if let Ok((disc, collection)) =
-                    rmp_serde::from_slice::<(&str, String)>(&record.payload)
+                    zerompk::from_msgpack::<(&str, String)>(&record.payload)
                     && disc == "kv_truncate"
                 {
                     self.kv_engine.truncate(tenant_id, &collection);

@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 /// Persisted sequence definition in the system catalog.
 ///
 /// Stored in redb under `_system.sequences` with key `"{tenant_id}:{name}"`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct StoredSequence {
     pub tenant_id: u32,
     pub name: String,
@@ -92,7 +94,9 @@ impl StoredSequence {
 ///
 /// Persisted to catalog periodically and on shutdown. Not synced via CRDT —
 /// each node maintains its own counter within an allocated range.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct SequenceState {
     pub tenant_id: u32,
     pub name: String,

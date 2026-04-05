@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// When set on a stream, the Event Plane spawns a background task that
 /// POSTs each event to the configured URL with retry and DLQ.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct WebhookConfig {
     /// Target URL to POST events to.
     pub url: String,

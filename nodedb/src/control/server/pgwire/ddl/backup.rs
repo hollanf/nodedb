@@ -21,7 +21,9 @@ use super::super::types::{int8_field, sqlstate_error, text_field};
 use super::user::extract_quoted_string;
 
 /// Serializable tenant backup.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(
+    serde::Serialize, serde::Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 struct TenantBackup {
     /// Backup format version (v2 = all engines).
     version: u32,
@@ -98,7 +100,7 @@ pub async fn backup_tenant(
     .map_err(|e| sqlstate_error("XX000", &format!("snapshot dispatch failed: {e}")))?;
 
     // Deserialize Data Plane snapshot.
-    let data_snapshot: crate::types::TenantDataSnapshot = rmp_serde::from_slice(&snapshot_bytes)
+    let data_snapshot: crate::types::TenantDataSnapshot = zerompk::from_msgpack(&snapshot_bytes)
         .map_err(|e| sqlstate_error("XX000", &format!("snapshot decode failed: {e}")))?;
 
     let backup = TenantBackup {
@@ -133,7 +135,7 @@ pub async fn backup_tenant(
     };
 
     // Serialize backup.
-    let plaintext = rmp_serde::to_vec(&backup)
+    let plaintext = zerompk::to_msgpack_vec(&backup)
         .map_err(|e| sqlstate_error("XX000", &format!("backup serialization failed: {e}")))?;
 
     // Encrypt if WAL encryption is configured (reuses same key).
@@ -248,7 +250,7 @@ pub async fn restore_tenant(
         raw_bytes
     };
 
-    let backup: TenantBackup = rmp_serde::from_slice(&bytes)
+    let backup: TenantBackup = zerompk::from_msgpack(&bytes)
         .map_err(|e| sqlstate_error("XX000", &format!("backup deserialization failed: {e}")))?;
 
     if backup.version != 1 {
@@ -269,9 +271,9 @@ pub async fn restore_tenant(
     }
 
     // Dispatch documents + indexes to Data Plane for restoration.
-    let documents_bytes = rmp_serde::to_vec(&backup.documents)
+    let documents_bytes = zerompk::to_msgpack_vec(&backup.documents)
         .map_err(|e| sqlstate_error("XX000", &format!("document serialization failed: {e}")))?;
-    let indexes_bytes = rmp_serde::to_vec(&backup.indexes)
+    let indexes_bytes = zerompk::to_msgpack_vec(&backup.indexes)
         .map_err(|e| sqlstate_error("XX000", &format!("index serialization failed: {e}")))?;
 
     let restore_plan = crate::bridge::envelope::PhysicalPlan::Meta(
@@ -393,7 +395,7 @@ pub fn restore_tenant_dry_run(
         .map_err(|e| sqlstate_error("XX000", &format!("cannot read backup file: {e}")))?;
 
     // Validate MessagePack structure.
-    let valid = rmp_serde::from_slice::<TenantBackup>(&data).is_ok();
+    let valid = zerompk::from_msgpack::<TenantBackup>(&data).is_ok();
 
     let status = if valid {
         format!(

@@ -218,7 +218,7 @@ pub(crate) fn build_match(fields: &TextFields, _collection: &str) -> crate::Resu
         })?;
 
     // Serialize the MATCH query string as MessagePack for the Data Plane.
-    let query = rmp_serde::to_vec(query_str).map_err(|e| crate::Error::Serialization {
+    let query = zerompk::to_msgpack_vec(query_str).map_err(|e| crate::Error::Serialization {
         format: "msgpack".into(),
         detail: format!("match query serialization: {e}"),
     })?;

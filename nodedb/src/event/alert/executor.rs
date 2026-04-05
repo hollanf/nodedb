@@ -153,7 +153,7 @@ async fn execute_aggregate_scan(
 ) -> crate::Result<Vec<(String, f64)>> {
     // Encode WHERE filter as MessagePack for the Data Plane filter evaluator.
     let filters = match &alert.where_filter {
-        Some(f) => rmp_serde::to_vec(f).unwrap_or_default(),
+        Some(f) => zerompk::to_msgpack_vec(f).unwrap_or_default(),
         None => Vec::new(),
     };
 

@@ -13,7 +13,14 @@
 /// The collection state is stored as opaque checkpoint bytes produced by
 /// `VectorCollection::checkpoint_to_bytes()`. This handles the multi-segment
 /// lifecycle (growing + sealed + building) transparently.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct HnswSnapshot {
     /// Tenant owner.
     #[serde(default)]
@@ -25,7 +32,14 @@ pub struct HnswSnapshot {
 }
 
 /// Serializable snapshot of a CRDT tenant's state.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct CrdtSnapshot {
     pub tenant_id: u32,
     pub peer_id: u64,
@@ -34,7 +48,14 @@ pub struct CrdtSnapshot {
 }
 
 /// Serializable key-value pair from a redb table.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct KvPair {
     pub key: String,
     pub value: Vec<u8>,
@@ -44,7 +65,14 @@ pub struct KvPair {
 ///
 /// Designed for serialization via MessagePack and transfer over the network
 /// as InstallSnapshot data or VShardEnvelope::SegmentChunk payloads.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct CoreSnapshot {
     /// Core/vShard watermark LSN.
     pub watermark: u64,
@@ -81,7 +109,7 @@ impl CoreSnapshot {
 
     /// Serialize to bytes for network transfer.
     pub fn to_bytes(&self) -> crate::Result<Vec<u8>> {
-        rmp_serde::to_vec(self).map_err(|e| crate::Error::Serialization {
+        zerompk::to_msgpack_vec(self).map_err(|e| crate::Error::Serialization {
             format: "msgpack".into(),
             detail: format!("CoreSnapshot: {e}"),
         })
@@ -89,7 +117,7 @@ impl CoreSnapshot {
 
     /// Deserialize from bytes.
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
-        rmp_serde::from_slice(data).ok()
+        zerompk::from_msgpack(data).ok()
     }
 
     /// Approximate size in bytes (for progress tracking).

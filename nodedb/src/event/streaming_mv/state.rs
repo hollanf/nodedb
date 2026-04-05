@@ -19,7 +19,9 @@ pub type AggRow = Vec<(String, f64)>;
 pub type MvResultRow = (String, AggRow, bool);
 
 /// Partial aggregate state for one group key.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct GroupState {
     pub count: u64,
     pub sum: f64,

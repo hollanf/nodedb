@@ -11,7 +11,7 @@ use super::distance::DistanceMetric;
 use super::flat::FlatIndex;
 use super::hnsw::{HnswIndex, HnswParams};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub(super) struct CollectionSnapshot {
     pub dim: usize,
     pub params_m: usize,
@@ -32,13 +32,13 @@ pub(super) struct CollectionSnapshot {
     pub multi_doc_map: Vec<(String, Vec<u32>)>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub(super) struct SealedSnapshot {
     pub base_id: u32,
     pub hnsw_bytes: Vec<u8>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub(super) struct BuildingSnapshot {
     pub base_id: u32,
     pub vectors: Vec<Vec<f32>>,
@@ -96,7 +96,7 @@ impl VectorCollection {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
         };
-        match rmp_serde::to_vec_named(&snapshot) {
+        match zerompk::to_msgpack_vec(&snapshot) {
             Ok(bytes) => bytes,
             Err(e) => {
                 tracing::warn!(error = %e, "vector collection checkpoint serialization failed");
@@ -107,7 +107,7 @@ impl VectorCollection {
 
     /// Restore a collection from checkpoint bytes.
     pub fn from_checkpoint(bytes: &[u8]) -> Option<Self> {
-        let snap: CollectionSnapshot = rmp_serde::from_slice(bytes).ok()?;
+        let snap: CollectionSnapshot = zerompk::from_msgpack(bytes).ok()?;
         let metric = match snap.params_metric {
             0 => DistanceMetric::L2,
             1 => DistanceMetric::Cosine,

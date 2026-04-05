@@ -36,19 +36,20 @@ pub fn wal_append_if_write_with_creds(
             document_id,
             value,
         }) => {
-            let entry = rmp_serde::to_vec(&(collection, document_id, value)).map_err(|e| {
-                crate::Error::Serialization {
-                    format: "msgpack".into(),
-                    detail: format!("wal point put: {e}"),
-                }
-            })?;
+            let entry =
+                zerompk::to_msgpack_vec(&(collection, document_id, value)).map_err(|e| {
+                    crate::Error::Serialization {
+                        format: "msgpack".into(),
+                        detail: format!("wal point put: {e}"),
+                    }
+                })?;
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
         PhysicalPlan::Document(DocumentOp::PointDelete {
             collection,
             document_id,
         }) => {
-            let entry = rmp_serde::to_vec(&(collection, document_id)).map_err(|e| {
+            let entry = zerompk::to_msgpack_vec(&(collection, document_id)).map_err(|e| {
                 crate::Error::Serialization {
                     format: "msgpack".into(),
                     detail: format!("wal point delete: {e}"),
@@ -63,7 +64,7 @@ pub fn wal_append_if_write_with_creds(
             field_name: _,
             doc_id: _,
         }) => {
-            let entry = rmp_serde::to_vec(&(collection, vector, dim)).map_err(|e| {
+            let entry = zerompk::to_msgpack_vec(&(collection, vector, dim)).map_err(|e| {
                 crate::Error::Serialization {
                     format: "msgpack".into(),
                     detail: format!("wal vector insert: {e}"),
@@ -76,7 +77,7 @@ pub fn wal_append_if_write_with_creds(
             vectors,
             dim,
         }) => {
-            let entry = rmp_serde::to_vec(&(collection, vectors, dim)).map_err(|e| {
+            let entry = zerompk::to_msgpack_vec(&(collection, vectors, dim)).map_err(|e| {
                 crate::Error::Serialization {
                     format: "msgpack".into(),
                     detail: format!("wal vector batch insert: {e}"),
@@ -88,7 +89,7 @@ pub fn wal_append_if_write_with_creds(
             collection,
             vector_id,
         }) => {
-            let entry = rmp_serde::to_vec(&(collection, vector_id)).map_err(|e| {
+            let entry = zerompk::to_msgpack_vec(&(collection, vector_id)).map_err(|e| {
                 crate::Error::Serialization {
                     format: "msgpack".into(),
                     detail: format!("wal vector delete: {e}"),
@@ -105,12 +106,13 @@ pub fn wal_append_if_write_with_creds(
             dst_id,
             properties,
         }) => {
-            let entry = rmp_serde::to_vec(&(src_id, label, dst_id, properties)).map_err(|e| {
-                crate::Error::Serialization {
-                    format: "msgpack".into(),
-                    detail: format!("wal edge put: {e}"),
-                }
-            })?;
+            let entry =
+                zerompk::to_msgpack_vec(&(src_id, label, dst_id, properties)).map_err(|e| {
+                    crate::Error::Serialization {
+                        format: "msgpack".into(),
+                        detail: format!("wal edge put: {e}"),
+                    }
+                })?;
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
         PhysicalPlan::Graph(GraphOp::EdgeDelete {
@@ -118,7 +120,7 @@ pub fn wal_append_if_write_with_creds(
             label,
             dst_id,
         }) => {
-            let entry = rmp_serde::to_vec(&(src_id, label, dst_id)).map_err(|e| {
+            let entry = zerompk::to_msgpack_vec(&(src_id, label, dst_id)).map_err(|e| {
                 crate::Error::Serialization {
                     format: "msgpack".into(),
                     detail: format!("wal edge delete: {e}"),
@@ -136,7 +138,7 @@ pub fn wal_append_if_write_with_creds(
             ivf_cells,
             ivf_nprobe,
         }) => {
-            let entry = rmp_serde::to_vec(&(
+            let entry = zerompk::to_msgpack_vec(&(
                 collection,
                 m,
                 ef_construction,
@@ -176,7 +178,7 @@ pub fn wal_append_if_write_with_creds(
                 return Ok(());
             }
 
-            let wal_payload = rmp_serde::to_vec(&(collection, payload)).map_err(|e| {
+            let wal_payload = zerompk::to_msgpack_vec(&(collection, payload)).map_err(|e| {
                 crate::Error::Serialization {
                     format: "msgpack".into(),
                     detail: format!("wal timeseries batch: {e}"),
@@ -191,17 +193,15 @@ pub fn wal_append_if_write_with_creds(
             value,
             ttl_ms,
         }) => {
-            let entry =
-                rmp_serde::to_vec(&("kv_put", collection, key, value, ttl_ms)).map_err(|e| {
-                    crate::Error::Serialization {
-                        format: "msgpack".into(),
-                        detail: format!("wal kv put: {e}"),
-                    }
+            let entry = zerompk::to_msgpack_vec(&("kv_put", collection, key, value, ttl_ms))
+                .map_err(|e| crate::Error::Serialization {
+                    format: "msgpack".into(),
+                    detail: format!("wal kv put: {e}"),
                 })?;
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
         PhysicalPlan::Kv(KvOp::Delete { collection, keys }) => {
-            let entry = rmp_serde::to_vec(&("kv_delete", collection, keys)).map_err(|e| {
+            let entry = zerompk::to_msgpack_vec(&("kv_delete", collection, keys)).map_err(|e| {
                 crate::Error::Serialization {
                     format: "msgpack".into(),
                     detail: format!("wal kv delete: {e}"),
@@ -214,12 +214,10 @@ pub fn wal_append_if_write_with_creds(
             entries,
             ttl_ms,
         }) => {
-            let entry =
-                rmp_serde::to_vec(&("kv_batch_put", collection, entries, ttl_ms)).map_err(|e| {
-                    crate::Error::Serialization {
-                        format: "msgpack".into(),
-                        detail: format!("wal kv batch put: {e}"),
-                    }
+            let entry = zerompk::to_msgpack_vec(&("kv_batch_put", collection, entries, ttl_ms))
+                .map_err(|e| crate::Error::Serialization {
+                    format: "msgpack".into(),
+                    detail: format!("wal kv batch put: {e}"),
                 })?;
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
@@ -229,7 +227,7 @@ pub fn wal_append_if_write_with_creds(
             ttl_ms,
         }) => {
             let entry =
-                rmp_serde::to_vec(&("kv_expire", collection, key, ttl_ms)).map_err(|e| {
+                zerompk::to_msgpack_vec(&("kv_expire", collection, key, ttl_ms)).map_err(|e| {
                     crate::Error::Serialization {
                         format: "msgpack".into(),
                         detail: format!("wal kv expire: {e}"),
@@ -238,7 +236,7 @@ pub fn wal_append_if_write_with_creds(
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
         PhysicalPlan::Kv(KvOp::Persist { collection, key }) => {
-            let entry = rmp_serde::to_vec(&("kv_persist", collection, key)).map_err(|e| {
+            let entry = zerompk::to_msgpack_vec(&("kv_persist", collection, key)).map_err(|e| {
                 crate::Error::Serialization {
                     format: "msgpack".into(),
                     detail: format!("wal kv persist: {e}"),
@@ -253,7 +251,7 @@ pub fn wal_append_if_write_with_creds(
             backfill: _,
         }) => {
             let entry =
-                rmp_serde::to_vec(&("kv_register_index", collection, field, field_position))
+                zerompk::to_msgpack_vec(&("kv_register_index", collection, field, field_position))
                     .map_err(|e| crate::Error::Serialization {
                         format: "msgpack".into(),
                         detail: format!("wal kv register index: {e}"),
@@ -261,12 +259,13 @@ pub fn wal_append_if_write_with_creds(
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
         PhysicalPlan::Kv(KvOp::DropIndex { collection, field }) => {
-            let entry = rmp_serde::to_vec(&("kv_drop_index", collection, field)).map_err(|e| {
-                crate::Error::Serialization {
-                    format: "msgpack".into(),
-                    detail: format!("wal kv drop index: {e}"),
-                }
-            })?;
+            let entry =
+                zerompk::to_msgpack_vec(&("kv_drop_index", collection, field)).map_err(|e| {
+                    crate::Error::Serialization {
+                        format: "msgpack".into(),
+                        detail: format!("wal kv drop index: {e}"),
+                    }
+                })?;
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
         PhysicalPlan::Kv(KvOp::FieldSet {
@@ -274,12 +273,10 @@ pub fn wal_append_if_write_with_creds(
             key,
             updates,
         }) => {
-            let entry =
-                rmp_serde::to_vec(&("kv_field_set", collection, key, updates)).map_err(|e| {
-                    crate::Error::Serialization {
-                        format: "msgpack".into(),
-                        detail: format!("wal kv field set: {e}"),
-                    }
+            let entry = zerompk::to_msgpack_vec(&("kv_field_set", collection, key, updates))
+                .map_err(|e| crate::Error::Serialization {
+                    format: "msgpack".into(),
+                    detail: format!("wal kv field set: {e}"),
                 })?;
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
@@ -290,12 +287,10 @@ pub fn wal_append_if_write_with_creds(
             delta,
             ttl_ms,
         }) => {
-            let entry =
-                rmp_serde::to_vec(&("kv_incr", collection, key, delta, ttl_ms)).map_err(|e| {
-                    crate::Error::Serialization {
-                        format: "msgpack".into(),
-                        detail: format!("wal kv incr: {e}"),
-                    }
+            let entry = zerompk::to_msgpack_vec(&("kv_incr", collection, key, delta, ttl_ms))
+                .map_err(|e| crate::Error::Serialization {
+                    format: "msgpack".into(),
+                    detail: format!("wal kv incr: {e}"),
                 })?;
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
@@ -304,12 +299,10 @@ pub fn wal_append_if_write_with_creds(
             key,
             delta,
         }) => {
-            let entry =
-                rmp_serde::to_vec(&("kv_incr_float", collection, key, delta)).map_err(|e| {
-                    crate::Error::Serialization {
-                        format: "msgpack".into(),
-                        detail: format!("wal kv incr_float: {e}"),
-                    }
+            let entry = zerompk::to_msgpack_vec(&("kv_incr_float", collection, key, delta))
+                .map_err(|e| crate::Error::Serialization {
+                    format: "msgpack".into(),
+                    detail: format!("wal kv incr_float: {e}"),
                 })?;
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
@@ -319,7 +312,7 @@ pub fn wal_append_if_write_with_creds(
             expected,
             new_value,
         }) => {
-            let entry = rmp_serde::to_vec(&("kv_cas", collection, key, expected, new_value))
+            let entry = zerompk::to_msgpack_vec(&("kv_cas", collection, key, expected, new_value))
                 .map_err(|e| crate::Error::Serialization {
                     format: "msgpack".into(),
                     detail: format!("wal kv cas: {e}"),
@@ -331,12 +324,10 @@ pub fn wal_append_if_write_with_creds(
             key,
             new_value,
         }) => {
-            let entry =
-                rmp_serde::to_vec(&("kv_getset", collection, key, new_value)).map_err(|e| {
-                    crate::Error::Serialization {
-                        format: "msgpack".into(),
-                        detail: format!("wal kv getset: {e}"),
-                    }
+            let entry = zerompk::to_msgpack_vec(&("kv_getset", collection, key, new_value))
+                .map_err(|e| crate::Error::Serialization {
+                    format: "msgpack".into(),
+                    detail: format!("wal kv getset: {e}"),
                 })?;
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
@@ -351,7 +342,7 @@ pub fn wal_append_if_write_with_creds(
             window_start_ms,
             window_end_ms,
         }) => {
-            let entry = rmp_serde::to_vec(&(
+            let entry = zerompk::to_msgpack_vec(&(
                 "kv_register_sorted_index",
                 collection,
                 index_name,
@@ -369,18 +360,19 @@ pub fn wal_append_if_write_with_creds(
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
         PhysicalPlan::Kv(KvOp::DropSortedIndex { index_name }) => {
-            let entry = rmp_serde::to_vec(&("kv_drop_sorted_index", index_name)).map_err(|e| {
-                crate::Error::Serialization {
-                    format: "msgpack".into(),
-                    detail: format!("wal kv drop sorted index: {e}"),
-                }
-            })?;
+            let entry =
+                zerompk::to_msgpack_vec(&("kv_drop_sorted_index", index_name)).map_err(|e| {
+                    crate::Error::Serialization {
+                        format: "msgpack".into(),
+                        detail: format!("wal kv drop sorted index: {e}"),
+                    }
+                })?;
             wal.append_delete(tenant_id, vshard_id, &entry)?;
         }
         // Truncate uses append_delete to mark the collection as cleared in the WAL.
         // On recovery, replaying this entry drops all hash table state for the collection.
         PhysicalPlan::Kv(KvOp::Truncate { collection }) => {
-            let entry = rmp_serde::to_vec(&("kv_truncate", collection)).map_err(|e| {
+            let entry = zerompk::to_msgpack_vec(&("kv_truncate", collection)).map_err(|e| {
                 crate::Error::Serialization {
                     format: "msgpack".into(),
                     detail: format!("wal kv truncate: {e}"),
@@ -417,11 +409,13 @@ pub fn wal_append_timeseries(
         return Ok(None);
     }
 
-    let wal_payload =
-        rmp_serde::to_vec(&(collection, payload)).map_err(|e| crate::Error::Serialization {
+    let payload_vec = payload.to_vec();
+    let wal_payload = zerompk::to_msgpack_vec(&(collection, payload_vec)).map_err(|e| {
+        crate::Error::Serialization {
             format: "msgpack".into(),
             detail: format!("wal timeseries batch: {e}"),
-        })?;
+        }
+    })?;
     let lsn = wal.append_timeseries_batch(tenant_id, vshard_id, &wal_payload)?;
     Ok(Some(lsn))
 }

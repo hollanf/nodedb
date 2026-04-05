@@ -294,7 +294,7 @@ impl<S: StorageEngine> NodeDbLite<S> {
         else {
             return Ok(hnsw_indices);
         };
-        let Ok(names) = rmp_serde::from_slice::<Vec<String>>(&collections_bytes) else {
+        let Ok(names) = zerompk::from_msgpack::<Vec<String>>(&collections_bytes) else {
             return Ok(hnsw_indices);
         };
         for name in &names {
@@ -338,7 +338,7 @@ impl<S: StorageEngine> NodeDbLite<S> {
             return crate::engine::spatial::SpatialIndexManager::new();
         };
 
-        let Ok(index_keys) = rmp_serde::from_slice::<Vec<(String, String)>>(&index_list_bytes)
+        let Ok(index_keys) = zerompk::from_msgpack::<Vec<(String, String)>>(&index_list_bytes)
         else {
             return crate::engine::spatial::SpatialIndexManager::new();
         };
@@ -427,7 +427,7 @@ impl<S: StorageEngine> NodeDbLite<S> {
         {
             let indices = self.hnsw_indices.lock_or_recover();
             let names: Vec<String> = indices.keys().cloned().collect();
-            let names_bytes = rmp_serde::to_vec_named(&names)
+            let names_bytes = zerompk::to_msgpack_vec(&names)
                 .map_err(|e| NodeDbError::serialization("msgpack", e))?;
             ops.push(WriteOp::Put {
                 ns: Namespace::Meta,
@@ -454,7 +454,7 @@ impl<S: StorageEngine> NodeDbLite<S> {
                 .iter()
                 .map(|(c, f, _)| (c.clone(), f.clone()))
                 .collect();
-            let keys_bytes = rmp_serde::to_vec_named(&index_keys)
+            let keys_bytes = zerompk::to_msgpack_vec(&index_keys)
                 .map_err(|e| NodeDbError::serialization("msgpack", e))?;
             ops.push(WriteOp::Put {
                 ns: Namespace::Meta,

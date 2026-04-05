@@ -140,7 +140,7 @@ impl<S: StorageEngine> StrictEngine<S> {
             .get(Namespace::Meta, META_STRICT_COLLECTIONS)
             .await?;
         let names: Vec<String> = match list_bytes {
-            Some(bytes) => rmp_serde::from_slice(&bytes).map_err(|e| LiteError::Storage {
+            Some(bytes) => zerompk::from_msgpack(&bytes).map_err(|e| LiteError::Storage {
                 detail: format!("strict collection list deserialization failed: {e}"),
             })?,
             None => Vec::new(),
@@ -150,7 +150,7 @@ impl<S: StorageEngine> StrictEngine<S> {
         for name in names {
             let meta_key = format!("{META_STRICT_SCHEMA_PREFIX}{name}");
             if let Some(schema_bytes) = storage.get(Namespace::Meta, meta_key.as_bytes()).await?
-                && let Ok(schema) = rmp_serde::from_slice::<StrictSchema>(&schema_bytes)
+                && let Ok(schema) = zerompk::from_msgpack::<StrictSchema>(&schema_bytes)
             {
                 engine
                     .collections

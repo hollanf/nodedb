@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
     rkyv::Archive,
     rkyv::Serialize,
     rkyv::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
 )]
 pub enum CompensationHint {
     /// UNIQUE constraint violated — another device wrote the same value first.
@@ -153,8 +155,8 @@ mod tests {
         let hint = CompensationHint::ForeignKeyMissing {
             referenced_id: "user-42".into(),
         };
-        let bytes = rmp_serde::to_vec_named(&hint).unwrap();
-        let decoded: CompensationHint = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&hint).unwrap();
+        let decoded: CompensationHint = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(hint, decoded);
     }
 }

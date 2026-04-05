@@ -1,11 +1,23 @@
 //! Type definitions for stored procedure catalog storage.
 
 /// Parameter direction for stored procedures.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum ParamDirection {
-    In,
-    Out,
-    InOut,
+    In = 0,
+    Out = 1,
+    InOut = 2,
 }
 
 impl ParamDirection {
@@ -19,7 +31,14 @@ impl ParamDirection {
 }
 
 /// A stored procedure parameter.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct ProcedureParam {
     pub name: String,
     pub data_type: String,
@@ -36,7 +55,17 @@ fn default_direction() -> ParamDirection {
 /// Determined at CREATE PROCEDURE time by parsing the body for DML target
 /// collections. Used by the Event Plane cron scheduler for per-collection
 /// affinity routing of `CALL procedure(...)` in scheduled jobs.
-#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum ProcedureRoutability {
     /// Procedure targets a single collection — can be routed to that
     /// collection's shard leader for locality.
@@ -48,7 +77,14 @@ pub enum ProcedureRoutability {
 }
 
 /// Serializable stored procedure definition for redb storage.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct StoredProcedure {
     pub tenant_id: u32,
     pub name: String,

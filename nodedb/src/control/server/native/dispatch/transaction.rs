@@ -61,7 +61,7 @@ pub(crate) async fn handle_commit(ctx: &DispatchCtx<'_>, seq: u64) -> NativeResp
         }
 
         if !sub_records.is_empty() {
-            match rmp_serde::to_vec_named(&sub_records) {
+            match zerompk::to_msgpack_vec(&sub_records) {
                 Ok(tx_payload) => {
                     if let Err(e) =
                         ctx.state

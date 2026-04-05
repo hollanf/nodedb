@@ -140,7 +140,7 @@ fn parse_put_record(
 ) -> Option<WriteEvent> {
     // Try KV put first: ("kv_put", collection, key, value, ttl_ms)
     if let Ok((disc, collection, key, value, _ttl_ms)) =
-        rmp_serde::from_slice::<(&str, String, Vec<u8>, Vec<u8>, u64)>(payload)
+        zerompk::from_msgpack::<(&str, String, Vec<u8>, Vec<u8>, u64)>(payload)
         && disc == "kv_put"
     {
         *sequence += 1;
@@ -161,7 +161,7 @@ fn parse_put_record(
 
     // Try KV batch put: ("kv_batch_put", collection, entries, ttl_ms)
     if let Ok((disc, collection, entries, _ttl_ms)) =
-        rmp_serde::from_slice::<(&str, String, Vec<(Vec<u8>, Vec<u8>)>, u64)>(payload)
+        zerompk::from_msgpack::<(&str, String, Vec<(Vec<u8>, Vec<u8>)>, u64)>(payload)
         && disc == "kv_batch_put"
     {
         // Emit one event for the batch (BulkInsert).
@@ -184,7 +184,7 @@ fn parse_put_record(
 
     // Try document put: (collection, document_id, value)
     if let Ok((collection, document_id, value)) =
-        rmp_serde::from_slice::<(String, String, Vec<u8>)>(payload)
+        zerompk::from_msgpack::<(String, String, Vec<u8>)>(payload)
     {
         // Distinguish from graph edge put which is (src_id, label, dst_id, props).
         // Document put has exactly 3 elements; edge put has 4.
@@ -223,7 +223,7 @@ fn parse_delete_record(
 ) -> Option<WriteEvent> {
     // Try KV delete: ("kv_delete", collection, keys)
     if let Ok((disc, collection, keys)) =
-        rmp_serde::from_slice::<(&str, String, Vec<Vec<u8>>)>(payload)
+        zerompk::from_msgpack::<(&str, String, Vec<Vec<u8>>)>(payload)
         && disc == "kv_delete"
     {
         *sequence += 1;
@@ -244,7 +244,7 @@ fn parse_delete_record(
     }
 
     // Try document delete: (collection, document_id)
-    if let Ok((collection, document_id)) = rmp_serde::from_slice::<(String, String)>(payload) {
+    if let Ok((collection, document_id)) = zerompk::from_msgpack::<(String, String)>(payload) {
         *sequence += 1;
         return Some(WriteEvent {
             sequence: *sequence,
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn parse_document_put() {
-        let payload = rmp_serde::to_vec(&("orders", "order-1", b"value")).unwrap();
+        let payload = zerompk::to_msgpack_vec(&("orders", "order-1", b"value")).unwrap();
         let record = make_record(RecordType::Put, &payload, 1, 0, 100);
         let mut seq = 0u64;
         let event = record_to_event(&record, &mut seq).unwrap();
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn parse_document_delete() {
-        let payload = rmp_serde::to_vec(&("orders", "order-1")).unwrap();
+        let payload = zerompk::to_msgpack_vec(&("orders", "order-1")).unwrap();
         let record = make_record(RecordType::Delete, &payload, 1, 0, 101);
         let mut seq = 0u64;
         let event = record_to_event(&record, &mut seq).unwrap();
@@ -297,7 +297,8 @@ mod tests {
 
     #[test]
     fn parse_kv_put() {
-        let payload = rmp_serde::to_vec(&("kv_put", "cache", b"key1", b"val1", 0u64)).unwrap();
+        let payload =
+            zerompk::to_msgpack_vec(&("kv_put", "cache", b"key1", b"val1", 0u64)).unwrap();
         let record = make_record(RecordType::Put, &payload, 1, 0, 102);
         let mut seq = 0u64;
         let event = record_to_event(&record, &mut seq).unwrap();
@@ -307,7 +308,8 @@ mod tests {
 
     #[test]
     fn parse_kv_delete() {
-        let payload = rmp_serde::to_vec(&("kv_delete", "cache", vec![b"key1".to_vec()])).unwrap();
+        let payload =
+            zerompk::to_msgpack_vec(&("kv_delete", "cache", vec![b"key1".to_vec()])).unwrap();
         let record = make_record(RecordType::Delete, &payload, 1, 0, 103);
         let mut seq = 0u64;
         let event = record_to_event(&record, &mut seq).unwrap();
@@ -316,7 +318,7 @@ mod tests {
 
     #[test]
     fn vector_records_skipped() {
-        let payload = rmp_serde::to_vec(&("vecs", vec![1.0f32, 2.0, 3.0], 3u32)).unwrap();
+        let payload = zerompk::to_msgpack_vec(&("vecs", vec![1.0f32, 2.0, 3.0], 3u32)).unwrap();
         let record = make_record(RecordType::VectorPut, &payload, 1, 0, 104);
         let mut seq = 0u64;
         assert!(record_to_event(&record, &mut seq).is_none());

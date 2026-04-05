@@ -11,7 +11,9 @@
 use serde::{Deserialize, Serialize};
 
 /// A request to allocate a range of sequence values via Raft consensus.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct RangeAllocationRequest {
     pub tenant_id: u32,
     pub sequence_name: String,
@@ -25,7 +27,9 @@ pub struct RangeAllocationRequest {
 ///
 /// In cluster mode, each gap-free nextval is proposed as a Raft log entry.
 /// On leader failover, the new leader replays the log and has the exact counter.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct GapFreeAdvanceRequest {
     pub tenant_id: u32,
     pub sequence_name: String,
@@ -35,7 +39,9 @@ pub struct GapFreeAdvanceRequest {
 }
 
 /// Response from the Raft leader after a range allocation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct RangeAllocationResponse {
     /// First value in the allocated range (inclusive).
     pub range_start: i64,
@@ -82,10 +88,11 @@ impl RangeAllocator {
                 chunk_size,
                 epoch,
             };
-            let payload = rmp_serde::to_vec(&request).map_err(|e| crate::Error::Serialization {
-                format: "msgpack".into(),
-                detail: format!("range allocation request: {e}"),
-            })?;
+            let payload =
+                zerompk::to_msgpack_vec(&request).map_err(|e| crate::Error::Serialization {
+                    format: "msgpack".into(),
+                    detail: format!("range allocation request: {e}"),
+                })?;
 
             // Propose to vshard 0 (system shard for metadata operations).
             let (_group_id, _log_index) =
@@ -163,10 +170,11 @@ impl RangeAllocator {
             reserved_value,
             epoch,
         };
-        let payload = rmp_serde::to_vec(&request).map_err(|e| crate::Error::Serialization {
-            format: "msgpack".into(),
-            detail: format!("gap-free advance request: {e}"),
-        })?;
+        let payload =
+            zerompk::to_msgpack_vec(&request).map_err(|e| crate::Error::Serialization {
+                format: "msgpack".into(),
+                detail: format!("gap-free advance request: {e}"),
+            })?;
 
         // Propose to vshard 0 (system shard).
         proposer(0, payload).map_err(|e| crate::Error::Dispatch {
@@ -195,8 +203,8 @@ mod tests {
             chunk_size: 10_000,
             epoch: 1,
         };
-        let bytes = rmp_serde::to_vec(&req).unwrap();
-        let decoded: RangeAllocationRequest = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&req).unwrap();
+        let decoded: RangeAllocationRequest = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.sequence_name, "order_seq");
         assert_eq!(decoded.chunk_size, 10_000);
     }
@@ -208,8 +216,8 @@ mod tests {
             range_end: 10_000,
             epoch: 1,
         };
-        let bytes = rmp_serde::to_vec(&resp).unwrap();
-        let decoded: RangeAllocationResponse = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&resp).unwrap();
+        let decoded: RangeAllocationResponse = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.range_start, 1);
         assert_eq!(decoded.range_end, 10_000);
     }

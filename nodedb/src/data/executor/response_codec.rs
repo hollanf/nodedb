@@ -173,7 +173,7 @@ impl ColBuilder {
 pub(super) fn encode_count(key: &str, count: usize) -> crate::Result<Vec<u8>> {
     let mut map = std::collections::BTreeMap::new();
     map.insert(key, count);
-    rmp_serde::to_vec_named(&map).map_err(|e| crate::Error::Codec {
+    zerompk::to_msgpack_vec(&map).map_err(|e| crate::Error::Codec {
         detail: format!("count response serialization: {e}"),
     })
 }

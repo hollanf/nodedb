@@ -22,7 +22,7 @@ impl SystemCatalog {
                 .map_err(|e| catalog_err("range audit", e))?
             {
                 let (key, value) = entry.map_err(|e| catalog_err("read audit", e))?;
-                let stored: StoredAuditEntry = match rmp_serde::from_slice(value.value()) {
+                let stored: StoredAuditEntry = match zerompk::from_msgpack(value.value()) {
                     Ok(s) => s,
                     Err(_) => continue,
                 };
@@ -74,8 +74,8 @@ impl SystemCatalog {
                 .map_err(|e| catalog_err("open audit_log", e))?;
             for entry in entries {
                 let key = entry.seq.to_be_bytes();
-                let value =
-                    rmp_serde::to_vec(entry).map_err(|e| catalog_err("serialize audit", e))?;
+                let value = zerompk::to_msgpack_vec(entry)
+                    .map_err(|e| catalog_err("serialize audit", e))?;
                 table
                     .insert(key.as_slice(), value.as_slice())
                     .map_err(|e| catalog_err("insert audit", e))?;
@@ -137,7 +137,7 @@ impl SystemCatalog {
         {
             let (_, value) = entry.map_err(|e| catalog_err("read audit", e))?;
             let stored: StoredAuditEntry =
-                rmp_serde::from_slice(value.value()).map_err(|e| catalog_err("deser audit", e))?;
+                zerompk::from_msgpack(value.value()).map_err(|e| catalog_err("deser audit", e))?;
             all.push(stored);
         }
 

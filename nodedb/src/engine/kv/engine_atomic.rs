@@ -55,7 +55,7 @@ impl KvEngine {
 
         let new_i64 = old_i64.checked_add(delta).ok_or(AtomicError::Overflow)?;
 
-        let new_bytes = rmp_serde::to_vec(&new_i64).expect("i64 always serializes");
+        let new_bytes = zerompk::to_msgpack_vec(&new_i64).expect("i64 always serializes");
         self.atomic_put(
             tenant_id,
             collection,
@@ -98,7 +98,7 @@ impl KvEngine {
             return Err(AtomicError::Overflow);
         }
 
-        let new_bytes = rmp_serde::to_vec(&new_f64).expect("f64 always serializes");
+        let new_bytes = zerompk::to_msgpack_vec(&new_f64).expect("f64 always serializes");
         // incr_float always preserves existing TTL (ttl_ms = 0).
         self.atomic_put(
             tenant_id,
@@ -303,14 +303,14 @@ impl KvEngine {
 /// Decode a MessagePack-encoded value as i64.
 fn decode_msgpack_i64(bytes: &[u8]) -> Result<i64, AtomicError> {
     // Try i64 first, then u64 (MessagePack encodes small positive as u64).
-    if let Ok(v) = rmp_serde::from_slice::<i64>(bytes) {
+    if let Ok(v) = zerompk::from_msgpack::<i64>(bytes) {
         return Ok(v);
     }
-    if let Ok(v) = rmp_serde::from_slice::<u64>(bytes) {
+    if let Ok(v) = zerompk::from_msgpack::<u64>(bytes) {
         return i64::try_from(v).map_err(|_| AtomicError::Overflow);
     }
     // Try f64 → i64 truncation for values stored as float.
-    if let Ok(v) = rmp_serde::from_slice::<f64>(bytes)
+    if let Ok(v) = zerompk::from_msgpack::<f64>(bytes)
         && v.fract() == 0.0
         && v >= i64::MIN as f64
         && v <= i64::MAX as f64
@@ -324,14 +324,14 @@ fn decode_msgpack_i64(bytes: &[u8]) -> Result<i64, AtomicError> {
 
 /// Decode a MessagePack-encoded value as f64.
 fn decode_msgpack_f64(bytes: &[u8]) -> Result<f64, AtomicError> {
-    if let Ok(v) = rmp_serde::from_slice::<f64>(bytes) {
+    if let Ok(v) = zerompk::from_msgpack::<f64>(bytes) {
         return Ok(v);
     }
     // Accept integer values promoted to float.
-    if let Ok(v) = rmp_serde::from_slice::<i64>(bytes) {
+    if let Ok(v) = zerompk::from_msgpack::<i64>(bytes) {
         return Ok(v as f64);
     }
-    if let Ok(v) = rmp_serde::from_slice::<u64>(bytes) {
+    if let Ok(v) = zerompk::from_msgpack::<u64>(bytes) {
         return Ok(v as f64);
     }
     Err(AtomicError::TypeMismatch {
@@ -374,7 +374,7 @@ mod tests {
     fn incr_overflow() {
         let mut engine = make_engine();
         // Set to MAX.
-        let bytes = rmp_serde::to_vec(&i64::MAX).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&i64::MAX).unwrap();
         engine.put(1, "counters", b"max", &bytes, 0, 1000);
         let result = engine.incr(1, "counters", b"max", 1, 0, 1000);
         assert!(matches!(result, Err(AtomicError::Overflow)));
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn incr_type_mismatch() {
         let mut engine = make_engine();
-        let bytes = rmp_serde::to_vec("hello").unwrap();
+        let bytes = zerompk::to_msgpack_vec(&"hello").unwrap();
         engine.put(1, "counters", b"str", &bytes, 0, 1000);
         let result = engine.incr(1, "counters", b"str", 1, 0, 1000);
         assert!(matches!(result, Err(AtomicError::TypeMismatch { .. })));
@@ -404,7 +404,7 @@ mod tests {
     fn incr_preserves_ttl_when_zero() {
         let mut engine = make_engine();
         // Set key with TTL.
-        let bytes = rmp_serde::to_vec(&50i64).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&50i64).unwrap();
         engine.put(1, "counters", b"temp", &bytes, 5000, 1000);
         // Incr with ttl_ms=0 should preserve existing TTL.
         engine.incr(1, "counters", b"temp", 10, 0, 1000).unwrap();
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn incr_float_infinity_rejected() {
         let mut engine = make_engine();
-        let bytes = rmp_serde::to_vec(&f64::MAX).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&f64::MAX).unwrap();
         engine.put(1, "scores", b"big", &bytes, 0, 1000);
         let result = engine.incr_float(1, "scores", b"big", f64::MAX, 1000);
         assert!(matches!(result, Err(AtomicError::Overflow)));

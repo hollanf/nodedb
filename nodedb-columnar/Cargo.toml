@@ -16,7 +16,7 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sonic-rs = { workspace = true }
-rmp-serde = { workspace = true }
+zerompk = { workspace = true }
 crc32c = { workspace = true }
 uuid = { workspace = true }
 roaring = { workspace = true }

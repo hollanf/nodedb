@@ -28,7 +28,14 @@ const META_COLUMNAR_SCHEMA_PREFIX: &str = "columnar_schema:";
 const META_COLUMNAR_COLLECTIONS: &[u8] = b"meta:columnar_collections";
 
 /// Per-collection segment metadata.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 struct SegmentMeta {
     segment_id: u32,
     row_count: u64,
@@ -67,7 +74,7 @@ impl<S: StorageEngine> ColumnarEngine<S> {
             .get(Namespace::Meta, META_COLUMNAR_COLLECTIONS)
             .await?;
         let names: Vec<String> = match list_bytes {
-            Some(bytes) => rmp_serde::from_slice(&bytes).map_err(|e| LiteError::Storage {
+            Some(bytes) => zerompk::from_msgpack(&bytes).map_err(|e| LiteError::Storage {
                 detail: format!("columnar collection list deserialization: {e}"),
             })?,
             None => Vec::new(),
@@ -75,20 +82,20 @@ impl<S: StorageEngine> ColumnarEngine<S> {
 
         for name in names {
             let meta_key = format!("{META_COLUMNAR_SCHEMA_PREFIX}{name}");
-            #[derive(serde::Deserialize)]
+            #[derive(serde::Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
             struct StoredSchema {
                 schema: ColumnarSchema,
                 profile: ColumnarProfile,
             }
             if let Some(schema_bytes) = storage.get(Namespace::Meta, meta_key.as_bytes()).await?
-                && let Ok(stored) = rmp_serde::from_slice::<StoredSchema>(&schema_bytes)
+                && let Ok(stored) = zerompk::from_msgpack::<StoredSchema>(&schema_bytes)
             {
                 // Restore segment metadata.
                 let seg_meta_key = format!("{name}:meta");
                 let segments: Vec<SegmentMeta> = storage
                     .get(Namespace::Columnar, seg_meta_key.as_bytes())
                     .await?
-                    .and_then(|b| rmp_serde::from_slice(&b).ok())
+                    .and_then(|b| zerompk::from_msgpack(&b).ok())
                     .unwrap_or_default();
 
                 let next_id = segments.iter().map(|s| s.segment_id + 1).max().unwrap_or(1);
@@ -158,13 +165,13 @@ impl<S: StorageEngine> ColumnarEngine<S> {
         }
 
         // Persist schema + profile.
-        #[derive(serde::Serialize)]
+        #[derive(serde::Serialize, zerompk::ToMessagePack)]
         struct StoredSchema<'a> {
             schema: &'a ColumnarSchema,
             profile: &'a ColumnarProfile,
         }
         let meta_key = format!("{META_COLUMNAR_SCHEMA_PREFIX}{name}");
-        let schema_bytes = rmp_serde::to_vec_named(&StoredSchema {
+        let schema_bytes = zerompk::to_msgpack_vec(&StoredSchema {
             schema: &schema,
             profile: &profile,
         })
@@ -175,7 +182,7 @@ impl<S: StorageEngine> ColumnarEngine<S> {
         let mut names: Vec<String> = self.collections.keys().cloned().collect();
         names.push(name.to_string());
         let names_bytes =
-            rmp_serde::to_vec_named(&names).map_err(|e| LiteError::Serialization {
+            zerompk::to_msgpack_vec(&names).map_err(|e| LiteError::Serialization {
                 detail: e.to_string(),
             })?;
 
@@ -241,7 +248,7 @@ impl<S: StorageEngine> ColumnarEngine<S> {
         // Update collection list.
         let names: Vec<String> = self.collections.keys().cloned().collect();
         let names_bytes =
-            rmp_serde::to_vec_named(&names).map_err(|e| LiteError::Serialization {
+            zerompk::to_msgpack_vec(&names).map_err(|e| LiteError::Serialization {
                 detail: e.to_string(),
             })?;
         ops.push(WriteOp::Put {
@@ -304,13 +311,13 @@ impl<S: StorageEngine> ColumnarEngine<S> {
         state.mutation = MutationEngine::new(name.to_string(), schema.clone());
 
         // Persist updated schema + profile.
-        #[derive(serde::Serialize)]
+        #[derive(serde::Serialize, zerompk::ToMessagePack)]
         struct StoredSchema<'a> {
             schema: &'a ColumnarSchema,
             profile: &'a ColumnarProfile,
         }
         let meta_key = format!("{META_COLUMNAR_SCHEMA_PREFIX}{name}");
-        let schema_bytes = rmp_serde::to_vec_named(&StoredSchema {
+        let schema_bytes = zerompk::to_msgpack_vec(&StoredSchema {
             schema: &schema,
             profile: &state.profile,
         })
@@ -443,7 +450,7 @@ impl<S: StorageEngine> ColumnarEngine<S> {
         });
         let meta_key = format!("{collection}:meta");
         let meta_bytes =
-            rmp_serde::to_vec_named(&state.segments).map_err(|e| LiteError::Serialization {
+            zerompk::to_msgpack_vec(&state.segments).map_err(|e| LiteError::Serialization {
                 detail: e.to_string(),
             })?;
 
@@ -585,7 +592,7 @@ impl<S: StorageEngine> ColumnarEngine<S> {
         if let Some(state) = self.collections.get(collection) {
             let meta_key = format!("{collection}:meta");
             let meta_bytes =
-                rmp_serde::to_vec_named(&state.segments).map_err(|e| LiteError::Serialization {
+                zerompk::to_msgpack_vec(&state.segments).map_err(|e| LiteError::Serialization {
                     detail: e.to_string(),
                 })?;
             self.storage

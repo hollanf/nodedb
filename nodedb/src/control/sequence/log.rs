@@ -7,11 +7,23 @@
 use serde::{Deserialize, Serialize};
 
 /// Status of a sequence reservation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[msgpack(c_enum)]
 pub enum ReservationStatus {
-    Committed,
-    RolledBack,
-    CrashRecycled,
+    Committed = 0,
+    RolledBack = 1,
+    CrashRecycled = 2,
 }
 
 impl std::fmt::Display for ReservationStatus {
@@ -25,7 +37,9 @@ impl std::fmt::Display for ReservationStatus {
 }
 
 /// A single sequence log entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct SequenceLogEntry {
     pub sequence_name: String,
     pub value: i64,
@@ -110,8 +124,8 @@ mod tests {
     #[test]
     fn entry_serialization_roundtrip() {
         let entry = committed("invoice_seq", 42, "admin", 1);
-        let bytes = rmp_serde::to_vec_named(&entry).unwrap();
-        let decoded: SequenceLogEntry = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&entry).unwrap();
+        let decoded: SequenceLogEntry = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.sequence_name, "invoice_seq");
         assert_eq!(decoded.value, 42);
         assert_eq!(decoded.status, ReservationStatus::Committed);

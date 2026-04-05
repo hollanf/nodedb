@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use nodedb_types::geometry::Geometry;
 use serde::{Deserialize, Serialize};
+use zerompk::{FromMessagePack, ToMessagePack};
 
 use crate::geohash::{geohash_encode, geohash_neighbors};
 
@@ -154,12 +155,12 @@ impl GeohashIndex {
             precision: self.precision,
             entries: self.entries.clone(),
         };
-        rmp_serde::to_vec_named(&snap).map_err(crate::persist::RTreeCheckpointError::Serialize)
+        zerompk::to_msgpack_vec(&snap).map_err(crate::persist::RTreeCheckpointError::Serialize)
     }
 
     /// Restore from checkpoint.
     pub fn from_checkpoint(bytes: &[u8]) -> Result<Self, crate::persist::RTreeCheckpointError> {
-        let snap: GeohashSnapshot = rmp_serde::from_slice(bytes)
+        let snap: GeohashSnapshot = zerompk::from_msgpack(bytes)
             .map_err(crate::persist::RTreeCheckpointError::Deserialize)?;
         let mut index = Self::new(&snap.collection, &snap.field, snap.precision);
         // Rebuild prefix_index from entries.
@@ -189,7 +190,7 @@ fn prefix_successor(prefix: &str) -> Option<String> {
     None
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 struct GeohashSnapshot {
     collection: String,
     field: String,

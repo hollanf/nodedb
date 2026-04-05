@@ -143,14 +143,20 @@ impl SyncFrame {
     }
 
     /// Create a frame with a MessagePack-serialized body.
-    pub fn new_msgpack<T: Serialize>(msg_type: SyncMessageType, value: &T) -> Option<Self> {
-        let body = rmp_serde::to_vec_named(value).ok()?;
+    pub fn new_msgpack<T: zerompk::ToMessagePack>(
+        msg_type: SyncMessageType,
+        value: &T,
+    ) -> Option<Self> {
+        let body = zerompk::to_msgpack_vec(value).ok()?;
         Some(Self { msg_type, body })
     }
 
     /// Create a frame from a serializable value, falling back to an empty
     /// body if serialization fails.
-    pub fn encode_or_empty<T: Serialize>(msg_type: SyncMessageType, value: &T) -> Self {
+    pub fn encode_or_empty<T: zerompk::ToMessagePack>(
+        msg_type: SyncMessageType,
+        value: &T,
+    ) -> Self {
         Self::new_msgpack(msg_type, value).unwrap_or(Self {
             msg_type,
             body: Vec::new(),
@@ -158,15 +164,17 @@ impl SyncFrame {
     }
 
     /// Deserialize the body from MessagePack.
-    pub fn decode_body<'a, T: Deserialize<'a>>(&'a self) -> Option<T> {
-        rmp_serde::from_slice(&self.body).ok()
+    pub fn decode_body<T: zerompk::FromMessagePackOwned>(&self) -> Option<T> {
+        zerompk::from_msgpack(&self.body).ok()
     }
 }
 
 // ─── Message Payloads ───────────────────────────────────────────────────────
 
 /// Handshake message (client → server, 0x01).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct HandshakeMsg {
     /// JWT bearer token for authentication.
     pub jwt_token: String,
@@ -189,7 +197,9 @@ pub struct HandshakeMsg {
 }
 
 /// Handshake acknowledgment (server → client, 0x02).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct HandshakeAckMsg {
     /// Whether the handshake succeeded.
     pub success: bool,
@@ -208,7 +218,9 @@ pub struct HandshakeAckMsg {
 }
 
 /// Delta push message (client → server, 0x10).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct DeltaPushMsg {
     /// Collection the delta applies to.
     pub collection: String,
@@ -227,7 +239,9 @@ pub struct DeltaPushMsg {
 }
 
 /// Delta acknowledgment (server → client, 0x11).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct DeltaAckMsg {
     /// Mutation ID being acknowledged.
     pub mutation_id: u64,
@@ -236,7 +250,9 @@ pub struct DeltaAckMsg {
 }
 
 /// Delta rejection (server → client, 0x12).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct DeltaRejectMsg {
     /// Mutation ID being rejected.
     pub mutation_id: u64,
@@ -247,14 +263,18 @@ pub struct DeltaRejectMsg {
 }
 
 /// Shape subscribe request (client → server, 0x20).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ShapeSubscribeMsg {
     /// Shape definition to subscribe to.
     pub shape: ShapeDefinition,
 }
 
 /// Shape snapshot response (server → client, 0x21).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ShapeSnapshotMsg {
     /// Shape ID this snapshot belongs to.
     pub shape_id: String,
@@ -267,7 +287,9 @@ pub struct ShapeSnapshotMsg {
 }
 
 /// Shape delta message (server → client, 0x22).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ShapeDeltaMsg {
     /// Shape ID this delta applies to.
     pub shape_id: String,
@@ -284,13 +306,17 @@ pub struct ShapeDeltaMsg {
 }
 
 /// Shape unsubscribe request (client → server, 0x23).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ShapeUnsubscribeMsg {
     pub shape_id: String,
 }
 
 /// Vector clock sync message (bidirectional, 0x30).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct VectorClockSyncMsg {
     /// Per-collection clock: `{ collection: max_lsn }`.
     pub clocks: HashMap<String, u64>,
@@ -308,7 +334,9 @@ pub struct VectorClockSyncMsg {
 /// On receiving a ResyncRequest, the sender should:
 /// 1. Re-send all deltas from `from_mutation_id` onwards, OR
 /// 2. Send a full snapshot if `from_mutation_id` is 0
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ResyncRequestMsg {
     /// Reason for requesting re-sync.
     pub reason: ResyncReason,
@@ -319,7 +347,9 @@ pub struct ResyncRequestMsg {
 }
 
 /// Reason for a re-sync request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub enum ResyncReason {
     /// Detected missing mutation IDs in the delta stream.
     SequenceGap {
@@ -342,7 +372,9 @@ pub enum ResyncReason {
 /// Sent by Lite when its incoming shape delta queue is overwhelmed.
 /// Origin should reduce its push rate for this peer until a
 /// `Throttle { throttle: false }` is received.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ThrottleMsg {
     /// `true` to enable throttling, `false` to release.
     pub throttle: bool,
@@ -358,14 +390,18 @@ pub struct ThrottleMsg {
 /// a fresh token obtained from the application's auth layer.
 /// Origin validates the new token and either upgrades the session
 /// or disconnects if the token is invalid.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct TokenRefreshMsg {
     /// New JWT bearer token.
     pub new_token: String,
 }
 
 /// Token refresh acknowledgment (server → client, 0x61).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct TokenRefreshAckMsg {
     /// Whether the token refresh succeeded.
     pub success: bool,
@@ -377,7 +413,9 @@ pub struct TokenRefreshAckMsg {
 }
 
 /// Ping/Pong keepalive (0xFF).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct PingPongMsg {
     /// Timestamp (epoch milliseconds) for RTT measurement.
     pub timestamp_ms: u64,
@@ -386,7 +424,9 @@ pub struct PingPongMsg {
 }
 
 /// Timeseries metric batch push (client → server, 0x40).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct TimeseriesPushMsg {
     /// Source Lite instance ID (UUID v7).
     pub lite_id: String,
@@ -410,7 +450,9 @@ pub struct TimeseriesPushMsg {
 }
 
 /// Timeseries push acknowledgment (server → client, 0x41).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct TimeseriesAckMsg {
     /// Collection acknowledged.
     pub collection: String,
@@ -426,7 +468,9 @@ pub struct TimeseriesAckMsg {
 ///
 /// Carries function/trigger/procedure definitions from Origin to Lite.
 /// Sent when definitions are created, modified, or dropped on Origin.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct DefinitionSyncMsg {
     /// Type of definition: "function", "trigger", "procedure".
     pub definition_type: String,
@@ -448,7 +492,9 @@ pub struct DefinitionSyncMsg {
 ///
 /// Sending a `PresenceUpdate` implicitly subscribes the sender to the channel
 /// (if not already subscribed).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct PresenceUpdateMsg {
     /// Channel scoping key (e.g., `"doc:doc-123"`, `"workspace:ws-acme"`).
     pub channel: String,
@@ -459,7 +505,9 @@ pub struct PresenceUpdateMsg {
 }
 
 /// A single peer's presence state within a channel.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct PeerPresence {
     /// User identifier.
     pub user_id: String,
@@ -473,7 +521,9 @@ pub struct PeerPresence {
 ///
 /// Contains the full set of currently-present peers in the channel.
 /// Sent whenever any peer updates their state or leaves.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct PresenceBroadcastMsg {
     /// Channel this broadcast belongs to.
     pub channel: String,
@@ -485,7 +535,9 @@ pub struct PresenceBroadcastMsg {
 ///
 /// Emitted when a peer disconnects (WebSocket close) or when their
 /// presence TTL expires (no heartbeat within `presence_ttl_ms`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct PresenceLeaveMsg {
     /// Channel the user left.
     pub channel: String,
@@ -589,11 +641,7 @@ mod tests {
     fn presence_update_roundtrip() {
         let msg = PresenceUpdateMsg {
             channel: "doc:doc-123".into(),
-            state: rmp_serde::to_vec_named(&serde_json::json!({
-                "user_id": "user-42",
-                "cursor": {"block_id": "blk-7", "offset": 42}
-            }))
-            .unwrap(),
+            state: b"user_id:user-42,cursor:blk-7:42".to_vec(),
         };
         let frame = SyncFrame::new_msgpack(SyncMessageType::PresenceUpdate, &msg).unwrap();
         let bytes = frame.to_bytes();

@@ -6,7 +6,7 @@ use crate::event::topic::TopicDef;
 impl SystemCatalog {
     pub fn put_ep_topic(&self, def: &TopicDef) -> crate::Result<()> {
         let key = topic_key(def.tenant_id, &def.name);
-        let bytes = rmp_serde::to_vec(def).map_err(|e| catalog_err("serialize topic", e))?;
+        let bytes = zerompk::to_msgpack_vec(def).map_err(|e| catalog_err("serialize topic", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -55,7 +55,7 @@ impl SystemCatalog {
             .range::<&str>(..)
             .map_err(|e| catalog_err("range topics_ep", e))?;
         while let Some(Ok((_key, value))) = range.next() {
-            if let Ok(def) = rmp_serde::from_slice::<TopicDef>(value.value()) {
+            if let Ok(def) = zerompk::from_msgpack::<TopicDef>(value.value()) {
                 topics.push(def);
             }
         }

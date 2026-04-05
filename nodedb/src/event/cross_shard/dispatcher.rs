@@ -153,7 +153,8 @@ async fn send_write(
     target_node: u64,
     request: &CrossShardWriteRequest,
 ) -> Result<CrossShardWriteResponse, String> {
-    let payload = rmp_serde::to_vec(request).map_err(|e| format!("serialize request: {e}"))?;
+    let payload =
+        zerompk::to_msgpack_vec(request).map_err(|e| format!("serialize request: {e}"))?;
 
     let envelope = VShardEnvelope::new(
         VShardMessageType::CrossShardEvent,
@@ -176,7 +177,7 @@ async fn send_write(
     let response_env = VShardEnvelope::from_bytes(&response_bytes)
         .ok_or_else(|| "malformed VShardEnvelope response".to_string())?;
 
-    rmp_serde::from_slice::<CrossShardWriteResponse>(&response_env.payload)
+    zerompk::from_msgpack::<CrossShardWriteResponse>(&response_env.payload)
         .map_err(|e| format!("deserialize response: {e}"))
 }
 

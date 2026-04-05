@@ -26,7 +26,9 @@ pub struct ContinuousAggregateDef {
 }
 
 /// An aggregate expression: function + source column → result column.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct AggregateExpr {
     /// Aggregate function.
     pub function: AggFunction,
@@ -37,7 +39,15 @@ pub struct AggregateExpr {
 }
 
 /// Supported aggregate functions.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum AggFunction {
     Sum,
     Count,

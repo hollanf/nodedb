@@ -181,9 +181,9 @@ impl HnswIndex {
     /// deserialization, not per-node allocation. For CSR (flat arrays),
     /// rkyv zero-copy is used.
     pub fn checkpoint_to_bytes(&self) -> Vec<u8> {
-        use serde::{Deserialize, Serialize};
+        use zerompk::{FromMessagePack, ToMessagePack};
 
-        #[derive(Serialize, Deserialize)]
+        #[derive(ToMessagePack, FromMessagePack)]
         struct Snapshot {
             dim: usize,
             m: usize,
@@ -196,7 +196,7 @@ impl HnswIndex {
             nodes: Vec<NodeSnap>,
         }
 
-        #[derive(Serialize, Deserialize)]
+        #[derive(ToMessagePack, FromMessagePack)]
         struct NodeSnap {
             vector: Vec<f32>,
             neighbors: Vec<Vec<u32>>,
@@ -222,7 +222,7 @@ impl HnswIndex {
                 })
                 .collect(),
         };
-        match rmp_serde::to_vec_named(&snapshot) {
+        match zerompk::to_msgpack_vec(&snapshot) {
             Ok(bytes) => bytes,
             Err(e) => {
                 tracing::error!(error = %e, "HNSW checkpoint serialization failed");
@@ -233,9 +233,9 @@ impl HnswIndex {
 
     /// Restore an index from a checkpoint snapshot.
     pub fn from_checkpoint(bytes: &[u8]) -> Option<Self> {
-        use serde::{Deserialize, Serialize};
+        use zerompk::{FromMessagePack, ToMessagePack};
 
-        #[derive(Serialize, Deserialize)]
+        #[derive(ToMessagePack, FromMessagePack)]
         struct Snapshot {
             dim: usize,
             m: usize,
@@ -248,14 +248,14 @@ impl HnswIndex {
             nodes: Vec<NodeSnap>,
         }
 
-        #[derive(Serialize, Deserialize)]
+        #[derive(ToMessagePack, FromMessagePack)]
         struct NodeSnap {
             vector: Vec<f32>,
             neighbors: Vec<Vec<u32>>,
             deleted: bool,
         }
 
-        let snap: Snapshot = rmp_serde::from_slice(bytes).ok()?;
+        let snap: Snapshot = zerompk::from_msgpack(bytes).ok()?;
         let metric = match snap.metric {
             0 => DistanceMetric::L2,
             1 => DistanceMetric::Cosine,

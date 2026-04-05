@@ -468,10 +468,10 @@ impl ColumnarMemtable {
         for (i, (name, _ty)) in self.schema.columns.iter().enumerate() {
             if i < self.columns.len() {
                 let bytes = match &self.columns[i] {
-                    ColumnData::Timestamp(v) => rmp_serde::to_vec(v).unwrap_or_default(),
-                    ColumnData::Float64(v) => rmp_serde::to_vec(v).unwrap_or_default(),
-                    ColumnData::Int64(v) => rmp_serde::to_vec(v).unwrap_or_default(),
-                    ColumnData::Symbol(v) => rmp_serde::to_vec(v).unwrap_or_default(),
+                    ColumnData::Timestamp(v) => zerompk::to_msgpack_vec(v).unwrap_or_default(),
+                    ColumnData::Float64(v) => zerompk::to_msgpack_vec(v).unwrap_or_default(),
+                    ColumnData::Int64(v) => zerompk::to_msgpack_vec(v).unwrap_or_default(),
+                    ColumnData::Symbol(v) => zerompk::to_msgpack_vec(v).unwrap_or_default(),
                 };
                 result.push((name.clone(), bytes));
             }

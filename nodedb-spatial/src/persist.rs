@@ -10,11 +10,12 @@
 
 use nodedb_types::BoundingBox;
 use serde::{Deserialize, Serialize};
+use zerompk::{FromMessagePack, ToMessagePack};
 
 use crate::rtree::{RTree, RTreeEntry};
 
 /// Metadata for a persisted spatial index.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct SpatialIndexMeta {
     /// Collection this index belongs to.
     pub collection: String,
@@ -29,10 +30,14 @@ pub struct SpatialIndexMeta {
 }
 
 /// Type of spatial index.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToMessagePack, FromMessagePack,
+)]
+#[msgpack(c_enum)]
+#[repr(u8)]
 pub enum SpatialIndexType {
-    RTree,
-    Geohash,
+    RTree = 0,
+    Geohash = 1,
 }
 
 impl SpatialIndexType {
@@ -51,7 +56,7 @@ impl std::fmt::Display for SpatialIndexType {
 }
 
 /// Serialized R-tree snapshot for checkpoint.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct RTreeSnapshot {
     pub entries: Vec<RTreeEntry>,
 }
@@ -65,7 +70,7 @@ impl RTree {
         let snapshot = RTreeSnapshot {
             entries: self.entries().into_iter().cloned().collect(),
         };
-        rmp_serde::to_vec_named(&snapshot).map_err(RTreeCheckpointError::Serialize)
+        zerompk::to_msgpack_vec(&snapshot).map_err(RTreeCheckpointError::Serialize)
     }
 
     /// Restore an R-tree from checkpoint bytes.
@@ -74,7 +79,7 @@ impl RTree {
     /// sequential insert. Returns None if bytes are corrupted.
     pub fn from_checkpoint(bytes: &[u8]) -> Result<Self, RTreeCheckpointError> {
         let snapshot: RTreeSnapshot =
-            rmp_serde::from_slice(bytes).map_err(RTreeCheckpointError::Deserialize)?;
+            zerompk::from_msgpack(bytes).map_err(RTreeCheckpointError::Deserialize)?;
         Ok(RTree::bulk_load(snapshot.entries))
     }
 }
@@ -107,21 +112,21 @@ pub fn meta_storage_key(collection: &str, field: &str) -> Vec<u8> {
 
 /// Serialize index metadata to bytes.
 pub fn serialize_meta(meta: &SpatialIndexMeta) -> Result<Vec<u8>, RTreeCheckpointError> {
-    rmp_serde::to_vec_named(meta).map_err(RTreeCheckpointError::Serialize)
+    zerompk::to_msgpack_vec(meta).map_err(RTreeCheckpointError::Serialize)
 }
 
 /// Deserialize index metadata from bytes.
 pub fn deserialize_meta(bytes: &[u8]) -> Result<SpatialIndexMeta, RTreeCheckpointError> {
-    rmp_serde::from_slice(bytes).map_err(RTreeCheckpointError::Deserialize)
+    zerompk::from_msgpack(bytes).map_err(RTreeCheckpointError::Deserialize)
 }
 
 /// Errors during R-tree checkpoint operations.
 #[derive(Debug, thiserror::Error)]
 pub enum RTreeCheckpointError {
     #[error("R-tree checkpoint serialization failed: {0}")]
-    Serialize(rmp_serde::encode::Error),
+    Serialize(zerompk::Error),
     #[error("R-tree checkpoint deserialization failed: {0}")]
-    Deserialize(rmp_serde::decode::Error),
+    Deserialize(zerompk::Error),
 }
 
 #[cfg(test)]

@@ -9,7 +9,8 @@ impl SystemCatalog {
     /// Key format: `"{tenant_id}:{name}"`.
     pub fn put_sequence(&self, seq: &StoredSequence) -> crate::Result<()> {
         let key = sequence_key(seq.tenant_id, &seq.name);
-        let bytes = rmp_serde::to_vec(seq).map_err(|e| catalog_err("serialize sequence", e))?;
+        let bytes =
+            zerompk::to_msgpack_vec(seq).map_err(|e| catalog_err("serialize sequence", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -44,7 +45,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("get sequence", e))?
         {
             Some(value) => {
-                let seq = rmp_serde::from_slice(value.value())
+                let seq = zerompk::from_msgpack(value.value())
                     .map_err(|e| catalog_err("deserialize sequence", e))?;
                 Ok(Some(seq))
             }
@@ -95,7 +96,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("range sequences", e))?;
         while let Some(Ok((key, value))) = range.next() {
             if key.value().starts_with(&prefix)
-                && let Ok(seq) = rmp_serde::from_slice::<StoredSequence>(value.value())
+                && let Ok(seq) = zerompk::from_msgpack::<StoredSequence>(value.value())
             {
                 sequences.push(seq);
             }
@@ -118,7 +119,7 @@ impl SystemCatalog {
             .range::<&str>(..)
             .map_err(|e| catalog_err("range sequences", e))?;
         while let Some(Ok((_key, value))) = range.next() {
-            if let Ok(seq) = rmp_serde::from_slice::<StoredSequence>(value.value()) {
+            if let Ok(seq) = zerompk::from_msgpack::<StoredSequence>(value.value()) {
                 sequences.push(seq);
             }
         }
@@ -128,8 +129,8 @@ impl SystemCatalog {
     /// Store sequence runtime state (current value, epoch).
     pub fn put_sequence_state(&self, state: &SequenceState) -> crate::Result<()> {
         let key = sequence_key(state.tenant_id, &state.name);
-        let bytes =
-            rmp_serde::to_vec(state).map_err(|e| catalog_err("serialize sequence state", e))?;
+        let bytes = zerompk::to_msgpack_vec(state)
+            .map_err(|e| catalog_err("serialize sequence state", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -164,7 +165,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("get sequence state", e))?
         {
             Some(value) => {
-                let state = rmp_serde::from_slice(value.value())
+                let state = zerompk::from_msgpack(value.value())
                     .map_err(|e| catalog_err("deserialize sequence state", e))?;
                 Ok(Some(state))
             }

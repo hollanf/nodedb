@@ -59,7 +59,7 @@ impl ClusterCatalog {
 
     /// Persist the cluster topology.
     pub fn save_topology(&self, topology: &ClusterTopology) -> Result<()> {
-        let bytes = rmp_serde::to_vec(topology).map_err(|e| ClusterError::Codec {
+        let bytes = zerompk::to_msgpack_vec(topology).map_err(|e| ClusterError::Codec {
             detail: format!("serialize topology: {e}"),
         })?;
 
@@ -83,7 +83,7 @@ impl ClusterCatalog {
             Some(guard) => {
                 let bytes = guard.value();
                 let topo: ClusterTopology =
-                    rmp_serde::from_slice(bytes).map_err(|e| ClusterError::Codec {
+                    zerompk::from_msgpack(bytes).map_err(|e| ClusterError::Codec {
                         detail: format!("deserialize topology: {e}"),
                     })?;
                 Ok(Some(topo))
@@ -96,7 +96,7 @@ impl ClusterCatalog {
 
     /// Persist the routing table.
     pub fn save_routing(&self, routing: &RoutingTable) -> Result<()> {
-        let bytes = rmp_serde::to_vec(routing).map_err(|e| ClusterError::Codec {
+        let bytes = zerompk::to_msgpack_vec(routing).map_err(|e| ClusterError::Codec {
             detail: format!("serialize routing: {e}"),
         })?;
 
@@ -120,7 +120,7 @@ impl ClusterCatalog {
             Some(guard) => {
                 let bytes = guard.value();
                 let rt: RoutingTable =
-                    rmp_serde::from_slice(bytes).map_err(|e| ClusterError::Codec {
+                    zerompk::from_msgpack(bytes).map_err(|e| ClusterError::Codec {
                         detail: format!("deserialize routing: {e}"),
                     })?;
                 Ok(Some(rt))

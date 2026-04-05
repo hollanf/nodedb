@@ -10,13 +10,14 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
+use zerompk::{FromMessagePack, ToMessagePack};
 
 use super::definition::{ShapeDefinition, ShapeId};
 use super::registry::ShapeRegistry;
 use crate::control::server::sync::wire::*;
 
 /// ShapeSubscribe request (client → server, 0x20).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct ShapeSubscribeMsg {
     /// Shape definition to subscribe to.
     pub shape: ShapeDefinition,
@@ -24,7 +25,7 @@ pub struct ShapeSubscribeMsg {
 
 /// ShapeSnapshot response (server → client, 0x21).
 /// Sent after ShapeSubscribe with the initial dataset.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct ShapeSnapshotMsg {
     /// Shape ID this snapshot belongs to.
     pub shape_id: ShapeId,
@@ -39,7 +40,7 @@ pub struct ShapeSnapshotMsg {
 
 /// ShapeDelta message (server → client, 0x22).
 /// Pushed when a mutation matches a subscribed shape.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct ShapeDeltaMsg {
     /// Shape ID this delta applies to.
     pub shape_id: ShapeId,
@@ -56,7 +57,7 @@ pub struct ShapeDeltaMsg {
 }
 
 /// ShapeUnsubscribe request (client → server, 0x23).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct ShapeUnsubscribeMsg {
     pub shape_id: ShapeId,
 }
@@ -281,7 +282,7 @@ mod tests {
 
         let frame = handle_subscribe("s1", 1, &msg, &registry, 100, |_shape, _lsn| {
             ShapeSnapshotData {
-                data: rmp_serde::to_vec_named(&vec!["doc1", "doc2"]).unwrap_or_default(),
+                data: zerompk::to_msgpack_vec(&vec!["doc1", "doc2"]).unwrap_or_default(),
                 doc_count: 2,
             }
         });

@@ -6,13 +6,14 @@
 
 use crate::geometry::Geometry;
 use serde::{Deserialize, Serialize};
+use zerompk::{FromMessagePack, ToMessagePack};
 
 /// An axis-aligned bounding box in WGS-84 coordinates.
 ///
 /// **Anti-meridian convention:** When `min_lng > max_lng`, the bbox wraps
 /// across the ±180° date line. For example, a geometry spanning 170°E to
 /// 170°W has `min_lng = 170.0, max_lng = -170.0`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct BoundingBox {
     pub min_lng: f64,
     pub min_lat: f64,

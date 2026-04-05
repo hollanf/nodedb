@@ -25,16 +25,16 @@ impl CoreLoop {
         // Try to deserialize as full TenantDataSnapshot first (new format).
         // Fall back to legacy (documents + indexes only) if that fails.
         let full_snapshot: Option<crate::types::TenantDataSnapshot> =
-            rmp_serde::from_slice(documents_bytes).ok();
+            zerompk::from_msgpack(documents_bytes).ok();
 
         let (docs_written, indexes_written) = if let Some(ref snap) = full_snapshot {
             self.restore_sparse(tenant_id, &snap.documents, &snap.indexes)
         } else {
             // Legacy format: separate documents and indexes bytes.
             let documents: Vec<(String, Vec<u8>)> =
-                rmp_serde::from_slice(documents_bytes).unwrap_or_default();
+                zerompk::from_msgpack(documents_bytes).unwrap_or_default();
             let indexes: Vec<(String, Vec<u8>)> =
-                rmp_serde::from_slice(indexes_bytes).unwrap_or_default();
+                zerompk::from_msgpack(indexes_bytes).unwrap_or_default();
             self.restore_sparse(tenant_id, &documents, &indexes)
         };
 
@@ -64,7 +64,7 @@ impl CoreLoop {
             // Restore vector collections.
             for (key, bytes) in &snap.vectors {
                 let vectors: Vec<(u32, Vec<f32>, Option<String>)> =
-                    match rmp_serde::from_slice(bytes) {
+                    match zerompk::from_msgpack(bytes) {
                         Ok(v) => v,
                         Err(e) => {
                             warn!(key, error = %e, "failed to decode vector snapshot");
@@ -78,7 +78,7 @@ impl CoreLoop {
 
             // Restore KV tables.
             for (collection_name, bytes) in &snap.kv_tables {
-                let entries: Vec<(Vec<u8>, Vec<u8>, u64)> = match rmp_serde::from_slice(bytes) {
+                let entries: Vec<(Vec<u8>, Vec<u8>, u64)> = match zerompk::from_msgpack(bytes) {
                     Ok(e) => e,
                     Err(e) => {
                         warn!(collection_name, error = %e, "failed to decode kv snapshot");
@@ -243,7 +243,7 @@ impl CoreLoop {
 
     fn restore_timeseries(&mut self, key: &str, bytes: &[u8]) -> crate::Result<()> {
         let columns: Vec<(String, Vec<u8>)> =
-            rmp_serde::from_slice(bytes).map_err(|e| crate::Error::Serialization {
+            zerompk::from_msgpack(bytes).map_err(|e| crate::Error::Serialization {
                 format: "msgpack".into(),
                 detail: e.to_string(),
             })?;

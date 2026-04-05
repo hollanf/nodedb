@@ -24,7 +24,14 @@ const GSI_META: TableDefinition<&str, &[u8]> = TableDefinition::new("gsi.meta");
 pub const DEFAULT_MAX_GSIS_PER_COLLECTION: usize = 4;
 
 /// A single GSI entry pointing to the document's primary location.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Clone,
+    Debug,
+)]
 pub struct GsiEntry {
     pub tenant_id: u32,
     pub collection: String,
@@ -34,7 +41,14 @@ pub struct GsiEntry {
 }
 
 /// GSI metadata for a declared index.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Clone,
+    Debug,
+)]
 pub struct GsiMeta {
     pub index_name: String,
     pub collection: String,
@@ -106,7 +120,7 @@ impl GsiStore {
         };
         let meta_key = format!("{tenant_id}:{collection}:{index_name}");
         let meta_bytes =
-            rmp_serde::to_vec_named(&meta).map_err(|e| crate::Error::Serialization {
+            zerompk::to_msgpack_vec(&meta).map_err(|e| crate::Error::Serialization {
                 format: "msgpack".into(),
                 detail: format!("gsi meta: {e}"),
             })?;
@@ -178,7 +192,7 @@ impl GsiStore {
 
                 let key = format!("{}:{}", idx_meta.index_name, value_str);
                 let mut entries: Vec<GsiEntry> = match table.get(key.as_str()) {
-                    Ok(Some(guard)) => match rmp_serde::from_slice(guard.value()) {
+                    Ok(Some(guard)) => match zerompk::from_msgpack(guard.value()) {
                         Ok(v) => v,
                         Err(e) => {
                             tracing::warn!(index = %key, error = %e, "GSI entry deserialization failed, starting fresh");
@@ -198,7 +212,7 @@ impl GsiStore {
                 });
 
                 let bytes =
-                    rmp_serde::to_vec_named(&entries).map_err(|e| crate::Error::Serialization {
+                    zerompk::to_msgpack_vec(&entries).map_err(|e| crate::Error::Serialization {
                         format: "msgpack".into(),
                         detail: format!("gsi entries: {e}"),
                     })?;
@@ -233,7 +247,7 @@ impl GsiStore {
 
         match table.get(key.as_str()) {
             Ok(Some(guard)) => {
-                let entries: Vec<GsiEntry> = match rmp_serde::from_slice(guard.value()) {
+                let entries: Vec<GsiEntry> = match zerompk::from_msgpack(guard.value()) {
                     Ok(v) => v,
                     Err(e) => {
                         tracing::warn!(index = %key, error = %e, "GSI lookup deserialization failed");
@@ -280,7 +294,7 @@ impl GsiStore {
                 engine: "gsi".into(),
                 detail: format!("entry: {e}"),
             })?;
-            match rmp_serde::from_slice::<GsiMeta>(entry.1.value()) {
+            match zerompk::from_msgpack::<GsiMeta>(entry.1.value()) {
                 Ok(meta) => result.push(meta),
                 Err(e) => {
                     tracing::warn!(

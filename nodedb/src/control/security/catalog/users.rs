@@ -19,7 +19,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("range users", e))?;
         for entry in range {
             let (_, value) = entry.map_err(|e| catalog_err("read entry", e))?;
-            let user: StoredUser = rmp_serde::from_slice(value.value())
+            let user: StoredUser = zerompk::from_msgpack(value.value())
                 .map_err(|e| catalog_err("deserialize user", e))?;
             users.push(user);
         }
@@ -29,7 +29,7 @@ impl SystemCatalog {
 
     /// Write a user record to the catalog (insert or update).
     pub fn put_user(&self, user: &StoredUser) -> crate::Result<()> {
-        let bytes = rmp_serde::to_vec(user).map_err(|e| catalog_err("serialize user", e))?;
+        let bytes = zerompk::to_msgpack_vec(user).map_err(|e| catalog_err("serialize user", e))?;
 
         let write_txn = self
             .db

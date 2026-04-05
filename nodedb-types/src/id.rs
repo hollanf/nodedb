@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
     Hash,
     Serialize,
     Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
     rkyv::Archive,
     rkyv::Serialize,
     rkyv::Deserialize,

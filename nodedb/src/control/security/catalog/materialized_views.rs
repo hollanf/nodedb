@@ -6,8 +6,8 @@ impl SystemCatalog {
     /// Store a materialized view record.
     pub fn put_materialized_view(&self, view: &StoredMaterializedView) -> crate::Result<()> {
         let key = format!("{}:{}", view.tenant_id, view.name);
-        let bytes =
-            rmp_serde::to_vec(view).map_err(|e| catalog_err("serialize materialized view", e))?;
+        let bytes = zerompk::to_msgpack_vec(view)
+            .map_err(|e| catalog_err("serialize materialized view", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -40,7 +40,7 @@ impl SystemCatalog {
         match table.get(key.as_str()) {
             Ok(Some(guard)) => {
                 let bytes = guard.value();
-                let view: StoredMaterializedView = rmp_serde::from_slice(bytes)
+                let view: StoredMaterializedView = zerompk::from_msgpack(bytes)
                     .map_err(|e| catalog_err("deserialize materialized view", e))?;
                 Ok(Some(view))
             }
@@ -69,7 +69,7 @@ impl SystemCatalog {
         {
             let (key, val) = entry.map_err(|e| catalog_err("read entry", e))?;
             if key.value().starts_with(&prefix)
-                && let Ok(view) = rmp_serde::from_slice::<StoredMaterializedView>(val.value())
+                && let Ok(view) = zerompk::from_msgpack::<StoredMaterializedView>(val.value())
             {
                 views.push(view);
             }

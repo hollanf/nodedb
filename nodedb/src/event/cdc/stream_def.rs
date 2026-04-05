@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Which operations to include in the stream.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct OpFilter {
     pub insert: bool,
     pub update: bool,
@@ -50,11 +52,24 @@ impl Default for OpFilter {
 }
 
 /// Output format for change stream events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum StreamFormat {
     #[default]
-    Json,
-    Msgpack,
+    Json = 0,
+    Msgpack = 1,
 }
 
 impl StreamFormat {
@@ -75,7 +90,9 @@ impl StreamFormat {
 }
 
 /// Retention configuration for a change stream.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct RetentionConfig {
     /// Maximum events retained. Default 1M.
     pub max_events: u64,
@@ -96,20 +113,33 @@ impl Default for RetentionConfig {
 ///
 /// In a well-ordered system, events arrive in LSN order within a partition.
 /// Late events can occur during WAL replay or catchup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum LateDataPolicy {
     /// Accept and process normally. For single-partition streams, events are
     /// strictly ordered by LSN so "late" events don't occur.
     #[default]
-    Allow,
+    Allow = 0,
     /// Silently discard events with LSN below the partition watermark.
-    Drop,
+    Drop = 1,
     /// Accept the late event, process it (update streaming MV aggregates),
     /// and emit a correction event into the stream so downstream consumers
     /// know that a previously-emitted aggregate bucket was updated.
     /// The correction event has `op = "RECOMPUTE"` and carries the updated
     /// aggregate values in `new_value`.
-    Recompute,
+    Recompute = 2,
 }
 
 impl LateDataPolicy {
@@ -133,7 +163,9 @@ impl LateDataPolicy {
 
 /// Log compaction configuration. When enabled, the buffer deduplicates
 /// by key field, keeping only the latest event per key value.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct CompactionConfig {
     /// Whether compaction is enabled.
     pub enabled: bool,
@@ -154,7 +186,9 @@ impl CompactionConfig {
 }
 
 /// Persistent definition of a change stream. Stored in the system catalog.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ChangeStreamDef {
     /// Tenant that owns this stream.
     pub tenant_id: u32,

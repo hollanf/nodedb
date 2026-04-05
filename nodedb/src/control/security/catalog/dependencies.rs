@@ -6,7 +6,16 @@
 use super::types::{DEPENDENCIES, SystemCatalog, catalog_err};
 
 /// A single dependency edge: the source object references the target.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    PartialEq,
+    Eq,
+)]
 pub struct Dependency {
     /// Type of referenced object: "function", "collection".
     pub target_type: String,
@@ -15,7 +24,14 @@ pub struct Dependency {
 }
 
 /// All dependencies for a source object.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct DependencyList {
     pub deps: Vec<Dependency>,
 }
@@ -36,7 +52,7 @@ impl SystemCatalog {
         let list = DependencyList {
             deps: deps.to_vec(),
         };
-        let bytes = rmp_serde::to_vec(&list).map_err(|e| catalog_err("serialize deps", e))?;
+        let bytes = zerompk::to_msgpack_vec(&list).map_err(|e| catalog_err("serialize deps", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -115,7 +131,7 @@ impl SystemCatalog {
                 continue;
             }
 
-            let list: DependencyList = match rmp_serde::from_slice(value.value()) {
+            let list: DependencyList = match zerompk::from_msgpack(value.value()) {
                 Ok(l) => l,
                 Err(_) => continue,
             };

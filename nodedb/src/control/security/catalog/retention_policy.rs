@@ -9,8 +9,8 @@ impl SystemCatalog {
     /// Key format: `"{tenant_id}:{policy_name}"`.
     pub fn put_retention_policy(&self, def: &RetentionPolicyDef) -> crate::Result<()> {
         let key = retention_policy_key(def.tenant_id, &def.name);
-        let bytes =
-            rmp_serde::to_vec(def).map_err(|e| catalog_err("serialize retention policy", e))?;
+        let bytes = zerompk::to_msgpack_vec(def)
+            .map_err(|e| catalog_err("serialize retention policy", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -62,7 +62,7 @@ impl SystemCatalog {
             .range::<&str>(..)
             .map_err(|e| catalog_err("range retention_policies", e))?;
         while let Some(Ok((_key, value))) = range.next() {
-            if let Ok(def) = rmp_serde::from_slice::<RetentionPolicyDef>(value.value()) {
+            if let Ok(def) = zerompk::from_msgpack::<RetentionPolicyDef>(value.value()) {
                 policies.push(def);
             }
         }

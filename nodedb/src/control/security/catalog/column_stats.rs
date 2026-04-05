@@ -8,7 +8,9 @@ use super::types::{COLUMN_STATS, SystemCatalog, catalog_err};
 ///
 /// Stored in redb under `_system.column_stats` with key `"{tenant_id}:{collection}:{column}"`.
 /// Used by DataFusion's cost-based optimizer for cardinality estimation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct StoredColumnStats {
     pub tenant_id: u32,
     pub collection: String,
@@ -34,7 +36,7 @@ impl SystemCatalog {
     pub fn put_column_stats(&self, stats: &StoredColumnStats) -> crate::Result<()> {
         let key = stats_key(stats.tenant_id, &stats.collection, &stats.column);
         let bytes =
-            rmp_serde::to_vec(stats).map_err(|e| catalog_err("serialize column_stats", e))?;
+            zerompk::to_msgpack_vec(stats).map_err(|e| catalog_err("serialize column_stats", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -71,7 +73,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("range column_stats", e))?;
         while let Some(Ok((key, value))) = range.next() {
             if key.value().starts_with(&prefix)
-                && let Ok(s) = rmp_serde::from_slice::<StoredColumnStats>(value.value())
+                && let Ok(s) = zerompk::from_msgpack::<StoredColumnStats>(value.value())
             {
                 stats.push(s);
             }

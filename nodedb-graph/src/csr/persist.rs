@@ -6,11 +6,11 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use zerompk::{FromMessagePack, ToMessagePack};
 
 use super::index::CsrIndex;
 
-#[derive(Serialize, Deserialize)]
+#[derive(ToMessagePack, FromMessagePack)]
 struct CsrSnapshot {
     nodes: Vec<String>,
     labels: Vec<String>,
@@ -23,16 +23,10 @@ struct CsrSnapshot {
     buffer_out: Vec<Vec<(u16, u32)>>,
     buffer_in: Vec<Vec<(u16, u32)>>,
     deleted: Vec<(u32, u16, u32)>,
-    // Weight fields — absent in old checkpoints (serde default).
-    #[serde(default)]
     has_weights: bool,
-    #[serde(default)]
     out_weights: Option<Vec<f64>>,
-    #[serde(default)]
     in_weights: Option<Vec<f64>>,
-    #[serde(default)]
     buffer_out_weights: Vec<Vec<f64>>,
-    #[serde(default)]
     buffer_in_weights: Vec<Vec<f64>>,
 }
 
@@ -57,7 +51,7 @@ impl CsrIndex {
             buffer_out_weights: self.buffer_out_weights.clone(),
             buffer_in_weights: self.buffer_in_weights.clone(),
         };
-        match rmp_serde::to_vec_named(&snapshot) {
+        match zerompk::to_msgpack_vec(&snapshot) {
             Ok(bytes) => bytes,
             Err(e) => {
                 tracing::error!(error = %e, "CSR checkpoint serialization failed");
@@ -71,7 +65,7 @@ impl CsrIndex {
     /// Backwards-compatible: old checkpoints without weight fields are
     /// deserialized with `has_weights = false` and empty weight arrays.
     pub fn from_checkpoint(bytes: &[u8]) -> Option<Self> {
-        let snap: CsrSnapshot = rmp_serde::from_slice(bytes).ok()?;
+        let snap: CsrSnapshot = zerompk::from_msgpack(bytes).ok()?;
 
         let node_to_id: HashMap<String, u32> = snap
             .nodes

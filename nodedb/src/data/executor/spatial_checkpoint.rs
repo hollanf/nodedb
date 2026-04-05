@@ -53,7 +53,7 @@ impl CoreLoop {
                 .map(|((_, entry_id), doc_id)| (*entry_id, doc_id.clone()))
                 .collect();
             if !doc_entries.is_empty() {
-                let map_bytes = rmp_serde::to_vec(&doc_entries).unwrap_or_default();
+                let map_bytes = zerompk::to_msgpack_vec(&doc_entries).unwrap_or_default();
                 let map_path = ckpt_dir.join(format!("{}.docmap", sanitize_key(key)));
                 let _ = std::fs::write(&map_path, &map_bytes);
             }
@@ -116,7 +116,7 @@ impl CoreLoop {
                 // Load doc_map.
                 let map_path = ckpt_dir.join(format!("{sanitized}.docmap"));
                 if let Ok(map_bytes) = std::fs::read(&map_path)
-                    && let Ok(doc_entries) = rmp_serde::from_slice::<Vec<(u64, String)>>(&map_bytes)
+                    && let Ok(doc_entries) = zerompk::from_msgpack::<Vec<(u64, String)>>(&map_bytes)
                 {
                     for (entry_id, doc_id) in doc_entries {
                         self.spatial_doc_map.insert((key.clone(), entry_id), doc_id);

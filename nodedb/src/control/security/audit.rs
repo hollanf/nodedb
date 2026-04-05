@@ -42,7 +42,14 @@ pub enum AuditLevel {
 }
 
 /// Security-relevant audit event.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct AuditEntry {
     /// Monotonic sequence number within this node.
     pub seq: u64,
@@ -70,52 +77,63 @@ pub struct AuditEntry {
 }
 
 /// Categories of audit events.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[repr(u8)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[msgpack(c_enum)]
 pub enum AuditEvent {
     /// Authentication succeeded.
-    AuthSuccess,
+    AuthSuccess = 0,
     /// Authentication failed.
-    AuthFailure,
+    AuthFailure = 1,
     /// Authorization denied.
-    AuthzDenied,
+    AuthzDenied = 2,
     /// Privilege/role change.
-    PrivilegeChange,
+    PrivilegeChange = 3,
     /// Tenant created.
-    TenantCreated,
+    TenantCreated = 4,
     /// Tenant deleted.
-    TenantDeleted,
+    TenantDeleted = 5,
     /// Snapshot initiated.
-    SnapshotBegin,
+    SnapshotBegin = 6,
     /// Snapshot completed.
-    SnapshotEnd,
+    SnapshotEnd = 7,
     /// Snapshot restore initiated.
-    RestoreBegin,
+    RestoreBegin = 8,
     /// Snapshot restore completed.
-    RestoreEnd,
+    RestoreEnd = 9,
     /// TLS certificate rotated.
-    CertRotation,
+    CertRotation = 10,
     /// TLS certificate rotation failed.
-    CertRotationFailed,
+    CertRotationFailed = 11,
     /// Encryption key rotated.
-    KeyRotation,
+    KeyRotation = 12,
     /// Configuration change.
-    ConfigChange,
+    ConfigChange = 13,
     /// Node joined cluster.
-    NodeJoined,
+    NodeJoined = 14,
     /// Node left cluster.
-    NodeLeft,
+    NodeLeft = 15,
     /// Admin action (catch-all for ops).
-    AdminAction,
+    AdminAction = 16,
     /// Session connected.
-    SessionConnect,
+    SessionConnect = 17,
     /// Session disconnected.
-    SessionDisconnect,
+    SessionDisconnect = 18,
     /// Query executed (full/forensic level only).
-    QueryExec,
+    QueryExec = 19,
     /// RLS denial (full level).
-    RlsDenied,
+    RlsDenied = 20,
     /// Row-level change (forensic level only).
-    RowChange,
+    RowChange = 21,
 }
 
 impl AuditEvent {

@@ -7,7 +7,7 @@ impl SystemCatalog {
     pub fn put_checkpoint(&self, record: &CheckpointRecord) -> crate::Result<()> {
         let key = record.catalog_key();
         let bytes =
-            rmp_serde::to_vec(record).map_err(|e| catalog_err("serialize checkpoint", e))?;
+            zerompk::to_msgpack_vec(record).map_err(|e| catalog_err("serialize checkpoint", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -71,7 +71,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("get checkpoint", e))?
         {
             Some(guard) => {
-                let record: CheckpointRecord = rmp_serde::from_slice(guard.value())
+                let record: CheckpointRecord = zerompk::from_msgpack(guard.value())
                     .map_err(|e| catalog_err("deserialize checkpoint", e))?;
                 Ok(Some(record))
             }
@@ -104,7 +104,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("range scan checkpoints", e))?;
         for entry in range {
             let (_key, value) = entry.map_err(|e| catalog_err("iterate checkpoints", e))?;
-            let record: CheckpointRecord = rmp_serde::from_slice(value.value())
+            let record: CheckpointRecord = zerompk::from_msgpack(value.value())
                 .map_err(|e| catalog_err("deserialize checkpoint", e))?;
             records.push(record);
         }
@@ -146,7 +146,7 @@ impl SystemCatalog {
         let mut keys_to_delete = Vec::new();
         for entry in range {
             let (key, value) = entry.map_err(|e| catalog_err("iterate checkpoints", e))?;
-            let record: CheckpointRecord = rmp_serde::from_slice(value.value())
+            let record: CheckpointRecord = zerompk::from_msgpack(value.value())
                 .map_err(|e| catalog_err("deserialize checkpoint", e))?;
             if record.created_at < before_timestamp {
                 keys_to_delete.push(key.value().to_owned());

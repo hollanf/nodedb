@@ -173,7 +173,7 @@ pub async fn rate_remaining(
     {
         Ok(resp) if resp.status == Status::Ok && !resp.payload.is_empty() => {
             // Counter is stored as MessagePack i64.
-            rmp_serde::from_slice::<i64>(&resp.payload).unwrap_or(0)
+            zerompk::from_msgpack::<i64>(&resp.payload).unwrap_or(0)
         }
         _ => 0, // Key doesn't exist yet — no usage.
     };

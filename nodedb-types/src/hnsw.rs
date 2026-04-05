@@ -32,7 +32,9 @@ impl Default for HnswParams {
 /// Shared format between Origin and Lite — both serialize nodes
 /// identically via MessagePack, enabling cross-deployment checkpoint
 /// compatibility.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct HnswNodeSnapshot {
     pub vector: Vec<f32>,
     pub neighbors: Vec<Vec<u32>>,
@@ -40,7 +42,9 @@ pub struct HnswNodeSnapshot {
 }
 
 /// HNSW checkpoint snapshot — shared serialization format.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct HnswCheckpoint {
     pub dim: usize,
     pub m: usize,
@@ -82,8 +86,8 @@ mod tests {
                 deleted: false,
             }],
         };
-        let bytes = rmp_serde::to_vec_named(&snap).unwrap();
-        let restored: HnswCheckpoint = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&snap).unwrap();
+        let restored: HnswCheckpoint = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(restored.dim, 128);
         assert_eq!(restored.nodes.len(), 1);
         assert_eq!(restored.nodes[0].vector.len(), 3);

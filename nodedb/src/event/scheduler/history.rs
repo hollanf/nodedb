@@ -64,7 +64,7 @@ impl JobHistoryStore {
                     if id > max_id {
                         max_id = id;
                     }
-                    if let Ok(run) = rmp_serde::from_slice::<JobRun>(value_guard.value()) {
+                    if let Ok(run) = zerompk::from_msgpack::<JobRun>(value_guard.value()) {
                         runs.push_back(run);
                     }
                 }
@@ -95,7 +95,7 @@ impl JobHistoryStore {
             .next_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        let bytes = rmp_serde::to_vec(&run).map_err(|e| crate::Error::Serialization {
+        let bytes = zerompk::to_msgpack_vec(&run).map_err(|e| crate::Error::Serialization {
             format: "msgpack".into(),
             detail: format!("job_run: {e}"),
         })?;

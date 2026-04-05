@@ -11,7 +11,15 @@ use serde::{Deserialize, Serialize};
 
 /// A shape definition: describes which data falls within the subscription.
 #[derive(
-    Debug, Clone, Serialize, Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
 )]
 pub struct ShapeDefinition {
     /// Unique shape ID.
@@ -30,7 +38,15 @@ pub struct ShapeDefinition {
 
 /// Shape type: determines how mutations are evaluated for inclusion.
 #[derive(
-    Debug, Clone, Serialize, Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
 )]
 pub enum ShapeType {
     /// Document shape: all documents in a collection matching a predicate.
@@ -162,8 +178,8 @@ mod tests {
             description: "test shape".into(),
             field_filter: vec![],
         };
-        let bytes = rmp_serde::to_vec_named(&shape).unwrap();
-        let decoded: ShapeDefinition = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&shape).unwrap();
+        let decoded: ShapeDefinition = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.shape_id, "test");
         assert_eq!(decoded.tenant_id, 5);
         assert!(matches!(decoded.shape_type, ShapeType::Document { .. }));

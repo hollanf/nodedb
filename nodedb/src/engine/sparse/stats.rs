@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 const COLUMN_STATS: TableDefinition<&str, &[u8]> = TableDefinition::new("column_stats");
 
 /// Statistics for a single column in a collection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ColumnStats {
     /// Total number of documents observed (including those without this field).
     pub row_count: u64,
@@ -193,7 +195,7 @@ impl StatsStore {
             Ok(Some(guard)) => {
                 let bytes = guard.value();
                 let stats: ColumnStats =
-                    rmp_serde::from_slice(bytes).map_err(|e| crate::Error::Storage {
+                    zerompk::from_msgpack(bytes).map_err(|e| crate::Error::Storage {
                         engine: "stats".into(),
                         detail: format!("deserialize: {e}"),
                     })?;
@@ -216,7 +218,7 @@ impl StatsStore {
         stats: &ColumnStats,
     ) -> crate::Result<()> {
         let key = format!("{tenant_id}:{collection}:{field}");
-        let bytes = rmp_serde::to_vec_named(stats).map_err(|e| crate::Error::Storage {
+        let bytes = zerompk::to_msgpack_vec(stats).map_err(|e| crate::Error::Storage {
             engine: "stats".into(),
             detail: format!("serialize: {e}"),
         })?;
@@ -299,12 +301,12 @@ impl StatsStore {
                 .get(key.as_str())
                 .ok()
                 .flatten()
-                .and_then(|guard| rmp_serde::from_slice(guard.value()).ok())
+                .and_then(|guard| zerompk::from_msgpack(guard.value()).ok())
                 .unwrap_or_default();
 
             stats.observe(Some(value));
 
-            let bytes = rmp_serde::to_vec_named(&stats).map_err(|e| crate::Error::Storage {
+            let bytes = zerompk::to_msgpack_vec(&stats).map_err(|e| crate::Error::Storage {
                 engine: "stats".into(),
                 detail: format!("serialize: {e}"),
             })?;

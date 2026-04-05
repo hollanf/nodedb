@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// Packaged by the source Event Plane, sent via `VShardEnvelope(CrossShardEvent)`,
 /// received and executed by the target Event Plane's `CrossShardReceiver`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct CrossShardWriteRequest {
     /// SQL statement to execute on the target shard.
     pub sql: String,
@@ -31,7 +33,9 @@ pub struct CrossShardWriteRequest {
 }
 
 /// Response from the target shard after processing a cross-shard write.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct CrossShardWriteResponse {
     /// Whether the write was successfully executed.
     pub success: bool,
@@ -78,7 +82,9 @@ impl CrossShardWriteResponse {
 /// When a node publishes a NOTIFY (via `ChangeStream.publish()`), it also
 /// broadcasts this message to all peer nodes via `VShardEnvelope(NotifyBroadcast)`.
 /// Each peer delivers the event to its local `ChangeStream` for LISTEN subscribers.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct NotifyBroadcastMsg {
     /// The originating node ID (for dedup — don't re-broadcast our own events).
     pub source_node: u64,
@@ -114,8 +120,8 @@ mod tests {
             source_collection: "orders".into(),
             target_vshard: 7,
         };
-        let bytes = rmp_serde::to_vec(&req).unwrap();
-        let decoded: CrossShardWriteRequest = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&req).unwrap();
+        let decoded: CrossShardWriteRequest = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.sql, req.sql);
         assert_eq!(decoded.source_lsn, 1500);
         assert_eq!(decoded.source_vshard, 3);
@@ -124,8 +130,8 @@ mod tests {
     #[test]
     fn response_roundtrip() {
         let resp = CrossShardWriteResponse::ok(1500);
-        let bytes = rmp_serde::to_vec(&resp).unwrap();
-        let decoded: CrossShardWriteResponse = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&resp).unwrap();
+        let decoded: CrossShardWriteResponse = zerompk::from_msgpack(&bytes).unwrap();
         assert!(decoded.success);
         assert!(!decoded.duplicate);
         assert_eq!(decoded.source_lsn, 1500);
@@ -155,8 +161,8 @@ mod tests {
             timestamp_ms: 1700000000000,
             lsn: 500,
         };
-        let bytes = rmp_serde::to_vec(&msg).unwrap();
-        let decoded: NotifyBroadcastMsg = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&msg).unwrap();
+        let decoded: NotifyBroadcastMsg = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.source_node, 1);
         assert_eq!(decoded.collection, "orders");
         assert_eq!(decoded.lsn, 500);

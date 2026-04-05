@@ -10,7 +10,7 @@ impl SystemCatalog {
     pub fn put_change_stream(&self, def: &ChangeStreamDef) -> crate::Result<()> {
         let key = stream_key(def.tenant_id, &def.name);
         let bytes =
-            rmp_serde::to_vec(def).map_err(|e| catalog_err("serialize change_stream", e))?;
+            zerompk::to_msgpack_vec(def).map_err(|e| catalog_err("serialize change_stream", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -42,7 +42,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("open change_streams", e))?;
         match table.get(key.as_str()) {
             Ok(Some(value)) => {
-                let def: ChangeStreamDef = rmp_serde::from_slice(value.value())
+                let def: ChangeStreamDef = zerompk::from_msgpack(value.value())
                     .map_err(|e| catalog_err("deser change_stream", e))?;
                 Ok(Some(def))
             }
@@ -87,7 +87,7 @@ impl SystemCatalog {
             .range::<&str>(..)
             .map_err(|e| catalog_err("range change_streams", e))?;
         while let Some(Ok((_key, value))) = range.next() {
-            if let Ok(def) = rmp_serde::from_slice::<ChangeStreamDef>(value.value()) {
+            if let Ok(def) = zerompk::from_msgpack::<ChangeStreamDef>(value.value()) {
                 streams.push(def);
             }
         }

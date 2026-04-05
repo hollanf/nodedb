@@ -10,7 +10,8 @@ impl SystemCatalog {
     /// Overwrites any existing definition with the same key (for CREATE OR REPLACE).
     pub fn put_function(&self, func: &StoredFunction) -> crate::Result<()> {
         let key = function_key(func.tenant_id, &func.name);
-        let bytes = rmp_serde::to_vec(func).map_err(|e| catalog_err("serialize function", e))?;
+        let bytes =
+            zerompk::to_msgpack_vec(func).map_err(|e| catalog_err("serialize function", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -42,7 +43,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("open functions", e))?;
         match table.get(key.as_str()) {
             Ok(Some(value)) => {
-                let func: StoredFunction = rmp_serde::from_slice(value.value())
+                let func: StoredFunction = zerompk::from_msgpack(value.value())
                     .map_err(|e| catalog_err("deser function", e))?;
                 Ok(Some(func))
             }
@@ -91,7 +92,7 @@ impl SystemCatalog {
         {
             let (key, value) = entry.map_err(|e| catalog_err("read function", e))?;
             if key.value().starts_with(&prefix) {
-                let func: StoredFunction = rmp_serde::from_slice(value.value())
+                let func: StoredFunction = zerompk::from_msgpack(value.value())
                     .map_err(|e| catalog_err("deser function", e))?;
                 funcs.push(func);
             }

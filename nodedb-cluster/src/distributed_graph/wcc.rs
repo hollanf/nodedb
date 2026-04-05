@@ -10,7 +10,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 /// Cross-shard component merge request: shard → target shard.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ComponentMergeRequest {
     pub round: u32,
     pub source_shard: u16,
@@ -19,7 +21,9 @@ pub struct ComponentMergeRequest {
 }
 
 /// WCC round acknowledgement: shard → coordinator.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct WccRoundAck {
     pub shard_id: u16,
     pub round: u32,
@@ -196,8 +200,8 @@ mod tests {
             source_shard: 1,
             merges: vec![("alice".into(), "0:root_a".into())],
         };
-        let bytes = rmp_serde::to_vec_named(&req).unwrap();
-        let decoded: ComponentMergeRequest = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&req).unwrap();
+        let decoded: ComponentMergeRequest = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.round, 2);
     }
 
@@ -209,8 +213,8 @@ mod tests {
             labels_changed: 5,
             merges_sent: 12,
         };
-        let bytes = rmp_serde::to_vec_named(&ack).unwrap();
-        let decoded: WccRoundAck = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&ack).unwrap();
+        let decoded: WccRoundAck = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.labels_changed, 5);
     }
 

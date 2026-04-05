@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Persistent definition of a streaming materialized view.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct StreamingMvDef {
     /// Tenant that owns this MV.
     pub tenant_id: u32,
@@ -24,7 +26,9 @@ pub struct StreamingMvDef {
 }
 
 /// A single aggregate function definition.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct AggDef {
     /// Output column name (e.g., "cnt", "total_revenue").
     pub output_name: String,
@@ -36,13 +40,25 @@ pub struct AggDef {
 }
 
 /// Supported aggregate functions for streaming MVs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum AggFunction {
-    Count,
-    Sum,
-    Min,
-    Max,
-    Avg,
+    Count = 0,
+    Sum = 1,
+    Min = 2,
+    Max = 3,
+    Avg = 4,
 }
 
 impl AggFunction {

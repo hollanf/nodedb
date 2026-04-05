@@ -78,7 +78,7 @@ pub fn create_alert(
 
     // Emit CRDT sync delta for Lite visibility.
     {
-        let delta_payload = rmp_serde::to_vec(&def).unwrap_or_default();
+        let delta_payload = zerompk::to_msgpack_vec(&def).unwrap_or_default();
         let delta = crate::event::crdt_sync::types::OutboundDelta {
             collection: ALERT_RULES_CRDT_COLLECTION.into(),
             document_id: def.name.clone(),

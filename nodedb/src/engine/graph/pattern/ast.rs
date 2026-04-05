@@ -12,7 +12,9 @@
 use serde::{Deserialize, Serialize};
 
 /// A complete MATCH query with clauses, predicates, and return projection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct MatchQuery {
     /// MATCH and OPTIONAL MATCH clauses.
     pub clauses: Vec<MatchClause>,
@@ -27,7 +29,9 @@ pub struct MatchQuery {
 }
 
 /// A single MATCH or OPTIONAL MATCH clause containing one or more patterns.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct MatchClause {
     /// Pattern triples: `(a)-[r]->(b)`.
     /// Multiple patterns in one clause (comma-separated) represent self-joins.
@@ -39,13 +43,17 @@ pub struct MatchClause {
 /// A chain of connected pattern triples: `(a)-[r1]->(b)-[r2]->(c)`.
 ///
 /// Represented as a sequence of triples sharing intermediate node bindings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct PatternChain {
     pub triples: Vec<PatternTriple>,
 }
 
 /// A single pattern element: `(src)-[edge]->(dst)`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct PatternTriple {
     pub src: NodeBinding,
     pub edge: EdgeBinding,
@@ -58,7 +66,9 @@ pub struct PatternTriple {
 /// `(:Person)` → `NodeBinding { name: None, label: Some("Person") }`
 /// `(a)` → `NodeBinding { name: Some("a"), label: None }`
 /// `()` → `NodeBinding { name: None, label: None }`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct NodeBinding {
     /// Variable name (e.g., `a`). None for anonymous nodes.
     pub name: Option<String>,
@@ -70,7 +80,9 @@ pub struct NodeBinding {
 ///
 /// `-[:KNOWS]->` → `EdgeBinding { name: None, edge_type: Some("KNOWS"), direction: Right, .. }`
 /// `-[r:KNOWS*1..3]->` → variable-length path
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct EdgeBinding {
     /// Variable name (e.g., `r`). None for anonymous edges.
     pub name: Option<String>,
@@ -92,14 +104,26 @@ impl EdgeBinding {
 }
 
 /// Edge traversal direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum EdgeDirection {
     /// `->` (outbound)
-    Right,
+    Right = 0,
     /// `<-` (inbound)
-    Left,
+    Left = 1,
     /// `-` (undirected / both directions)
-    Both,
+    Both = 2,
 }
 
 impl EdgeDirection {
@@ -114,7 +138,9 @@ impl EdgeDirection {
 }
 
 /// A WHERE predicate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub enum WherePredicate {
     /// `a.name = 'Alice'`
     Equals {
@@ -134,18 +160,32 @@ pub enum WherePredicate {
 }
 
 /// Comparison operator for WHERE predicates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ComparisonOp {
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
     Eq,
-    Neq,
-    Lt,
-    Lte,
-    Gt,
-    Gte,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
+pub enum ComparisonOp {
+    Eq = 0,
+    Neq = 1,
+    Lt = 2,
+    Lte = 3,
+    Gt = 4,
+    Gte = 5,
 }
 
 /// A RETURN column specification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ReturnColumn {
     /// Expression: `a.name`, `b`, `count(*)`.
     pub expr: String,
@@ -154,7 +194,9 @@ pub struct ReturnColumn {
 }
 
 /// ORDER BY column.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct OrderByColumn {
     pub expr: String,
     pub ascending: bool,

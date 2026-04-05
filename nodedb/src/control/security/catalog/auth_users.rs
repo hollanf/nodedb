@@ -5,7 +5,8 @@ use super::types::{AUTH_USERS, StoredAuthUser, SystemCatalog, catalog_err};
 impl SystemCatalog {
     /// Insert or update a JIT-provisioned auth user.
     pub fn put_auth_user(&self, user: &StoredAuthUser) -> crate::Result<()> {
-        let bytes = rmp_serde::to_vec(user).map_err(|e| catalog_err("serialize auth user", e))?;
+        let bytes =
+            zerompk::to_msgpack_vec(user).map_err(|e| catalog_err("serialize auth user", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -35,7 +36,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("open auth_users", e))?;
         match table.get(id).map_err(|e| catalog_err("get auth user", e))? {
             Some(val) => {
-                let user: StoredAuthUser = rmp_serde::from_slice(val.value())
+                let user: StoredAuthUser = zerompk::from_msgpack(val.value())
                     .map_err(|e| catalog_err("deserialize auth user", e))?;
                 Ok(Some(user))
             }
@@ -79,7 +80,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("range auth_users", e))?;
         for item in range {
             let (_, value) = item.map_err(|e| catalog_err("read auth user", e))?;
-            if let Ok(user) = rmp_serde::from_slice::<StoredAuthUser>(value.value()) {
+            if let Ok(user) = zerompk::from_msgpack::<StoredAuthUser>(value.value()) {
                 users.push(user);
             }
         }

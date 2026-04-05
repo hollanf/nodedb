@@ -32,7 +32,14 @@ use crate::types::Lsn;
 static SNAPSHOT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Snapshot manifest: stored as `manifest.msgpack` inside the snapshot directory.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct SnapshotManifest {
     /// Snapshot metadata.
     pub meta: SnapshotMeta,
@@ -129,7 +136,7 @@ pub fn create_base_snapshot(
 
     // Write manifest with atomic temp+rename.
     let manifest_bytes =
-        rmp_serde::to_vec_named(&manifest).map_err(|e| crate::Error::Serialization {
+        zerompk::to_msgpack_vec(&manifest).map_err(|e| crate::Error::Serialization {
             format: "msgpack".into(),
             detail: format!("snapshot manifest: {e}"),
         })?;
@@ -155,7 +162,7 @@ pub fn create_base_snapshot(
 pub fn load_manifest(snap_dir: &Path) -> crate::Result<SnapshotManifest> {
     let manifest_path = snap_dir.join("manifest.msgpack");
     let bytes = fs::read(&manifest_path).map_err(crate::Error::Io)?;
-    rmp_serde::from_slice(&bytes).map_err(|e| crate::Error::Serialization {
+    zerompk::from_msgpack(&bytes).map_err(|e| crate::Error::Serialization {
         format: "msgpack".into(),
         detail: format!("snapshot manifest: {e}"),
     })

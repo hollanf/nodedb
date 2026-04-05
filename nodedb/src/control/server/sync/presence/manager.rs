@@ -316,7 +316,10 @@ impl PresenceManager {
 }
 
 /// Serialize a frame once and wrap in Arc for zero-copy fan-out.
-fn serialize_frame<T: serde::Serialize>(msg_type: SyncMessageType, msg: &T) -> SharedBytes {
+fn serialize_frame<T: serde::Serialize + zerompk::ToMessagePack>(
+    msg_type: SyncMessageType,
+    msg: &T,
+) -> SharedBytes {
     let frame = SyncFrame::encode_or_empty(msg_type, msg);
     Arc::new(frame.to_bytes())
 }

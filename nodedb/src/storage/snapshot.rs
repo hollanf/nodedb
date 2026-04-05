@@ -14,7 +14,16 @@ pub use crate::storage::snapshot_restore::{PitrTarget, RestoreDryRun, dry_run_re
 use crate::types::Lsn;
 
 /// Snapshot metadata stored alongside the snapshot data.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct SnapshotMeta {
     /// Unique snapshot identifier.
     pub snapshot_id: u64,
@@ -35,12 +44,24 @@ pub struct SnapshotMeta {
 }
 
 /// Snapshot type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum SnapshotKind {
     /// Full base image.
-    Base,
+    Base = 0,
     /// Block-level delta relative to a parent snapshot.
-    Delta,
+    Delta = 1,
 }
 
 /// Snapshot catalog: tracks all available snapshots for restore planning.

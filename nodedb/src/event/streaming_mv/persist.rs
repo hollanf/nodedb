@@ -72,9 +72,11 @@ impl MvPersistence {
         snapshot: &[(String, Vec<GroupState>)],
     ) -> crate::Result<()> {
         let key = format!("{tenant_id}:{mv_name}");
-        let bytes = rmp_serde::to_vec(snapshot).map_err(|e| crate::Error::Serialization {
-            format: "msgpack".into(),
-            detail: format!("mv_state: {e}"),
+        let bytes = zerompk::to_msgpack_vec(&snapshot.to_vec()).map_err(|e| {
+            crate::Error::Serialization {
+                format: "msgpack".into(),
+                detail: format!("mv_state: {e}"),
+            }
         })?;
 
         let txn = self.db.begin_write().map_err(|e| crate::Error::Storage {
@@ -121,7 +123,7 @@ impl MvPersistence {
             Ok(Some(guard)) => {
                 let bytes: &[u8] = guard.value();
                 let snapshot: MvSnapshot =
-                    rmp_serde::from_slice(bytes).map_err(|e| crate::Error::Serialization {
+                    zerompk::from_msgpack(bytes).map_err(|e| crate::Error::Serialization {
                         format: "msgpack".into(),
                         detail: format!("mv_state restore: {e}"),
                     })?;

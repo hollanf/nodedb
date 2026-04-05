@@ -10,7 +10,7 @@ impl SystemCatalog {
     pub fn put_consumer_group(&self, def: &ConsumerGroupDef) -> crate::Result<()> {
         let key = group_key(def.tenant_id, &def.stream_name, &def.name);
         let bytes =
-            rmp_serde::to_vec(def).map_err(|e| catalog_err("serialize consumer_group", e))?;
+            zerompk::to_msgpack_vec(def).map_err(|e| catalog_err("serialize consumer_group", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -67,7 +67,7 @@ impl SystemCatalog {
             .range::<&str>(..)
             .map_err(|e| catalog_err("range consumer_groups", e))?;
         while let Some(Ok((_key, value))) = range.next() {
-            if let Ok(def) = rmp_serde::from_slice::<ConsumerGroupDef>(value.value()) {
+            if let Ok(def) = zerompk::from_msgpack::<ConsumerGroupDef>(value.value()) {
                 groups.push(def);
             }
         }

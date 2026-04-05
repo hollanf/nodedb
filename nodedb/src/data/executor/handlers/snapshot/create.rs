@@ -60,7 +60,7 @@ impl CoreLoop {
                 continue;
             }
             let vectors = collection.export_snapshot();
-            match rmp_serde::to_vec(&vectors) {
+            match zerompk::to_msgpack_vec(&vectors) {
                 Ok(bytes) => snapshot.vectors.push((key.clone(), bytes)),
                 Err(e) => warn!(key, error = %e, "snapshot: vector serialization failed"),
             }
@@ -81,7 +81,7 @@ impl CoreLoop {
                 .cloned()
                 .unwrap_or_else(|| hash.to_string());
             let entries = table.export_entries();
-            match rmp_serde::to_vec(&entries) {
+            match zerompk::to_msgpack_vec(&entries) {
                 Ok(bytes) => snapshot.kv_tables.push((collection_name, bytes)),
                 Err(e) => warn!(hash, error = %e, "snapshot: kv serialization failed"),
             }
@@ -103,7 +103,7 @@ impl CoreLoop {
             if !key.starts_with(&prefix) {
                 continue;
             }
-            match rmp_serde::to_vec(&mt.export_snapshot()) {
+            match zerompk::to_msgpack_vec(&mt.export_snapshot()) {
                 Ok(bytes) => snapshot.timeseries.push((key.clone(), bytes)),
                 Err(e) => warn!(key, error = %e, "snapshot: timeseries serialization failed"),
             }
@@ -121,7 +121,7 @@ impl CoreLoop {
             "full tenant snapshot created"
         );
 
-        match rmp_serde::to_vec(&snapshot) {
+        match zerompk::to_msgpack_vec(&snapshot) {
             Ok(payload) => self.response_with_payload(task, payload),
             Err(e) => self.response_error(
                 task,

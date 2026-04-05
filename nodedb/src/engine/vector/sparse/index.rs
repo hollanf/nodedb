@@ -165,12 +165,12 @@ impl SparseInvertedIndex {
                 })
                 .collect(),
         };
-        rmp_serde::to_vec_named(&snapshot).unwrap_or_default()
+        zerompk::to_msgpack_vec(&snapshot).unwrap_or_default()
     }
 
     /// Restore from checkpoint bytes.
     pub fn from_checkpoint(bytes: &[u8]) -> Option<Self> {
-        let snapshot: SparseIndexSnapshot = rmp_serde::from_slice(bytes).ok()?;
+        let snapshot: SparseIndexSnapshot = zerompk::from_msgpack(bytes).ok()?;
         let mut index = Self::new();
         index.next_id = snapshot.next_id;
 
@@ -198,13 +198,13 @@ impl SparseInvertedIndex {
 }
 
 /// Checkpoint serialization format.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 struct SparseIndexSnapshot {
     next_id: u32,
     documents: Vec<SparseDocSnapshot>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 struct SparseDocSnapshot {
     internal_id: u32,
     doc_id: String,

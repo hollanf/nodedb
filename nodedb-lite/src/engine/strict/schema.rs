@@ -26,7 +26,7 @@ impl<S: StorageEngine> StrictEngine<S> {
         // Persist schema to meta.
         let meta_key = format!("{META_STRICT_SCHEMA_PREFIX}{name}");
         let schema_bytes =
-            rmp_serde::to_vec_named(&schema).map_err(|e| LiteError::Serialization {
+            zerompk::to_msgpack_vec(&schema).map_err(|e| LiteError::Serialization {
                 detail: e.to_string(),
             })?;
 
@@ -34,7 +34,7 @@ impl<S: StorageEngine> StrictEngine<S> {
         let mut names: Vec<String> = self.collections.keys().cloned().collect();
         names.push(name.to_string());
         let names_bytes =
-            rmp_serde::to_vec_named(&names).map_err(|e| LiteError::Serialization {
+            zerompk::to_msgpack_vec(&names).map_err(|e| LiteError::Serialization {
                 detail: e.to_string(),
             })?;
 
@@ -91,7 +91,7 @@ impl<S: StorageEngine> StrictEngine<S> {
         self.collections.remove(name);
         let names: Vec<String> = self.collections.keys().cloned().collect();
         let names_bytes =
-            rmp_serde::to_vec_named(&names).map_err(|e| LiteError::Serialization {
+            zerompk::to_msgpack_vec(&names).map_err(|e| LiteError::Serialization {
                 detail: e.to_string(),
             })?;
         ops.push(WriteOp::Put {
@@ -160,7 +160,7 @@ impl<S: StorageEngine> StrictEngine<S> {
         // Persist updated schema.
         let meta_key = format!("{META_STRICT_SCHEMA_PREFIX}{name}");
         let schema_bytes =
-            rmp_serde::to_vec_named(&state.schema).map_err(|e| LiteError::Serialization {
+            zerompk::to_msgpack_vec(&state.schema).map_err(|e| LiteError::Serialization {
                 detail: e.to_string(),
             })?;
 

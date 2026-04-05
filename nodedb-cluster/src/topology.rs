@@ -4,21 +4,33 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 /// Node lifecycle states.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum NodeState {
     /// Node is connecting, receiving initial topology.
-    Joining,
+    Joining = 0,
+    /// Node is fully operational, hosting Raft groups as voting member.
+    Active = 1,
+    /// Node is being decommissioned, migrating data off.
+    Draining = 2,
+    /// Node has been removed from the cluster.
+    Decommissioned = 3,
     /// Node is catching up as a non-voting learner.
     /// Receives Raft log entries but doesn't vote in elections.
     /// Promoted to Active (voting member) after state catch-up
     /// and checksum validation.
-    Learner,
-    /// Node is fully operational, hosting Raft groups as voting member.
-    Active,
-    /// Node is being decommissioned, migrating data off.
-    Draining,
-    /// Node has been removed from the cluster.
-    Decommissioned,
+    Learner = 4,
 }
 
 impl NodeState {
@@ -55,7 +67,14 @@ impl NodeState {
 }
 
 /// Information about a single node in the cluster.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct NodeInfo {
     pub node_id: u64,
     /// Listen address for Raft RPCs (as string for serialization portability).
@@ -84,7 +103,14 @@ impl NodeInfo {
 ///
 /// Updated atomically via Raft (metadata group) in production.
 /// Persisted to the cluster catalog (redb).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct ClusterTopology {
     nodes: HashMap<u64, NodeInfo>,
     /// Monotonically increasing version for stale detection.
@@ -282,8 +308,8 @@ mod tests {
             NodeState::Active,
         ));
 
-        let bytes = rmp_serde::to_vec(&topo).unwrap();
-        let decoded: ClusterTopology = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&topo).unwrap();
+        let decoded: ClusterTopology = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.node_count(), 2);
         assert_eq!(decoded.version(), 2);
     }

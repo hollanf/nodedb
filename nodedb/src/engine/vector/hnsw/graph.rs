@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::super::distance::distance;
 
 /// Serializable HNSW snapshot for checkpointing.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 struct HnswSnapshot {
     dim: usize,
     params_m: usize,
@@ -16,7 +16,7 @@ struct HnswSnapshot {
     nodes: Vec<NodeSnapshot>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 struct NodeSnapshot {
     vector: Vec<f32>,
     neighbors: Vec<Vec<u32>>,
@@ -290,14 +290,14 @@ impl HnswIndex {
                 })
                 .collect(),
         };
-        rmp_serde::to_vec_named(&snapshot).unwrap_or_default()
+        zerompk::to_msgpack_vec(&snapshot).unwrap_or_default()
     }
 
     /// Restore an index from a checkpoint snapshot.
     ///
     /// Returns `None` if the snapshot is invalid or corrupt.
     pub fn from_checkpoint(bytes: &[u8]) -> Option<Self> {
-        let snapshot: HnswSnapshot = rmp_serde::from_slice(bytes).ok()?;
+        let snapshot: HnswSnapshot = zerompk::from_msgpack(bytes).ok()?;
         let metric = match snapshot.params_metric {
             0 => super::super::distance::DistanceMetric::L2,
             1 => super::super::distance::DistanceMetric::Cosine,

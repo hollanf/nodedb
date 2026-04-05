@@ -54,7 +54,8 @@ impl SystemCatalog {
 
     pub fn put_tenant(&self, tenant: &StoredTenant) -> crate::Result<()> {
         let key = tenant.tenant_id.to_string();
-        let bytes = rmp_serde::to_vec(tenant).map_err(|e| catalog_err("serialize tenant", e))?;
+        let bytes =
+            zerompk::to_msgpack_vec(tenant).map_err(|e| catalog_err("serialize tenant", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -85,7 +86,7 @@ impl SystemCatalog {
         {
             let (_, value) = entry.map_err(|e| catalog_err("read tenant", e))?;
             tenants.push(
-                rmp_serde::from_slice(value.value()).map_err(|e| catalog_err("deser tenant", e))?,
+                zerompk::from_msgpack(value.value()).map_err(|e| catalog_err("deser tenant", e))?,
             );
         }
         Ok(tenants)

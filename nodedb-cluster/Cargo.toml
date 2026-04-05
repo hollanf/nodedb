@@ -32,6 +32,7 @@ crc32c = { workspace = true }
 # Persistence
 redb = { workspace = true }
 rmp-serde = { workspace = true }
+zerompk = { workspace = true }
 
 # QUIC transport (nexar for TLS utilities, quinn for bidi streams)
 nexar = { workspace = true }

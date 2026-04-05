@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Configuration for Kafka bridge delivery on a change stream.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct KafkaDeliveryConfig {
     /// Whether Kafka delivery is enabled for this stream.
     pub enabled: bool,
@@ -21,11 +23,24 @@ pub struct KafkaDeliveryConfig {
 }
 
 /// Serialization format for Kafka-published events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum KafkaFormat {
     #[default]
-    Json,
-    Avro,
+    Json = 0,
+    Avro = 1,
 }
 
 impl KafkaFormat {

@@ -10,7 +10,8 @@ impl SystemCatalog {
 
     /// Write an API key record.
     pub fn put_api_key(&self, key: &StoredApiKey) -> crate::Result<()> {
-        let bytes = rmp_serde::to_vec(key).map_err(|e| catalog_err("serialize api key", e))?;
+        let bytes =
+            zerompk::to_msgpack_vec(key).map_err(|e| catalog_err("serialize api key", e))?;
 
         let write_txn = self
             .db
@@ -45,7 +46,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("range api_keys", e))?;
         for entry in range {
             let (_, value) = entry.map_err(|e| catalog_err("read entry", e))?;
-            let key: StoredApiKey = rmp_serde::from_slice(value.value())
+            let key: StoredApiKey = zerompk::from_msgpack(value.value())
                 .map_err(|e| catalog_err("deserialize api key", e))?;
             keys.push(key);
         }
@@ -75,7 +76,7 @@ impl SystemCatalog {
     // ── Role operations ──────────────────────────────────────────────
 
     pub fn put_role(&self, role: &StoredRole) -> crate::Result<()> {
-        let bytes = rmp_serde::to_vec(role).map_err(|e| catalog_err("serialize role", e))?;
+        let bytes = zerompk::to_msgpack_vec(role).map_err(|e| catalog_err("serialize role", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -122,7 +123,7 @@ impl SystemCatalog {
         {
             let (_, value) = entry.map_err(|e| catalog_err("read role", e))?;
             roles.push(
-                rmp_serde::from_slice(value.value()).map_err(|e| catalog_err("deser role", e))?,
+                zerompk::from_msgpack(value.value()).map_err(|e| catalog_err("deser role", e))?,
             );
         }
         Ok(roles)
@@ -137,7 +138,7 @@ impl SystemCatalog {
 
     pub fn put_permission(&self, perm: &StoredPermission) -> crate::Result<()> {
         let key = Self::permission_key(&perm.target, &perm.grantee, &perm.permission);
-        let bytes = rmp_serde::to_vec(perm).map_err(|e| catalog_err("serialize perm", e))?;
+        let bytes = zerompk::to_msgpack_vec(perm).map_err(|e| catalog_err("serialize perm", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -190,7 +191,7 @@ impl SystemCatalog {
         {
             let (_, value) = entry.map_err(|e| catalog_err("read perm", e))?;
             perms.push(
-                rmp_serde::from_slice(value.value()).map_err(|e| catalog_err("deser perm", e))?,
+                zerompk::from_msgpack(value.value()).map_err(|e| catalog_err("deser perm", e))?,
             );
         }
         Ok(perms)
@@ -200,7 +201,8 @@ impl SystemCatalog {
 
     pub fn put_owner(&self, owner: &StoredOwner) -> crate::Result<()> {
         let key = owner_key(&owner.object_type, owner.tenant_id, &owner.object_name);
-        let bytes = rmp_serde::to_vec(owner).map_err(|e| catalog_err("serialize owner", e))?;
+        let bytes =
+            zerompk::to_msgpack_vec(owner).map_err(|e| catalog_err("serialize owner", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -253,7 +255,7 @@ impl SystemCatalog {
         {
             let (_, value) = entry.map_err(|e| catalog_err("read owner", e))?;
             owners.push(
-                rmp_serde::from_slice(value.value()).map_err(|e| catalog_err("deser owner", e))?,
+                zerompk::from_msgpack(value.value()).map_err(|e| catalog_err("deser owner", e))?,
             );
         }
         Ok(owners)

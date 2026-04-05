@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Persistent definition of a consumer group. Stored in the system catalog.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ConsumerGroupDef {
     /// Tenant that owns this group.
     pub tenant_id: u32,
@@ -18,7 +20,17 @@ pub struct ConsumerGroupDef {
 }
 
 /// A single partition offset: (partition_id, committed_lsn).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct PartitionOffset {
     /// Partition ID (vShard ID).
     pub partition_id: u16,
@@ -43,8 +55,8 @@ mod tests {
     #[test]
     fn partition_offset_serde_roundtrip() {
         let po = PartitionOffset::new(42, 1000);
-        let bytes = rmp_serde::to_vec(&po).unwrap();
-        let decoded: PartitionOffset = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&po).unwrap();
+        let decoded: PartitionOffset = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.partition_id, 42);
         assert_eq!(decoded.committed_lsn, 1000);
     }

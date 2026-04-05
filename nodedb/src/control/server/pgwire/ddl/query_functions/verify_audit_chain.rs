@@ -60,7 +60,7 @@ pub async fn verify_audit_chain(
         // Verify from durable WAL entries.
         for (_data_lsn, audit_bytes) in &audit_entries {
             let entry: crate::control::security::audit::AuditEntry =
-                match rmp_serde::from_slice(audit_bytes) {
+                match zerompk::from_msgpack(audit_bytes) {
                     Ok(e) => e,
                     Err(e) => {
                         tracing::warn!(error = %e, "skipping malformed audit WAL entry");

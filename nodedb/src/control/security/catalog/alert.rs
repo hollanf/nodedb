@@ -9,7 +9,8 @@ impl SystemCatalog {
     /// Key format: `"{tenant_id}:{alert_name}"`.
     pub fn put_alert_rule(&self, def: &AlertDef) -> crate::Result<()> {
         let key = alert_key(def.tenant_id, &def.name);
-        let bytes = rmp_serde::to_vec(def).map_err(|e| catalog_err("serialize alert rule", e))?;
+        let bytes =
+            zerompk::to_msgpack_vec(def).map_err(|e| catalog_err("serialize alert rule", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -61,7 +62,7 @@ impl SystemCatalog {
             .range::<&str>(..)
             .map_err(|e| catalog_err("range alert_rules", e))?;
         while let Some(Ok((_key, value))) = range.next() {
-            if let Ok(def) = rmp_serde::from_slice::<AlertDef>(value.value()) {
+            if let Ok(def) = zerompk::from_msgpack::<AlertDef>(value.value()) {
                 rules.push(def);
             }
         }

@@ -23,7 +23,9 @@ use serde::{Deserialize, Serialize};
 /// Contains the current variable bindings and the index of the next
 /// triple to execute in the pattern chain. The target shard resumes
 /// from `next_triple_idx` using the provided bindings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct PatternContinuation {
     /// Target shard that should continue execution.
     pub target_shard: u16,
@@ -40,7 +42,9 @@ pub struct PatternContinuation {
 }
 
 /// Coordinator response from a shard for distributed MATCH.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ShardMatchResult {
     /// Shard that produced these results.
     pub shard_id: u16,
@@ -128,8 +132,8 @@ mod tests {
             start_node: "bob".into(),
             start_binding: "b".into(),
         };
-        let bytes = rmp_serde::to_vec_named(&cont).unwrap();
-        let decoded: PatternContinuation = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&cont).unwrap();
+        let decoded: PatternContinuation = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.target_shard, 2);
         assert_eq!(decoded.start_node, "bob");
         assert_eq!(decoded.bindings["a"], "alice");
@@ -146,8 +150,8 @@ mod tests {
             ],
             continuations: vec![],
         };
-        let bytes = rmp_serde::to_vec_named(&result).unwrap();
-        let decoded: ShardMatchResult = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&result).unwrap();
+        let decoded: ShardMatchResult = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.completed_rows.len(), 1);
     }
 

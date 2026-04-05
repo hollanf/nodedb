@@ -260,7 +260,7 @@ impl CoreLoop {
         );
 
         // Deserialize broadcast (small) side from MessagePack Vec<(String, Vec<u8>)>.
-        let small_docs_raw: Vec<(String, Vec<u8>)> = match rmp_serde::from_slice(broadcast_data) {
+        let small_docs_raw: Vec<(String, Vec<u8>)> = match zerompk::from_msgpack(broadcast_data) {
             Ok(v) => v,
             Err(e) => {
                 return self.response_error(

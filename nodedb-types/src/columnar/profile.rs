@@ -7,7 +7,16 @@ use serde::{Deserialize, Serialize};
 use super::schema::StrictSchema;
 
 /// Specialization profile for columnar collections.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 #[serde(tag = "profile")]
 pub enum ColumnarProfile {
     /// General analytics. No special constraints.

@@ -120,7 +120,7 @@ async fn run_catchup_cycle(shared: &SharedState) -> CatchupResult {
 
         // Deserialize WAL payload: (collection, raw_ilp_bytes).
         let Ok((collection, payload)): Result<(String, Vec<u8>), _> =
-            rmp_serde::from_slice(&record.payload)
+            zerompk::from_msgpack(&record.payload)
         else {
             max_lsn = max_lsn.max(record.header.lsn);
             continue;

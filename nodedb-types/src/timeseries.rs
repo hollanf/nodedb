@@ -696,7 +696,9 @@ impl TieredPartitionConfig {
 ///
 /// One WAL record per ingest batch. On crash recovery, replay all records
 /// with LSN > `last_flushed_wal_lsn` per partition.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct TimeseriesWalBatch {
     /// Collection name.
     pub collection: String,

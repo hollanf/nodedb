@@ -5,12 +5,24 @@
 use serde::{Deserialize, Serialize};
 
 /// Quantization mode currently active on a vector index.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[msgpack(c_enum)]
 pub enum VectorIndexQuantization {
-    None,
-    Sq8,
-    Pq,
-    Binary,
+    None = 0,
+    Sq8 = 1,
+    Pq = 2,
+    Binary = 3,
 }
 
 impl std::fmt::Display for VectorIndexQuantization {
@@ -25,12 +37,24 @@ impl std::fmt::Display for VectorIndexQuantization {
 }
 
 /// Index type identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[msgpack(c_enum)]
 pub enum VectorIndexType {
-    Hnsw,
-    HnswPq,
-    IvfPq,
-    Flat,
+    Hnsw = 0,
+    HnswPq = 1,
+    IvfPq = 2,
+    Flat = 3,
 }
 
 impl std::fmt::Display for VectorIndexType {
@@ -48,7 +72,9 @@ impl std::fmt::Display for VectorIndexType {
 ///
 /// Collected on the Data Plane from `VectorCollection` segment state and
 /// serialized back to the Control Plane via the SPSC bridge response payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct VectorIndexStats {
     /// Number of sealed segments (with completed HNSW indexes).
     pub sealed_count: usize,
@@ -117,8 +143,8 @@ mod tests {
             seal_threshold: 65_536,
             mmap_segment_count: 1,
         };
-        let bytes = rmp_serde::to_vec_named(&stats).unwrap();
-        let restored: VectorIndexStats = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&stats).unwrap();
+        let restored: VectorIndexStats = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(restored.sealed_count, 3);
         assert_eq!(restored.live_count, 183_000);
         assert_eq!(restored.quantization, VectorIndexQuantization::Sq8);

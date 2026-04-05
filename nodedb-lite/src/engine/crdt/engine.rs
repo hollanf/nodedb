@@ -57,7 +57,14 @@ pub struct CrdtEngine {
 }
 
 /// A pending (unsent) delta waiting to be synced to Origin.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct PendingDelta {
     /// Monotonic mutation ID (for ordering and dedup).
     pub mutation_id: u64,
@@ -501,7 +508,7 @@ impl CrdtEngine {
 
     /// Serialize pending deltas to bytes for StorageEngine persistence.
     pub fn serialize_pending_deltas(&self) -> Result<Vec<u8>, crate::error::LiteError> {
-        rmp_serde::to_vec_named(&self.pending_deltas).map_err(|e| {
+        zerompk::to_msgpack_vec(&self.pending_deltas).map_err(|e| {
             crate::error::LiteError::Serialization {
                 detail: format!("pending deltas: {e}"),
             }
@@ -510,7 +517,7 @@ impl CrdtEngine {
 
     /// Restore pending deltas from bytes (cold start).
     pub fn restore_pending_deltas(&mut self, bytes: &[u8]) {
-        match rmp_serde::from_slice::<Vec<PendingDelta>>(bytes) {
+        match zerompk::from_msgpack::<Vec<PendingDelta>>(bytes) {
             Ok(deltas) => {
                 // Advance mutation ID counter past any restored deltas.
                 let max_id = deltas.iter().map(|d| d.mutation_id).max().unwrap_or(0);
@@ -525,7 +532,7 @@ impl CrdtEngine {
 
     /// Serialize a single pending delta to bytes (for append-only persistence).
     pub fn serialize_delta(delta: &PendingDelta) -> Result<Vec<u8>, crate::error::LiteError> {
-        rmp_serde::to_vec_named(delta).map_err(|e| crate::error::LiteError::Serialization {
+        zerompk::to_msgpack_vec(delta).map_err(|e| crate::error::LiteError::Serialization {
             detail: format!("pending delta: {e}"),
         })
     }
@@ -543,7 +550,7 @@ impl CrdtEngine {
     pub fn restore_pending_deltas_incremental(&mut self, entries: &[(Vec<u8>, Vec<u8>)]) {
         let mut deltas = Vec::with_capacity(entries.len());
         for (_key, value) in entries {
-            match rmp_serde::from_slice::<PendingDelta>(value) {
+            match zerompk::from_msgpack::<PendingDelta>(value) {
                 Ok(delta) => deltas.push(delta),
                 Err(e) => {
                     tracing::warn!(error = %e, "skipping corrupted pending delta entry");

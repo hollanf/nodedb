@@ -1,11 +1,23 @@
 //! Type definitions for trigger catalog storage.
 
 /// When the trigger fires relative to the DML operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum TriggerTiming {
-    Before,
-    After,
-    InsteadOf,
+    Before = 0,
+    After = 1,
+    InsteadOf = 2,
 }
 
 impl TriggerTiming {
@@ -19,7 +31,16 @@ impl TriggerTiming {
 }
 
 /// Which DML event(s) the trigger responds to.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct TriggerEvents {
     pub on_insert: bool,
     pub on_update: bool,
@@ -48,19 +69,32 @@ impl TriggerEvents {
 /// - `Async` (default): Event Plane, eventually consistent, zero write latency impact.
 /// - `Sync`: Control Plane write path, same logical transaction, adds to write latency.
 /// - `Deferred`: Data Plane at COMMIT time, same transaction, batched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum TriggerExecutionMode {
     /// Trigger fires asynchronously via Event Plane after commit.
     /// Default. Eventually consistent side effects. Zero write latency impact.
     #[default]
-    Async,
+    Async = 0,
     /// Trigger fires synchronously in the Control Plane write path.
     /// ACID (same logical transaction). Adds trigger execution time to write latency.
     /// Cross-shard SYNC triggers are rejected at CREATE TRIGGER time.
-    Sync,
+    Sync = 1,
     /// Trigger fires at COMMIT time in the Data Plane, batched.
     /// ACID (same transaction). Only adds latency at COMMIT, not per-statement.
-    Deferred,
+    Deferred = 2,
 }
 
 impl TriggerExecutionMode {
@@ -74,10 +108,22 @@ impl TriggerExecutionMode {
 }
 
 /// Row-level or statement-level granularity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum TriggerGranularity {
-    Row,
-    Statement,
+    Row = 0,
+    Statement = 1,
 }
 
 impl TriggerGranularity {
@@ -96,11 +142,24 @@ impl TriggerGranularity {
 /// - `Definer`: body executes with the trigger/function owner's credentials.
 ///   Allows privileged operations (e.g., admin-owned trigger can update system tables).
 ///   Tenant boundary still enforced — DEFINER cannot cross tenant boundaries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum TriggerSecurity {
     #[default]
-    Invoker,
-    Definer,
+    Invoker = 0,
+    Definer = 1,
 }
 
 impl TriggerSecurity {
@@ -116,16 +175,29 @@ impl TriggerSecurity {
 ///
 /// Controls whether the trigger can process multiple rows as a batch (vectorized)
 /// or must fall back to row-at-a-time execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum TriggerBatchMode {
     /// Trigger body has a single uniform DML target — safe for batch execution.
     /// All rows can be collected into a RecordBatch and the trigger body's DML
     /// can be dispatched as a single bulk INSERT/UPDATE/DELETE.
     #[default]
-    BatchSafe,
+    BatchSafe = 0,
     /// Trigger body has row-dependent control flow or multiple DML targets.
     /// Must execute row-at-a-time (the current behavior).
-    RowAtATime,
+    RowAtATime = 1,
 }
 
 impl TriggerBatchMode {
@@ -138,7 +210,14 @@ impl TriggerBatchMode {
 }
 
 /// Serializable trigger definition for redb storage.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct StoredTrigger {
     pub tenant_id: u32,
     pub name: String,

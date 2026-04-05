@@ -41,7 +41,7 @@ pub async fn match_query(
     };
 
     // Serialize the MatchQuery for SPSC transport.
-    let query_bytes = rmp_serde::to_vec_named(&query)
+    let query_bytes = zerompk::to_msgpack_vec(&query)
         .map_err(|e| sqlstate_error("XX000", &format!("serialize match query: {e}")))?;
 
     let tenant_id = identity.tenant_id;

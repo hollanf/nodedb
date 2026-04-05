@@ -6,7 +6,8 @@ use crate::event::streaming_mv::StreamingMvDef;
 impl SystemCatalog {
     pub fn put_streaming_mv(&self, def: &StreamingMvDef) -> crate::Result<()> {
         let key = mv_key(def.tenant_id, &def.name);
-        let bytes = rmp_serde::to_vec(def).map_err(|e| catalog_err("serialize streaming_mv", e))?;
+        let bytes =
+            zerompk::to_msgpack_vec(def).map_err(|e| catalog_err("serialize streaming_mv", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -55,7 +56,7 @@ impl SystemCatalog {
             .range::<&str>(..)
             .map_err(|e| catalog_err("range streaming_mvs", e))?;
         while let Some(Ok((_key, value))) = range.next() {
-            if let Ok(def) = rmp_serde::from_slice::<StreamingMvDef>(value.value()) {
+            if let Ok(def) = zerompk::from_msgpack::<StreamingMvDef>(value.value()) {
                 mvs.push(def);
             }
         }

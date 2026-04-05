@@ -33,7 +33,7 @@ impl CoreLoop {
                 if let Some(ref m) = self.metrics {
                     m.record_kv_put();
                 }
-                let new_bytes = rmp_serde::to_vec(&new_value).unwrap_or_default();
+                let new_bytes = zerompk::to_msgpack_vec(&new_value).unwrap_or_default();
                 let key_str = String::from_utf8_lossy(key);
                 self.emit_write_event(
                     task,
@@ -87,7 +87,7 @@ impl CoreLoop {
                 if let Some(ref m) = self.metrics {
                     m.record_kv_put();
                 }
-                let new_bytes = rmp_serde::to_vec(&new_value).unwrap_or_default();
+                let new_bytes = zerompk::to_msgpack_vec(&new_value).unwrap_or_default();
                 let key_str = String::from_utf8_lossy(key);
                 self.emit_write_event(
                     task,

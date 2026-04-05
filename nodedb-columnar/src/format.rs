@@ -5,6 +5,7 @@
 //! scanning the entire file.
 
 use serde::{Deserialize, Serialize};
+use zerompk::{FromMessagePack, ToMessagePack};
 
 /// Magic bytes identifying a NodeDB columnar segment.
 pub const MAGIC: [u8; 4] = *b"NDBS";
@@ -95,7 +96,7 @@ impl SegmentHeader {
 
 /// Per-block statistics for a single column. Enables predicate pushdown:
 /// skip blocks where `WHERE price > 100` and block's `max_price < 100`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct BlockStats {
     /// Minimum value in this block (encoded as f64 for uniformity;
     /// i64 values are cast losslessly, strings use 0.0).
@@ -121,7 +122,7 @@ impl BlockStats {
 }
 
 /// Metadata for a single column within the segment footer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct ColumnMeta {
     /// Column name (matches schema definition).
     pub name: String,
@@ -150,7 +151,7 @@ pub struct ColumnMeta {
 ///
 /// To read: seek to end - 8, read footer_len + footer_crc, seek to
 /// end - 8 - footer_len, read + verify CRC, deserialize footer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct SegmentFooter {
     /// xxHash64 of the schema definition (for schema compatibility checks).
     pub schema_hash: u64,
@@ -167,7 +168,7 @@ pub struct SegmentFooter {
 impl SegmentFooter {
     /// Serialize the footer to bytes with trailing length + CRC32C.
     pub fn to_bytes(&self) -> Result<Vec<u8>, crate::error::ColumnarError> {
-        let footer_msgpack = rmp_serde::to_vec_named(self)
+        let footer_msgpack = zerompk::to_msgpack_vec(self)
             .map_err(|e| crate::error::ColumnarError::Serialization(e.to_string()))?;
 
         let footer_len = footer_msgpack.len() as u32;
@@ -214,7 +215,7 @@ impl SegmentFooter {
             });
         }
 
-        rmp_serde::from_slice(footer_bytes)
+        zerompk::from_msgpack(footer_bytes)
             .map_err(|e| crate::error::ColumnarError::Serialization(e.to_string()))
     }
 }

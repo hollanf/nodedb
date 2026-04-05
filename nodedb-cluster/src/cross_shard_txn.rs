@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 /// A cross-shard transaction: a set of writes targeting multiple vShards.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct CrossShardTransaction {
     /// Unique transaction ID (monotonic from coordinator).
     pub txn_id: u64,
@@ -30,7 +32,9 @@ pub struct CrossShardTransaction {
 }
 
 /// A forwarded write entry that a remote shard applies as a Raft side-effect.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ForwardEntry {
     /// Transaction ID — used to correlate with the coordinator's commit.
     pub txn_id: u64,
@@ -47,7 +51,9 @@ pub struct ForwardEntry {
 /// When a document write triggers a GSI update on a different shard,
 /// this entry is forwarded to the target shard as a Raft-replicated
 /// side-effect, ensuring atomic consistency with the primary write.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct GsiForwardEntry {
     /// GSI index name.
     pub index_name: String,
@@ -62,12 +68,16 @@ pub struct GsiForwardEntry {
     pub action: GsiAction,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum GsiAction {
     /// Add/update the GSI entry for this document.
-    Upsert,
+    Upsert = 0,
     /// Remove the GSI entry for this document.
-    Remove,
+    Remove = 1,
 }
 
 /// Cross-shard edge creation validation request.
@@ -75,7 +85,9 @@ pub enum GsiAction {
 /// Before creating an edge where src and dst are on different shards,
 /// the Control Plane sends a validation request to the destination
 /// shard to confirm the dst node exists.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct EdgeValidationRequest {
     pub src_id: String,
     pub src_vshard: u16,
@@ -84,14 +96,18 @@ pub struct EdgeValidationRequest {
     pub label: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum EdgeValidationResult {
     /// Destination exists — safe to create the edge.
-    Exists,
+    Exists = 0,
     /// Destination not found — reject the edge.
-    NotFound,
+    NotFound = 1,
     /// Destination shard unreachable — retry later.
-    Unavailable,
+    Unavailable = 2,
 }
 
 /// Transaction coordinator state (per node).
@@ -289,8 +305,8 @@ mod tests {
             dst_vshard: 20,
             label: "KNOWS".into(),
         };
-        let bytes = rmp_serde::to_vec_named(&req).unwrap();
-        let decoded: EdgeValidationRequest = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&req).unwrap();
+        let decoded: EdgeValidationRequest = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.src_id, "alice");
         assert_eq!(decoded.dst_vshard, 20);
     }
@@ -306,8 +322,8 @@ mod tests {
             source_vshard: 10,
             action: GsiAction::Upsert,
         };
-        let bytes = rmp_serde::to_vec_named(&entry).unwrap();
-        let decoded: GsiForwardEntry = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&entry).unwrap();
+        let decoded: GsiForwardEntry = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.index_name, "email_idx");
     }
 }

@@ -5,8 +5,8 @@ use super::types::{BLACKLIST, StoredBlacklistEntry, SystemCatalog, catalog_err};
 impl SystemCatalog {
     /// Insert or update a blacklist entry.
     pub fn put_blacklist_entry(&self, entry: &StoredBlacklistEntry) -> crate::Result<()> {
-        let bytes =
-            rmp_serde::to_vec(entry).map_err(|e| catalog_err("serialize blacklist entry", e))?;
+        let bytes = zerompk::to_msgpack_vec(entry)
+            .map_err(|e| catalog_err("serialize blacklist entry", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -61,7 +61,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("range blacklist", e))?;
         for item in range {
             let (_, value) = item.map_err(|e| catalog_err("read blacklist entry", e))?;
-            if let Ok(entry) = rmp_serde::from_slice::<StoredBlacklistEntry>(value.value()) {
+            if let Ok(entry) = zerompk::from_msgpack::<StoredBlacklistEntry>(value.value()) {
                 entries.push(entry);
             }
         }

@@ -6,7 +6,16 @@
 use std::collections::HashMap;
 
 /// A single token in a format template.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum FormatToken {
     /// Literal text (e.g. `"INV-"`).
     Literal(String),
@@ -282,19 +291,32 @@ pub fn compute_period_key(scope: &ResetScope, year: u16, month: u8, day: u8) -> 
 }
 
 /// Reset scope — when the counter should auto-reset to START.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Default,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum ResetScope {
     /// Never reset (default).
     #[default]
-    Never,
+    Never = 0,
     /// Reset at the start of each calendar year.
-    Yearly,
+    Yearly = 1,
     /// Reset at the start of each calendar month.
-    Monthly,
+    Monthly = 2,
     /// Reset at the start of each calendar quarter.
-    Quarterly,
+    Quarterly = 3,
     /// Reset at the start of each day.
-    Daily,
+    Daily = 4,
 }
 
 impl ResetScope {

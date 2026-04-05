@@ -82,7 +82,7 @@ pub fn create_schedule(
     // Lite devices receive this but NEVER execute Origin schedules —
     // they display them via SHOW SCHEDULES for observability.
     {
-        let delta_payload = rmp_serde::to_vec(&def).unwrap_or_default();
+        let delta_payload = zerompk::to_msgpack_vec(&def).unwrap_or_default();
         let delta = crate::event::crdt_sync::types::OutboundDelta {
             collection: "_schedules".into(),
             document_id: def.name.clone(),

@@ -25,6 +25,8 @@ use serde::{Deserialize, Serialize};
     rkyv::Archive,
     rkyv::Serialize,
     rkyv::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
 )]
 pub struct Lsn(u64);
 

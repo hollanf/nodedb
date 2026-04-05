@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// Stored in the system catalog via `ALTER COLLECTION x SET VECTOR METADATA ON column (...)`.
 /// Retrieved via `SELECT VECTOR_METADATA('collection', 'column')` or `SHOW VECTOR MODELS`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct VectorModelMetadata {
     /// Embedding model identifier (e.g. "text-embedding-3-large", "all-MiniLM-L6-v2").
     pub model: String,
@@ -27,7 +29,9 @@ pub struct VectorModelMetadata {
 ///
 /// Wraps `VectorModelMetadata` with the key fields needed for catalog storage
 /// and the `_system.vector_models` view.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct VectorModelEntry {
     /// Tenant that owns this collection.
     pub tenant_id: u32,
@@ -56,8 +60,8 @@ mod tests {
                 strict_dimensions: false,
             },
         };
-        let bytes = rmp_serde::to_vec_named(&entry).unwrap();
-        let restored: VectorModelEntry = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&entry).unwrap();
+        let restored: VectorModelEntry = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(restored.metadata.model, "text-embedding-3-large");
         assert_eq!(restored.metadata.dimensions, 1536);
         assert!(!restored.metadata.strict_dimensions);
@@ -72,8 +76,8 @@ mod tests {
             created_at: "2026-01-01".into(),
             strict_dimensions: false,
         };
-        let bytes = rmp_serde::to_vec_named(&meta).unwrap();
-        let restored: VectorModelMetadata = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&meta).unwrap();
+        let restored: VectorModelMetadata = zerompk::from_msgpack(&bytes).unwrap();
         assert!(!restored.strict_dimensions);
     }
 }

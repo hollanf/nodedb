@@ -22,7 +22,9 @@ const TRIGGER_DLQ: TableDefinition<u64, &[u8]> = TableDefinition::new("trigger_d
 const DEFAULT_MAX_ENTRIES: usize = 100_000;
 
 /// A failed trigger event in the DLQ.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct TriggerDlqEntry {
     /// Unique entry ID (monotonic within this node).
     pub entry_id: u64,
@@ -112,7 +114,7 @@ impl TriggerDlq {
                         max_id = id;
                     }
                     let bytes: &[u8] = value_guard.value();
-                    if let Ok(entry) = rmp_serde::from_slice::<TriggerDlqEntry>(bytes) {
+                    if let Ok(entry) = zerompk::from_msgpack::<TriggerDlqEntry>(bytes) {
                         entries.push_back(entry);
                     }
                 }
@@ -216,7 +218,7 @@ impl TriggerDlq {
     }
 
     fn write_to_redb(&self, entry: &TriggerDlqEntry) -> crate::Result<()> {
-        let bytes = rmp_serde::to_vec(entry).map_err(|e| crate::Error::Serialization {
+        let bytes = zerompk::to_msgpack_vec(entry).map_err(|e| crate::Error::Serialization {
             format: "msgpack".into(),
             detail: format!("trigger DLQ entry: {e}"),
         })?;

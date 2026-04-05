@@ -14,6 +14,7 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sonic-rs = { workspace = true }
+zerompk = { workspace = true }
 
 # LZ4 — pure Rust, compiles to WASM natively
 lz4_flex = { workspace = true }

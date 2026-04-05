@@ -22,7 +22,14 @@ const SPARSE_POSTINGS: TableDefinition<&str, &[u8]> = TableDefinition::new("spar
 const SPARSE_NORMS: TableDefinition<&str, &[u8]> = TableDefinition::new("sparse.norms");
 
 /// A single posting in the sparse inverted index.
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+    Clone,
+    Debug,
+)]
 pub struct SparsePosting {
     pub doc_id: String,
     pub weight: f32,
@@ -105,7 +112,7 @@ impl SparseVectorIndex {
                     .get(key.as_str())
                     .ok()
                     .flatten()
-                    .and_then(|g| rmp_serde::from_slice(g.value()).ok())
+                    .and_then(|g| zerompk::from_msgpack(g.value()).ok())
                     .unwrap_or_default();
 
                 // Remove existing posting for this doc (update case).
@@ -116,7 +123,7 @@ impl SparseVectorIndex {
                 });
 
                 let bytes =
-                    rmp_serde::to_vec_named(&postings).map_err(|e| crate::Error::Storage {
+                    zerompk::to_msgpack_vec(&postings).map_err(|e| crate::Error::Storage {
                         engine: "sparse_vector".into(),
                         detail: format!("serialize postings: {e}"),
                     })?;
@@ -131,7 +138,7 @@ impl SparseVectorIndex {
             // Store document norm (L2 of weights).
             let norm: f32 = vector.iter().map(|(_, w)| w * w).sum::<f32>().sqrt();
             let norm_key = format!("{collection}:{doc_id}");
-            let norm_bytes = rmp_serde::to_vec_named(&norm).map_err(|e| crate::Error::Storage {
+            let norm_bytes = zerompk::to_msgpack_vec(&norm).map_err(|e| crate::Error::Storage {
                 engine: "sparse_vector".into(),
                 detail: format!("serialize norm: {e}"),
             })?;
@@ -197,7 +204,7 @@ impl SparseVectorIndex {
                     })?;
                     let key = entry.0.value().to_string();
                     let postings: Vec<SparsePosting> =
-                        rmp_serde::from_slice(entry.1.value()).unwrap_or_default();
+                        zerompk::from_msgpack(entry.1.value()).unwrap_or_default();
                     if postings.iter().any(|p| p.doc_id == doc_id) {
                         let filtered: Vec<SparsePosting> = postings
                             .into_iter()
@@ -219,7 +226,7 @@ impl SparseVectorIndex {
                         })?;
                 } else {
                     let bytes =
-                        rmp_serde::to_vec_named(&postings).map_err(|e| crate::Error::Storage {
+                        zerompk::to_msgpack_vec(&postings).map_err(|e| crate::Error::Storage {
                             engine: "sparse_vector".into(),
                             detail: format!("serialize: {e}"),
                         })?;
@@ -279,7 +286,7 @@ impl SparseVectorIndex {
             let key = format!("{collection}:{token_id}");
             if let Ok(Some(guard)) = postings_table.get(key.as_str()) {
                 let postings: Vec<SparsePosting> =
-                    rmp_serde::from_slice(guard.value()).unwrap_or_default();
+                    zerompk::from_msgpack(guard.value()).unwrap_or_default();
                 if !postings.is_empty() {
                     term_postings.push((query_weight, postings));
                 }

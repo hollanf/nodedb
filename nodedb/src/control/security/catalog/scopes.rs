@@ -3,7 +3,14 @@
 use super::types::{SCOPE_GRANTS, SCOPES, SystemCatalog, catalog_err};
 
 /// Serializable scope definition for redb storage.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct StoredScope {
     /// Scope name (e.g., "profile:read", "orders:write").
     pub name: String,
@@ -17,7 +24,14 @@ pub struct StoredScope {
 }
 
 /// Serializable scope grant for redb storage.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct StoredScopeGrant {
     pub scope_name: String,
     /// Grantee type: "user", "role", "org", "team".
@@ -39,7 +53,8 @@ pub struct StoredScopeGrant {
 
 impl SystemCatalog {
     pub fn put_scope(&self, scope: &StoredScope) -> crate::Result<()> {
-        let bytes = rmp_serde::to_vec(scope).map_err(|e| catalog_err("serialize scope", e))?;
+        let bytes =
+            zerompk::to_msgpack_vec(scope).map_err(|e| catalog_err("serialize scope", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -68,7 +83,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("open scopes", e))?;
         match table.get(name).map_err(|e| catalog_err("get scope", e))? {
             Some(val) => {
-                let scope: StoredScope = rmp_serde::from_slice(val.value())
+                let scope: StoredScope = zerompk::from_msgpack(val.value())
                     .map_err(|e| catalog_err("deserialize scope", e))?;
                 Ok(Some(scope))
             }
@@ -110,7 +125,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("range scopes", e))?
         {
             let (_, val) = item.map_err(|e| catalog_err("read scope", e))?;
-            if let Ok(s) = rmp_serde::from_slice::<StoredScope>(val.value()) {
+            if let Ok(s) = zerompk::from_msgpack::<StoredScope>(val.value()) {
                 scopes.push(s);
             }
         }
@@ -125,7 +140,7 @@ impl SystemCatalog {
 
     pub fn put_scope_grant(&self, grant: &StoredScopeGrant) -> crate::Result<()> {
         let bytes =
-            rmp_serde::to_vec(grant).map_err(|e| catalog_err("serialize scope grant", e))?;
+            zerompk::to_msgpack_vec(grant).map_err(|e| catalog_err("serialize scope grant", e))?;
         let key = Self::scope_grant_key(&grant.scope_name, &grant.grantee_type, &grant.grantee_id);
         let write_txn = self
             .db
@@ -185,7 +200,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("range grants", e))?
         {
             let (_, val) = item.map_err(|e| catalog_err("read grant", e))?;
-            if let Ok(g) = rmp_serde::from_slice::<StoredScopeGrant>(val.value()) {
+            if let Ok(g) = zerompk::from_msgpack::<StoredScopeGrant>(val.value()) {
                 grants.push(g);
             }
         }

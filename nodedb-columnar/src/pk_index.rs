@@ -11,11 +11,14 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use zerompk::{FromMessagePack, ToMessagePack};
 
 use crate::error::ColumnarError;
 
 /// Location of a row within the columnar segment store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToMessagePack, FromMessagePack,
+)]
 pub struct RowLocation {
     /// Segment identifier (index in the segment list, or a unique segment ID).
     pub segment_id: u32,
@@ -138,13 +141,13 @@ impl PkIndex {
     pub fn to_bytes(&self) -> Result<Vec<u8>, ColumnarError> {
         // Serialize as Vec<(key, location)> via MessagePack.
         let entries: Vec<(&Vec<u8>, &RowLocation)> = self.inner.iter().collect();
-        rmp_serde::to_vec_named(&entries).map_err(|e| ColumnarError::Serialization(e.to_string()))
+        zerompk::to_msgpack_vec(&entries).map_err(|e| ColumnarError::Serialization(e.to_string()))
     }
 
     /// Deserialize the index from a checkpoint.
     pub fn from_bytes(data: &[u8]) -> Result<Self, ColumnarError> {
         let entries: Vec<(Vec<u8>, RowLocation)> =
-            rmp_serde::from_slice(data).map_err(|e| ColumnarError::Serialization(e.to_string()))?;
+            zerompk::from_msgpack(data).map_err(|e| ColumnarError::Serialization(e.to_string()))?;
         let mut inner = BTreeMap::new();
         for (key, loc) in entries {
             inner.insert(key, loc);

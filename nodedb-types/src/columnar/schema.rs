@@ -31,14 +31,32 @@ pub trait SchemaOps {
 }
 
 /// Schema for a strict document collection (Binary Tuple serialization).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct StrictSchema {
     pub columns: Vec<ColumnDef>,
     pub version: u16,
 }
 
 /// Schema for a columnar collection (compressed segment files).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct ColumnarSchema {
     pub columns: Vec<ColumnDef>,
     pub version: u16,

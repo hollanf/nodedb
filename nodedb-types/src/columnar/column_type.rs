@@ -8,7 +8,17 @@ use serde::{Deserialize, Serialize};
 use crate::value::Value;
 
 /// Typed column definition for strict document and columnar collections.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 #[serde(tag = "type", content = "params")]
 pub enum ColumnType {
     Int64,
@@ -145,18 +155,39 @@ pub enum ColumnTypeParseError {
 ///
 /// These tell the engine which column serves a specialized purpose.
 /// Extensible for future column roles (e.g., `PartitionKey`, `SortKey`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[msgpack(c_enum)]
+#[repr(u8)]
 pub enum ColumnModifier {
     /// This column is the time-partitioning key (timeseries profile).
     /// Exactly one required for timeseries collections.
-    TimeKey,
+    TimeKey = 0,
     /// This column has an automatic R-tree spatial index (spatial profile).
     /// Exactly one required for spatial collections.
-    SpatialIndex,
+    SpatialIndex = 1,
 }
 
 /// A single column definition in a strict document or columnar schema.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct ColumnDef {
     pub name: String,
     pub column_type: ColumnType,

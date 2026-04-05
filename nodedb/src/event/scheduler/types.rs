@@ -3,15 +3,28 @@
 use serde::{Deserialize, Serialize};
 
 /// What to do when a scheduled execution was missed (server was down).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum MissedPolicy {
     /// Skip missed executions (default). Resume from next scheduled time.
     #[default]
-    Skip,
+    Skip = 0,
     /// Catch up: run once immediately for all missed executions.
-    CatchUp,
+    CatchUp = 1,
     /// Queue: run each missed execution in order.
-    Queue,
+    Queue = 2,
 }
 
 impl MissedPolicy {
@@ -34,14 +47,27 @@ impl MissedPolicy {
 }
 
 /// Where the schedule runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum ScheduleScope {
     /// Runs on the shard leader for the target collection (or `_system` coordinator
     /// for cross-collection jobs). In single-node mode, always runs locally.
     #[default]
-    Normal,
+    Normal = 0,
     /// Runs on the creating node only. Never migrates, never syncs.
-    Local,
+    Local = 1,
 }
 
 impl ScheduleScope {
@@ -54,7 +80,9 @@ impl ScheduleScope {
 }
 
 /// Persistent definition of a scheduled job. Stored in the system catalog.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct ScheduleDef {
     /// Tenant that owns this schedule.
     pub tenant_id: u32,
@@ -84,7 +112,9 @@ pub struct ScheduleDef {
 }
 
 /// A completed job execution record.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct JobRun {
     /// Schedule name.
     pub schedule_name: String,

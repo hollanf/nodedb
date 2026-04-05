@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// Packaged by the Event Plane's packager from a `WriteEvent`. Contains
 /// the full row data serialized as the CRDT delta payload (MessagePack).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct OutboundDelta {
     /// Collection the delta applies to.
     pub collection: String,
@@ -31,10 +33,22 @@ pub struct OutboundDelta {
 }
 
 /// Operation type for outbound deltas.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[repr(u8)]
+#[msgpack(c_enum)]
 pub enum DeltaOp {
-    Upsert,
-    Delete,
+    Upsert = 0,
+    Delete = 1,
 }
 
 /// Handle to a connected Lite session for delta delivery.
@@ -90,8 +104,8 @@ mod tests {
             peer_id: 42,
             sequence: 7,
         };
-        let bytes = rmp_serde::to_vec(&delta).unwrap();
-        let decoded: OutboundDelta = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = zerompk::to_msgpack_vec(&delta).unwrap();
+        let decoded: OutboundDelta = zerompk::from_msgpack(&bytes).unwrap();
         assert_eq!(decoded.collection, "orders");
         assert_eq!(decoded.lsn, 1500);
         assert_eq!(decoded.op, DeltaOp::Upsert);

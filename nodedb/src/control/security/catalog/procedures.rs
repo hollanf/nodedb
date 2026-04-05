@@ -7,7 +7,8 @@ impl SystemCatalog {
     /// Store a procedure definition.
     pub fn put_procedure(&self, proc: &StoredProcedure) -> crate::Result<()> {
         let key = procedure_key(proc.tenant_id, &proc.name);
-        let bytes = rmp_serde::to_vec(proc).map_err(|e| catalog_err("serialize procedure", e))?;
+        let bytes =
+            zerompk::to_msgpack_vec(proc).map_err(|e| catalog_err("serialize procedure", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -39,7 +40,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("open procedures", e))?;
         match table.get(key.as_str()) {
             Ok(Some(value)) => {
-                let p: StoredProcedure = rmp_serde::from_slice(value.value())
+                let p: StoredProcedure = zerompk::from_msgpack(value.value())
                     .map_err(|e| catalog_err("deser procedure", e))?;
                 Ok(Some(p))
             }
@@ -89,7 +90,7 @@ impl SystemCatalog {
         {
             let (key, value) = entry.map_err(|e| catalog_err("read procedure", e))?;
             if key.value().starts_with(&prefix) {
-                let p: StoredProcedure = rmp_serde::from_slice(value.value())
+                let p: StoredProcedure = zerompk::from_msgpack(value.value())
                     .map_err(|e| catalog_err("deser procedure", e))?;
                 procs.push(p);
             }

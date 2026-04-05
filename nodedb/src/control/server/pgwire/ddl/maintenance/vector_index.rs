@@ -51,7 +51,7 @@ pub async fn handle_show_vector_index(
         ));
     }
 
-    let stats: nodedb_types::VectorIndexStats = rmp_serde::from_slice(&resp.payload)
+    let stats: nodedb_types::VectorIndexStats = zerompk::from_msgpack(&resp.payload)
         .map_err(|e| sqlstate_error("XX000", &format!("decode vector stats: {e}")))?;
 
     let schema = Arc::new(vec![text_field("property"), text_field("value")]);

@@ -170,7 +170,7 @@ impl SharedState {
         // Write to durable audit WAL — failure is a hard error.
         if let Some(ref entry) = entry {
             let bytes =
-                rmp_serde::to_vec_named(entry).map_err(|e| crate::Error::Serialization {
+                zerompk::to_msgpack_vec(entry).map_err(|e| crate::Error::Serialization {
                     format: "msgpack".into(),
                     detail: format!("audit entry serialization failed: {e}"),
                 })?;

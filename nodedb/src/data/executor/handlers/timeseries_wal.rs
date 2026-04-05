@@ -64,7 +64,7 @@ impl CoreLoop {
 
             // Deserialize: (collection, raw_payload).
             let Ok((raw_collection, payload)): Result<(String, Vec<u8>), _> =
-                rmp_serde::from_slice(&record.payload)
+                zerompk::from_msgpack(&record.payload)
             else {
                 tracing::warn!(
                     core = self.core_id,
@@ -140,7 +140,7 @@ impl CoreLoop {
             } else {
                 // Binary payload — try msgpack-encoded samples.
                 if let Ok(batch) =
-                    rmp_serde::from_slice::<nodedb_types::timeseries::TimeseriesWalBatch>(&payload)
+                    zerompk::from_msgpack::<nodedb_types::timeseries::TimeseriesWalBatch>(&payload)
                 {
                     self.ensure_columnar_memtable(&collection, ColumnarSchema::metric_default());
 

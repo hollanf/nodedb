@@ -12,7 +12,7 @@ impl SystemCatalog {
     pub fn put_vector_model(&self, entry: &VectorModelEntry) -> crate::Result<()> {
         let key = vector_model_key(entry.tenant_id, &entry.collection, &entry.column);
         let bytes =
-            rmp_serde::to_vec(entry).map_err(|e| catalog_err("serialize vector model", e))?;
+            zerompk::to_msgpack_vec(entry).map_err(|e| catalog_err("serialize vector model", e))?;
         let write_txn = self
             .db
             .begin_write()
@@ -46,7 +46,7 @@ impl SystemCatalog {
 
         match table.get(key.as_str()) {
             Ok(Some(value)) => {
-                let entry: VectorModelEntry = rmp_serde::from_slice(value.value())
+                let entry: VectorModelEntry = zerompk::from_msgpack(value.value())
                     .map_err(|e| catalog_err("deser vector model", e))?;
                 Ok(Some(entry))
             }
@@ -73,7 +73,7 @@ impl SystemCatalog {
         {
             let (key, value) = item.map_err(|e| catalog_err("read vector model", e))?;
             if key.value().starts_with(&prefix) {
-                let entry: VectorModelEntry = rmp_serde::from_slice(value.value())
+                let entry: VectorModelEntry = zerompk::from_msgpack(value.value())
                     .map_err(|e| catalog_err("deser vector model", e))?;
                 entries.push(entry);
             }
@@ -97,7 +97,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("range vector models", e))?
         {
             let (_, value) = item.map_err(|e| catalog_err("read vector model", e))?;
-            let entry: VectorModelEntry = rmp_serde::from_slice(value.value())
+            let entry: VectorModelEntry = zerompk::from_msgpack(value.value())
                 .map_err(|e| catalog_err("deser vector model", e))?;
             entries.push(entry);
         }

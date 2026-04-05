@@ -18,7 +18,9 @@ const CROSS_SHARD_DLQ: TableDefinition<u64, &[u8]> = TableDefinition::new("cross
 const DEFAULT_MAX_ENTRIES: usize = 100_000;
 
 /// A cross-shard write that exhausted all retries.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct CrossShardDlqEntry {
     /// Monotonic entry identifier.
     pub entry_id: u64,
@@ -221,7 +223,7 @@ impl CrossShardDlq {
     }
 
     fn write_to_redb(&self, entry: &CrossShardDlqEntry) -> crate::Result<()> {
-        let bytes = rmp_serde::to_vec(entry).map_err(|e| crate::Error::Serialization {
+        let bytes = zerompk::to_msgpack_vec(entry).map_err(|e| crate::Error::Serialization {
             format: "msgpack".into(),
             detail: format!("cross_shard_dlq: {e}"),
         })?;
@@ -283,7 +285,7 @@ impl CrossShardDlq {
                 detail: format!("entry: {e}"),
             })?;
             let value_bytes: &[u8] = guard.1.value();
-            match rmp_serde::from_slice::<CrossShardDlqEntry>(value_bytes) {
+            match zerompk::from_msgpack::<CrossShardDlqEntry>(value_bytes) {
                 Ok(entry) => entries.push_back(entry),
                 Err(e) => {
                     warn!(error = %e, "skipping corrupt cross-shard DLQ entry");
