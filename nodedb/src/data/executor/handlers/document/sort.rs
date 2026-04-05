@@ -8,7 +8,7 @@ use tracing::debug;
 
 use crate::data::executor::core_loop::CoreLoop;
 
-use crate::bridge::scan_filter::compare_json_values;
+use nodedb_query::msgpack_scan;
 
 impl CoreLoop {
     /// External sort: split filtered rows into sorted runs, spill each run
@@ -137,19 +137,26 @@ impl CoreLoop {
     }
 }
 
-/// Compare two JSON documents by a list of sort keys.
+/// Compare two raw msgpack documents by a list of sort keys.
 ///
-/// Used by both in-memory sort and external merge sort to ensure
-/// consistent ordering across all code paths.
-pub(super) fn compare_docs_by_keys(
-    a_doc: &serde_json::Value,
-    b_doc: &serde_json::Value,
+/// Uses binary field extraction — no decode. Used by both in-memory
+/// sort and external merge sort for consistent ordering.
+pub(super) fn compare_docs_by_keys_binary(
+    a_bytes: &[u8],
+    b_bytes: &[u8],
     sort_keys: &[(String, bool)],
 ) -> std::cmp::Ordering {
     for (field, asc) in sort_keys {
-        let a_val = a_doc.get(field.as_str());
-        let b_val = b_doc.get(field.as_str());
-        let cmp = compare_json_values(a_val, b_val);
+        let a_range = msgpack_scan::extract_field(a_bytes, 0, field);
+        let b_range = msgpack_scan::extract_field(b_bytes, 0, field);
+
+        let cmp = match (a_range, b_range) {
+            (Some(ar), Some(br)) => msgpack_scan::compare_field_bytes(a_bytes, ar, b_bytes, br),
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (None, None) => std::cmp::Ordering::Equal,
+        };
+
         let ordered = if *asc { cmp } else { cmp.reverse() };
         if ordered != std::cmp::Ordering::Equal {
             return ordered;
@@ -158,14 +165,79 @@ pub(super) fn compare_docs_by_keys(
     std::cmp::Ordering::Equal
 }
 
+/// Pre-extracted sort key offsets for a single row.
+/// Each entry is `Option<(usize, usize)>` — byte range of the sort key value.
+type SortKeyOffsets = Vec<Option<(usize, usize)>>;
+
 pub(super) fn sort_rows(rows: &mut [(String, Vec<u8>)], sort_keys: &[(String, bool)]) {
-    rows.sort_by(|(_, a_bytes), (_, b_bytes)| {
-        let a_doc = super::super::super::doc_format::decode_document(a_bytes)
-            .unwrap_or(serde_json::Value::Null);
-        let b_doc = super::super::super::doc_format::decode_document(b_bytes)
-            .unwrap_or(serde_json::Value::Null);
-        compare_docs_by_keys(&a_doc, &b_doc, sort_keys)
+    if sort_keys.is_empty() {
+        return;
+    }
+
+    // Pre-extract sort key offsets for all rows — one scan per row instead
+    // of O(N log N) scans during comparisons.
+    let mut key_offsets: Vec<SortKeyOffsets> = rows
+        .iter()
+        .map(|(_, bytes)| {
+            sort_keys
+                .iter()
+                .map(|(field, _)| msgpack_scan::extract_field(bytes, 0, field))
+                .collect()
+        })
+        .collect();
+
+    // Sort indices using pre-extracted offsets.
+    let mut indices: Vec<usize> = (0..rows.len()).collect();
+    indices.sort_by(|&ai, &bi| {
+        compare_with_preextracted(
+            &rows[ai].1,
+            &key_offsets[ai],
+            &rows[bi].1,
+            &key_offsets[bi],
+            sort_keys,
+        )
     });
+
+    // Apply permutation in-place.
+    apply_permutation(rows, &mut key_offsets, indices);
+}
+
+/// Compare two docs using pre-extracted sort key offsets.
+fn compare_with_preextracted(
+    a_bytes: &[u8],
+    a_offsets: &[Option<(usize, usize)>],
+    b_bytes: &[u8],
+    b_offsets: &[Option<(usize, usize)>],
+    sort_keys: &[(String, bool)],
+) -> std::cmp::Ordering {
+    for (i, (_, asc)) in sort_keys.iter().enumerate() {
+        let cmp = match (a_offsets[i], b_offsets[i]) {
+            (Some(ar), Some(br)) => msgpack_scan::compare_field_bytes(a_bytes, ar, b_bytes, br),
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (None, None) => std::cmp::Ordering::Equal,
+        };
+        let ordered = if *asc { cmp } else { cmp.reverse() };
+        if ordered != std::cmp::Ordering::Equal {
+            return ordered;
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+/// Apply a permutation to rows (and key_offsets) in-place using swaps.
+fn apply_permutation(
+    rows: &mut [(String, Vec<u8>)],
+    _key_offsets: &mut [SortKeyOffsets],
+    mut indices: Vec<usize>,
+) {
+    for i in 0..indices.len() {
+        while indices[i] != i {
+            let j = indices[i];
+            rows.swap(i, j);
+            indices.swap(i, j);
+        }
+    }
 }
 
 pub(super) struct RunReader {
@@ -245,10 +317,6 @@ impl PartialOrd for MergeEntry {
 
 impl Ord for MergeEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let a_doc = super::super::super::doc_format::decode_document(&self.row.1)
-            .unwrap_or(serde_json::Value::Null);
-        let b_doc = super::super::super::doc_format::decode_document(&other.row.1)
-            .unwrap_or(serde_json::Value::Null);
-        compare_docs_by_keys(&a_doc, &b_doc, &self.sort_keys)
+        compare_docs_by_keys_binary(&self.row.1, &other.row.1, &self.sort_keys)
     }
 }

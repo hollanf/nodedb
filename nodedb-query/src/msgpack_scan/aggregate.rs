@@ -42,10 +42,10 @@ pub fn compute_aggregate_binary(op: &str, field: &str, docs: &[&[u8]]) -> nodedb
         "count_distinct" => {
             let mut seen = HashSet::new();
             for doc in docs {
-                if let Some((start, end)) = extract_field(doc, 0, field) {
-                    if !read_null(doc, start) {
-                        seen.insert(&doc[start..end]);
-                    }
+                if let Some((start, end)) = extract_field(doc, 0, field)
+                    && !read_null(doc, start)
+                {
+                    seen.insert(&doc[start..end]);
                 }
             }
             nodedb_types::Value::Integer(seen.len() as i64)
@@ -74,14 +74,14 @@ pub fn compute_aggregate_binary(op: &str, field: &str, docs: &[&[u8]]) -> nodedb
             let mut seen_bytes = HashSet::new();
             let mut values = Vec::new();
             for doc in docs {
-                if let Some((start, end)) = extract_field(doc, 0, field) {
-                    if !read_null(doc, start) {
-                        let bytes = &doc[start..end];
-                        if seen_bytes.insert(bytes) {
-                            if let Some(v) = extract_as_value(doc, field) {
-                                values.push(v);
-                            }
-                        }
+                if let Some((start, end)) = extract_field(doc, 0, field)
+                    && !read_null(doc, start)
+                {
+                    let bytes = &doc[start..end];
+                    if seen_bytes.insert(bytes)
+                        && let Some(v) = extract_as_value(doc, field)
+                    {
+                        values.push(v);
                     }
                 }
             }
@@ -136,10 +136,15 @@ fn extract_str<'a>(doc: &'a [u8], field: &str) -> Option<&'a str> {
     read_str(doc, start)
 }
 
-/// Extract a field and decode to `nodedb_types::Value` (fallback path for
-/// array_agg where we need the actual typed value in the result).
+/// Extract a field as `nodedb_types::Value`. Uses direct msgpack→Value
+/// for scalars; falls back to json_from_msgpack only for complex types.
 fn extract_as_value(doc: &[u8], field: &str) -> Option<nodedb_types::Value> {
     let (start, end) = extract_field(doc, 0, field)?;
+    // Fast path: scalar types (null, bool, int, float, string).
+    if let Some(v) = crate::msgpack_scan::reader::read_value(doc, start) {
+        return Some(v);
+    }
+    // Slow path: complex types (array, map, bin) — go through JSON.
     let field_bytes = &doc[start..end];
     let json = nodedb_types::json_msgpack::json_from_msgpack(field_bytes).ok()?;
     Some(nodedb_types::Value::from(json))
@@ -178,6 +183,11 @@ fn find_minmax(docs: &[&[u8]], field: &str, want_max: bool) -> nodedb_types::Val
 
     match (best_doc, best_range) {
         (Some(doc), Some((start, end))) => {
+            // Fast path: scalars directly.
+            if let Some(v) = crate::msgpack_scan::reader::read_value(doc, start) {
+                return v;
+            }
+            // Slow path: complex types through JSON.
             let bytes = &doc[start..end];
             nodedb_types::json_msgpack::json_from_msgpack(bytes)
                 .ok()

@@ -9,10 +9,15 @@ pub mod compare;
 pub mod field;
 pub mod filter;
 pub mod group_key;
+pub mod index;
 pub mod reader;
 
 pub use aggregate::compute_aggregate_binary;
 pub use compare::{compare_field_bytes, hash_field_bytes};
 pub use field::{extract_field, extract_path};
 pub use group_key::build_group_key;
-pub use reader::{array_header, read_bool, read_f64, read_i64, read_null, read_str, skip_value};
+pub use index::FieldIndex;
+pub use reader::{
+    array_header, map_header, read_bool, read_f64, read_i64, read_null, read_str, read_value,
+    skip_value,
+};

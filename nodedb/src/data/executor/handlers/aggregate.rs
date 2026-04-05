@@ -242,13 +242,29 @@ impl CoreLoop {
                 let mut binary_groups: std::collections::HashMap<String, Vec<usize>> =
                     std::collections::HashMap::new();
 
+                // Use FieldIndex when multiple field accesses per doc (filters + group-by).
+                let use_field_index = filter_predicates.len() + group_by.len() >= 2;
+
                 for (i, (_, value)) in docs.iter().enumerate() {
-                    // Binary filter evaluation — no decode needed.
-                    if !filter_predicates.iter().all(|f| f.matches_binary(value)) {
-                        continue;
+                    if use_field_index {
+                        let idx = msgpack_scan::FieldIndex::build(value, 0)
+                            .unwrap_or_else(|| msgpack_scan::FieldIndex::empty());
+                        if !filter_predicates
+                            .iter()
+                            .all(|f| f.matches_binary_indexed(value, &idx))
+                        {
+                            continue;
+                        }
+                        let key =
+                            msgpack_scan::group_key::build_group_key_indexed(value, group_by, &idx);
+                        binary_groups.entry(key).or_default().push(i);
+                    } else {
+                        if !filter_predicates.iter().all(|f| f.matches_binary(value)) {
+                            continue;
+                        }
+                        let key = msgpack_scan::build_group_key(value, group_by);
+                        binary_groups.entry(key).or_default().push(i);
                     }
-                    let key = msgpack_scan::build_group_key(value, group_by);
-                    binary_groups.entry(key).or_default().push(i);
                 }
 
                 let mut results: Vec<serde_json::Value> = Vec::new();

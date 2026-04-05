@@ -311,9 +311,62 @@ pub fn read_null(buf: &[u8], offset: usize) -> bool {
     get(buf, offset) == Some(NIL)
 }
 
+/// Read a scalar msgpack value at `offset` into `nodedb_types::Value`.
+///
+/// Handles null, bool, integers, floats, and strings. For complex types
+/// (array, map, bin, ext), returns `None` — caller should use
+/// `json_from_msgpack` for those.
+pub fn read_value(buf: &[u8], offset: usize) -> Option<nodedb_types::Value> {
+    let tag = get(buf, offset)?;
+    match tag {
+        NIL => Some(nodedb_types::Value::Null),
+        TRUE => Some(nodedb_types::Value::Bool(true)),
+        FALSE => Some(nodedb_types::Value::Bool(false)),
+        // Integers
+        0x00..=0x7f => Some(nodedb_types::Value::Integer(tag as i64)),
+        0xe0..=0xff => Some(nodedb_types::Value::Integer((tag as i8) as i64)),
+        UINT8 => Some(nodedb_types::Value::Integer(get(buf, offset + 1)? as i64)),
+        UINT16 => Some(nodedb_types::Value::Integer(
+            read_u16_be(buf, offset + 1)? as i64
+        )),
+        UINT32 => Some(nodedb_types::Value::Integer(
+            read_u32_be(buf, offset + 1)? as i64
+        )),
+        UINT64 => Some(nodedb_types::Value::Integer(
+            read_u64_be(buf, offset + 1)? as i64
+        )),
+        INT8 => Some(nodedb_types::Value::Integer(
+            get(buf, offset + 1)? as i8 as i64
+        )),
+        INT16 => Some(nodedb_types::Value::Integer(
+            read_u16_be(buf, offset + 1)? as i16 as i64,
+        )),
+        INT32 => Some(nodedb_types::Value::Integer(
+            read_u32_be(buf, offset + 1)? as i32 as i64,
+        )),
+        INT64 => Some(nodedb_types::Value::Integer(
+            read_u64_be(buf, offset + 1)? as i64
+        )),
+        // Floats
+        FLOAT32 => {
+            let bits = read_u32_be(buf, offset + 1)?;
+            Some(nodedb_types::Value::Float(f32::from_bits(bits) as f64))
+        }
+        FLOAT64 => {
+            let bits = read_u64_be(buf, offset + 1)?;
+            Some(nodedb_types::Value::Float(f64::from_bits(bits)))
+        }
+        // Strings
+        0xa0..=0xbf | STR8 | STR16 | STR32 => {
+            read_str(buf, offset).map(|s| nodedb_types::Value::String(s.to_string()))
+        }
+        _ => None,
+    }
+}
+
 /// Return the number of key-value pairs and the offset of the first pair,
 /// for the map starting at `offset`. Returns `None` if not a map.
-pub(crate) fn map_header(buf: &[u8], offset: usize) -> Option<(usize, usize)> {
+pub fn map_header(buf: &[u8], offset: usize) -> Option<(usize, usize)> {
     let tag = get(buf, offset)?;
     match tag {
         0x80..=0x8f => Some(((tag & 0x0f) as usize, offset + 1)),

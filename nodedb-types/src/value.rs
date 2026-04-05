@@ -273,6 +273,65 @@ impl Value {
         a_str.cmp(b_str)
     }
 
+    /// Coerced equality: `Value` vs `Value` with numeric/string coercion.
+    ///
+    /// Single source of truth for type coercion in filter evaluation.
+    /// Both `eq_json` and binary filter use this.
+    pub fn eq_coerced(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::Null, Value::Null) => true,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Integer(a), Value::Integer(b)) => a == b,
+            (Value::Integer(a), Value::Float(b)) => *a as f64 == *b,
+            (Value::Float(a), Value::Integer(b)) => *a == *b as f64,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::String(a), Value::String(b)) => a == b,
+            // Coercion: number vs string
+            (Value::Integer(a), Value::String(s)) => {
+                s.parse::<i64>().is_ok_and(|n| *a == n)
+                    || s.parse::<f64>().is_ok_and(|n| *a as f64 == n)
+            }
+            (Value::String(s), Value::Integer(b)) => {
+                s.parse::<i64>().is_ok_and(|n| n == *b)
+                    || s.parse::<f64>().is_ok_and(|n| n == *b as f64)
+            }
+            (Value::Float(a), Value::String(s)) => s.parse::<f64>().is_ok_and(|n| *a == n),
+            (Value::String(s), Value::Float(b)) => s.parse::<f64>().is_ok_and(|n| n == *b),
+            _ => false,
+        }
+    }
+
+    /// Coerced ordering: `Value` vs `Value` with numeric/string coercion.
+    ///
+    /// Single source of truth for ordering in filter/sort evaluation.
+    pub fn cmp_coerced(&self, other: &Value) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        let self_f64 = match self {
+            Value::Integer(i) => Some(*i as f64),
+            Value::Float(f) => Some(*f),
+            Value::String(s) => s.parse::<f64>().ok(),
+            _ => None,
+        };
+        let other_f64 = match other {
+            Value::Integer(i) => Some(*i as f64),
+            Value::Float(f) => Some(*f),
+            Value::String(s) => s.parse::<f64>().ok(),
+            _ => None,
+        };
+        if let (Some(a), Some(b)) = (self_f64, other_f64) {
+            return a.partial_cmp(&b).unwrap_or(Ordering::Equal);
+        }
+        let a_str = match self {
+            Value::String(s) => s.as_str(),
+            _ => return Ordering::Equal,
+        };
+        let b_str = match other {
+            Value::String(s) => s.as_str(),
+            _ => return Ordering::Equal,
+        };
+        a_str.cmp(b_str)
+    }
+
     /// Get array elements (for IN/array operations).
     pub fn as_array_iter(&self) -> Option<impl Iterator<Item = &Value>> {
         match self {

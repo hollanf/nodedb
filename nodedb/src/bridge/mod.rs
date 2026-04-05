@@ -10,12 +10,7 @@ pub mod slab;
 pub mod expr_eval {
     pub use nodedb_query::expr::{BinaryOp, CastType, ComputedColumn, SqlExpr};
 }
-pub mod json_ops {
-    pub use nodedb_query::json_ops::*;
-}
 pub mod scan_filter {
-    pub use nodedb_query::json_ops::coerced_eq;
-    pub use nodedb_query::json_ops::compare_json_optional as compare_json_values;
     pub use nodedb_query::scan_filter::*;
 }
 pub mod window_func {
