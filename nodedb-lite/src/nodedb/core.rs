@@ -66,6 +66,9 @@ pub struct NodeDbLite<S: StorageEngine> {
     /// HTAP bridge: CDC from strict → columnar materialized views.
     /// Arc-wrapped for sharing with the query engine's DDL handlers.
     pub(crate) htap: Arc<Mutex<HtapBridge>>,
+    /// Lite timeseries engine.
+    /// Arc-wrapped for sharing with the query engine's DDL handlers.
+    pub(crate) timeseries: Arc<Mutex<crate::engine::timeseries::engine::TimeseriesEngine>>,
     /// When `false`, KV operations go directly to redb, bypassing Loro.
     /// Other engines (vector, graph, document) are unaffected.
     pub(crate) sync_enabled: bool,
@@ -240,12 +243,16 @@ impl<S: StorageEngine> NodeDbLite<S> {
         let strict = Arc::new(Mutex::new(strict));
         let columnar = Arc::new(Mutex::new(columnar));
         let htap = Arc::new(Mutex::new(HtapBridge::new()));
+        let timeseries = Arc::new(Mutex::new(
+            crate::engine::timeseries::engine::TimeseriesEngine::new(),
+        ));
         let query_engine = crate::query::LiteQueryEngine::new(
             Arc::clone(&crdt),
             Arc::clone(&strict),
             Arc::clone(&columnar),
             Arc::clone(&htap),
             Arc::clone(&storage),
+            Arc::clone(&timeseries),
         );
 
         let db = Self {
@@ -263,6 +270,7 @@ impl<S: StorageEngine> NodeDbLite<S> {
             strict,
             columnar,
             htap,
+            timeseries,
             sync_enabled,
             kv_write_buf: Mutex::new(KvWriteBuffer {
                 ops: Vec::with_capacity(1024),

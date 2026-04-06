@@ -96,10 +96,21 @@ impl TimeseriesEngine {
         };
         coll.partitions.push(partition);
 
+        // Snapshot timestamps/values for continuous aggregate refresh
+        // before clearing the memtable. We need to release the mutable
+        // borrow on `coll` (via `self.collections`) before borrowing
+        // `self.continuous_agg_mgr`.
+        let ts_snapshot: Vec<i64> = coll.timestamps.clone();
+        let val_snapshot: Vec<f64> = coll.values.clone();
+
         coll.timestamps.clear();
         coll.values.clear();
         coll.series_ids.clear();
         coll.memory_bytes = 0;
+
+        // Fire continuous aggregate refresh now that `coll` borrow is released.
+        self.continuous_agg_mgr
+            .on_flush_simple(collection, &ts_snapshot, &val_snapshot);
 
         Some(FlushResult {
             key_prefix,

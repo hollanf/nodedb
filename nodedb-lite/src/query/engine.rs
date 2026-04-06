@@ -35,6 +35,8 @@ pub struct LiteQueryEngine<S: StorageEngine> {
     pub(in crate::query) columnar: Arc<Mutex<ColumnarEngine<S>>>,
     pub(in crate::query) htap: Arc<Mutex<HtapBridge>>,
     pub(in crate::query) storage: Arc<S>,
+    pub(in crate::query) timeseries:
+        Arc<Mutex<crate::engine::timeseries::engine::TimeseriesEngine>>,
 }
 
 impl<S: StorageEngine> LiteQueryEngine<S> {
@@ -45,6 +47,7 @@ impl<S: StorageEngine> LiteQueryEngine<S> {
         columnar: Arc<Mutex<ColumnarEngine<S>>>,
         htap: Arc<Mutex<HtapBridge>>,
         storage: Arc<S>,
+        timeseries: Arc<Mutex<crate::engine::timeseries::engine::TimeseriesEngine>>,
     ) -> Self {
         let config = SessionConfig::new()
             .with_information_schema(false)
@@ -60,6 +63,7 @@ impl<S: StorageEngine> LiteQueryEngine<S> {
             columnar,
             htap,
             storage,
+            timeseries,
         }
     }
 

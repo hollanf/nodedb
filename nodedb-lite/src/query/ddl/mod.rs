@@ -2,6 +2,7 @@
 
 pub mod alter;
 pub mod columnar;
+pub mod continuous_agg;
 pub mod convert;
 pub mod htap;
 pub mod kv;
@@ -38,6 +39,21 @@ impl<S: StorageEngine> LiteQueryEngine<S> {
         // DROP MATERIALIZED VIEW <target>
         if upper.starts_with("DROP MATERIALIZED VIEW ") {
             return Some(self.handle_drop_materialized_view(sql).await);
+        }
+
+        // CREATE CONTINUOUS AGGREGATE <name> ON <source> ...
+        if upper.starts_with("CREATE CONTINUOUS AGGREGATE ") {
+            return Some(self.handle_create_continuous_aggregate(sql).await);
+        }
+
+        // DROP CONTINUOUS AGGREGATE <name>
+        if upper.starts_with("DROP CONTINUOUS AGGREGATE ") {
+            return Some(self.handle_drop_continuous_aggregate(sql).await);
+        }
+
+        // SHOW CONTINUOUS AGGREGATES [FOR <source>]
+        if upper.starts_with("SHOW CONTINUOUS AGGREGATES") {
+            return Some(self.handle_show_continuous_aggregates(sql).await);
         }
 
         // CREATE TIMESERIES [COLLECTION] <name> ...

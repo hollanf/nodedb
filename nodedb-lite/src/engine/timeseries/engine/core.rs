@@ -25,6 +25,8 @@ pub struct TimeseriesEngine {
     pub(super) wal_seq: u64,
     pub(super) rate_estimator: IngestRateEstimator,
     pub(super) bulk_import_active: bool,
+    /// Continuous aggregate manager: auto-refreshes on flush.
+    pub(crate) continuous_agg_mgr: super::continuous_agg::LiteContinuousAggManager,
 }
 
 /// Per-collection timeseries state.
@@ -88,6 +90,7 @@ impl TimeseriesEngine {
             wal_seq: 0,
             rate_estimator: IngestRateEstimator::new(),
             bulk_import_active: false,
+            continuous_agg_mgr: super::continuous_agg::LiteContinuousAggManager::new(),
         }
     }
 
