@@ -262,6 +262,27 @@ impl ColumnarSegmentReader {
         decode_column(&data, col_type, codec)
     }
 
+    /// Decode a column from pre-read raw bytes.
+    ///
+    /// Used with `UringReader::read_files()` which batch-reads all column
+    /// files via io_uring, returning raw bytes. This method decodes those
+    /// bytes into `ColumnData` without additional disk I/O.
+    pub fn decode_column_from_bytes(
+        partition_dir: &Path,
+        col_name: &str,
+        col_type: ColumnType,
+        codec: Option<ColumnCodec>,
+        raw_bytes: &[u8],
+    ) -> Result<ColumnData, SegmentError> {
+        let codec = codec.unwrap_or_else(|| {
+            Self::read_meta(partition_dir)
+                .ok()
+                .and_then(|meta| meta.column_stats.get(col_name).map(|s| s.codec))
+                .unwrap_or_else(|| legacy_default_codec(col_type))
+        });
+        decode_column(raw_bytes, col_type, codec)
+    }
+
     /// Read the symbol dictionary for a tag column.
     pub fn read_symbol_dict(
         partition_dir: &Path,

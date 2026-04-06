@@ -201,6 +201,10 @@ pub struct CoreLoop {
     /// Per-core KV engine: hash tables + expiry wheel. `!Send`.
     pub(in crate::data::executor) kv_engine: crate::engine::kv::KvEngine,
 
+    /// Per-core io_uring reader for batched columnar segment reads.
+    /// Initialized lazily; `None` if io_uring is not available.
+    pub(in crate::data::executor) uring_reader: Option<crate::data::io::uring_reader::UringReader>,
+
     /// Shared system metrics — Arc is safe for `!Send` since all fields are atomic.
     pub(in crate::data::executor) metrics: Option<Arc<crate::control::metrics::SystemMetrics>>,
 
@@ -296,6 +300,7 @@ impl CoreLoop {
                 crate::engine::kv::current_ms(),
                 &nodedb_types::config::tuning::KvTuning::default(),
             ),
+            uring_reader: crate::data::io::uring_reader::UringReader::new(),
             metrics: None,
             event_producer: None,
             event_sequence: 0,
