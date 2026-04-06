@@ -9,14 +9,14 @@ use crate::bridge::envelope::Response;
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::timeseries::grouped_scan::{
-    GroupedAggResult, aggregate_memtable, aggregate_partition,
+    GroupedAggResult, PartitionAggParams, aggregate_memtable, aggregate_partition,
 };
 
 impl CoreLoop {
     /// Aggregate mode: GROUP BY / time-bucket across memtable + partitions.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::data::executor) fn execute_ts_aggregate(
-        &self,
+        &mut self,
         task: &ExecutionTask,
         collection: &str,
         time_range: (i64, i64),
@@ -61,16 +61,18 @@ impl CoreLoop {
                     .collect();
 
                 if partition_dirs.len() <= 1 {
+                    // Single partition — use io_uring batched reads on TPC core.
                     for dir in &partition_dirs {
-                        if let Some(part_result) = aggregate_partition(
-                            dir,
+                        if let Some(part_result) = aggregate_partition(PartitionAggParams {
+                            partition_dir: dir,
                             group_by,
                             aggregates,
-                            filter_predicates,
+                            filters: filter_predicates,
                             time_range,
                             needed_columns,
                             bucket_interval_ms,
-                        ) {
+                            uring_reader: self.uring_reader.as_mut(),
+                        }) {
                             merged.merge(&part_result);
                         }
                     }
@@ -99,15 +101,17 @@ impl CoreLoop {
                                 s.spawn(move || {
                                     let mut local = GroupedAggResult::new(ag.len());
                                     for dir in chunk {
-                                        if let Some(r) = aggregate_partition(
-                                            dir,
-                                            gb,
-                                            ag,
-                                            fl,
+                                        // Parallel threads: no io_uring (fadvise fallback).
+                                        if let Some(r) = aggregate_partition(PartitionAggParams {
+                                            partition_dir: dir,
+                                            group_by: gb,
+                                            aggregates: ag,
+                                            filters: fl,
                                             time_range,
-                                            nc,
+                                            needed_columns: nc,
                                             bucket_interval_ms,
-                                        ) {
+                                            uring_reader: None,
+                                        }) {
                                             local.merge(&r);
                                         }
                                     }

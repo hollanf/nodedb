@@ -157,39 +157,42 @@ fn resolve_key_part(
     }
 }
 
+/// Parameters for dense-symbol GROUP BY aggregation.
+struct DenseSymbolParams<'a> {
+    mt: &'a ColumnarMemtable,
+    group_col_idx: usize,
+    agg_col_data: &'a [Option<(usize, &'a ColumnData)>],
+    aggregates: &'a [(String, String)],
+    bitmask: Option<&'a [u64]>,
+    bool_mask: Option<&'a [bool]>,
+    row_count: usize,
+    cardinality: usize,
+}
+
 /// Dense-array GROUP BY for a single Symbol column with cardinality ≤ 65536.
 ///
 /// Indexes accumulators directly by symbol ID, avoiding HashMap entirely.
 /// Returns `(sym_id, accumulators)` for every non-empty group.
-fn aggregate_dense_symbol(
-    mt: &ColumnarMemtable,
-    group_col_idx: usize,
-    agg_col_data: &[Option<(usize, &ColumnData)>],
-    aggregates: &[(String, String)],
-    bitmask: Option<&[u64]>,
-    bool_mask: Option<&[bool]>,
-    row_count: usize,
-    cardinality: usize,
-) -> Vec<(u32, Vec<AggAccum>)> {
-    let num_aggs = aggregates.len();
-    let ids = match mt.column(group_col_idx) {
+fn aggregate_dense_symbol(p: &DenseSymbolParams<'_>) -> Vec<(u32, Vec<AggAccum>)> {
+    let num_aggs = p.aggregates.len();
+    let ids = match p.mt.column(p.group_col_idx) {
         ColumnData::Symbol(v) => v,
         _ => return Vec::new(),
     };
 
     // Allocate one accumulator vector per possible symbol ID.
-    let mut table: Vec<Vec<AggAccum>> = (0..cardinality)
+    let mut table: Vec<Vec<AggAccum>> = (0..p.cardinality)
         .map(|_| (0..num_aggs).map(|_| AggAccum::new()).collect())
         .collect();
 
     let accumulate = |row_idx: usize, table: &mut Vec<Vec<AggAccum>>| {
         let sym_id = ids[row_idx] as usize;
-        if sym_id >= cardinality {
+        if sym_id >= p.cardinality {
             return;
         }
         let accums = &mut table[sym_id];
-        for (agg_idx, (op, _)) in aggregates.iter().enumerate() {
-            match &agg_col_data[agg_idx] {
+        for (agg_idx, (op, _)) in p.aggregates.iter().enumerate() {
+            match &p.agg_col_data[agg_idx] {
                 None => accums[agg_idx].feed_count_only(),
                 Some((_, col_data)) => {
                     let val = match col_data {
@@ -208,16 +211,16 @@ fn aggregate_dense_symbol(
         }
     };
 
-    if let Some(bm) = bitmask {
-        for_each_set_bit(bm, row_count, |row_idx| accumulate(row_idx, &mut table));
-    } else if let Some(mask) = bool_mask {
-        for (row_idx, &passes) in mask.iter().enumerate().take(row_count) {
+    if let Some(bm) = p.bitmask {
+        for_each_set_bit(bm, p.row_count, |row_idx| accumulate(row_idx, &mut table));
+    } else if let Some(mask) = p.bool_mask {
+        for (row_idx, &passes) in mask.iter().enumerate().take(p.row_count) {
             if passes {
                 accumulate(row_idx, &mut table);
             }
         }
     } else {
-        for row_idx in 0..row_count {
+        for row_idx in 0..p.row_count {
             accumulate(row_idx, &mut table);
         }
     }
@@ -339,16 +342,16 @@ pub(super) fn try_columnar_aggregate(
                         FilterResult::BoolMask(m) => (None, Some(m.as_slice())),
                         FilterResult::None => (None, None),
                     };
-                    Some(aggregate_dense_symbol(
+                    Some(aggregate_dense_symbol(&DenseSymbolParams {
                         mt,
-                        col_idx,
-                        &agg_col_data,
+                        group_col_idx: col_idx,
+                        agg_col_data: &agg_col_data,
                         aggregates,
-                        bm,
-                        boolm,
+                        bitmask: bm,
+                        bool_mask: boolm,
                         row_count,
                         cardinality,
-                    ))
+                    }))
                 } else {
                     None
                 }
@@ -412,7 +415,7 @@ pub(super) fn try_columnar_aggregate(
 
         match &filter_result {
             FilterResult::Bitmask(bm) => {
-                for_each_set_bit(bm, row_count, |row_idx| process_row(row_idx));
+                for_each_set_bit(bm, row_count, &mut process_row);
             }
             FilterResult::BoolMask(mask) => {
                 for (row_idx, &passes) in mask.iter().enumerate().take(row_count) {

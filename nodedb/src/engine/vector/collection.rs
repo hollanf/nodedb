@@ -288,6 +288,14 @@ impl VectorCollection {
                     candidates.truncate(rerank_k);
                 }
 
+                // Prefetch FP32 vectors for reranking candidates.
+                // madvise(MADV_WILLNEED) is non-blocking — kernel initiates
+                // readahead from NVMe while we set up the reranking loop.
+                if let Some(mmap) = &seg.mmap_vectors {
+                    let ids: Vec<u32> = candidates.iter().map(|&(id, _)| id).collect();
+                    mmap.prefetch_batch(&ids);
+                }
+
                 // Phase 2: Rerank with exact FP32 distance.
                 // For L1 NVMe tier, read FP32 from mmap segment file
                 // instead of HNSW node vectors (which may be dummy/empty).

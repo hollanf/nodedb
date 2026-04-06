@@ -174,7 +174,7 @@ fn scan_partitions_parallel(
             merged.append(batch);
         }
         // Sort by timestamp (first field in each row map).
-        merged.sort_by_key(|row| extract_timestamp(row));
+        merged.sort_by_key(extract_timestamp);
         merged.truncate(limit);
         merged
     }
@@ -223,6 +223,10 @@ fn scan_one_partition(
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
+
+    // Prefetch all column files into page cache before reading.
+    let all_col_names: Vec<String> = schema.columns.iter().map(|(n, _)| n.clone()).collect();
+    crate::data::io::fadvise::prefetch_partition_columns(part_dir, &all_col_names);
 
     let col_data: Vec<Option<ColumnData>> = schema
         .columns
@@ -280,6 +284,10 @@ fn scan_one_partition(
         let row = emit_partition_row(&schema_vec, &col_data, &sym_dicts, idx as usize);
         rows.push(row);
     }
+
+    // Release page cache for this partition.
+    crate::data::io::fadvise::release_partition_columns(part_dir, &all_col_names);
+
     rows
 }
 

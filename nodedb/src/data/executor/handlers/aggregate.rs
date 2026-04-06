@@ -248,7 +248,7 @@ impl CoreLoop {
                 for (i, (_, value)) in docs.iter().enumerate() {
                     if use_field_index {
                         let idx = msgpack_scan::FieldIndex::build(value, 0)
-                            .unwrap_or_else(|| msgpack_scan::FieldIndex::empty());
+                            .unwrap_or_else(msgpack_scan::FieldIndex::empty);
                         if !filter_predicates
                             .iter()
                             .all(|f| f.matches_binary_indexed(value, &idx))

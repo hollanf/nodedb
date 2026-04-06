@@ -35,17 +35,19 @@ pub(super) fn hash_join_key(
     (hasher.finish(), ranges)
 }
 
+/// (doc_index, key_ranges) for a single hash bucket entry.
+type BucketEntry = (usize, Vec<(usize, usize)>);
+
 /// Build side of hash join: hash index keys, store (hash → doc indices + key ranges).
 pub(super) struct HashIndex {
-    /// hash → list of (doc_index, key_ranges)
-    pub(super) buckets: std::collections::HashMap<u64, Vec<(usize, Vec<(usize, usize)>)>>,
+    pub(super) buckets: std::collections::HashMap<u64, Vec<BucketEntry>>,
     pub(super) state: std::collections::hash_map::RandomState,
 }
 
 impl HashIndex {
     pub(super) fn build(docs: &[(String, Vec<u8>)], keys: &[&str]) -> Self {
         let state = std::collections::hash_map::RandomState::new();
-        let mut buckets: std::collections::HashMap<u64, Vec<(usize, Vec<(usize, usize)>)>> =
+        let mut buckets: std::collections::HashMap<u64, Vec<BucketEntry>> =
             std::collections::HashMap::with_capacity(docs.len());
         for (i, (_, value)) in docs.iter().enumerate() {
             let (hash, ranges) = hash_join_key(value, keys, &state);
@@ -74,41 +76,44 @@ impl HashIndex {
     }
 }
 
+/// Parameters for probing a hash join index.
+pub(super) struct ProbeParams<'a> {
+    pub(super) probe_docs: &'a [(String, Vec<u8>)],
+    pub(super) index: &'a HashIndex,
+    pub(super) index_docs: &'a [(String, Vec<u8>)],
+    pub(super) probe_keys: &'a [&'a str],
+    pub(super) join_type: &'a str,
+    pub(super) limit: usize,
+    pub(super) probe_collection: &'a str,
+    pub(super) index_collection: &'a str,
+}
+
 /// Probe a hash index with probe-side documents and produce join results.
 ///
 /// Uses u64 hash keys — zero String allocation for key matching.
-pub(super) fn probe_hash_index(
-    probe_docs: &[(String, Vec<u8>)],
-    index: &HashIndex,
-    index_docs: &[(String, Vec<u8>)],
-    probe_keys: &[&str],
-    join_type: &str,
-    limit: usize,
-    probe_collection: &str,
-    index_collection: &str,
-) -> Vec<serde_json::Value> {
-    let is_left = join_type == "left" || join_type == "full";
-    let is_right = join_type == "right" || join_type == "full";
-    let is_semi = join_type == "semi";
-    let is_anti = join_type == "anti";
+pub(super) fn probe_hash_index(p: &ProbeParams<'_>) -> Vec<serde_json::Value> {
+    let is_left = p.join_type == "left" || p.join_type == "full";
+    let is_right = p.join_type == "right" || p.join_type == "full";
+    let is_semi = p.join_type == "semi";
+    let is_anti = p.join_type == "anti";
 
     let mut index_matched: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut results = Vec::new();
 
-    for (_, value) in probe_docs {
-        if results.len() >= limit {
+    for (_, value) in p.probe_docs {
+        if results.len() >= p.limit {
             break;
         }
-        let (_, _, matched_indices) = index.probe(value, probe_keys);
+        let (_, _, matched_indices) = p.index.probe(value, p.probe_keys);
 
         if !matched_indices.is_empty() {
             if is_semi {
-                results.push(merge_join_docs_binary(value, None, probe_collection, ""));
+                results.push(merge_join_docs_binary(value, None, p.probe_collection, ""));
             } else if is_anti {
                 // Skip — has match.
             } else {
                 for &mi in &matched_indices {
-                    if results.len() >= limit {
+                    if results.len() >= p.limit {
                         break;
                     }
                     if is_right {
@@ -116,28 +121,28 @@ pub(super) fn probe_hash_index(
                     }
                     results.push(merge_join_docs_binary(
                         value,
-                        Some(&index_docs[mi].1),
-                        probe_collection,
-                        index_collection,
+                        Some(&p.index_docs[mi].1),
+                        p.probe_collection,
+                        p.index_collection,
                     ));
                 }
             }
         } else if is_anti {
-            results.push(merge_join_docs_binary(value, None, probe_collection, ""));
+            results.push(merge_join_docs_binary(value, None, p.probe_collection, ""));
         } else if is_left {
             results.push(merge_join_docs_binary(
                 value,
                 None,
-                probe_collection,
-                index_collection,
+                p.probe_collection,
+                p.index_collection,
             ));
         }
     }
 
     // RIGHT/FULL: emit unmatched index-side rows.
     if is_right {
-        for (i, (_, bytes)) in index_docs.iter().enumerate() {
-            if results.len() >= limit {
+        for (i, (_, bytes)) in p.index_docs.iter().enumerate() {
+            if results.len() >= p.limit {
                 break;
             }
             if !index_matched.contains(&i) {
@@ -145,7 +150,7 @@ pub(super) fn probe_hash_index(
                     &[],
                     Some(bytes),
                     "",
-                    index_collection,
+                    p.index_collection,
                 ));
             }
         }
@@ -210,16 +215,16 @@ impl CoreLoop {
         let right_index = HashIndex::build(&right_docs, &right_keys);
 
         // Probe the hash index with left (probe) side.
-        let results = probe_hash_index(
-            &left_docs,
-            &right_index,
-            &right_docs,
-            &left_keys,
+        let results = probe_hash_index(&ProbeParams {
+            probe_docs: &left_docs,
+            index: &right_index,
+            index_docs: &right_docs,
+            probe_keys: &left_keys,
             join_type,
             limit,
-            left_collection,
-            right_collection,
-        );
+            probe_collection: left_collection,
+            index_collection: right_collection,
+        });
 
         match super::super::super::response_codec::encode_json_vec(&results) {
             Ok(payload) => self.response_with_payload(task, payload),
@@ -294,16 +299,16 @@ impl CoreLoop {
 
         // Probe the hash index with large (scanned) side.
         let small_collection = "broadcast";
-        let results = probe_hash_index(
-            &large_docs,
-            &small_index,
-            &small_docs_raw,
-            &large_keys,
+        let results = probe_hash_index(&ProbeParams {
+            probe_docs: &large_docs,
+            index: &small_index,
+            index_docs: &small_docs_raw,
+            probe_keys: &large_keys,
             join_type,
             limit,
-            large_collection,
-            small_collection,
-        );
+            probe_collection: large_collection,
+            index_collection: small_collection,
+        });
 
         match super::super::super::response_codec::encode_json_vec(&results) {
             Ok(payload) => self.response_with_payload(task, payload),

@@ -210,7 +210,7 @@ pub(crate) fn eval_filters_bitmask(
         } = col_data
         {
             let dict_mask =
-                eval_dict_filter_bitmask(ids, dictionary, reverse, valid, f, row_count, &rt)?;
+                eval_dict_filter_bitmask(ids, dictionary, reverse, valid, f, row_count, rt)?;
             mask = simd_filter::bitmask_and(&mask, &dict_mask);
             continue;
         }
