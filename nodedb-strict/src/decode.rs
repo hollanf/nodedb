@@ -105,7 +105,10 @@ impl TupleDecoder {
         let size = self.schema.columns[col_idx]
             .column_type
             .fixed_size()
-            .unwrap();
+            .ok_or(StrictError::TypeMismatch {
+                column: self.schema.columns[col_idx].name.clone(),
+                expected: self.schema.columns[col_idx].column_type.clone(),
+            })?;
         let start = self.header_size + offset;
         let end = start + size;
 
@@ -190,10 +193,20 @@ impl TupleDecoder {
         let col = &self.schema.columns[col_idx];
 
         if col.column_type.fixed_size().is_some() {
-            let raw = self.extract_fixed_raw(tuple, col_idx)?.unwrap();
+            let raw = self
+                .extract_fixed_raw(tuple, col_idx)?
+                .ok_or(StrictError::TypeMismatch {
+                    column: col.name.clone(),
+                    expected: col.column_type.clone(),
+                })?;
             Ok(decode_fixed_value(&col.column_type, raw))
         } else {
-            let raw = self.extract_variable_raw(tuple, col_idx)?.unwrap();
+            let raw =
+                self.extract_variable_raw(tuple, col_idx)?
+                    .ok_or(StrictError::TypeMismatch {
+                        column: col.name.clone(),
+                        expected: col.column_type.clone(),
+                    })?;
             Ok(decode_variable_value(&col.column_type, raw))
         }
     }
@@ -323,11 +336,17 @@ impl TupleDecoder {
 /// Decode a fixed-size raw byte slice into a Value.
 fn decode_fixed_value(col_type: &ColumnType, raw: &[u8]) -> Value {
     match col_type {
-        ColumnType::Int64 => Value::Integer(i64::from_le_bytes(raw[..8].try_into().unwrap())),
-        ColumnType::Float64 => Value::Float(f64::from_le_bytes(raw[..8].try_into().unwrap())),
+        ColumnType::Int64 => Value::Integer(i64::from_le_bytes([
+            raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+        ])),
+        ColumnType::Float64 => Value::Float(f64::from_le_bytes([
+            raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+        ])),
         ColumnType::Bool => Value::Bool(raw[0] != 0),
         ColumnType::Timestamp => {
-            let micros = i64::from_le_bytes(raw[..8].try_into().unwrap());
+            let micros = i64::from_le_bytes([
+                raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+            ]);
             Value::DateTime(NdbDateTime::from_micros(micros))
         }
         ColumnType::Decimal => {
@@ -336,14 +355,17 @@ fn decode_fixed_value(col_type: &ColumnType, raw: &[u8]) -> Value {
             Value::Decimal(rust_decimal::Decimal::deserialize(bytes))
         }
         ColumnType::Uuid => {
-            let parsed = uuid::Uuid::from_bytes(raw[..16].try_into().unwrap());
+            let mut bytes = [0u8; 16];
+            bytes.copy_from_slice(&raw[..16]);
+            let parsed = uuid::Uuid::from_bytes(bytes);
             Value::Uuid(parsed.to_string())
         }
         ColumnType::Vector(dim) => {
             let d = *dim as usize;
             let mut floats = Vec::with_capacity(d);
             for i in 0..d {
-                let bytes: [u8; 4] = raw[i * 4..(i + 1) * 4].try_into().unwrap();
+                let off = i * 4;
+                let bytes = [raw[off], raw[off + 1], raw[off + 2], raw[off + 3]];
                 let f = f32::from_le_bytes(bytes);
                 floats.push(Value::Float(f as f64));
             }

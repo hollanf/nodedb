@@ -207,13 +207,20 @@ impl KvHashTable {
 
         // Check if key exists in primary — update in place (no key copy needed).
         if let Some(idx) = Self::probe_find_index_static(&self.slots, h, key) {
-            let old_value =
-                extract_value_from(&self.slots[idx].as_ref().unwrap().value, &self.overflow);
-            free_value_from(&self.slots[idx].as_ref().unwrap().value, &mut self.overflow);
+            // probe_find_index_static guarantees slots[idx] is Some.
+            let old_value = {
+                let Some(slot) = self.slots[idx].as_ref() else {
+                    return None;
+                };
+                let v = extract_value_from(&slot.value, &self.overflow);
+                free_value_from(&slot.value, &mut self.overflow);
+                v
+            };
             let new_kv_value = store_value_in(&mut self.overflow, value, self.inline_threshold);
-            let entry = self.slots[idx].as_mut().unwrap();
-            entry.value = new_kv_value;
-            entry.expire_at_ms = expire_at_ms;
+            if let Some(entry) = self.slots[idx].as_mut() {
+                entry.value = new_kv_value;
+                entry.expire_at_ms = expire_at_ms;
+            }
             return Some(old_value);
         }
 
@@ -221,7 +228,9 @@ impl KvHashTable {
         if let Some(old_slots) = self.rehash_source.as_mut()
             && let Some(idx) = Self::probe_find_index_static(old_slots, h, key)
         {
-            let old_entry = old_slots[idx].take().unwrap();
+            let Some(old_entry) = old_slots[idx].take() else {
+                return None;
+            };
             let old_value = extract_value_from(&old_entry.value, &self.overflow);
             free_value_from(&old_entry.value, &mut self.overflow);
             let new_kv_value = store_value_in(&mut self.overflow, value, self.inline_threshold);
@@ -258,7 +267,9 @@ impl KvHashTable {
 
         // Try primary table.
         if let Some(idx) = Self::probe_find_index_static(&self.slots, h, key) {
-            let entry = self.slots[idx].take().unwrap();
+            let Some(entry) = self.slots[idx].take() else {
+                return false;
+            };
             free_value_from(&entry.value, &mut self.overflow);
             Self::repair_after_delete_static(&mut self.slots, idx);
             self.len -= 1;
@@ -269,7 +280,9 @@ impl KvHashTable {
         if let Some(old_slots) = self.rehash_source.as_mut()
             && let Some(idx) = Self::probe_find_index_static(old_slots, h, key)
         {
-            let entry = old_slots[idx].take().unwrap();
+            let Some(entry) = old_slots[idx].take() else {
+                return false;
+            };
             free_value_from(&entry.value, &mut self.overflow);
             Self::repair_after_delete_static(old_slots, idx);
             self.len -= 1;
@@ -287,9 +300,13 @@ impl KvHashTable {
         let h = hash_key(key);
 
         if let Some(idx) = Self::probe_find_index_static(&self.slots, h, key)
-            && self.slots[idx].as_ref().unwrap().expire_at_ms == expected_expire_ms
+            && self.slots[idx]
+                .as_ref()
+                .is_some_and(|e| e.expire_at_ms == expected_expire_ms)
         {
-            let entry = self.slots[idx].take().unwrap();
+            let Some(entry) = self.slots[idx].take() else {
+                return false;
+            };
             free_value_from(&entry.value, &mut self.overflow);
             Self::repair_after_delete_static(&mut self.slots, idx);
             self.len -= 1;
@@ -298,9 +315,13 @@ impl KvHashTable {
 
         if let Some(old_slots) = self.rehash_source.as_mut()
             && let Some(idx) = Self::probe_find_index_static(old_slots, h, key)
-            && old_slots[idx].as_ref().unwrap().expire_at_ms == expected_expire_ms
+            && old_slots[idx]
+                .as_ref()
+                .is_some_and(|e| e.expire_at_ms == expected_expire_ms)
         {
-            let entry = old_slots[idx].take().unwrap();
+            let Some(entry) = old_slots[idx].take() else {
+                return false;
+            };
             free_value_from(&entry.value, &mut self.overflow);
             Self::repair_after_delete_static(old_slots, idx);
             self.len -= 1;
@@ -315,14 +336,18 @@ impl KvHashTable {
         let h = hash_key(key);
 
         if let Some(idx) = Self::probe_find_index_static(&self.slots, h, key) {
-            self.slots[idx].as_mut().unwrap().expire_at_ms = expire_at_ms;
+            if let Some(entry) = self.slots[idx].as_mut() {
+                entry.expire_at_ms = expire_at_ms;
+            }
             return true;
         }
 
         if let Some(old_slots) = self.rehash_source.as_mut()
             && let Some(idx) = Self::probe_find_index_static(old_slots, h, key)
         {
-            old_slots[idx].as_mut().unwrap().expire_at_ms = expire_at_ms;
+            if let Some(entry) = old_slots[idx].as_mut() {
+                entry.expire_at_ms = expire_at_ms;
+            }
             return true;
         }
 
@@ -433,7 +458,11 @@ impl KvHashTable {
                     let existing_dist = Self::probe_distance(cap, existing.hash, idx);
                     if dist > existing_dist {
                         // Steal this slot (Robin Hood: take from the rich).
-                        let displaced = slots[idx].take().unwrap();
+                        // slots[idx] is Some — we matched Some(existing) in this arm.
+                        let Some(displaced) = slots[idx].take() else {
+                            return;
+                        };
+
                         slots[idx] = Some(entry);
                         entry = displaced;
                         dist = existing_dist;

@@ -166,7 +166,8 @@ fn find_minmax(docs: &[&[u8]], field: &str, want_max: bool) -> nodedb_types::Val
                     best_range = Some(range);
                 }
                 Some(br) => {
-                    let cmp = compare_field_bytes(doc, range, best_doc.unwrap(), br);
+                    let Some(bd) = best_doc else { continue };
+                    let cmp = compare_field_bytes(doc, range, bd, br);
                     let replace = if want_max {
                         cmp == Ordering::Greater
                     } else {

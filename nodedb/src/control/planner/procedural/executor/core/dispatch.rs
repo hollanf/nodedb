@@ -146,16 +146,17 @@ impl<'a> StatementExecutor<'a> {
         }
 
         if tasks.len() == 1 {
-            let task = tasks.into_iter().next().unwrap();
-            crate::control::server::dispatch_utils::dispatch_to_data_plane_with_source(
-                self.state,
-                task.tenant_id,
-                task.vshard_id,
-                task.plan,
-                0,
-                self.event_source,
-            )
-            .await?;
+            if let Some(task) = tasks.into_iter().next() {
+                crate::control::server::dispatch_utils::dispatch_to_data_plane_with_source(
+                    self.state,
+                    task.tenant_id,
+                    task.vshard_id,
+                    task.plan,
+                    0,
+                    self.event_source,
+                )
+                .await?;
+            }
         } else {
             let tenant_id = tasks[0].tenant_id;
             let vshard_id = tasks[0].vshard_id;

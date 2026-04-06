@@ -423,10 +423,8 @@ impl RlsPolicyStore {
     pub fn policy_count(&self) -> usize {
         self.policies
             .read()
-            .unwrap()
-            .values()
-            .map(|v| v.len())
-            .sum()
+            .map(|g| g.values().map(|v| v.len()).sum())
+            .unwrap_or(0)
     }
 
     /// Get all policies for a tenant+collection.

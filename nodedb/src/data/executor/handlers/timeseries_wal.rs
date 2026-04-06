@@ -127,7 +127,9 @@ impl CoreLoop {
                 let schema = crate::engine::timeseries::ilp_ingest::infer_schema(&lines);
                 self.ensure_columnar_memtable(&collection, schema);
 
-                let mt = self.columnar_memtables.get_mut(&collection).unwrap();
+                let Some(mt) = self.columnar_memtables.get_mut(&collection) else {
+                    continue;
+                };
                 let mut series_keys = std::collections::HashMap::new();
                 let now_ms = 0; // Default timestamp not needed for replay (records have timestamps).
                 let (accepted, _) = crate::engine::timeseries::ilp_ingest::ingest_batch(
@@ -144,7 +146,9 @@ impl CoreLoop {
                 {
                     self.ensure_columnar_memtable(&collection, ColumnarSchema::metric_default());
 
-                    let mt = self.columnar_memtables.get_mut(&collection).unwrap();
+                    let Some(mt) = self.columnar_memtables.get_mut(&collection) else {
+                        continue;
+                    };
                     for (series_id, timestamp_ms, value) in &batch.samples {
                         mt.ingest_metric(
                             *series_id,

@@ -59,7 +59,7 @@ pub fn decode(data: &[u8]) -> Result<Vec<u8>, CodecError> {
         });
     }
 
-    let uncompressed_size = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
+    let uncompressed_size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
     // Byte 4 is level — informational only, not needed for decompression.
     let frame = &data[HEADER_SIZE..];
 
@@ -74,7 +74,7 @@ pub fn uncompressed_size(data: &[u8]) -> Result<usize, CodecError> {
             actual: data.len(),
         });
     }
-    Ok(u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize)
+    Ok(u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize)
 }
 
 /// Get the compression level from the header.

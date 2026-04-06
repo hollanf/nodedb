@@ -221,7 +221,7 @@ fn kmeans_centroids(data: &[&[f32]], dim: usize, k: usize, max_iter: usize) -> V
     let mut min_dists = vec![f32::MAX; n];
 
     for _ in 1..k {
-        let last = centroids.last().unwrap();
+        let Some(last) = centroids.last() else { break };
         for (i, point) in data.iter().enumerate() {
             let d = distance(point, last, DistanceMetric::L2);
             if d < min_dists[i] {

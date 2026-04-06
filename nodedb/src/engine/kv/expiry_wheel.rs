@@ -178,7 +178,9 @@ impl ExpiryWheel {
 
         // Drain deferred entries from previous ticks first.
         while !self.deferred.is_empty() && expired.len() < self.reap_budget {
-            let entry = self.deferred.pop().unwrap();
+            let Some(entry) = self.deferred.pop() else {
+                break;
+            };
             expired.push((entry.key, entry.expire_at_ms));
             self.total_entries -= 1;
         }

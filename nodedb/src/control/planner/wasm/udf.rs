@@ -118,10 +118,10 @@ impl ScalarUDFImpl for WasmScalarUdf {
             .args
             .into_iter()
             .map(|cv| match cv {
-                ColumnarValue::Array(a) => a,
-                ColumnarValue::Scalar(s) => s.to_array().unwrap(),
+                ColumnarValue::Array(a) => Ok(a),
+                ColumnarValue::Scalar(s) => s.to_array(),
             })
-            .collect();
+            .collect::<datafusion::common::Result<Vec<_>>>()?;
 
         if arrays.is_empty() {
             return Err(datafusion::error::DataFusionError::Execution(

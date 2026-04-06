@@ -71,14 +71,16 @@ impl RecordHeader {
     /// Deserialize a header from a byte buffer.
     pub fn from_bytes(buf: &[u8; HEADER_SIZE]) -> Self {
         Self {
-            magic: u32::from_le_bytes(buf[0..4].try_into().unwrap()),
-            format_version: u16::from_le_bytes(buf[4..6].try_into().unwrap()),
-            record_type: u16::from_le_bytes(buf[6..8].try_into().unwrap()),
-            lsn: u64::from_le_bytes(buf[8..16].try_into().unwrap()),
-            tenant_id: u32::from_le_bytes(buf[16..20].try_into().unwrap()),
-            vshard_id: u16::from_le_bytes(buf[20..22].try_into().unwrap()),
-            payload_len: u32::from_le_bytes(buf[22..26].try_into().unwrap()),
-            crc32c: u32::from_le_bytes(buf[26..30].try_into().unwrap()),
+            magic: u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
+            format_version: u16::from_le_bytes([buf[4], buf[5]]),
+            record_type: u16::from_le_bytes([buf[6], buf[7]]),
+            lsn: u64::from_le_bytes([
+                buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
+            ]),
+            tenant_id: u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]),
+            vshard_id: u16::from_le_bytes([buf[20], buf[21]]),
+            payload_len: u32::from_le_bytes([buf[22], buf[23], buf[24], buf[25]]),
+            crc32c: u32::from_le_bytes([buf[26], buf[27], buf[28], buf[29]]),
         }
     }
 

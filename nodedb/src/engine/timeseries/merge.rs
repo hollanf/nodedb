@@ -83,7 +83,12 @@ pub fn merge_partitions(
                         // Remap symbol IDs through merged dictionary.
                         let source_dict =
                             ColumnarSegmentReader::read_symbol_dict(source_dir, col_name)?;
-                        let merged_dict = merged_dicts.get_mut(&i).unwrap();
+                        let merged_dict =
+                            merged_dicts
+                                .get_mut(&i)
+                                .ok_or(SegmentError::Corrupt(format!(
+                                    "missing merged dict for column index {i}"
+                                )))?;
                         let remap = merged_dict.merge(&source_dict, 100_000);
 
                         let remapped = remap_symbols(col.as_symbols(), &remap);
@@ -176,8 +181,11 @@ pub fn run_merge_cycle(
         }
 
         // Determine output name.
-        let first_start = group_starts[0];
-        let last_entry = registry.get(*group_starts.last().unwrap());
+        let (Some(&first_start), Some(&last_start)) = (group_starts.first(), group_starts.last())
+        else {
+            continue;
+        };
+        let last_entry = registry.get(last_start);
         let last_end = last_entry.map(|e| e.meta.max_ts).unwrap_or(first_start);
         let output_name = format_partition_dir(first_start, last_end);
 

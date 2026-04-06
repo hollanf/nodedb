@@ -91,11 +91,10 @@ impl TriggerRetryQueue {
         let mut exhausted = Vec::new();
 
         // Drain from front (oldest first).
-        while let Some(entry) = self.queue.front() {
-            if entry.next_retry_at > now {
-                break; // All remaining entries are in the future.
-            }
-            let entry = self.queue.pop_front().unwrap();
+        while self.queue.front().map_or(false, |e| e.next_retry_at <= now) {
+            let Some(entry) = self.queue.pop_front() else {
+                break;
+            };
             if entry.attempts >= self.max_retries {
                 warn!(
                     trigger = %entry.trigger_name,

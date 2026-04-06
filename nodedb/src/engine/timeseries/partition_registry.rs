@@ -136,27 +136,28 @@ impl PartitionRegistry {
     pub fn get_or_create_partition(&mut self, timestamp_ms: i64) -> (&PartitionEntry, bool) {
         let (start, end) = self.partition_boundaries(timestamp_ms);
 
-        if self.partitions.contains_key(&start) {
-            return (self.partitions.get(&start).unwrap(), false);
+        use std::collections::btree_map::Entry;
+        match self.partitions.entry(start) {
+            Entry::Occupied(e) => (e.into_mut(), false),
+            Entry::Vacant(e) => {
+                let dir_name = format_partition_dir(start, end);
+                let entry = PartitionEntry {
+                    meta: PartitionMeta {
+                        min_ts: timestamp_ms,
+                        max_ts: timestamp_ms,
+                        row_count: 0,
+                        size_bytes: 0,
+                        schema_version: 1,
+                        state: PartitionState::Active,
+                        interval_ms: self.current_interval.as_millis().unwrap_or(0),
+                        last_flushed_wal_lsn: 0,
+                        column_stats: std::collections::HashMap::new(),
+                    },
+                    dir_name,
+                };
+                (e.insert(entry), true)
+            }
         }
-
-        let dir_name = format_partition_dir(start, end);
-        let entry = PartitionEntry {
-            meta: PartitionMeta {
-                min_ts: timestamp_ms,
-                max_ts: timestamp_ms,
-                row_count: 0,
-                size_bytes: 0,
-                schema_version: 1,
-                state: PartitionState::Active,
-                interval_ms: self.current_interval.as_millis().unwrap_or(0),
-                last_flushed_wal_lsn: 0,
-                column_stats: std::collections::HashMap::new(),
-            },
-            dir_name,
-        };
-        self.partitions.insert(start, entry);
-        (self.partitions.get(&start).unwrap(), true)
     }
 
     /// Compute partition boundaries (start_ms, end_ms) for a given timestamp.

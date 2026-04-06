@@ -167,7 +167,7 @@ impl Accumulator for TopkAccum {
             }
             let k = f64_arr.value(0) as usize;
             self.ensure_init(k);
-            let ss = self.ss.as_mut().unwrap();
+            let Some(ss) = self.ss.as_mut() else { continue };
             let mut j = 1;
             while j + 2 < f64_arr.len() {
                 let item = f64_arr.value(j) as u64;

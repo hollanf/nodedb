@@ -136,7 +136,9 @@ impl ScopeStore {
                 }
             }
         }
-        let def = scopes.get_mut(name).unwrap();
+        let def = scopes.get_mut(name).ok_or(crate::Error::BadRequest {
+            detail: format!("scope '{name}' not found"),
+        })?;
         if let Some(g) = grants {
             def.grants = g;
         }

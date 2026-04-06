@@ -247,8 +247,11 @@ fn extract_routability(body_sql: &str) -> ProcedureRoutability {
     match collections.len() {
         0 => ProcedureRoutability::MultiCollection, // No DML — no affinity
         1 => {
-            let name = collections.into_iter().next().unwrap();
-            ProcedureRoutability::SingleCollection(name)
+            if let Some(name) = collections.into_iter().next() {
+                ProcedureRoutability::SingleCollection(name)
+            } else {
+                ProcedureRoutability::MultiCollection
+            }
         }
         _ => ProcedureRoutability::MultiCollection,
     }

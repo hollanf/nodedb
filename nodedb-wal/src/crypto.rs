@@ -153,10 +153,13 @@ impl KeyRing {
             Ok(plaintext) => Ok(plaintext),
             Err(_) if self.previous.is_some() => {
                 // Current key failed — try previous key.
-                self.previous
-                    .as_ref()
-                    .unwrap()
-                    .decrypt(lsn, header_bytes, ciphertext)
+                if let Some(prev) = self.previous.as_ref() {
+                    prev.decrypt(lsn, header_bytes, ciphertext)
+                } else {
+                    Err(crate::error::WalError::EncryptionError {
+                        detail: "key rotation state inconsistent".into(),
+                    })
+                }
             }
             Err(e) => Err(e),
         }

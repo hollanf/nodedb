@@ -66,7 +66,14 @@ impl CoreLoop {
             self.columnar_memtables.insert(collection.to_string(), mt);
         }
 
-        let mt = self.columnar_memtables.get_mut(collection).unwrap();
+        let Some(mt) = self.columnar_memtables.get_mut(collection) else {
+            return self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: "columnar memtable missing after insert".into(),
+                },
+            );
+        };
         let schema = mt.schema().clone();
         let mut accepted = 0u64;
 
@@ -187,7 +194,9 @@ impl CoreLoop {
             self.columnar_memtables.insert(collection.to_string(), mt);
         }
 
-        let mt = self.columnar_memtables.get_mut(collection).unwrap();
+        let Some(mt) = self.columnar_memtables.get_mut(collection) else {
+            return;
+        };
         let schema = mt.schema().clone();
 
         // Build owned string values for Symbol columns (need stable references).

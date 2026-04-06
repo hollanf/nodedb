@@ -21,77 +21,71 @@ pub fn arrow_scalar_to_value(col: &Arc<dyn Array>, row: usize) -> Value {
     }
 
     match col.data_type() {
-        DataType::Boolean => Value::Bool(
-            col.as_any()
-                .downcast_ref::<BooleanArray>()
-                .unwrap()
-                .value(row),
-        ),
-        DataType::Int8 => {
-            Value::Integer(col.as_any().downcast_ref::<Int8Array>().unwrap().value(row) as i64)
-        }
-        DataType::Int16 => Value::Integer(
-            col.as_any()
-                .downcast_ref::<Int16Array>()
-                .unwrap()
-                .value(row) as i64,
-        ),
-        DataType::Int32 => Value::Integer(
-            col.as_any()
-                .downcast_ref::<Int32Array>()
-                .unwrap()
-                .value(row) as i64,
-        ),
-        DataType::Int64 => Value::Integer(
-            col.as_any()
-                .downcast_ref::<Int64Array>()
-                .unwrap()
-                .value(row),
-        ),
-        DataType::UInt8 => Value::Integer(
-            col.as_any()
-                .downcast_ref::<UInt8Array>()
-                .unwrap()
-                .value(row) as i64,
-        ),
-        DataType::UInt16 => Value::Integer(
-            col.as_any()
-                .downcast_ref::<UInt16Array>()
-                .unwrap()
-                .value(row) as i64,
-        ),
-        DataType::UInt32 => Value::Integer(
-            col.as_any()
-                .downcast_ref::<UInt32Array>()
-                .unwrap()
-                .value(row) as i64,
-        ),
-        DataType::UInt64 => Value::Integer(
-            col.as_any()
-                .downcast_ref::<UInt64Array>()
-                .unwrap()
-                .value(row) as i64,
-        ),
-        DataType::Float32 => Value::Float(
-            col.as_any()
-                .downcast_ref::<Float32Array>()
-                .unwrap()
-                .value(row) as f64,
-        ),
-        DataType::Float64 => Value::Float(
-            col.as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap()
-                .value(row),
-        ),
-        DataType::Utf8 => {
-            let arr = col.as_any().downcast_ref::<StringArray>().unwrap();
-            Value::String(arr.value(row).to_string())
-        }
-        DataType::LargeUtf8 => {
-            let arr = col.as_any().downcast_ref::<LargeStringArray>().unwrap();
-            Value::String(arr.value(row).to_string())
-        }
+        DataType::Boolean => col
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .map(|a| Value::Bool(a.value(row)))
+            .unwrap_or(Value::Null),
+        DataType::Int8 => col
+            .as_any()
+            .downcast_ref::<Int8Array>()
+            .map(|a| Value::Integer(a.value(row) as i64))
+            .unwrap_or(Value::Null),
+        DataType::Int16 => col
+            .as_any()
+            .downcast_ref::<Int16Array>()
+            .map(|a| Value::Integer(a.value(row) as i64))
+            .unwrap_or(Value::Null),
+        DataType::Int32 => col
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .map(|a| Value::Integer(a.value(row) as i64))
+            .unwrap_or(Value::Null),
+        DataType::Int64 => col
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .map(|a| Value::Integer(a.value(row)))
+            .unwrap_or(Value::Null),
+        DataType::UInt8 => col
+            .as_any()
+            .downcast_ref::<UInt8Array>()
+            .map(|a| Value::Integer(a.value(row) as i64))
+            .unwrap_or(Value::Null),
+        DataType::UInt16 => col
+            .as_any()
+            .downcast_ref::<UInt16Array>()
+            .map(|a| Value::Integer(a.value(row) as i64))
+            .unwrap_or(Value::Null),
+        DataType::UInt32 => col
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .map(|a| Value::Integer(a.value(row) as i64))
+            .unwrap_or(Value::Null),
+        DataType::UInt64 => col
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .map(|a| Value::Integer(a.value(row) as i64))
+            .unwrap_or(Value::Null),
+        DataType::Float32 => col
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .map(|a| Value::Float(a.value(row) as f64))
+            .unwrap_or(Value::Null),
+        DataType::Float64 => col
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .map(|a| Value::Float(a.value(row)))
+            .unwrap_or(Value::Null),
+        DataType::Utf8 => col
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .map(|a| Value::String(a.value(row).to_string()))
+            .unwrap_or(Value::Null),
+        DataType::LargeUtf8 => col
+            .as_any()
+            .downcast_ref::<LargeStringArray>()
+            .map(|a| Value::String(a.value(row).to_string()))
+            .unwrap_or(Value::Null),
         _ => {
             // Fallback: format as string via ScalarValue.
             let scalar = datafusion::common::ScalarValue::try_from_array(col, row);

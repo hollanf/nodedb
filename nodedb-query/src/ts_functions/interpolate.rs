@@ -95,7 +95,7 @@ fn fill_linear(values: &[Option<f64>], timestamps_ns: &[i64]) -> Vec<f64> {
         if let Some(val) = values[i] {
             // Fill the gap between prev_idx and i.
             if let Some(pi) = prev_idx {
-                let prev_val = values[pi].unwrap();
+                let Some(prev_val) = values[pi] else { continue };
                 let dt = (timestamps_ns[i] - timestamps_ns[pi]) as f64;
                 if dt > 0.0 && pi + 1 < i {
                     for j in (pi + 1)..i {
@@ -111,16 +111,18 @@ fn fill_linear(values: &[Option<f64>], timestamps_ns: &[i64]) -> Vec<f64> {
 
     // Edge: fill leading NULLs with first known value.
     if let Some(first) = values.iter().position(|v| v.is_some()) {
-        let fv = values[first].unwrap();
-        for r in result.iter_mut().take(first) {
-            *r = fv;
+        if let Some(fv) = values[first] {
+            for r in result.iter_mut().take(first) {
+                *r = fv;
+            }
         }
     }
     // Edge: fill trailing NULLs with last known value.
     if let Some(last) = values.iter().rposition(|v| v.is_some()) {
-        let lv = values[last].unwrap();
-        for r in result.iter_mut().skip(last + 1) {
-            *r = lv;
+        if let Some(lv) = values[last] {
+            for r in result.iter_mut().skip(last + 1) {
+                *r = lv;
+            }
         }
     }
 

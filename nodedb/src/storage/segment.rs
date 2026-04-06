@@ -71,8 +71,12 @@ impl SegmentFooter {
         let mut created_by = [0u8; 32];
         created_by.copy_from_slice(&buf[6..38]);
         let checksum = u32::from_le_bytes([buf[38], buf[39], buf[40], buf[41]]);
-        let min_lsn = Lsn::new(u64::from_le_bytes(buf[42..50].try_into().unwrap()));
-        let max_lsn = Lsn::new(u64::from_le_bytes(buf[50..58].try_into().unwrap()));
+        let min_lsn = Lsn::new(u64::from_le_bytes([
+            buf[42], buf[43], buf[44], buf[45], buf[46], buf[47], buf[48], buf[49],
+        ]));
+        let max_lsn = Lsn::new(u64::from_le_bytes([
+            buf[50], buf[51], buf[52], buf[53], buf[54], buf[55], buf[56], buf[57],
+        ]));
 
         Ok(Self {
             format_version,

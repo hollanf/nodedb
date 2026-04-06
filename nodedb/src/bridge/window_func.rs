@@ -408,8 +408,8 @@ fn apply_aggregate_window(
                 .reduce(f64::max)
                 .map(|m| serde_json::json!(m))
                 .unwrap_or(serde_json::Value::Null),
-            "first_value" => get_field(&rows[indices[0]].1, field),
-            "last_value" => get_field(&rows[*indices.last().unwrap()].1, field),
+            "first_value" => indices.first().map(|&i| get_field(&rows[i].1, field)).unwrap_or(serde_json::Value::Null),
+            "last_value" => indices.last().map(|&i| get_field(&rows[i].1, field)).unwrap_or(serde_json::Value::Null),
             _ => serde_json::Value::Null,
         };
 
