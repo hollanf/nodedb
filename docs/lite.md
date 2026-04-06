@@ -12,12 +12,12 @@ NodeDB-Lite is a fully capable embedded database for edge devices — phones, ta
 
 ## Platforms
 
-| Platform              | Backend                   | Binary Size |
-| --------------------- | ------------------------- | ----------- |
-| Linux, macOS, Windows | redb (file-backed)        | Native      |
-| iOS                   | redb + C FFI (cbindgen)   | Native      |
-| Android               | redb + C FFI + Kotlin/JNI | Native      |
-| Browser (WASM)        | redb (in-memory + OPFS)   | ~4.5 MB     |
+| Platform              | Backend                   | Binary Size                                                                          |
+| --------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
+| Linux, macOS, Windows | redb (file-backed)        | Native                                                                               |
+| iOS _(in progress)_   | redb + C FFI (cbindgen)   | Native _(requires macOS build environment — Rust compiles but not yet built/tested)_ |
+| Android               | redb + C FFI + Kotlin/JNI | Native                                                                               |
+| Browser (WASM)        | redb (in-memory + OPFS)   | ~4.5 MB                                                                              |
 
 ## Key Features
 

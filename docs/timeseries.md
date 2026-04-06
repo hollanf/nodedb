@@ -72,20 +72,26 @@ WHERE ts > now() - INTERVAL '24 hours';
 
 ## Timeseries SQL Functions
 
-| Function         | What it does                          |
-| ---------------- | ------------------------------------- |
-| `ts_rate`        | Per-second rate of change             |
-| `ts_delta`       | Difference between consecutive values |
-| `ts_moving_avg`  | Moving average over a window          |
-| `ts_ema`         | Exponential moving average            |
-| `ts_interpolate` | Fill gaps with interpolated values    |
-| `ts_percentile`  | Percentile calculation                |
-| `ts_correlate`   | Correlation between two series        |
-| `ts_lag`         | Previous value in a series            |
-| `ts_lead`        | Next value in a series                |
-| `ts_rank`        | Rank within a series                  |
-| `ts_stddev`      | Standard deviation                    |
-| `ts_derivative`  | Rate of change                        |
+| Function               | What it does                              |
+| ---------------------- | ----------------------------------------- |
+| `ts_rate`              | Per-second rate of change                 |
+| `ts_delta`             | Difference between consecutive values     |
+| `ts_moving_avg`        | Moving average over a window              |
+| `ts_ema`               | Exponential moving average                |
+| `ts_interpolate`       | Fill gaps with interpolated values        |
+| `ts_percentile`        | Percentile calculation                    |
+| `ts_correlate`         | Correlation between two series            |
+| `ts_lag`               | Previous value in a series                |
+| `ts_lead`              | Next value in a series                    |
+| `ts_rank`              | Rank within a series                      |
+| `ts_stddev`            | Standard deviation                        |
+| `ts_derivative`        | Rate of change (alias for ts_rate)        |
+| `ts_zscore`            | Z-score anomaly detection                 |
+| `ts_bollinger_upper`   | Bollinger Band upper bound                |
+| `ts_bollinger_lower`   | Bollinger Band lower bound                |
+| `ts_bollinger_mid`     | Bollinger Band midline (moving average)   |
+| `ts_bollinger_width`   | Bollinger Band width (volatility measure) |
+| `ts_moving_percentile` | Rolling percentile over a window          |
 
 ## time_bucket() UDF
 
