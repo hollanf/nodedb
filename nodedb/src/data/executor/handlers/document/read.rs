@@ -97,12 +97,42 @@ impl CoreLoop {
             }
         };
 
+        // Check if this collection uses strict (Binary Tuple) encoding.
+        let config_key = format!("{tid}:{collection}");
+        let strict_schema = self.doc_configs.get(&config_key).and_then(|c| {
+            if let crate::bridge::physical_plan::StorageMode::Strict { ref schema } = c.storage_mode
+            {
+                Some(schema.clone())
+            } else {
+                None
+            }
+        });
+
         // When filters are present, push predicate evaluation into the
         // storage scan. Non-matching documents are never allocated —
         // only decoded for predicate evaluation, then dropped. This
         // avoids O(N) allocation for large collections with selective filters.
+        //
+        // Strict (Binary Tuple) collections need JSON-level filter evaluation
+        // because `matches_binary` operates on MessagePack, not Binary Tuples.
         let scan_result = if filter_predicates.is_empty() {
             self.sparse.scan_documents(tid, collection, fetch_limit)
+        } else if let Some(ref schema) = strict_schema {
+            // Strict: decode each binary tuple to JSON then apply filters.
+            self.sparse
+                .scan_documents_filtered(tid, collection, fetch_limit, &|value: &[u8]| {
+                    let json =
+                        super::super::super::strict_format::binary_tuple_to_json(value, schema);
+                    match json {
+                        Some(doc) => {
+                            let json_bytes = sonic_rs::to_vec(&doc).unwrap_or_default();
+                            filter_predicates
+                                .iter()
+                                .all(|f| f.matches_binary(&json_bytes))
+                        }
+                        None => false,
+                    }
+                })
         } else {
             self.sparse
                 .scan_documents_filtered(tid, collection, fetch_limit, &|value: &[u8]| {
@@ -137,6 +167,39 @@ impl CoreLoop {
                 };
 
                 let stream_chunk_size = self.query_tuning.stream_chunk_size;
+
+                // Strict (Binary Tuple) collections: decode binary tuples inline,
+                // after dedup/offset/limit, so we only decode rows that are returned.
+                // This avoids double serialization (binary_tuple → JSON bytes → re-parse → MsgPack)
+                // and avoids decoding rows that will be skipped by offset/limit.
+                if let Some(ref schema) = strict_schema {
+                    let deduped = if distinct {
+                        let mut seen = std::collections::HashSet::new();
+                        sorted
+                            .into_iter()
+                            .filter(|(_, value)| seen.insert(value.clone()))
+                            .collect::<Vec<_>>()
+                    } else {
+                        sorted
+                    };
+                    let result: Vec<_> = deduped
+                        .into_iter()
+                        .skip(offset)
+                        .take(limit)
+                        .filter_map(|(doc_id, val)| {
+                            let data = super::super::super::strict_format::binary_tuple_to_json(
+                                &val, schema,
+                            )
+                            .unwrap_or(serde_json::Value::Null);
+                            let projected = apply_projection(data, &computed_cols, projection);
+                            Some(super::super::super::response_codec::DocumentRow {
+                                id: doc_id,
+                                data: projected,
+                            })
+                        })
+                        .collect();
+                    return self.send_document_rows_transformed(task, &result, stream_chunk_size);
+                }
 
                 // Window functions require decoded values; keep them decoded
                 // through dedup/projection to avoid re-encode→re-decode cycle.
