@@ -46,6 +46,37 @@ fn aggregate_cache_key(
     key
 }
 
+/// Group a single document into the binary_groups map.
+///
+/// Applies filter predicates, computes group key, and stores the raw
+/// document bytes for later aggregation.
+fn group_doc(
+    value: &[u8],
+    group_by: &[String],
+    filter_predicates: &[ScanFilter],
+    use_field_index: bool,
+    binary_groups: &mut std::collections::HashMap<String, Vec<Vec<u8>>>,
+) {
+    if use_field_index {
+        let idx = msgpack_scan::FieldIndex::build(value, 0)
+            .unwrap_or_else(msgpack_scan::FieldIndex::empty);
+        if !filter_predicates
+            .iter()
+            .all(|f| f.matches_binary_indexed(value, &idx))
+        {
+            return;
+        }
+        let key = msgpack_scan::group_key::build_group_key_indexed(value, group_by, &idx);
+        binary_groups.entry(key).or_default().push(value.to_vec());
+    } else {
+        if !filter_predicates.iter().all(|f| f.matches_binary(value)) {
+            return;
+        }
+        let key = msgpack_scan::build_group_key(value, group_by);
+        binary_groups.entry(key).or_default().push(value.to_vec());
+    }
+}
+
 impl CoreLoop {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::data::executor) fn execute_aggregate(
@@ -127,21 +158,29 @@ impl CoreLoop {
         // If collection has columnar memtable data, read from there.
         // Works for all columnar profiles: plain, timeseries, spatial.
         // Spatial inserts write to both sparse (R-tree) and columnar (scans/aggregates).
-        let use_columnar = self
+        let columnar_mt = self
             .columnar_memtables
             .get(collection)
-            .is_some_and(|mt| !mt.is_empty());
+            .filter(|mt| !mt.is_empty());
+        let use_columnar = columnar_mt.is_some();
 
         // Fast path: native columnar aggregation.
         // Groups directly on symbol IDs (u32) instead of JSON-serialized strings.
         // Accumulates in-place without document construction.
         // Falls back to generic path for complex filters (OR, string comparisons).
-        if use_columnar && sub_group_by.is_empty() && sub_aggregates.is_empty() {
-            let mt = self.columnar_memtables.get(collection).unwrap();
+        if let Some(mt) =
+            columnar_mt.filter(|_| sub_group_by.is_empty() && sub_aggregates.is_empty())
+        {
             let filter_predicates: Vec<ScanFilter> = if filters.is_empty() {
                 Vec::new()
             } else {
-                zerompk::from_msgpack(filters).unwrap_or_default()
+                match zerompk::from_msgpack(filters) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        tracing::warn!(core = self.core_id, error = %e, "filter predicate deserialization failed");
+                        Vec::new()
+                    }
+                }
             };
 
             if let Some(mut agg_result) = super::columnar_agg::try_columnar_aggregate(
@@ -154,8 +193,13 @@ impl CoreLoop {
             ) {
                 // Apply HAVING filters.
                 if !having.is_empty() {
-                    let having_predicates: Vec<ScanFilter> =
-                        zerompk::from_msgpack(having).unwrap_or_default();
+                    let having_predicates: Vec<ScanFilter> = match zerompk::from_msgpack(having) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            tracing::warn!(core = self.core_id, error = %e, "having predicate deserialization failed");
+                            Vec::new()
+                        }
+                    };
                     if !having_predicates.is_empty() {
                         agg_result
                             .rows
@@ -193,8 +237,36 @@ impl CoreLoop {
             // Native path returned None — fall through to generic path.
         }
 
-        let docs_result = if use_columnar {
-            let mt = self.columnar_memtables.get(collection).unwrap();
+        // ── Streaming aggregation: process documents in chunks ──
+        // Instead of loading all documents into memory, scan in chunks of
+        // 10K docs, group + aggregate each chunk, then merge partial results.
+        // Memory: O(chunk_size + num_groups) instead of O(all_docs).
+
+        let filter_predicates: Vec<ScanFilter> = if filters.is_empty() {
+            Vec::new()
+        } else {
+            match zerompk::from_msgpack(filters) {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!(core = self.core_id, error = %e, "filter predicate deserialization failed");
+                    Vec::new()
+                }
+            }
+        };
+
+        let use_field_index = filter_predicates.len() + group_by.len() >= 2;
+
+        // Accumulate per-group doc bytes across all chunks.
+        // Key: group_key string, Value: collected raw doc bytes for final aggregation.
+        let mut binary_groups: std::collections::HashMap<String, Vec<Vec<u8>>> =
+            std::collections::HashMap::new();
+
+        let chunk_size = 10_000;
+
+        let scan_result = if let Some(mt) = use_columnar
+            .then(|| self.columnar_memtables.get(collection))
+            .flatten()
+        {
             let schema = mt.schema();
             let row_count = (mt.row_count() as usize).min(scan_limit);
             let col_meta: Vec<_> = schema
@@ -203,72 +275,51 @@ impl CoreLoop {
                 .enumerate()
                 .map(|(i, (name, ty))| (i, name.clone(), *ty))
                 .collect();
-            let mut docs = Vec::with_capacity(row_count);
-            for idx in 0..row_count {
-                let mut row = serde_json::Map::new();
-                for (col_idx, col_name, col_type) in &col_meta {
-                    let col_data = mt.column(*col_idx);
-                    let val = super::columnar_read::emit_column_value(
-                        mt, *col_idx, col_type, col_data, idx,
+
+            for chunk_start in (0..row_count).step_by(chunk_size) {
+                let chunk_end = (chunk_start + chunk_size).min(row_count);
+                for idx in chunk_start..chunk_end {
+                    let mut row = serde_json::Map::new();
+                    for (col_idx, col_name, col_type) in &col_meta {
+                        let col_data = mt.column(*col_idx);
+                        let val = super::columnar_read::emit_column_value(
+                            mt, *col_idx, col_type, col_data, idx,
+                        );
+                        row.insert(col_name.to_string(), val);
+                    }
+                    let bytes = nodedb_types::json_to_msgpack(&serde_json::Value::Object(row))
+                        .unwrap_or_default();
+                    group_doc(
+                        &bytes,
+                        group_by,
+                        &filter_predicates,
+                        use_field_index,
+                        &mut binary_groups,
                     );
-                    row.insert(col_name.to_string(), val);
                 }
-                // Encode as msgpack to match the sparse doc format the aggregate loop expects.
-                let bytes = nodedb_types::json_to_msgpack(&serde_json::Value::Object(row))
-                    .unwrap_or_default();
-                docs.push((idx.to_string(), bytes));
             }
-            Ok(docs)
+            Ok(())
         } else {
-            self.sparse.scan_documents(tid, collection, scan_limit)
+            // Sparse path: chunked btree scan.
+            self.sparse
+                .scan_documents_chunked(tid, collection, scan_limit, chunk_size, |chunk| {
+                    for (_, value) in chunk {
+                        group_doc(
+                            value,
+                            group_by,
+                            &filter_predicates,
+                            use_field_index,
+                            &mut binary_groups,
+                        );
+                    }
+                })
+                .map(|_| ())
         };
 
-        match docs_result {
-            Ok(docs) => {
-                let filter_predicates: Vec<ScanFilter> = if filters.is_empty() {
-                    Vec::new()
-                } else {
-                    match zerompk::from_msgpack(filters) {
-                        Ok(f) => f,
-                        Err(e) => {
-                            tracing::warn!(core = self.core_id, error = %e, "filter predicate deserialization failed");
-                            Vec::new()
-                        }
-                    }
-                };
-
-                // ── Binary scan path (zero deserialization) ───
-                // Filter + group + aggregate directly on raw msgpack bytes.
-                let mut binary_groups: std::collections::HashMap<String, Vec<usize>> =
-                    std::collections::HashMap::new();
-
-                // Use FieldIndex when multiple field accesses per doc (filters + group-by).
-                let use_field_index = filter_predicates.len() + group_by.len() >= 2;
-
-                for (i, (_, value)) in docs.iter().enumerate() {
-                    if use_field_index {
-                        let idx = msgpack_scan::FieldIndex::build(value, 0)
-                            .unwrap_or_else(msgpack_scan::FieldIndex::empty);
-                        if !filter_predicates
-                            .iter()
-                            .all(|f| f.matches_binary_indexed(value, &idx))
-                        {
-                            continue;
-                        }
-                        let key =
-                            msgpack_scan::group_key::build_group_key_indexed(value, group_by, &idx);
-                        binary_groups.entry(key).or_default().push(i);
-                    } else {
-                        if !filter_predicates.iter().all(|f| f.matches_binary(value)) {
-                            continue;
-                        }
-                        let key = msgpack_scan::build_group_key(value, group_by);
-                        binary_groups.entry(key).or_default().push(i);
-                    }
-                }
-
+        match scan_result {
+            Ok(()) => {
                 let mut results: Vec<serde_json::Value> = Vec::new();
-                for (group_key, doc_indices) in &binary_groups {
+                for (group_key, group_docs) in &binary_groups {
                     let mut row = serde_json::Map::new();
 
                     // Insert group-by field values into the result row.
@@ -281,14 +332,11 @@ impl CoreLoop {
                         }
                     }
 
-                    // Collect raw doc slices for this group.
-                    let group_docs: Vec<&[u8]> =
-                        doc_indices.iter().map(|&i| docs[i].1.as_slice()).collect();
+                    let doc_slices: Vec<&[u8]> = group_docs.iter().map(|d| d.as_slice()).collect();
 
                     for (op, field) in aggregates {
                         let agg_key = format!("{op}_{field}").replace('*', "all");
-                        let val = msgpack_scan::compute_aggregate_binary(op, field, &group_docs);
-                        // Convert nodedb_types::Value → serde_json::Value at result boundary.
+                        let val = msgpack_scan::compute_aggregate_binary(op, field, &doc_slices);
                         let json_val: serde_json::Value = val.into();
                         row.insert(agg_key, json_val);
                     }
@@ -297,7 +345,7 @@ impl CoreLoop {
                     if !sub_group_by.is_empty() && !sub_aggregates.is_empty() {
                         let mut sub_groups: std::collections::HashMap<String, Vec<&[u8]>> =
                             std::collections::HashMap::new();
-                        for &doc_bytes in &group_docs {
+                        for doc_bytes in &doc_slices {
                             let sub_key = msgpack_scan::build_group_key(doc_bytes, sub_group_by);
                             sub_groups.entry(sub_key).or_default().push(doc_bytes);
                         }

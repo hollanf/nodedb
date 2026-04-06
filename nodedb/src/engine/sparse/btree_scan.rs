@@ -44,6 +44,65 @@ impl SparseEngine {
         Ok(results)
     }
 
+    /// Scan documents in chunks, calling `handler` for each chunk.
+    ///
+    /// Processes up to `total_limit` documents in chunks of `chunk_size`.
+    /// The handler receives each chunk and can accumulate results without
+    /// holding all documents in memory simultaneously.
+    ///
+    /// Returns the total number of documents processed.
+    pub fn scan_documents_chunked<F>(
+        &self,
+        tenant_id: u32,
+        collection: &str,
+        total_limit: usize,
+        chunk_size: usize,
+        mut handler: F,
+    ) -> crate::Result<usize>
+    where
+        F: FnMut(&[(String, Vec<u8>)]),
+    {
+        let prefix = format!("{tenant_id}:{collection}:");
+        let end = format!("{tenant_id}:{collection}:\u{ffff}");
+
+        let read_txn = self.db.begin_read().map_err(|e| redb_err("read txn", e))?;
+        let table = read_txn
+            .open_table(DOCUMENTS)
+            .map_err(|e| redb_err("open table", e))?;
+
+        let range = table
+            .range(prefix.as_str()..end.as_str())
+            .map_err(|e| redb_err("doc range", e))?;
+
+        let mut chunk = Vec::with_capacity(chunk_size);
+        let mut total = 0usize;
+
+        for entry in range {
+            if total >= total_limit {
+                break;
+            }
+            let entry = entry.map_err(|e| redb_err("doc entry", e))?;
+            let key = entry.0.value().to_string();
+            let doc_id = key.strip_prefix(&prefix).unwrap_or(&key).to_string();
+            let value = entry.1.value().to_vec();
+            chunk.push((doc_id, value));
+            total += 1;
+
+            if chunk.len() >= chunk_size {
+                handler(&chunk);
+                chunk.clear();
+            }
+        }
+
+        // Process remaining partial chunk.
+        if !chunk.is_empty() {
+            handler(&chunk);
+        }
+
+        debug!(collection, total, chunk_size, "chunked document scan");
+        Ok(total)
+    }
+
     /// Scan index entries grouped by value for a field.
     ///
     /// Returns `(value, count)` pairs by scanning the INDEXES table for

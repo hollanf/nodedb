@@ -105,10 +105,8 @@ impl<S: StorageEngine> LiteQueryEngine<S> {
             let Some(def) = ts.continuous_agg_mgr.get(name) else {
                 continue;
             };
-            if let Some(filter) = &source_filter {
-                if def.source != *filter {
-                    continue;
-                }
+            if source_filter.as_deref().is_some_and(|f| def.source != f) {
+                continue;
             }
             let agg_str = def
                 .aggregates
