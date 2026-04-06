@@ -1,7 +1,6 @@
 //! Vector index configuration: unified config for HNSW, HNSW+PQ, and IVF-PQ.
 
-use super::hnsw::HnswParams;
-use super::ivf::IvfPqParams;
+use crate::hnsw::HnswParams;
 
 /// Index type selection for vector collections.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -10,12 +9,8 @@ pub enum IndexType {
     #[default]
     Hnsw,
     /// HNSW graph with PQ-compressed storage for traversal.
-    /// Graph connectivity is maintained with FP32, but distance computation
-    /// during search uses PQ lookup tables (O(M) per candidate vs O(D)).
-    /// Trade-off: ~95% recall, 4-8x memory reduction.
     HnswPq,
     /// IVF-PQ flat index. Lowest memory (~16 bytes/vector), best for >10M vectors.
-    /// Trade-off: ~85-95% recall depending on nprobe.
     IvfPq,
 }
 
@@ -66,8 +61,9 @@ impl Default for IndexConfig {
 
 impl IndexConfig {
     /// Build IVF-PQ params from this config.
-    pub fn to_ivf_params(&self) -> IvfPqParams {
-        IvfPqParams {
+    #[cfg(feature = "ivf")]
+    pub fn to_ivf_params(&self) -> crate::ivf::IvfPqParams {
+        crate::ivf::IvfPqParams {
             n_cells: self.ivf_cells,
             pq_m: self.pq_m,
             pq_k: 256,

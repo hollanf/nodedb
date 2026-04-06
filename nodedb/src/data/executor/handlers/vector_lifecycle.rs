@@ -192,7 +192,9 @@ impl CoreLoop {
             let expected_count = vectors.len();
             let mut new_index = HnswIndex::new(dim, new_params.clone());
             for v in &vectors {
-                new_index.insert(v.clone());
+                new_index
+                    .insert(v.clone())
+                    .unwrap_or_else(|e| tracing::error!(error = %e, "HNSW rebuild insert failed"));
             }
             // Verify all vectors were inserted before swapping.
             if new_index.len() != expected_count {

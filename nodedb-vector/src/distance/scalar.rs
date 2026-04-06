@@ -1,9 +1,24 @@
-//! Distance metrics for vector similarity search.
+//! Scalar (non-SIMD) distance metric implementations.
 //!
-//! Re-exports shared scalar implementations from `nodedb-types`.
-//! No SIMD intrinsics — works on all targets (native, WASM, iOS, Android).
+//! Re-exports scalar implementations from `nodedb-types`.
+//! Works on all targets: native, WASM, iOS, Android.
 
 pub use nodedb_types::vector_distance::*;
+
+/// Compute distance between two vectors using scalar implementations.
+pub fn scalar_distance(a: &[f32], b: &[f32], metric: super::DistanceMetric) -> f32 {
+    use super::DistanceMetric::*;
+    match metric {
+        L2 => l2_squared(a, b),
+        Cosine => cosine_distance(a, b),
+        InnerProduct => neg_inner_product(a, b),
+        Manhattan => manhattan(a, b),
+        Chebyshev => chebyshev(a, b),
+        Hamming => hamming_f32(a, b),
+        Jaccard => jaccard(a, b),
+        Pearson => pearson(a, b),
+    }
+}
 
 #[cfg(test)]
 mod tests {

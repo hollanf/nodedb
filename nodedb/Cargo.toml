@@ -34,6 +34,7 @@ nodedb-codec = { workspace = true }
 nodedb-strict = { workspace = true }
 nodedb-spatial = { workspace = true }
 nodedb-graph = { workspace = true }
+nodedb-vector = { workspace = true, features = ["collection"] }
 
 # Async runtime (Control Plane)
 tokio = { workspace = true }

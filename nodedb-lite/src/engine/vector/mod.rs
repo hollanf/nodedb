@@ -1,9 +1,9 @@
 // Re-export shared vector engine from nodedb-vector crate.
-// The core HNSW implementation lives in the shared crate.
-// Origin extends with SIMD distance + quantization.
-pub use nodedb_vector::build;
+// Lite uses the base crate without simd/ivf/collection features.
 pub use nodedb_vector::distance;
+pub use nodedb_vector::hnsw;
 pub use nodedb_vector::hnsw as graph;
-pub use nodedb_vector::search;
+pub use nodedb_vector::hnsw::build;
+pub use nodedb_vector::hnsw::search;
 
 pub use nodedb_vector::{DistanceMetric, HnswIndex, HnswParams, SearchResult};

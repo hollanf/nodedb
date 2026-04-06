@@ -1,18 +1,17 @@
 //! Checkpoint serialization and deserialization for `VectorCollection`.
-//!
-//! Persists segment state (growing, sealed, building) to bytes for crash
-//! recovery. Sealed segments serialize their HNSW indexes. Building segments
-//! serialize raw vectors and are rebuilt on restore.
 
 use serde::{Deserialize, Serialize};
 
-use super::collection::{SealedSegment, VectorCollection};
-use super::distance::DistanceMetric;
-use super::flat::FlatIndex;
-use super::hnsw::{HnswIndex, HnswParams};
+use crate::collection::segment::{DEFAULT_SEAL_THRESHOLD, SealedSegment};
+use crate::collection::tier::StorageTier;
+use crate::distance::DistanceMetric;
+use crate::flat::FlatIndex;
+use crate::hnsw::{HnswIndex, HnswParams};
+
+use super::lifecycle::VectorCollection;
 
 #[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
-pub(super) struct CollectionSnapshot {
+pub(crate) struct CollectionSnapshot {
     pub dim: usize,
     pub params_m: usize,
     pub params_m0: usize,
@@ -24,34 +23,26 @@ pub(super) struct CollectionSnapshot {
     pub growing_deleted: Vec<bool>,
     pub sealed_segments: Vec<SealedSnapshot>,
     pub building_segments: Vec<BuildingSnapshot>,
-    /// Persisted doc_id_map: vector_id → document_id string.
     #[serde(default)]
     pub doc_id_map: Vec<(u32, String)>,
-    /// Persisted multi_doc_map: document_id → list of vector_ids.
     #[serde(default)]
     pub multi_doc_map: Vec<(String, Vec<u32>)>,
 }
 
 #[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
-pub(super) struct SealedSnapshot {
+pub(crate) struct SealedSnapshot {
     pub base_id: u32,
     pub hnsw_bytes: Vec<u8>,
 }
 
 #[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
-pub(super) struct BuildingSnapshot {
+pub(crate) struct BuildingSnapshot {
     pub base_id: u32,
     pub vectors: Vec<Vec<f32>>,
 }
 
 impl VectorCollection {
     /// Serialize all segments for checkpointing.
-    ///
-    /// Lock-free: sealed segments are immutable (no concurrent writes).
-    /// Growing segment is small (<=64K vectors). Building segments are
-    /// serialized as raw vectors (will trigger rebuild on reload).
-    ///
-    /// Returns empty bytes if serialization fails (caller should log the error).
     pub fn checkpoint_to_bytes(&self) -> Vec<u8> {
         let snapshot = CollectionSnapshot {
             dim: self.dim,
@@ -126,39 +117,38 @@ impl VectorCollection {
             metric,
         };
 
-        // Restore growing segment.
         let mut growing = FlatIndex::new(snap.dim, metric);
         for v in &snap.growing_vectors {
             growing.insert(v.clone());
         }
 
-        // Restore sealed segments.
         let mut sealed = Vec::with_capacity(snap.sealed_segments.len());
         for ss in &snap.sealed_segments {
             if let Some(index) = HnswIndex::from_checkpoint(&ss.hnsw_bytes) {
-                let sq8 = Self::build_sq8_for_index(&index);
+                let sq8 = VectorCollection::build_sq8_for_index(&index);
                 sealed.push(SealedSegment {
                     index,
                     base_id: ss.base_id,
                     sq8,
-                    tier: crate::storage::tier::StorageTier::L0Ram,
+                    tier: StorageTier::L0Ram,
                     mmap_vectors: None,
                 });
             }
         }
 
-        // Building segments become sealed with fresh HNSW builds.
         for bs in &snap.building_segments {
             let mut index = HnswIndex::new(snap.dim, params.clone());
             for v in &bs.vectors {
-                index.insert(v.clone());
+                index
+                    .insert(v.clone())
+                    .expect("dimension guaranteed by checkpoint");
             }
-            let sq8 = Self::build_sq8_for_index(&index);
+            let sq8 = VectorCollection::build_sq8_for_index(&index);
             sealed.push(SealedSegment {
                 index,
                 base_id: bs.base_id,
                 sq8,
-                tier: crate::storage::tier::StorageTier::L0Ram,
+                tier: StorageTier::L0Ram,
                 mmap_vectors: None,
             });
         }
@@ -180,7 +170,35 @@ impl VectorCollection {
             mmap_segment_count: 0,
             doc_id_map: snap.doc_id_map.into_iter().collect(),
             multi_doc_map: snap.multi_doc_map.into_iter().collect(),
-            seal_threshold: super::collection::DEFAULT_SEAL_THRESHOLD,
+            seal_threshold: DEFAULT_SEAL_THRESHOLD,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::collection::lifecycle::VectorCollection;
+    use crate::distance::DistanceMetric;
+    use crate::hnsw::HnswParams;
+
+    #[test]
+    fn checkpoint_roundtrip() {
+        let mut coll = VectorCollection::new(
+            3,
+            HnswParams {
+                metric: DistanceMetric::L2,
+                ..HnswParams::default()
+            },
+        );
+        for i in 0..50u32 {
+            coll.insert(vec![i as f32, 0.0, 0.0]);
+        }
+        let bytes = coll.checkpoint_to_bytes();
+        let restored = VectorCollection::from_checkpoint(&bytes).unwrap();
+        assert_eq!(restored.len(), 50);
+        assert_eq!(restored.dim(), 3);
+
+        let results = restored.search(&[25.0, 0.0, 0.0], 1, 64);
+        assert_eq!(results[0].id, 25);
     }
 }

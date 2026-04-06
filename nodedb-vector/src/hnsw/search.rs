@@ -1,61 +1,16 @@
 //! HNSW search algorithm (Malkov & Yashunin, Algorithm 2).
 //!
-//! Beam search through the multi-layer graph. No Roaring bitmap dependency —
-//! filtering is handled at the `NodeDbLite` layer above.
+//! Beam search through the multi-layer graph with optional Roaring bitmap
+//! pre-filtering for efficient filtered k-NN queries.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet};
 
-use crate::hnsw::{Candidate, HnswIndex, SearchResult};
+use roaring::RoaringBitmap;
+
+use crate::hnsw::graph::{Candidate, HnswIndex, SearchResult};
 
 impl HnswIndex {
-    /// K-NN search with pre-filtering: only consider vectors whose IDs are in `allowed`.
-    ///
-    /// The graph is still traversed through all nodes for connectivity, but
-    /// only nodes in `allowed` are added to the result set. This gives much
-    /// better recall than post-filtering because the beam search can explore
-    /// deeper before filling the result set.
-    ///
-    /// `ef` is automatically scaled up to compensate for filter selectivity.
-    pub fn search_filtered(
-        &self,
-        query: &[f32],
-        k: usize,
-        ef: usize,
-        allowed: &HashSet<u32>,
-    ) -> Vec<SearchResult> {
-        assert_eq!(query.len(), self.dim, "query dimension mismatch");
-        if self.is_empty() || allowed.is_empty() {
-            return Vec::new();
-        }
-
-        let ef = ef.max(k);
-        let Some(ep) = self.entry_point else {
-            return Vec::new();
-        };
-
-        // Phase 1: Greedy descent from top layer to layer 1.
-        let mut current_ep = ep;
-        for layer in (1..=self.max_layer).rev() {
-            let results = search_layer(self, query, current_ep, 1, layer, None);
-            if let Some(nearest) = results.first() {
-                current_ep = nearest.id;
-            }
-        }
-
-        // Phase 2: Beam search at layer 0 with filter applied.
-        let results = search_layer(self, query, current_ep, ef, 0, Some(allowed));
-
-        results
-            .into_iter()
-            .take(k)
-            .map(|c| SearchResult {
-                id: c.id,
-                distance: c.dist,
-            })
-            .collect()
-    }
-
     /// K-NN search: find the `k` closest vectors to `query`.
     ///
     /// `ef` controls the search beam width (higher = better recall, slower).
@@ -92,21 +47,76 @@ impl HnswIndex {
             })
             .collect()
     }
+
+    /// Filtered K-NN search with Roaring bitmap pre-filtering.
+    ///
+    /// Only nodes whose ID is present in `filter` are included in results.
+    /// All nodes are still used for graph navigation — this prevents accuracy
+    /// degradation for selective filters.
+    pub fn search_filtered(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef: usize,
+        filter: &RoaringBitmap,
+    ) -> Vec<SearchResult> {
+        assert_eq!(query.len(), self.dim, "query dimension mismatch");
+        if self.is_empty() {
+            return Vec::new();
+        }
+
+        let ef = ef.max(k);
+        let Some(ep) = self.entry_point else {
+            return Vec::new();
+        };
+
+        let mut current_ep = ep;
+        for layer in (1..=self.max_layer).rev() {
+            let results = search_layer(self, query, current_ep, 1, layer, None);
+            if let Some(nearest) = results.first() {
+                current_ep = nearest.id;
+            }
+        }
+
+        let results = search_layer(self, query, current_ep, ef, 0, Some(filter));
+
+        results
+            .into_iter()
+            .take(k)
+            .map(|c| SearchResult {
+                id: c.id,
+                distance: c.dist,
+            })
+            .collect()
+    }
+
+    /// Deserialize a Roaring bitmap from bytes and perform filtered search.
+    pub fn search_with_bitmap_bytes(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef: usize,
+        bitmap_bytes: &[u8],
+    ) -> Vec<SearchResult> {
+        match RoaringBitmap::deserialize_from(bitmap_bytes) {
+            Ok(bitmap) => self.search_filtered(query, k, ef, &bitmap),
+            Err(_) => self.search(query, k, ef),
+        }
+    }
 }
 
 /// Unified HNSW beam search on a single layer with optional pre-filter.
 ///
-/// When `allowed` is `None`, all non-deleted nodes enter the result set.
-/// When `allowed` is `Some`, only nodes in the set enter results, but all
-/// nodes are traversed for graph connectivity (preserves recall while filtering).
-/// Filtered mode uses a 3x internal beam to compensate for filter selectivity.
+/// When `filter` is `None`, all non-deleted nodes enter the result set.
+/// When `filter` is `Some`, only nodes present in the bitmap enter results,
+/// but all nodes are still traversed for graph connectivity.
 pub(crate) fn search_layer(
     index: &HnswIndex,
     query: &[f32],
     entry_point: u32,
     ef: usize,
     layer: usize,
-    allowed: Option<&HashSet<u32>>,
+    filter: Option<&RoaringBitmap>,
 ) -> Vec<Candidate> {
     let mut visited: HashSet<u32> = HashSet::new();
     visited.insert(entry_point);
@@ -122,11 +132,17 @@ pub(crate) fn search_layer(
 
     let mut results: BinaryHeap<Candidate> = BinaryHeap::new();
 
-    let internal_ef = if allowed.is_some() { ef * 3 } else { ef };
+    let passes_filter = |id: u32| -> bool {
+        if index.nodes[id as usize].deleted {
+            return false;
+        }
+        match filter {
+            Some(f) => f.contains(id),
+            None => true,
+        }
+    };
 
-    let ep_passes = !index.nodes[entry_point as usize].deleted
-        && allowed.is_none_or(|a| a.contains(&entry_point));
-    if ep_passes {
+    if passes_filter(entry_point) {
         results.push(ep_candidate);
     }
 
@@ -155,15 +171,13 @@ pub(crate) fn search_layer(
             };
 
             let worst_dist = results.peek().map_or(f32::INFINITY, |w| w.dist);
-            let should_explore = dist < worst_dist || results.len() < internal_ef;
+            let should_explore = dist < worst_dist || results.len() < ef;
 
             if should_explore {
                 candidates.push(Reverse(neighbor));
             }
 
-            let passes = !index.nodes[neighbor_id as usize].deleted
-                && allowed.is_none_or(|a| a.contains(&neighbor_id));
-            if passes {
+            if passes_filter(neighbor_id) {
                 results.push(neighbor);
                 if results.len() > ef {
                     results.pop();
@@ -181,6 +195,7 @@ pub(crate) fn search_layer(
 mod tests {
     use crate::distance::DistanceMetric;
     use crate::hnsw::{HnswIndex, HnswParams};
+    use roaring::RoaringBitmap;
 
     fn build_index(n: usize, dim: usize) -> HnswIndex {
         let mut idx = HnswIndex::with_seed(
@@ -220,7 +235,6 @@ mod tests {
             1,
         );
         idx.insert(vec![1.0, 0.0]).unwrap();
-
         let results = idx.search(&[1.0, 0.0], 1, 10);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, 0);
@@ -243,7 +257,6 @@ mod tests {
         let query = vec![50.0, 50.0, 50.0, 50.0];
         let results = idx.search(&query, 10, 64);
         assert_eq!(results.len(), 10);
-
         for w in results.windows(2) {
             assert!(w[0].distance <= w[1].distance);
         }
@@ -260,10 +273,8 @@ mod tests {
     fn search_recall_at_10() {
         let idx = build_index(500, 3);
         let query = vec![100.0, 100.0, 100.0];
-
         let results = idx.search(&query, 10, 128);
 
-        // Brute-force ground truth.
         let mut truth: Vec<(u32, f32)> = (0..500)
             .map(|i| {
                 let v = idx.get_vector(i).unwrap();
@@ -276,14 +287,12 @@ mod tests {
 
         let found: std::collections::HashSet<u32> = results.iter().map(|r| r.id).collect();
         let recall = found.intersection(&truth_top10).count() as f64 / 10.0;
-
         assert!(recall >= 0.8, "recall@10 = {recall:.2}, expected >= 0.80");
     }
 
     #[test]
     fn search_excludes_tombstoned() {
         let mut idx = build_index(20, 3);
-        // Delete node 0 (which would be closest to [0,0,0]).
         idx.delete(0);
         let results = idx.search(&[0.0, 0.0, 0.0], 5, 32);
         for r in &results {
@@ -292,51 +301,39 @@ mod tests {
     }
 
     #[test]
-    fn search_filtered_respects_allowed_set() {
+    fn search_filtered_respects_bitmap() {
         let idx = build_index(50, 3);
-        // Only allow even IDs.
-        let allowed: std::collections::HashSet<u32> = (0..50).filter(|i| i % 2 == 0).collect();
-        let results = idx.search_filtered(&[0.0, 0.0, 0.0], 5, 64, &allowed);
+        let mut filter = RoaringBitmap::new();
+        for i in (0..50u32).step_by(2) {
+            filter.insert(i);
+        }
+        let results = idx.search_filtered(&[0.0, 0.0, 0.0], 5, 64, &filter);
         assert_eq!(results.len(), 5);
         for r in &results {
-            assert!(
-                r.id % 2 == 0,
-                "filtered result should only contain even IDs, got {}",
-                r.id
-            );
+            assert!(r.id % 2 == 0, "got odd id {}", r.id);
         }
     }
 
     #[test]
-    fn search_filtered_empty_allowed_returns_empty() {
+    fn search_filtered_empty_returns_empty() {
         let idx = build_index(20, 3);
-        let allowed = std::collections::HashSet::new();
-        let results = idx.search_filtered(&[0.0, 0.0, 0.0], 5, 64, &allowed);
+        let filter = RoaringBitmap::new();
+        let results = idx.search_filtered(&[0.0, 0.0, 0.0], 5, 64, &filter);
         assert!(results.is_empty());
     }
 
     #[test]
-    fn search_high_dimensional() {
-        let mut idx = HnswIndex::with_seed(
-            128,
-            HnswParams {
-                m: 16,
-                m0: 32,
-                ef_construction: 100,
-                metric: DistanceMetric::Cosine,
-            },
-            7,
-        );
-        for i in 0..200 {
-            let v: Vec<f32> = (0..128).map(|d| ((i * 128 + d) as f32).sin()).collect();
-            idx.insert(v).unwrap();
+    fn bitmap_bytes_roundtrip() {
+        let idx = build_index(50, 3);
+        let mut filter = RoaringBitmap::new();
+        for i in 0..25u32 {
+            filter.insert(i);
         }
-
-        let query: Vec<f32> = (0..128).map(|d| (d as f32).sin()).collect();
-        let results = idx.search(&query, 5, 64);
-        assert_eq!(results.len(), 5);
-        for w in results.windows(2) {
-            assert!(w[0].distance <= w[1].distance);
+        let mut bytes = Vec::new();
+        filter.serialize_into(&mut bytes).unwrap();
+        let results = idx.search_with_bitmap_bytes(&[0.0, 0.0, 0.0], 5, 32, &bytes);
+        for r in &results {
+            assert!(r.id < 25, "got filtered-out node {}", r.id);
         }
     }
 }

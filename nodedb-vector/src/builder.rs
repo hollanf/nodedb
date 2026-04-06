@@ -1,21 +1,15 @@
 //! Background HNSW index builder thread.
 //!
 //! Each Data Plane core has one builder thread that processes HNSW
-//! construction requests sequentially (FIFO). The TPC core sends
-//! `BuildRequest` when a growing segment seals; the builder constructs
-//! the HNSW index on a separate OS thread (not the TPC core) and sends
-//! the completed index back via `BuildComplete`.
-//!
-//! The core polls for completed builds during its idle loop (between
-//! poll_wait and tick).
+//! construction requests sequentially (FIFO).
 
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 
 use tracing::{debug, info, warn};
 
-use super::collection::{BuildComplete, BuildRequest};
-use super::hnsw::HnswIndex;
+use crate::collection::{BuildComplete, BuildRequest};
+use crate::hnsw::HnswIndex;
 
 /// Sender half: TPC core sends build requests to the builder thread.
 pub type BuildSender = mpsc::Sender<BuildRequest>;
@@ -24,11 +18,6 @@ pub type BuildSender = mpsc::Sender<BuildRequest>;
 pub type CompleteReceiver = mpsc::Receiver<BuildComplete>;
 
 /// Spawn a background HNSW builder thread for a Data Plane core.
-///
-/// Returns:
-/// - `BuildSender` — send `BuildRequest` from the TPC core
-/// - `CompleteReceiver` — poll for `BuildComplete` in the core's idle loop
-/// - `JoinHandle` — for shutdown cleanup
 pub fn spawn_builder(core_id: usize) -> (BuildSender, CompleteReceiver, JoinHandle<()>) {
     let (request_tx, request_rx) = mpsc::channel::<BuildRequest>();
     let (complete_tx, complete_rx) = mpsc::channel::<BuildComplete>();
@@ -45,7 +34,6 @@ pub fn spawn_builder(core_id: usize) -> (BuildSender, CompleteReceiver, JoinHand
     (request_tx, complete_rx, handle)
 }
 
-/// Main loop for the builder thread: receive requests, build HNSW, send back.
 fn builder_loop(core_id: usize, rx: mpsc::Receiver<BuildRequest>, tx: mpsc::Sender<BuildComplete>) {
     while let Ok(req) = rx.recv() {
         debug!(
@@ -65,7 +53,9 @@ fn builder_loop(core_id: usize, rx: mpsc::Receiver<BuildRequest>, tx: mpsc::Send
         );
 
         for vector in req.vectors {
-            index.insert(vector);
+            index
+                .insert(vector)
+                .unwrap_or_else(|e| tracing::error!(error = %e, "HNSW insert failed"));
         }
 
         let elapsed = start.elapsed();

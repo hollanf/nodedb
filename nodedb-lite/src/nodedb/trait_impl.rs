@@ -83,7 +83,7 @@ impl<S: StorageEngine> NodeDbLite<S> {
         let raw_results = if let Some(f) = filter
             && collection_size <= 10_000
         {
-            let mut allowed = std::collections::HashSet::new();
+            let mut allowed = roaring::RoaringBitmap::new();
             for (composite_key, (doc_id, _)) in id_map.iter() {
                 if !composite_key.starts_with(index_key) {
                     continue;

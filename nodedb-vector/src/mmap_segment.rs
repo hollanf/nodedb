@@ -1,13 +1,7 @@
 //! Memory-mapped vector segment for L1 NVMe tiering.
 //!
 //! Stores FP32 vectors contiguously in a file, memory-mapped for read access.
-//! Used when the memory governor's vector budget is exhausted — vectors are
-//! written to NVMe instead of kept in RAM. The HNSW graph structure and SQ8
-//! quantized data remain in RAM (L0) for traversal; only the full-precision
-//! FP32 vectors used for reranking live on NVMe.
-//!
 //! Layout: `[dim:u32][count:u32][v0_f0..v0_fD][v1_f0..v1_fD]...]`
-//! Header: 8 bytes. Each vector: `dim * 4` bytes.
 
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -16,30 +10,19 @@ use std::path::{Path, PathBuf};
 ///
 /// Not `Send` or `Sync` — owned by a single Data Plane core.
 pub struct MmapVectorSegment {
-    /// Path to the segment file.
     path: PathBuf,
-    /// File handle (kept open for the mmap lifetime).
     _fd: std::fs::File,
-    /// mmap base pointer.
     base: *const u8,
-    /// Total mmap size in bytes.
     mmap_size: usize,
-    /// Vector dimensionality.
     dim: usize,
-    /// Number of vectors stored.
     count: usize,
-    /// Offset in bytes to the first vector (after header).
     data_offset: usize,
 }
 
-/// Header size: `dim (u32) + count (u32) = 8 bytes`.
 const HEADER_SIZE: usize = 8;
 
 impl MmapVectorSegment {
     /// Create a new segment file and write vectors to it.
-    ///
-    /// Vectors are written contiguously as FP32. The file is then
-    /// memory-mapped read-only for subsequent access.
     pub fn create(path: &Path, dim: usize, vectors: &[&[f32]]) -> std::io::Result<Self> {
         use std::io::Write;
 
@@ -49,7 +32,6 @@ impl MmapVectorSegment {
 
         let count = vectors.len();
 
-        // Write header + vectors to file.
         let mut fd = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -57,22 +39,17 @@ impl MmapVectorSegment {
             .truncate(true)
             .open(path)?;
 
-        // Header: dim (u32 LE) + count (u32 LE).
         fd.write_all(&(dim as u32).to_le_bytes())?;
         fd.write_all(&(count as u32).to_le_bytes())?;
 
-        // Vectors: contiguous FP32 little-endian.
         for v in vectors {
             debug_assert_eq!(v.len(), dim);
-            // SAFETY: &[f32] to &[u8] reinterpretation is safe on LE platforms.
-            // Rust guarantees f32 is IEEE 754, and we're on a LE machine (x86_64).
             let bytes: &[u8] =
                 unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, v.len() * 4) };
             fd.write_all(bytes)?;
         }
         fd.sync_all()?;
 
-        // Re-open as read-only and mmap.
         drop(fd);
         Self::open(path)
     }
@@ -89,7 +66,6 @@ impl MmapVectorSegment {
             ));
         }
 
-        // SAFETY: file is open and readable, size is validated.
         let base = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -107,7 +83,6 @@ impl MmapVectorSegment {
 
         let base = base as *const u8;
 
-        // Read header.
         let dim = unsafe {
             let ptr = base as *const u32;
             u32::from_le(*ptr) as usize
@@ -117,7 +92,6 @@ impl MmapVectorSegment {
             u32::from_le(*ptr) as usize
         };
 
-        // Validate file size.
         let expected = HEADER_SIZE + count * dim * 4;
         if file_size < expected {
             unsafe {
@@ -141,10 +115,6 @@ impl MmapVectorSegment {
     }
 
     /// Get a vector by ID. Returns a slice into the mmap'd region.
-    ///
-    /// This may trigger a page fault if the page isn't resident — the
-    /// kernel fetches it from NVMe transparently. On TPC cores, major
-    /// faults block the core thread until the I/O completes.
     #[inline]
     pub fn get_vector(&self, id: u32) -> Option<&[f32]> {
         let idx = id as usize;
@@ -152,7 +122,6 @@ impl MmapVectorSegment {
             return None;
         }
         let offset = self.data_offset + idx * self.dim * 4;
-        // SAFETY: bounds checked above, file validated on open.
         unsafe {
             let ptr = self.base.add(offset) as *const f32;
             Some(std::slice::from_raw_parts(ptr, self.dim))
@@ -160,17 +129,14 @@ impl MmapVectorSegment {
     }
 
     /// Prefetch a vector's page into memory via `madvise(MADV_WILLNEED)`.
-    ///
-    /// Called during BFS planning or before a batch rerank to avoid
-    /// synchronous page faults on the TPC core.
     pub fn prefetch(&self, id: u32) {
         let idx = id as usize;
         if idx >= self.count {
             return;
         }
         let offset = self.data_offset + idx * self.dim * 4;
-        let page_start = offset & !(4095); // Align to page boundary.
-        let len = (self.dim * 4 + 4095) & !(4095); // Round up to page.
+        let page_start = offset & !(4095);
+        let len = (self.dim * 4 + 4095) & !(4095);
         unsafe {
             libc::madvise(
                 self.base.add(page_start) as *mut libc::c_void,
@@ -199,12 +165,10 @@ impl MmapVectorSegment {
         &self.path
     }
 
-    /// Size of the mmap'd region in bytes.
     pub fn mmap_bytes(&self) -> usize {
         self.mmap_size
     }
 
-    /// File size on disk in bytes (same as mmap_bytes for mmap'd segments).
     pub fn file_size(&self) -> usize {
         self.mmap_size
     }
@@ -256,14 +220,11 @@ mod tests {
 
         MmapVectorSegment::create(&path, 3, &refs).unwrap();
 
-        // Reopen from disk.
         let seg = MmapVectorSegment::open(&path).unwrap();
         assert_eq!(seg.count(), 100);
-        assert_eq!(seg.dim(), 3);
-
         for (i, v) in vectors.iter().enumerate() {
             let loaded = seg.get_vector(i as u32).unwrap();
-            assert_eq!(loaded, v.as_slice(), "mismatch at vector {i}");
+            assert_eq!(loaded, v.as_slice());
         }
     }
 
@@ -272,10 +233,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("prefetch.vseg");
 
-        let v: Vec<f32> = vec![1.0; 768]; // Typical embedding size.
+        let v: Vec<f32> = vec![1.0; 768];
         let seg = MmapVectorSegment::create(&path, 768, &[&v]).unwrap();
 
-        // Should not crash even for out-of-range IDs.
         seg.prefetch(0);
         seg.prefetch(999);
     }

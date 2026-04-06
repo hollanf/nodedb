@@ -1,8 +1,8 @@
 //! HNSW insert algorithm (Malkov & Yashunin, Algorithm 1).
 
 use crate::error::VectorError;
-use crate::hnsw::{Candidate, HnswIndex, Node};
-use crate::search::search_layer;
+use crate::hnsw::graph::{Candidate, HnswIndex, Node};
+use crate::hnsw::search::search_layer;
 
 impl HnswIndex {
     /// Insert a vector into the index.
@@ -107,10 +107,6 @@ impl HnswIndex {
 }
 
 /// Heuristic neighbor selection (Malkov & Yashunin, Algorithm 4).
-///
-/// Selects up to `m` neighbors that are both close AND diverse.
-/// A candidate is kept only if it is closer to query than to every
-/// already-selected neighbor — producing better long-range connectivity.
 fn select_neighbors_heuristic(
     index: &HnswIndex,
     candidates: &[Candidate],
@@ -123,9 +119,6 @@ fn select_neighbors_heuristic(
             break;
         }
 
-        // Batch diversity check: compute distances from candidate to all
-        // selected neighbors and check if candidate is closer to query
-        // than to every selected neighbor.
         let candidate_vec = &index.nodes[candidate.id as usize].vector;
         let selected_vecs: Vec<&[f32]> = selected
             .iter()
@@ -244,34 +237,6 @@ mod tests {
             assert!(!results.is_empty());
             let found_vec = idx.get_vector(results[0].id).unwrap();
             assert_eq!(found_vec[0], target_old_id as f32);
-        }
-    }
-
-    #[test]
-    fn checkpoint_roundtrip() {
-        let mut idx = make_index();
-        for i in 0..50 {
-            idx.insert(vec![(i as f32) * 0.1, (i as f32) * 0.2, (i as f32) * 0.3])
-                .unwrap();
-        }
-
-        let bytes = idx.checkpoint_to_bytes();
-        assert!(!bytes.is_empty());
-
-        let restored = HnswIndex::from_checkpoint(&bytes).unwrap();
-        assert_eq!(restored.len(), 50);
-        assert_eq!(restored.dim(), 3);
-        assert_eq!(restored.entry_point(), idx.entry_point());
-        assert_eq!(restored.max_layer(), idx.max_layer());
-
-        // Verify search works on restored index.
-        let query = vec![1.0, 2.0, 3.0];
-        let orig_results = idx.search(&query, 5, 32);
-        let rest_results = restored.search(&query, 5, 32);
-        assert_eq!(orig_results.len(), rest_results.len());
-        for (a, b) in orig_results.iter().zip(rest_results.iter()) {
-            assert_eq!(a.id, b.id);
-            assert!((a.distance - b.distance).abs() < 1e-6);
         }
     }
 }

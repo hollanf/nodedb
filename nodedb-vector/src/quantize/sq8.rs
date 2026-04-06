@@ -212,7 +212,7 @@ mod tests {
         let query = &[5.0, 0.5, -0.5];
         for v in &vecs {
             let q = codec.quantize(v);
-            let exact = crate::engine::vector::distance::l2_squared(query, v);
+            let exact = crate::distance::l2_squared(query, v);
             let approx = codec.asymmetric_l2(query, &q);
             // Allow up to 5% relative error.
             let rel_error = if exact > 0.01 {

@@ -1,10 +1,9 @@
-//! HNSW graph structure — nodes, parameters, checkpoint serialization.
+//! HNSW graph structure — nodes, parameters, core index operations.
 //!
 //! Production implementation per Malkov & Yashunin (2018).
-//! Adapted for edge devices: no SIMD runtime dispatch, no Roaring bitmap
-//! (those are in the Origin). Pure scalar distance functions.
+//! FP32 construction for structural integrity; heuristic neighbor selection.
 
-use crate::distance::{DistanceMetric, distance};
+use crate::distance::distance;
 
 // Re-export shared params from nodedb-types.
 pub use nodedb_types::hnsw::HnswParams;
@@ -19,7 +18,7 @@ pub struct SearchResult {
 }
 
 /// A node in the HNSW graph.
-pub(crate) struct Node {
+pub struct Node {
     /// Full-precision vector data.
     pub vector: Vec<f32>,
     /// Neighbors at each layer this node participates in.
@@ -28,29 +27,8 @@ pub(crate) struct Node {
     pub deleted: bool,
 }
 
-/// Magic header for rkyv-serialized HNSW snapshots (6 bytes).
-const HNSW_RKYV_MAGIC: &[u8; 6] = b"RKHNS\0";
-
-/// rkyv-serialized HNSW snapshot. SoA layout for better rkyv compatibility
-/// (flat Vecs instead of Vec<struct>).
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-struct HnswSnapshotRkyv {
-    dim: usize,
-    m: usize,
-    m0: usize,
-    ef_construction: usize,
-    metric: u8,
-    entry_point: Option<u32>,
-    max_layer: usize,
-    rng_state: u64,
-    /// Per-node vectors (SoA).
-    node_vectors: Vec<Vec<f32>>,
-    /// Per-node neighbor lists (SoA).
-    node_neighbors: Vec<Vec<Vec<u32>>>,
-    /// Per-node deleted flags (SoA).
-    node_deleted: Vec<bool>,
-}
-
+/// Hierarchical Navigable Small World graph index.
+///
 /// - FP32 construction for structural integrity
 /// - Heuristic neighbor selection (Algorithm 4)
 /// - Beam search with configurable ef parameter
@@ -64,7 +42,7 @@ pub struct HnswIndex {
     /// Flat neighbor storage for zero-copy access after checkpoint restore.
     /// When present, `neighbors_at()` reads from here instead of per-node Vecs.
     /// Cleared on first mutation (insert/delete).
-    pub(crate) flat_neighbors: Option<crate::flat_neighbors::FlatNeighborStore>,
+    pub(crate) flat_neighbors: Option<crate::hnsw::flat_neighbors::FlatNeighborStore>,
 }
 
 impl HnswIndex {
@@ -105,7 +83,7 @@ impl HnswIndex {
 }
 
 /// Lightweight xorshift64 PRNG for layer assignment.
-pub(crate) struct Xorshift64(pub u64);
+pub struct Xorshift64(pub u64);
 
 impl Xorshift64 {
     pub fn new(seed: u64) -> Self {
@@ -122,7 +100,7 @@ impl Xorshift64 {
 
 /// Ordered candidate for priority queues during search and construction.
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) struct Candidate {
+pub struct Candidate {
     pub dist: f32,
     pub id: u32,
 }
@@ -183,6 +161,15 @@ impl HnswIndex {
         self.nodes.iter().filter(|n| n.deleted).count()
     }
 
+    /// Tombstone ratio: fraction of nodes that are deleted.
+    pub fn tombstone_ratio(&self) -> f64 {
+        if self.nodes.is_empty() {
+            0.0
+        } else {
+            self.tombstone_count() as f64 / self.nodes.len() as f64
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.live_count() == 0
     }
@@ -234,138 +221,36 @@ impl HnswIndex {
         self.max_layer
     }
 
-    /// Serialize the index to MessagePack bytes for storage.
-    ///
-    /// NOTE: The checklist mandates rkyv for engine blobs, but HNSW's
-    /// Serialize the index to rkyv bytes (with magic header) for storage.
-    ///
-    /// rkyv 0.8 supports `Vec<Vec<u32>>` with the `alloc` feature.
-    /// Magic header `RKHNS\0` allows `from_checkpoint` to detect format.
-    pub fn checkpoint_to_bytes(&self) -> Vec<u8> {
-        let snapshot = HnswSnapshotRkyv {
-            dim: self.dim,
-            m: self.params.m,
-            m0: self.params.m0,
-            ef_construction: self.params.ef_construction,
-            metric: self.params.metric as u8,
-            entry_point: self.entry_point,
-            max_layer: self.max_layer,
-            rng_state: self.rng.0,
-            node_vectors: self.nodes.iter().map(|n| n.vector.clone()).collect(),
-            node_neighbors: if let Some(ref flat) = self.flat_neighbors {
-                flat.to_nested(self.nodes.len())
-            } else {
-                self.nodes.iter().map(|n| n.neighbors.clone()).collect()
-            },
-            node_deleted: self.nodes.iter().map(|n| n.deleted).collect(),
-        };
-        let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&snapshot)
-            .expect("HNSW rkyv serialization should not fail");
-        let mut buf = Vec::with_capacity(HNSW_RKYV_MAGIC.len() + rkyv_bytes.len());
-        buf.extend_from_slice(HNSW_RKYV_MAGIC);
-        buf.extend_from_slice(&rkyv_bytes);
-        buf
+    /// Current RNG state (for snapshot reproducibility).
+    pub fn rng_state(&self) -> u64 {
+        self.rng.0
     }
 
-    /// Restore an index from a checkpoint snapshot.
-    ///
-    /// Auto-detects format: rkyv (magic `RKHNS\0`) or legacy MessagePack.
-    pub fn from_checkpoint(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() > HNSW_RKYV_MAGIC.len() && &bytes[..HNSW_RKYV_MAGIC.len()] == HNSW_RKYV_MAGIC
-        {
-            return Self::from_rkyv_checkpoint(&bytes[HNSW_RKYV_MAGIC.len()..]);
-        }
-        Self::from_msgpack_checkpoint(bytes)
-    }
-
-    /// Restore from rkyv-serialized bytes.
-    fn from_rkyv_checkpoint(bytes: &[u8]) -> Option<Self> {
-        let mut aligned = rkyv::util::AlignedVec::<16>::with_capacity(bytes.len());
-        aligned.extend_from_slice(bytes);
-        let snap: HnswSnapshotRkyv =
-            rkyv::from_bytes::<HnswSnapshotRkyv, rkyv::rancor::Error>(&aligned).ok()?;
-        Self::from_hnsw_snapshot(snap)
-    }
-
-    /// Restore from legacy MessagePack bytes.
-    fn from_msgpack_checkpoint(bytes: &[u8]) -> Option<Self> {
-        use zerompk::{FromMessagePack, ToMessagePack};
-
-        #[derive(ToMessagePack, FromMessagePack)]
-        struct Snapshot {
-            dim: usize,
-            m: usize,
-            m0: usize,
-            ef_construction: usize,
-            metric: u8,
-            entry_point: Option<u32>,
-            max_layer: usize,
-            rng_state: u64,
-            nodes: Vec<NodeSnap>,
-        }
-
-        #[derive(ToMessagePack, FromMessagePack)]
-        struct NodeSnap {
-            vector: Vec<f32>,
-            neighbors: Vec<Vec<u32>>,
-            deleted: bool,
-        }
-
-        let snap: Snapshot = zerompk::from_msgpack(bytes).ok()?;
-        Self::from_hnsw_snapshot(HnswSnapshotRkyv {
-            dim: snap.dim,
-            m: snap.m,
-            m0: snap.m0,
-            ef_construction: snap.ef_construction,
-            metric: snap.metric,
-            entry_point: snap.entry_point,
-            max_layer: snap.max_layer,
-            rng_state: snap.rng_state,
-            node_vectors: snap.nodes.iter().map(|n| n.vector.clone()).collect(),
-            node_neighbors: snap.nodes.iter().map(|n| n.neighbors.clone()).collect(),
-            node_deleted: snap.nodes.iter().map(|n| n.deleted).collect(),
-        })
-    }
-
-    /// Reconstruct HnswIndex from deserialized snapshot fields.
-    fn from_hnsw_snapshot(snap: HnswSnapshotRkyv) -> Option<Self> {
-        let metric = match snap.metric {
-            0 => DistanceMetric::L2,
-            1 => DistanceMetric::Cosine,
-            2 => DistanceMetric::InnerProduct,
-            _ => DistanceMetric::Cosine,
-        };
-
-        // Build flat neighbor store from SoA data (avoids per-node Vec<Vec<u32>>
-        // allocations — millions of small Vecs on large graphs).
-        let flat = crate::flat_neighbors::FlatNeighborStore::from_nested(&snap.node_neighbors);
-
-        // Nodes only need vector + deleted; neighbors are in flat store.
-        let nodes: Vec<Node> = snap
-            .node_vectors
-            .into_iter()
-            .zip(snap.node_deleted)
-            .map(|(vector, deleted)| Node {
-                vector,
-                neighbors: Vec::new(), // Empty — flat store handles reads.
-                deleted,
+    /// Approximate memory usage in bytes (vector data + neighbor lists).
+    pub fn memory_usage_bytes(&self) -> usize {
+        let vector_bytes = self.nodes.len() * self.dim * std::mem::size_of::<f32>();
+        let neighbor_bytes: usize = self
+            .nodes
+            .iter()
+            .map(|n| {
+                n.neighbors
+                    .iter()
+                    .map(|layer| layer.len() * 4)
+                    .sum::<usize>()
             })
-            .collect();
+            .sum();
+        let node_overhead = self.nodes.len() * std::mem::size_of::<Node>();
+        vector_bytes + neighbor_bytes + node_overhead
+    }
 
-        Some(Self {
-            dim: snap.dim,
-            params: HnswParams {
-                m: snap.m,
-                m0: snap.m0,
-                ef_construction: snap.ef_construction,
-                metric,
-            },
-            nodes,
-            entry_point: snap.entry_point,
-            max_layer: snap.max_layer,
-            rng: Xorshift64::new(snap.rng_state),
-            flat_neighbors: Some(flat),
-        })
+    /// Export all vectors for snapshot transfer.
+    pub fn export_vectors(&self) -> Vec<Vec<f32>> {
+        self.nodes.iter().map(|n| n.vector.clone()).collect()
+    }
+
+    /// Export all neighbor lists for snapshot transfer.
+    pub fn export_neighbors(&self) -> Vec<Vec<Vec<u32>>> {
+        self.nodes.iter().map(|n| n.neighbors.clone()).collect()
     }
 
     /// Assign a random layer using the exponential distribution.
@@ -470,6 +355,7 @@ impl HnswIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::distance::DistanceMetric;
 
     #[test]
     fn create_empty_index() {

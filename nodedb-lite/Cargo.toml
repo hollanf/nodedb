@@ -21,6 +21,7 @@ nodedb-query = { workspace = true }
 nodedb-spatial = { workspace = true }
 nodedb-graph = { workspace = true }
 nodedb-vector = { workspace = true }
+roaring = { workspace = true }
 nodedb-strict = { workspace = true }
 nodedb-columnar = { workspace = true }
 async-trait = { workspace = true }
