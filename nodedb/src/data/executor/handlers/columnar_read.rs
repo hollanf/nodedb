@@ -1,9 +1,11 @@
 //! Columnar base scan handler.
 //!
-//! Reads rows from the `MutationEngine` memtable, applies projection and
-//! limit. Used by plain columnar and spatial collections.
+//! Reads rows from the `MutationEngine` memtable, applies projection,
+//! WHERE filter predicates, and limit. Used by plain columnar and spatial
+//! collections.
 
 use crate::bridge::envelope::{ErrorCode, Response};
+use crate::bridge::scan_filter::{FilterOp, ScanFilter};
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
@@ -16,7 +18,7 @@ impl CoreLoop {
         collection: &str,
         projection: &[String],
         limit: usize,
-        _filters: &[u8],
+        filters: &[u8],
         _rls_filters: &[u8],
     ) -> Response {
         let limit = if limit == 0 { 1000 } else { limit };
@@ -38,9 +40,25 @@ impl CoreLoop {
         };
 
         let schema = engine.schema();
+
+        let filter_predicates: Vec<ScanFilter> = if !filters.is_empty() {
+            zerompk::from_msgpack(filters).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         let mut results = Vec::new();
 
-        for row in engine.scan_memtable_rows().take(limit) {
+        // Scan more rows than `limit` so we have candidates to filter from.
+        for row in engine
+            .scan_memtable_rows()
+            .take(limit.saturating_mul(10).max(limit))
+        {
+            if !filter_predicates.is_empty()
+                && !row_matches_filters(&row, schema, &filter_predicates)
+            {
+                continue;
+            }
             let mut obj = serde_json::Map::new();
             for (i, col_def) in schema.columns.iter().enumerate() {
                 if !projection.is_empty() && !projection.iter().any(|p| p == &col_def.name) {
@@ -51,6 +69,9 @@ impl CoreLoop {
                 }
             }
             results.push(serde_json::Value::Object(obj));
+            if results.len() >= limit {
+                break;
+            }
         }
 
         match response_codec::encode_json_vec(&results) {
@@ -85,6 +106,90 @@ fn value_to_json(val: &nodedb_types::value::Value) -> serde_json::Value {
         }
         Value::Array(arr) => serde_json::Value::Array(arr.iter().map(value_to_json).collect()),
         _ => serde_json::Value::Null,
+    }
+}
+
+/// Check whether a memtable row satisfies all filter predicates.
+///
+/// Returns `true` if every filter passes (AND semantics). An unknown field or
+/// out-of-bounds column index causes the row to be excluded.
+pub(in crate::data::executor) fn row_matches_filters(
+    row: &[nodedb_types::value::Value],
+    schema: &nodedb_types::columnar::ColumnarSchema,
+    filters: &[ScanFilter],
+) -> bool {
+    for filter in filters {
+        if filter.op == FilterOp::MatchAll {
+            continue;
+        }
+        let col_idx = match schema.columns.iter().position(|c| c.name == filter.field) {
+            Some(i) => i,
+            None => continue, // unknown field — skip predicate
+        };
+        if col_idx >= row.len() {
+            return false;
+        }
+        if !eval_filter(&row[col_idx], filter.op, &filter.value) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Evaluate a single filter predicate against a row value.
+fn eval_filter(
+    val: &nodedb_types::value::Value,
+    op: FilterOp,
+    filter_val: &nodedb_types::value::Value,
+) -> bool {
+    use nodedb_types::value::Value;
+
+    let val_f64 = match val {
+        Value::Float(f) => Some(*f),
+        Value::Integer(i) => Some(*i as f64),
+        _ => None,
+    };
+    let filter_f64 = match filter_val {
+        Value::Float(f) => Some(*f),
+        Value::Integer(i) => Some(*i as f64),
+        _ => None,
+    };
+
+    let val_str = match val {
+        Value::String(s) => Some(s.as_str()),
+        _ => None,
+    };
+    let filter_str = match filter_val {
+        Value::String(s) => Some(s.as_str()),
+        _ => None,
+    };
+
+    match op {
+        FilterOp::Eq => {
+            if let (Some(a), Some(b)) = (val_f64, filter_f64) {
+                a == b
+            } else if let (Some(a), Some(b)) = (val_str, filter_str) {
+                a == b
+            } else {
+                false
+            }
+        }
+        FilterOp::Ne => {
+            if let (Some(a), Some(b)) = (val_f64, filter_f64) {
+                a != b
+            } else if let (Some(a), Some(b)) = (val_str, filter_str) {
+                a != b
+            } else {
+                true
+            }
+        }
+        FilterOp::Gt => val_f64.zip(filter_f64).is_some_and(|(a, b)| a > b),
+        FilterOp::Gte => val_f64.zip(filter_f64).is_some_and(|(a, b)| a >= b),
+        FilterOp::Lt => val_f64.zip(filter_f64).is_some_and(|(a, b)| a < b),
+        FilterOp::Lte => val_f64.zip(filter_f64).is_some_and(|(a, b)| a <= b),
+        FilterOp::IsNull => matches!(val, Value::Null),
+        FilterOp::IsNotNull => !matches!(val, Value::Null),
+        _ => true, // unknown/unsupported op — pass through
     }
 }
 

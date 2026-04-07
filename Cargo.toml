@@ -21,6 +21,7 @@ members = [
   "nodedb-fts",
   "nodedb-strict",
   "nodedb-columnar",
+  "nodedb-sql",
 ]
 resolver = "2"
 
@@ -53,6 +54,7 @@ nodedb-vector = { path = "nodedb-vector", version = "0.0.0-beta.1" }
 nodedb-fts = { path = "nodedb-fts", version = "0.0.0-beta.1" }
 nodedb-strict = { path = "nodedb-strict", version = "0.0.0-beta.1" }
 nodedb-columnar = { path = "nodedb-columnar", version = "0.0.0-beta.1" }
+nodedb-sql = { path = "nodedb-sql", version = "0.0.0-beta.1" }
 
 # Async runtimes
 tokio = { version = "1", features = ["full"] }

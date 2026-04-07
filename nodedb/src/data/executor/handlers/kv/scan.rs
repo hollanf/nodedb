@@ -35,22 +35,42 @@ impl CoreLoop {
             filter_value.as_deref(),
         );
 
-        let cursor_b64 = if next_cursor.is_empty() {
-            "0".to_string()
+        // Parse filter predicates for post-scan evaluation.
+        // Index pushdown handles eq filters on indexed fields, but general
+        // predicates (gt, lt, in, etc.) need post-scan evaluation.
+        let filter_predicates: Vec<crate::bridge::scan_filter::ScanFilter> = if !filters.is_empty()
+        {
+            zerompk::from_msgpack(filters).unwrap_or_default()
         } else {
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &next_cursor)
+            Vec::new()
         };
-        let result = serde_json::json!({
-            "cursor": cursor_b64,
-            "count": entries.len(),
-            "entries": entries.iter().map(|(k, v)| {
-                serde_json::json!({
-                    "key": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, k),
-                    "value": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, v),
-                })
-            }).collect::<Vec<_>>(),
-        });
-        let payload = match super::super::super::response_codec::encode_json(&result) {
+
+        let mut results = Vec::with_capacity(entries.len());
+        for (k, v) in &entries {
+            let key_str = String::from_utf8_lossy(k).to_string();
+            let json: serde_json::Value = nodedb_types::value_from_msgpack(v)
+                .ok()
+                .map(serde_json::Value::from)
+                .unwrap_or(serde_json::Value::Null);
+            let obj = if let serde_json::Value::Object(mut map) = json {
+                map.entry("key".to_string())
+                    .or_insert(serde_json::Value::String(key_str));
+                serde_json::Value::Object(map)
+            } else {
+                serde_json::json!({"key": key_str, "value": json})
+            };
+
+            // Apply filter predicates post-scan.
+            if !filter_predicates.is_empty() {
+                let mp = super::super::super::doc_format::encode_to_msgpack(&obj);
+                if !filter_predicates.iter().all(|f| f.matches_binary(&mp)) {
+                    continue;
+                }
+            }
+
+            results.push(obj);
+        }
+        let payload = match super::super::super::response_codec::encode_json_vec(&results) {
             Ok(p) => p,
             Err(e) => {
                 return self.response_error(

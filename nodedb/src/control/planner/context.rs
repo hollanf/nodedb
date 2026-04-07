@@ -4,7 +4,6 @@ use datafusion::catalog::{CatalogProvider, MemoryCatalogProvider};
 use datafusion::execution::context::SessionContext;
 use datafusion::prelude::*;
 
-use crate::control::planner::converter::PlanConverter;
 use crate::control::security::credential::CredentialStore;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::security::permission::PermissionStore;
@@ -46,10 +45,13 @@ pub struct PlanSecurityContext<'a> {
 /// This type is `Send + Sync` — lives on the Control Plane (Tokio).
 pub struct QueryContext {
     session: SessionContext,
-    converter: PlanConverter,
     /// User UDF definitions for inlining + permission extraction.
     /// Empty if no user functions exist for the tenant.
     inliner: InlineUserFunctions,
+    /// nodedb-sql catalog adapter for planning.
+    sql_catalog: Option<super::catalog_adapter::OriginCatalog>,
+    /// Tenant ID for nodedb-sql planning.
+    tenant_id: u32,
 }
 
 impl QueryContext {
@@ -67,8 +69,9 @@ impl QueryContext {
 
         Self {
             session,
-            converter: PlanConverter::new(),
             inliner: InlineUserFunctions::new(),
+            sql_catalog: None,
+            tenant_id: 0,
         }
     }
 
@@ -144,14 +147,17 @@ impl QueryContext {
             .expect("register schema");
         session.register_catalog("nodedb", Arc::new(catalog));
 
+        let sql_catalog = super::catalog_adapter::OriginCatalog::new(
+            Arc::clone(&credentials),
+            tenant_id,
+            retention_policy_registry.clone(),
+        );
+
         Self {
             session,
-            converter: if let Some(rpr) = retention_policy_registry {
-                PlanConverter::with_full_context(Arc::clone(&credentials), rpr)
-            } else {
-                PlanConverter::with_credentials(credentials)
-            },
             inliner,
+            sql_catalog: Some(sql_catalog),
+            tenant_id,
         }
     }
 
@@ -186,20 +192,33 @@ impl QueryContext {
 
     /// Parse SQL and convert to NodeDB physical plan(s).
     ///
-    /// Returns one or more `PhysicalTask` for dispatch to the Data Plane.
+    /// Uses nodedb-sql for parsing and planning, then converts to PhysicalTasks.
     pub async fn plan_sql(
         &self,
         sql: &str,
         tenant_id: crate::types::TenantId,
     ) -> crate::Result<Vec<super::physical::PhysicalTask>> {
-        // Schemaless UPDATE/DELETE bypass DataFusion column validation.
-        if let Some(result) =
-            super::schemaless_dml::try_plan_schemaless_dml(sql, tenant_id, &self.converter, false)
-        {
-            return result;
-        }
-        let logical = self.sql_to_logical(sql).await?;
-        self.converter.convert(&logical, tenant_id)
+        self.plan_with_nodedb_sql(sql, tenant_id)
+    }
+
+    /// Core planning via nodedb-sql: parse → plan → optimize → convert.
+    fn plan_with_nodedb_sql(
+        &self,
+        sql: &str,
+        tenant_id: crate::types::TenantId,
+    ) -> crate::Result<Vec<super::physical::PhysicalTask>> {
+        let catalog: &dyn nodedb_sql::SqlCatalog = match &self.sql_catalog {
+            Some(c) => c,
+            None => {
+                return Err(crate::Error::PlanError {
+                    detail: "no catalog available for SQL planning".into(),
+                });
+            }
+        };
+        let plans = nodedb_sql::plan_sql(sql, catalog).map_err(|e| crate::Error::PlanError {
+            detail: format!("{e}"),
+        })?;
+        super::sql_plan_convert::convert(&plans, tenant_id)
     }
 
     /// Parse SQL, check EXECUTE permissions, convert to physical plan, inject RLS.
@@ -231,67 +250,15 @@ impl QueryContext {
         sql: &str,
         tenant_id: crate::types::TenantId,
         sec: &PlanSecurityContext<'_>,
-        returning: bool,
+        _returning: bool,
     ) -> crate::Result<Vec<super::physical::PhysicalTask>> {
-        // Schemaless UPDATE/DELETE bypass DataFusion column validation (which
-        // rejects custom field names against the static `(id, document)` schema).
-        if let Some(result) = super::schemaless_dml::try_plan_schemaless_dml(
-            sql,
-            tenant_id,
-            &self.converter,
-            returning,
-        ) {
-            return result;
-        }
+        // Step 1-2: Parse + plan via nodedb-sql.
+        let mut tasks = self.plan_with_nodedb_sql(sql, tenant_id)?;
 
-        // Step 1: Parse + analyze (UDFs still as ScalarFunction nodes, not inlined).
-        let df = self
-            .session
-            .sql(sql)
-            .await
-            .map_err(|e| crate::Error::PlanError {
-                detail: format!("SQL parse: {e}"),
-            })?;
-        let (state, plan) = df.into_parts();
-
-        // Step 2-3: Check EXECUTE permissions on referenced user UDFs.
-        let udf_refs = self.inliner.extract_udf_references(&plan);
-        for func_name in &udf_refs {
-            if !sec
-                .permissions
-                .check_function(sec.identity, func_name, sec.roles)
-            {
-                return Err(crate::Error::RejectedAuthz {
-                    tenant_id: sec.identity.tenant_id,
-                    resource: format!("EXECUTE on function '{func_name}'"),
-                });
-            }
-        }
-
-        // Step 4: Inline UDFs (SECURITY INVOKER — body runs in caller's context).
-        let inlined = self
-            .inliner
-            .inline(plan)
-            .map_err(|e| crate::Error::PlanError {
-                detail: format!("UDF inlining: {e}"),
-            })?;
-
-        // Step 5: Optimize.
-        let optimized = state
-            .optimize(&inlined)
-            .map_err(|e| crate::Error::PlanError {
-                detail: format!("optimization: {e}"),
-            })?;
-
-        // Step 6: Convert to physical plan.
-        let mut tasks = self
-            .converter
-            .convert_returning(&optimized, tenant_id, returning)?;
-
-        // Step 7: Inject RLS (applies to inlined body expressions too).
+        // Step 3: Inject RLS predicates.
         super::rls_injection::inject_rls(&mut tasks, sec.rls_store, sec.auth)?;
 
-        // Step 8: Inject permission tree filters (hierarchical ACL).
+        // Step 4: Inject permission tree filters (hierarchical ACL).
         if let Some(cache) = sec.permission_cache {
             super::rls_injection::inject_permission_tree(&mut tasks, cache, sec.auth)?;
         }

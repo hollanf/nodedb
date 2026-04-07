@@ -93,6 +93,13 @@ impl NodeDbPgHandler {
             )
             .await?;
 
+            tracing::warn!(
+                broadcast_bytes = broadcast_data.len(),
+                right = %right_collection,
+                left = %left_collection,
+                "two-phase join: phase 1 complete"
+            );
+
             // Phase 2: dispatch BroadcastJoin to all cores (each core has a
             // shard of the left collection; the right side is fully embedded).
             let on_keys: Vec<(String, String)> =

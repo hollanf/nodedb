@@ -281,6 +281,13 @@ impl CoreLoop {
         let small_docs_raw: Vec<(String, Vec<u8>)> =
             super::super::super::response_codec::decode_raw_scan_to_docs(broadcast_data);
 
+        tracing::warn!(
+            core = self.core_id,
+            small_count = small_docs_raw.len(),
+            broadcast_len = broadcast_data.len(),
+            "broadcast join: decoded small side"
+        );
+
         let scan_limit = (limit * 10).min(50000);
         let large_docs = match self.scan_collection(tid, large_collection, scan_limit) {
             Ok(d) => d,

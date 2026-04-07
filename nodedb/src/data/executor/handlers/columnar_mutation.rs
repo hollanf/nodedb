@@ -6,6 +6,7 @@
 use tracing::{debug, warn};
 
 use crate::bridge::envelope::{ErrorCode, Response};
+use crate::bridge::scan_filter::{FilterOp, ScanFilter};
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
 
@@ -18,7 +19,7 @@ impl CoreLoop {
         &mut self,
         task: &ExecutionTask,
         collection: &str,
-        _filter_bytes: &[u8],
+        filter_bytes: &[u8],
         updates: &[(String, Vec<u8>)],
     ) -> Response {
         debug!(core = self.core_id, %collection, "columnar update");
@@ -56,12 +57,24 @@ impl CoreLoop {
             );
         }
 
+        let filter_predicates: Vec<ScanFilter> = if !filter_bytes.is_empty() {
+            zerompk::from_msgpack(filter_bytes).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         // Scan memtable rows to find matches and apply updates.
         // Collect rows to update (can't mutate while iterating).
         let rows: Vec<Vec<nodedb_types::value::Value>> = engine.scan_memtable_rows().collect();
 
         let mut affected = 0u64;
         for row in &rows {
+            // Skip rows that don't match WHERE filters.
+            if !filter_predicates.is_empty()
+                && !row_matches_filters(row, &schema, &filter_predicates)
+            {
+                continue;
+            }
             // Apply field updates to the row.
             let mut new_row = row.clone();
             for (field_name, value_bytes) in updates {
@@ -114,7 +127,7 @@ impl CoreLoop {
         &mut self,
         task: &ExecutionTask,
         collection: &str,
-        _filter_bytes: &[u8],
+        filter_bytes: &[u8],
     ) -> Response {
         debug!(core = self.core_id, %collection, "columnar delete");
 
@@ -149,9 +162,21 @@ impl CoreLoop {
             );
         }
 
-        // Collect all PK values to delete (can't mutate while iterating).
-        let pk_values: Vec<nodedb_types::value::Value> = engine
-            .scan_memtable_rows()
+        let filter_predicates: Vec<ScanFilter> = if !filter_bytes.is_empty() {
+            zerompk::from_msgpack(filter_bytes).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        // Collect only the PK values of rows that match the WHERE filter
+        // (can't mutate while iterating).
+        let rows: Vec<Vec<nodedb_types::value::Value>> = engine.scan_memtable_rows().collect();
+        let pk_values: Vec<nodedb_types::value::Value> = rows
+            .iter()
+            .filter(|row| {
+                filter_predicates.is_empty()
+                    || row_matches_filters(row, &schema, &filter_predicates)
+            })
             .map(|row| row[pk_cols[0]].clone())
             .collect();
 
@@ -176,6 +201,87 @@ impl CoreLoop {
                 },
             ),
         }
+    }
+}
+
+/// Check whether a memtable row satisfies all filter predicates (AND semantics).
+fn row_matches_filters(
+    row: &[nodedb_types::value::Value],
+    schema: &nodedb_types::columnar::ColumnarSchema,
+    filters: &[ScanFilter],
+) -> bool {
+    for filter in filters {
+        if filter.op == FilterOp::MatchAll {
+            continue;
+        }
+        let col_idx = match schema.columns.iter().position(|c| c.name == filter.field) {
+            Some(i) => i,
+            None => continue, // unknown field — skip predicate
+        };
+        if col_idx >= row.len() {
+            return false;
+        }
+        if !eval_filter(&row[col_idx], filter.op, &filter.value) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Evaluate a single filter predicate against a row value.
+fn eval_filter(
+    val: &nodedb_types::value::Value,
+    op: FilterOp,
+    filter_val: &nodedb_types::value::Value,
+) -> bool {
+    use nodedb_types::value::Value;
+
+    let val_f64 = match val {
+        Value::Float(f) => Some(*f),
+        Value::Integer(i) => Some(*i as f64),
+        _ => None,
+    };
+    let filter_f64 = match filter_val {
+        Value::Float(f) => Some(*f),
+        Value::Integer(i) => Some(*i as f64),
+        _ => None,
+    };
+
+    let val_str = match val {
+        Value::String(s) => Some(s.as_str()),
+        _ => None,
+    };
+    let filter_str = match filter_val {
+        Value::String(s) => Some(s.as_str()),
+        _ => None,
+    };
+
+    match op {
+        FilterOp::Eq => {
+            if let (Some(a), Some(b)) = (val_f64, filter_f64) {
+                a == b
+            } else if let (Some(a), Some(b)) = (val_str, filter_str) {
+                a == b
+            } else {
+                false
+            }
+        }
+        FilterOp::Ne => {
+            if let (Some(a), Some(b)) = (val_f64, filter_f64) {
+                a != b
+            } else if let (Some(a), Some(b)) = (val_str, filter_str) {
+                a != b
+            } else {
+                true
+            }
+        }
+        FilterOp::Gt => val_f64.zip(filter_f64).is_some_and(|(a, b)| a > b),
+        FilterOp::Gte => val_f64.zip(filter_f64).is_some_and(|(a, b)| a >= b),
+        FilterOp::Lt => val_f64.zip(filter_f64).is_some_and(|(a, b)| a < b),
+        FilterOp::Lte => val_f64.zip(filter_f64).is_some_and(|(a, b)| a <= b),
+        FilterOp::IsNull => matches!(val, Value::Null),
+        FilterOp::IsNotNull => !matches!(val, Value::Null),
+        _ => true, // unknown/unsupported op — pass through
     }
 }
 

@@ -108,15 +108,34 @@ impl CoreLoop {
             }
         });
 
-        // When filters are present, push predicate evaluation into the
-        // storage scan. Non-matching documents are never allocated —
-        // only decoded for predicate evaluation, then dropped. This
-        // avoids O(N) allocation for large collections with selective filters.
+        // Scan strategy:
+        // 1. Try sparse engine first (with optimized push-down filters when present).
+        // 2. If sparse returns empty, fall back to scan_collection which routes
+        //    to the correct engine (KV → columnar → sparse). This makes
+        //    DocumentOp::Scan the universal scan for ALL collection types.
         //
         // Strict (Binary Tuple) collections need JSON-level filter evaluation
         // because `matches_binary` operates on MessagePack, not Binary Tuples.
         let scan_result = if filter_predicates.is_empty() {
-            self.sparse.scan_documents(tid, collection, fetch_limit)
+            let sparse_result = self.sparse.scan_documents(tid, collection, fetch_limit);
+            match &sparse_result {
+                Ok(docs) if docs.is_empty() => {
+                    // Sparse empty — try KV / columnar engines.
+                    let fallback = self.scan_collection(tid, collection, fetch_limit);
+                    if let Ok(ref docs) = fallback {
+                        if !docs.is_empty() {
+                            warn!(
+                                core = self.core_id,
+                                %collection,
+                                count = docs.len(),
+                                "document scan fallback to scan_collection"
+                            );
+                        }
+                    }
+                    fallback
+                }
+                _ => sparse_result,
+            }
         } else if let Some(ref schema) = strict_schema {
             // Strict: Binary Tuple → Value → MessagePack → matches_binary.
             self.sparse
@@ -130,10 +149,26 @@ impl CoreLoop {
                     }
                 })
         } else {
-            self.sparse
-                .scan_documents_filtered(tid, collection, fetch_limit, &|value: &[u8]| {
-                    filter_predicates.iter().all(|f| f.matches_binary(value))
-                })
+            let sparse_result = self.sparse.scan_documents_filtered(
+                tid,
+                collection,
+                fetch_limit,
+                &|value: &[u8]| filter_predicates.iter().all(|f| f.matches_binary(value)),
+            );
+            match &sparse_result {
+                Ok(docs) if docs.is_empty() => {
+                    // Sparse empty — try KV / columnar, apply filters post-scan.
+                    self.scan_collection(tid, collection, fetch_limit)
+                        .map(|docs| {
+                            docs.into_iter()
+                                .filter(|(_, data)| {
+                                    filter_predicates.iter().all(|f| f.matches_binary(data))
+                                })
+                                .collect()
+                        })
+                }
+                _ => sparse_result,
+            }
         };
 
         match scan_result {
