@@ -25,8 +25,34 @@ pub fn plan_query(
     {
         return super::cte::plan_recursive_cte(query, catalog, functions);
     }
-    // Non-recursive CTEs: plan as subquery (inline expansion).
-    // For now, fall through to main SELECT — CTE references resolve via catalog.
+    // Non-recursive CTEs: wrap catalog so CTE names resolve as virtual collections.
+    if let Some(with) = &query.with
+        && !with.cte_tables.is_empty()
+    {
+        let inner_query = Query {
+            with: None,
+            body: query.body.clone(),
+            order_by: query.order_by.clone(),
+            limit_clause: query.limit_clause.clone(),
+            fetch: query.fetch.clone(),
+            locks: query.locks.clone(),
+            for_clause: query.for_clause.clone(),
+            settings: query.settings.clone(),
+            format_clause: query.format_clause.clone(),
+            pipe_operators: query.pipe_operators.clone(),
+        };
+
+        // Build CTE-aware catalog: each CTE becomes a schemaless document collection.
+        let cte_catalog = CteCatalog {
+            inner: catalog,
+            cte_names: with
+                .cte_tables
+                .iter()
+                .map(|cte| normalize_ident(&cte.alias.name))
+                .collect(),
+        };
+        return plan_query(&inner_query, &cte_catalog, functions);
+    }
 
     // Handle UNION.
     match &*query.body {
@@ -778,4 +804,26 @@ fn try_plan_join(
         return Ok(None);
     }
     super::join::plan_join_from_select(select, scope, catalog, functions)
+}
+
+/// Catalog wrapper that resolves CTE names as schemaless document collections.
+struct CteCatalog<'a> {
+    inner: &'a dyn SqlCatalog,
+    cte_names: Vec<String>,
+}
+
+impl SqlCatalog for CteCatalog<'_> {
+    fn get_collection(&self, name: &str) -> Option<CollectionInfo> {
+        // Check CTE names first.
+        if self.cte_names.iter().any(|n| n == name) {
+            return Some(CollectionInfo {
+                name: name.into(),
+                engine: EngineType::DocumentSchemaless,
+                columns: Vec::new(),
+                primary_key: Some("id".into()),
+                has_auto_tier: false,
+            });
+        }
+        self.inner.get_collection(name)
+    }
 }

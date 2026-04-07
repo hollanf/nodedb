@@ -110,6 +110,43 @@ pub fn convert_expr(expr: &Expr) -> Result<SqlExpr> {
             Ok(SqlExpr::ArrayLiteral(elems))
         }
         Expr::Wildcard(_) => Ok(SqlExpr::Wildcard),
+        // TRIM([BOTH|LEADING|TRAILING] [what FROM] expr)
+        Expr::Trim { expr, .. } => Ok(SqlExpr::Function {
+            name: "trim".into(),
+            args: vec![convert_expr(expr)?],
+            distinct: false,
+        }),
+        // CEIL(expr) / FLOOR(expr)
+        Expr::Ceil { expr, .. } => Ok(SqlExpr::Function {
+            name: "ceil".into(),
+            args: vec![convert_expr(expr)?],
+            distinct: false,
+        }),
+        Expr::Floor { expr, .. } => Ok(SqlExpr::Function {
+            name: "floor".into(),
+            args: vec![convert_expr(expr)?],
+            distinct: false,
+        }),
+        // SUBSTRING(expr FROM start FOR len)
+        Expr::Substring {
+            expr,
+            substring_from,
+            substring_for,
+            ..
+        } => {
+            let mut args = vec![convert_expr(expr)?];
+            if let Some(from) = substring_from {
+                args.push(convert_expr(from)?);
+            }
+            if let Some(len) = substring_for {
+                args.push(convert_expr(len)?);
+            }
+            Ok(SqlExpr::Function {
+                name: "substring".into(),
+                args,
+                distinct: false,
+            })
+        }
         _ => Err(SqlError::Unsupported {
             detail: format!("expression: {expr}"),
         }),

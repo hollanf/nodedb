@@ -157,6 +157,16 @@ pub enum SqlPlan {
         inputs: Vec<SqlPlan>,
         distinct: bool,
     },
+    Intersect {
+        left: Box<SqlPlan>,
+        right: Box<SqlPlan>,
+        all: bool,
+    },
+    Except {
+        left: Box<SqlPlan>,
+        right: Box<SqlPlan>,
+        all: bool,
+    },
     RecursiveScan {
         collection: String,
         base_filters: Vec<Filter>,

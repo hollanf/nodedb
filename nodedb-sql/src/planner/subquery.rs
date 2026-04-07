@@ -119,6 +119,17 @@ fn extract_recursive(
             }
         }
 
+        // EXISTS (SELECT ...): rewrite as semi-join.
+        // NOT EXISTS (SELECT ...): rewrite as anti-join.
+        Expr::Exists { subquery, negated } => {
+            if let Some(join) = try_plan_exists_subquery(subquery, *negated, catalog, functions)? {
+                joins.push(join);
+                Ok(None)
+            } else {
+                Ok(Some(expr.clone()))
+            }
+        }
+
         // Nested parentheses.
         Expr::Nested(inner) => extract_recursive(inner, joins, catalog, functions),
 
@@ -194,6 +205,89 @@ fn extract_single_projected_column(query: &ast::Query) -> Result<String> {
         _ => Err(SqlError::Unsupported {
             detail: "subquery projection must be a column reference".into(),
         }),
+    }
+}
+
+/// Plan `EXISTS (SELECT 1 FROM tbl WHERE tbl.col = outer.col)` as a semi/anti join.
+///
+/// Extracts the correlated column from the subquery's WHERE clause.
+fn try_plan_exists_subquery(
+    subquery: &ast::Query,
+    negated: bool,
+    catalog: &dyn SqlCatalog,
+    functions: &FunctionRegistry,
+) -> Result<Option<SubqueryJoin>> {
+    let select = match &*subquery.body {
+        SetExpr::Select(s) => s,
+        _ => return Ok(None),
+    };
+
+    // Look for a correlated predicate in the WHERE: inner.col = outer.col
+    let (outer_col, inner_col) = match &select.selection {
+        Some(expr) => match extract_correlated_eq(expr) {
+            Some(pair) => pair,
+            None => return Ok(None),
+        },
+        None => return Ok(None),
+    };
+
+    // Build a simplified subquery without the correlated predicate for planning.
+    let inner_plan = super::select::plan_query(subquery, catalog, functions)?;
+
+    Ok(Some(SubqueryJoin {
+        outer_column: outer_col,
+        inner_plan,
+        inner_column: inner_col,
+        join_type: if negated {
+            JoinType::Anti
+        } else {
+            JoinType::Semi
+        },
+    }))
+}
+
+/// Extract a correlated equality predicate from a WHERE clause.
+///
+/// Looks for patterns like `o.user_id = u.id` and returns (outer_col, inner_col).
+/// The "inner" column is the one qualified with the subquery's table alias;
+/// the "outer" column is the one referencing the outer query's table.
+fn extract_correlated_eq(expr: &Expr) -> Option<(String, String)> {
+    match expr {
+        Expr::BinaryOp {
+            left,
+            op: ast::BinaryOperator::Eq,
+            right,
+        } => {
+            let left_parts = extract_qualified_column(left);
+            let right_parts = extract_qualified_column(right);
+            match (left_parts, right_parts) {
+                (Some((_lt, lc)), Some((_rt, rc))) => {
+                    // Convention: left is inner (subquery table), right is outer.
+                    // But we can't distinguish without schema, so just return both.
+                    Some((rc, lc))
+                }
+                _ => None,
+            }
+        }
+        // For AND, try to find a correlated eq in either side.
+        Expr::BinaryOp {
+            left,
+            op: ast::BinaryOperator::And,
+            right,
+        } => extract_correlated_eq(left).or_else(|| extract_correlated_eq(right)),
+        Expr::Nested(inner) => extract_correlated_eq(inner),
+        _ => None,
+    }
+}
+
+/// Extract table.column from a qualified identifier.
+fn extract_qualified_column(expr: &Expr) -> Option<(String, String)> {
+    match expr {
+        Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
+            Some((normalize_ident(&parts[0]), normalize_ident(&parts[1])))
+        }
+        Expr::Identifier(ident) => Some((String::new(), normalize_ident(ident))),
+        _ => None,
     }
 }
 

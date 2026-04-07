@@ -26,6 +26,22 @@ pub fn plan_set_operation(
                 distinct,
             })
         }
+        SetOperator::Intersect => {
+            let all = matches!(quantifier, SetQuantifier::All);
+            Ok(SqlPlan::Intersect {
+                left: Box::new(left_plan),
+                right: Box::new(right_plan),
+                all,
+            })
+        }
+        SetOperator::Except => {
+            let all = matches!(quantifier, SetQuantifier::All);
+            Ok(SqlPlan::Except {
+                left: Box::new(left_plan),
+                right: Box::new(right_plan),
+                all,
+            })
+        }
         _ => Err(SqlError::Unsupported {
             detail: format!("set operation: {op}"),
         }),
