@@ -192,6 +192,12 @@ impl QueryContext {
         sql: &str,
         tenant_id: crate::types::TenantId,
     ) -> crate::Result<Vec<super::physical::PhysicalTask>> {
+        // Schemaless UPDATE/DELETE bypass DataFusion column validation.
+        if let Some(result) =
+            super::schemaless_dml::try_plan_schemaless_dml(sql, tenant_id, &self.converter, false)
+        {
+            return result;
+        }
         let logical = self.sql_to_logical(sql).await?;
         self.converter.convert(&logical, tenant_id)
     }
@@ -227,6 +233,17 @@ impl QueryContext {
         sec: &PlanSecurityContext<'_>,
         returning: bool,
     ) -> crate::Result<Vec<super::physical::PhysicalTask>> {
+        // Schemaless UPDATE/DELETE bypass DataFusion column validation (which
+        // rejects custom field names against the static `(id, document)` schema).
+        if let Some(result) = super::schemaless_dml::try_plan_schemaless_dml(
+            sql,
+            tenant_id,
+            &self.converter,
+            returning,
+        ) {
+            return result;
+        }
+
         // Step 1: Parse + analyze (UDFs still as ScalarFunction nodes, not inlined).
         let df = self
             .session

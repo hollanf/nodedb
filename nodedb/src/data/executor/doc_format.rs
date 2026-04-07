@@ -55,18 +55,30 @@ pub(super) fn encode_to_msgpack(value: &serde_json::Value) -> Vec<u8> {
 /// Convert JSON bytes to MessagePack bytes for storage.
 ///
 /// If the input is already MessagePack, returns it unchanged.
-/// If the input is JSON, deserializes and re-encodes as MessagePack.
-/// If deserialization fails, returns the original bytes unchanged
-/// (the storage engine is format-agnostic).
+/// Ensure bytes are in standard MessagePack map format.
+///
+/// Handles three input formats:
+/// - Standard msgpack map (0x80–0x8F / 0xDE / 0xDF): returned as-is.
+/// - zerompk `nodedb_types::Value` tagged format: transcoded to standard msgpack map.
+/// - JSON bytes: parsed and re-encoded as standard msgpack map.
+/// - Unknown: stored as-is (storage engine is format-agnostic).
 pub(super) fn json_to_msgpack(bytes: &[u8]) -> Vec<u8> {
     if bytes.is_empty() {
         return bytes.to_vec();
     }
 
-    // Already MessagePack? Return as-is.
+    // Already a standard MessagePack map? Return as-is.
     let first = bytes[0];
     if (0x80..=0x8F).contains(&first) || first == 0xDE || first == 0xDF {
         return bytes.to_vec();
+    }
+
+    // Try decoding as nodedb_types::Value (zerompk tagged format) and transcode.
+    if let Ok(val) = nodedb_types::value_from_msgpack(bytes) {
+        let json: serde_json::Value = val.into();
+        if let Ok(mp) = nodedb_types::json_to_msgpack(&json) {
+            return mp;
+        }
     }
 
     // Try parsing as JSON and converting to MessagePack.

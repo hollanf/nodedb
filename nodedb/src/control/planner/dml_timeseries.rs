@@ -1,7 +1,5 @@
 //! DML plan conversion for timeseries collections.
 
-use sonic_rs;
-
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::TimeseriesOp;
 use crate::control::planner::physical::PhysicalTask;
@@ -38,61 +36,57 @@ impl PlanConverter {
                 }
 
                 // Convert SQL row values to ILP lines for the timeseries ingest handler.
-                // `value_bytes` from extract_insert_values are JSON bytes.
                 let mut ilp_batch = String::new();
                 for (_doc_id, value_bytes) in &values {
-                    let row: serde_json::Value =
-                        sonic_rs::from_slice(value_bytes).unwrap_or_default();
-                    if let serde_json::Value::Object(map) = row {
-                        // Extract timestamp (look for common timestamp field names).
-                        let ts_ns = map
-                            .get("ts")
-                            .or_else(|| map.get("timestamp"))
-                            .or_else(|| map.get("time"))
-                            .or_else(|| map.get("created_at"))
-                            .and_then(|v| v.as_i64())
-                            .map(|ms| ms * 1_000_000) // ms → ns
-                            .unwrap_or_else(|| {
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_nanos() as i64)
-                                    .unwrap_or(0)
-                            });
+                    let nodedb_types::Value::Object(map) =
+                        nodedb_types::value_from_msgpack(value_bytes)
+                            .unwrap_or(nodedb_types::Value::Null)
+                    else {
+                        continue;
+                    };
 
-                        // Build ILP fields from remaining columns.
-                        let mut fields = Vec::new();
-                        for (k, v) in &map {
-                            if k == "ts"
-                                || k == "timestamp"
-                                || k == "time"
-                                || k == "created_at"
-                                || k == "id"
-                                || k == "document_id"
-                            {
-                                continue;
-                            }
-                            match v {
-                                serde_json::Value::Number(n) => {
-                                    fields.push(format!("{k}={n}"));
-                                }
-                                serde_json::Value::String(s) => {
-                                    fields.push(format!("{k}=\"{s}\""));
-                                }
-                                serde_json::Value::Bool(b) => {
-                                    fields.push(format!("{k}={b}"));
-                                }
-                                _ => {}
-                            }
-                        }
+                    // Extract timestamp (look for common timestamp field names).
+                    let ts_ns = ["ts", "timestamp", "time", "created_at"]
+                        .iter()
+                        .find_map(|k| map.get(*k))
+                        .and_then(|v| match v {
+                            nodedb_types::Value::Integer(n) => Some(*n),
+                            nodedb_types::Value::Float(f) => Some(*f as i64),
+                            _ => None,
+                        })
+                        .map(|ms| ms * 1_000_000) // ms → ns
+                        .unwrap_or_else(|| {
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_nanos() as i64)
+                                .unwrap_or(0)
+                        });
 
-                        if !fields.is_empty() {
-                            ilp_batch.push_str(collection);
-                            ilp_batch.push(' ');
-                            ilp_batch.push_str(&fields.join(","));
-                            ilp_batch.push(' ');
-                            ilp_batch.push_str(&ts_ns.to_string());
-                            ilp_batch.push('\n');
+                    // Build ILP fields from remaining columns.
+                    let mut fields = Vec::new();
+                    for (k, v) in &map {
+                        if matches!(
+                            k.as_str(),
+                            "ts" | "timestamp" | "time" | "created_at" | "id" | "document_id"
+                        ) {
+                            continue;
                         }
+                        match v {
+                            nodedb_types::Value::Integer(n) => fields.push(format!("{k}={n}")),
+                            nodedb_types::Value::Float(f) => fields.push(format!("{k}={f}")),
+                            nodedb_types::Value::String(s) => fields.push(format!("{k}=\"{s}\"")),
+                            nodedb_types::Value::Bool(b) => fields.push(format!("{k}={b}")),
+                            _ => {}
+                        }
+                    }
+
+                    if !fields.is_empty() {
+                        ilp_batch.push_str(collection);
+                        ilp_batch.push(' ');
+                        ilp_batch.push_str(&fields.join(","));
+                        ilp_batch.push(' ');
+                        ilp_batch.push_str(&ts_ns.to_string());
+                        ilp_batch.push('\n');
                     }
                 }
 

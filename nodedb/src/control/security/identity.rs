@@ -248,7 +248,9 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
 
         PhysicalPlan::Meta(MetaOp::WalAppend { .. }) => Permission::Write,
 
-        PhysicalPlan::Columnar(ColumnarOp::Insert { .. }) => Permission::Write,
+        PhysicalPlan::Columnar(
+            ColumnarOp::Insert { .. } | ColumnarOp::Update { .. } | ColumnarOp::Delete { .. },
+        ) => Permission::Write,
 
         PhysicalPlan::Timeseries(TimeseriesOp::Ingest { .. }) => Permission::Write,
 

@@ -149,6 +149,12 @@ pub struct CoreLoop {
     pub(in crate::data::executor) columnar_memtables:
         HashMap<String, crate::engine::timeseries::columnar_memtable::ColumnarMemtable>,
 
+    /// Per-collection columnar mutation engines for plain/spatial profiles.
+    /// Uses `nodedb-columnar`'s `MutationEngine` with full INSERT/UPDATE/DELETE.
+    /// Keyed by "{tid}:{collection}".
+    pub(in crate::data::executor) columnar_engines:
+        HashMap<String, nodedb_columnar::MutationEngine>,
+
     /// Per-collection max WAL LSN that has been ingested into the memtable.
     /// Used by the WAL catch-up deduplication: if a catch-up record's LSN
     /// is <= this value, the Data Plane skips it (already ingested).
@@ -276,6 +282,7 @@ impl CoreLoop {
                 nodedb_types::config::tuning::QueryTuning::default().doc_cache_entries,
             ),
             columnar_memtables: HashMap::new(),
+            columnar_engines: HashMap::new(),
             ts_max_ingested_lsn: HashMap::new(),
             last_ts_ingest: None,
             ts_last_value_caches: HashMap::new(),

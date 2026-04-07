@@ -51,7 +51,8 @@ impl PlanConverter {
                 })
             }
             WriteOp::Delete => {
-                let doc_ids = extract_point_targets(&dml.input, collection).unwrap_or_default();
+                let pk_col = self.kv_pk_column(tenant_id, collection);
+                let doc_ids = extract_point_targets(&dml.input, &pk_col).unwrap_or_default();
                 if !doc_ids.is_empty() {
                     let keys: Vec<Vec<u8>> =
                         doc_ids.into_iter().map(|id| id.into_bytes()).collect();
@@ -78,8 +79,8 @@ impl PlanConverter {
                     });
                 }
 
-                // Point UPDATE: WHERE key = 'x' (or WHERE id = 'x').
-                let key_ids = extract_point_targets(&dml.input, collection).unwrap_or_default();
+                let pk_col = self.kv_pk_column(tenant_id, collection);
+                let key_ids = extract_point_targets(&dml.input, &pk_col).unwrap_or_default();
                 if key_ids.is_empty() {
                     return Err(crate::Error::PlanError {
                         detail: "KV UPDATE requires WHERE with primary key \

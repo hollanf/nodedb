@@ -64,84 +64,117 @@ pub fn create_collection(
         .unwrap_or_default()
         .as_secs();
 
-    // Detect storage mode: WITH storage = 'strict' | 'columnar' | 'kv'.
+    // Standard DDL syntax:
+    //   CREATE COLLECTION name                                     → schemaless document
+    //   CREATE COLLECTION name TYPE DOCUMENT STRICT (schema)      → strict document
+    //   CREATE COLLECTION name TYPE KEY_VALUE (schema)            → key-value
+    //   CREATE COLLECTION name TYPE COLUMNAR (schema)             → columnar plain
+    //   CREATE COLLECTION name TYPE COLUMNAR (schema)
+    //     WITH profile = 'timeseries'                             → timeseries
+    //   CREATE COLLECTION name TYPE COLUMNAR (schema)
+    //     WITH profile = 'spatial'                                → spatial
+    //
     let upper = sql_upper_from_parts(parts);
 
-    // For columnar collections the typed schema (e.g. `(ts TIMESTAMP TIME_KEY, cpu FLOAT)`)
-    // is parsed to extract profile hints. We also capture its columns so they can be stored
-    // in `fields` for DataFusion schema registration — `ColumnarProfile` only keeps the
-    // profile-specific keys (time_key, geometry_column), not the full column list.
+    // Columnar schema columns are captured separately because `ColumnarProfile` only stores
+    // the profile-specific key (time_key / geometry_column), not the full column list.
+    // DataFusion needs all column names+types to build the Arrow schema for planning.
     let mut columnar_schema_columns: Vec<(String, String)> = Vec::new();
 
-    let collection_type = if upper.contains("STORAGE") && upper.contains("STRICT") {
-        let schema = parse_typed_schema(sql).map_err(|e| sqlstate_error("42601", &e))?;
-        nodedb_types::CollectionType::strict(schema)
-    } else if upper.contains("STORAGE")
-        && (upper.contains("COLUMNAR") || upper.contains("TIMESERIES") || upper.contains("SPATIAL"))
-    {
-        // Infer columnar profile from column modifiers or explicit profile keyword.
-        // Priority: column modifiers (TIME_KEY, SPATIAL_INDEX) > WITH profile = '...'
+    /// Parse columnar schema, capture column list, and resolve the profile.
+    ///
+    /// Profile resolution order:
+    ///   1. `WITH profile = 'timeseries'` / `WITH profile = 'spatial'`
+    ///   2. Column modifiers: `TIME_KEY`, `SPATIAL_INDEX`
+    ///   3. Default: plain columnar
+    fn resolve_columnar(
+        sql: &str,
+        _upper: &str,
+        columnar_schema_columns: &mut Vec<(String, String)>,
+    ) -> nodedb_types::CollectionType {
         let schema = parse_typed_schema(sql).ok();
         let partition_by =
             extract_with_value(sql, "partition_by").unwrap_or_else(|| "1h".to_string());
 
-        // Capture column names/types for fields storage before consuming schema.
         if let Some(ref s) = schema {
-            columnar_schema_columns = s
+            *columnar_schema_columns = s
                 .columns
                 .iter()
                 .map(|c| (c.name.clone(), c.column_type.to_string()))
                 .collect();
         }
 
-        // Check column modifiers first.
-        let time_key_col = schema.as_ref().and_then(|s| {
-            s.columns
-                .iter()
-                .find(|c| c.is_time_key())
-                .map(|c| c.name.clone())
-        });
-        let spatial_col = schema.as_ref().and_then(|s| {
-            s.columns
-                .iter()
-                .find(|c| c.is_spatial_index())
-                .map(|c| c.name.clone())
-        });
+        // Explicit profile= wins over column modifiers.
+        let profile_val = extract_with_value(sql, "profile")
+            .map(|v| v.to_uppercase())
+            .unwrap_or_default();
 
-        if let Some(time_key) = time_key_col {
-            nodedb_types::CollectionType::timeseries(time_key, partition_by)
-        } else if let Some(geom_col) = spatial_col {
-            nodedb_types::CollectionType::spatial(geom_col)
-        } else if upper.contains("PROFILE") && upper.contains("TIMESERIES") {
-            // Fallback: explicit profile keyword. Find first TIMESTAMP column.
+        if profile_val == "TIMESERIES" {
             let time_key = schema
                 .as_ref()
                 .and_then(|s| {
                     s.columns
                         .iter()
-                        .find(|c| c.column_type == nodedb_types::columnar::ColumnType::Timestamp)
+                        .find(|c| {
+                            c.is_time_key()
+                                || c.column_type == nodedb_types::columnar::ColumnType::Timestamp
+                        })
                         .map(|c| c.name.clone())
                 })
                 .unwrap_or_else(|| "timestamp".to_string());
-            nodedb_types::CollectionType::timeseries(time_key, partition_by)
-        } else if upper.contains("PROFILE") && upper.contains("SPATIAL") {
-            // Fallback: explicit profile keyword. Find first GEOMETRY column.
+            return nodedb_types::CollectionType::timeseries(time_key, partition_by);
+        }
+
+        if profile_val == "SPATIAL" {
             let geom_col = schema
                 .as_ref()
                 .and_then(|s| {
                     s.columns
                         .iter()
-                        .find(|c| c.column_type == nodedb_types::columnar::ColumnType::Geometry)
+                        .find(|c| {
+                            c.is_spatial_index()
+                                || c.column_type == nodedb_types::columnar::ColumnType::Geometry
+                        })
                         .map(|c| c.name.clone())
                 })
                 .unwrap_or_else(|| "geom".to_string());
-            nodedb_types::CollectionType::spatial(geom_col)
-        } else {
-            nodedb_types::CollectionType::columnar()
+            return nodedb_types::CollectionType::spatial(geom_col);
         }
-    } else if super::super::kv::is_kv_storage_mode(&upper) {
+
+        // Fall back to column modifiers.
+        if let Some(time_key) = schema.as_ref().and_then(|s| {
+            s.columns
+                .iter()
+                .find(|c| c.is_time_key())
+                .map(|c| c.name.clone())
+        }) {
+            return nodedb_types::CollectionType::timeseries(time_key, partition_by);
+        }
+
+        if let Some(geom_col) = schema.as_ref().and_then(|s| {
+            s.columns
+                .iter()
+                .find(|c| c.is_spatial_index())
+                .map(|c| c.name.clone())
+        }) {
+            return nodedb_types::CollectionType::spatial(geom_col);
+        }
+
+        nodedb_types::CollectionType::columnar()
+    }
+
+    let collection_type = if upper.contains("TYPE") && upper.contains("KEY_VALUE") {
+        // TYPE KEY_VALUE (schema)
         super::super::kv::parse_kv_collection(sql, &upper)?
+    } else if upper.contains("TYPE") && upper.contains("STRICT") {
+        // TYPE DOCUMENT STRICT (schema)
+        let schema = parse_typed_schema(sql).map_err(|e| sqlstate_error("42601", &e))?;
+        nodedb_types::CollectionType::strict(schema)
+    } else if upper.contains("TYPE") && upper.contains("COLUMNAR") {
+        // TYPE COLUMNAR (schema) [WITH profile = 'timeseries'|'spatial']
+        resolve_columnar(sql, &upper, &mut columnar_schema_columns)
     } else {
+        // No TYPE keyword → schemaless document.
         nodedb_types::CollectionType::document()
     };
 

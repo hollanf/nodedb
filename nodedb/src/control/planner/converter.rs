@@ -100,6 +100,21 @@ impl PlanConverter {
         Some(coll.collection_type.clone())
     }
 
+    /// Returns the primary key column name for a KV collection.
+    ///
+    /// Looks up the KvConfig schema and returns the first PRIMARY KEY column.
+    /// Falls back to `"key"` if the catalog is unavailable or config is missing.
+    pub(super) fn kv_pk_column(&self, tenant_id: TenantId, collection: &str) -> String {
+        if let Some(nodedb_types::CollectionType::KeyValue(config)) =
+            self.collection_type(tenant_id, collection)
+        {
+            if let Some(pk) = config.schema.columns.iter().find(|c| c.primary_key) {
+                return pk.name.clone();
+            }
+        }
+        "key".to_string()
+    }
+
     /// Convert a DataFusion logical plan into one or more physical tasks.
     pub fn convert(
         &self,

@@ -118,17 +118,13 @@ impl CoreLoop {
         let scan_result = if filter_predicates.is_empty() {
             self.sparse.scan_documents(tid, collection, fetch_limit)
         } else if let Some(ref schema) = strict_schema {
-            // Strict: decode each binary tuple to JSON then apply filters.
+            // Strict: Binary Tuple → Value → MessagePack → matches_binary.
             self.sparse
                 .scan_documents_filtered(tid, collection, fetch_limit, &|value: &[u8]| {
-                    let json =
-                        super::super::super::strict_format::binary_tuple_to_json(value, schema);
-                    match json {
+                    match super::super::super::strict_format::binary_tuple_to_json(value, schema) {
                         Some(doc) => {
-                            let json_bytes = sonic_rs::to_vec(&doc).unwrap_or_default();
-                            filter_predicates
-                                .iter()
-                                .all(|f| f.matches_binary(&json_bytes))
+                            let msgpack = super::super::super::doc_format::encode_to_msgpack(&doc);
+                            filter_predicates.iter().all(|f| f.matches_binary(&msgpack))
                         }
                         None => false,
                     }

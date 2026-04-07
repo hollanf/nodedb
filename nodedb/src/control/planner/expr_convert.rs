@@ -33,6 +33,31 @@ pub(super) fn expr_to_string(expr: &Expr) -> String {
 }
 
 /// Convert an expression to a JSON value (for document fields).
+pub(super) fn expr_to_value(expr: &Expr) -> nodedb_types::Value {
+    match expr {
+        Expr::Literal(lit, _) => {
+            let s = lit.to_string();
+            if let Ok(n) = s.parse::<i64>() {
+                return nodedb_types::Value::Integer(n);
+            }
+            if let Ok(n) = s.parse::<f64>() {
+                return nodedb_types::Value::Float(n);
+            }
+            if s == "true" {
+                return nodedb_types::Value::Bool(true);
+            }
+            if s == "false" {
+                return nodedb_types::Value::Bool(false);
+            }
+            if s == "NULL" || s == "null" {
+                return nodedb_types::Value::Null;
+            }
+            nodedb_types::Value::String(s.trim_matches('\'').trim_matches('"').to_string())
+        }
+        _ => nodedb_types::Value::String(format!("{expr}")),
+    }
+}
+
 pub(super) fn expr_to_json_value(expr: &Expr) -> serde_json::Value {
     match expr {
         Expr::Literal(lit, _) => {

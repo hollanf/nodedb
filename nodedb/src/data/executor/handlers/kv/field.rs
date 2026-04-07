@@ -1,6 +1,5 @@
 //! KV field-level operation handlers: FieldGet, FieldSet.
 
-use sonic_rs;
 use tracing::debug;
 
 use crate::bridge::envelope::{ErrorCode, Response};
@@ -26,30 +25,30 @@ impl CoreLoop {
             return self.response_error(task, ErrorCode::NotFound);
         };
 
-        // Deserialize as MessagePack → JSON.
-        let doc: serde_json::Value = match nodedb_types::json_from_msgpack(&value) {
-            Ok(v) => v,
-            Err(_) => {
+        // Deserialize as nodedb_types::Value.
+        let doc = match nodedb_types::value_from_msgpack(&value) {
+            Ok(nodedb_types::Value::Object(map)) => map,
+            _ => {
                 return self.response_error(
                     task,
                     ErrorCode::Internal {
-                        detail: "value is not MessagePack-encoded; use GET for raw values".into(),
+                        detail: "value is not a msgpack-encoded object".into(),
                     },
                 );
             }
         };
 
         // Extract requested fields.
-        let result: serde_json::Map<String, serde_json::Value> = fields
+        let result: std::collections::HashMap<String, nodedb_types::Value> = fields
             .iter()
             .map(|f| {
-                let v = doc.get(f).cloned().unwrap_or(serde_json::Value::Null);
+                let v = doc.get(f).cloned().unwrap_or(nodedb_types::Value::Null);
                 (f.clone(), v)
             })
             .collect();
 
-        let result_value = serde_json::Value::Object(result);
-        match response_codec::encode_json(&result_value) {
+        let result_value = nodedb_types::Value::Object(result);
+        match response_codec::encode(&result_value) {
             Ok(payload) => self.response_with_payload(task, payload),
             Err(e) => self.response_error(
                 task,
@@ -74,18 +73,23 @@ impl CoreLoop {
         // Read current value.
         let current = self.kv_engine.get(tid, collection, key, now_ms);
 
-        let mut doc: serde_json::Map<String, serde_json::Value> = current
+        let mut doc: std::collections::HashMap<String, nodedb_types::Value> = current
             .as_ref()
-            .and_then(|v| nodedb_types::json_from_msgpack(v).ok())
-            .and_then(|v: serde_json::Value| v.as_object().cloned())
+            .and_then(|v| nodedb_types::value_from_msgpack(v).ok())
+            .and_then(|v| {
+                if let nodedb_types::Value::Object(m) = v {
+                    Some(m)
+                } else {
+                    None
+                }
+            })
             .unwrap_or_default();
 
         // Merge field updates, tracking how many fields are new (not previously existing).
         let mut fields_added = 0u64;
         for (field, value_bytes) in updates {
-            let new_value: serde_json::Value = sonic_rs::from_slice(value_bytes).unwrap_or(
-                serde_json::Value::String(String::from_utf8_lossy(value_bytes).into_owned()),
-            );
+            let new_value =
+                nodedb_types::value_from_msgpack(value_bytes).unwrap_or(nodedb_types::Value::Null);
             if !doc.contains_key(field) {
                 fields_added += 1;
             }
@@ -93,7 +97,7 @@ impl CoreLoop {
         }
 
         // Serialize back to MessagePack and write.
-        let new_value = match nodedb_types::json_to_msgpack(&serde_json::Value::Object(doc)) {
+        let new_value = match nodedb_types::value_to_msgpack(&nodedb_types::Value::Object(doc)) {
             Ok(v) => v,
             Err(e) => {
                 return self.response_error(

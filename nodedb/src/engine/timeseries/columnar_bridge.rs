@@ -78,27 +78,27 @@ fn ts_column_to_shared(
     match (ts_col, ts_type) {
         (TsColumnData::Timestamp(values), TsColumnType::Timestamp) => SharedColumnData::Timestamp {
             values: values.clone(),
-            valid: vec![true; row_count],
+            valid: None, // Timeseries columns are non-nullable.
         },
         (TsColumnData::Float64(values), TsColumnType::Float64) => SharedColumnData::Float64 {
             values: values.clone(),
-            valid: vec![true; row_count],
+            valid: None,
         },
         (TsColumnData::Int64(values), TsColumnType::Int64) => SharedColumnData::Int64 {
             values: values.clone(),
-            valid: vec![true; row_count],
+            valid: None,
         },
         (TsColumnData::Symbol(sym_ids), TsColumnType::Symbol) => {
             // Convert u32 symbol IDs to i64 for the shared Int64 column.
             SharedColumnData::Int64 {
                 values: sym_ids.iter().map(|&id| id as i64).collect(),
-                valid: vec![true; row_count],
+                valid: None,
             }
         }
         // Fallback: shouldn't happen if schema is consistent.
         _ => SharedColumnData::Int64 {
             values: vec![0; row_count],
-            valid: vec![false; row_count],
+            valid: Some(vec![false; row_count]),
         },
     }
 }

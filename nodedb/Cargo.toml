@@ -130,6 +130,7 @@ datafusion = { workspace = true }
 datafusion-common = { workspace = true }
 datafusion-expr = { workspace = true }
 datafusion-physical-plan = { workspace = true }
+sqlparser = "0.61"
 
 # Memory allocator
 tikv-jemallocator = { workspace = true }

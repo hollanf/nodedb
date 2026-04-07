@@ -301,12 +301,17 @@ impl CoreLoop {
                 // Apply field-level updates.
                 if let Some(obj) = doc.as_object_mut() {
                     for (field, value_bytes) in updates {
-                        let val: serde_json::Value = match sonic_rs::from_slice(value_bytes) {
-                            Ok(v) => v,
-                            Err(_) => serde_json::Value::String(
-                                String::from_utf8_lossy(value_bytes).into_owned(),
-                            ),
-                        };
+                        // value_bytes are zerompk nodedb_types::Value (from planner).
+                        let val: serde_json::Value =
+                            if let Ok(v) = nodedb_types::value_from_msgpack(value_bytes) {
+                                v.into()
+                            } else if let Ok(v) = sonic_rs::from_slice(value_bytes) {
+                                v
+                            } else {
+                                serde_json::Value::String(
+                                    String::from_utf8_lossy(value_bytes).into_owned(),
+                                )
+                            };
                         obj.insert(field.clone(), val);
                     }
                 }
@@ -332,9 +337,8 @@ impl CoreLoop {
                         && let crate::bridge::physical_plan::StorageMode::Strict { ref schema } =
                             config.storage_mode
                     {
-                        let json_bytes = sonic_rs::to_vec(&doc).unwrap_or_default();
-                        match super::super::strict_format::json_to_binary_tuple(&json_bytes, schema)
-                        {
+                        let ndb_val: nodedb_types::Value = doc.clone().into();
+                        match super::super::strict_format::value_to_binary_tuple(&ndb_val, schema) {
                             Ok(bytes) => bytes,
                             Err(e) => {
                                 return self.response_error(
@@ -453,7 +457,7 @@ impl CoreLoop {
             && let crate::bridge::physical_plan::StorageMode::Strict { ref schema } =
                 config.storage_mode
         {
-            super::super::strict_format::json_to_binary_tuple(value, schema).map_err(|e| {
+            super::super::strict_format::bytes_to_binary_tuple(value, schema).map_err(|e| {
                 crate::Error::Serialization {
                     format: "binary_tuple".into(),
                     detail: e,

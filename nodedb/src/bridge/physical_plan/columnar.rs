@@ -34,4 +34,25 @@ pub enum ColumnarOp {
         /// "ilp" for InfluxDB Line Protocol (delegated to timeseries path).
         format: String,
     },
+
+    /// Update rows matching filter predicates.
+    ///
+    /// Uses `MutationEngine` for plain/spatial profiles.
+    /// `updates` is a list of (field_name, json_value_bytes) pairs.
+    Update {
+        collection: String,
+        /// Serialized `Vec<ScanFilter>` (MessagePack).
+        filters: Vec<u8>,
+        /// Field assignments: `(column_name, json_value_bytes)`.
+        updates: Vec<(String, Vec<u8>)>,
+    },
+
+    /// Delete rows matching filter predicates.
+    ///
+    /// Uses `MutationEngine` for plain/spatial profiles.
+    Delete {
+        collection: String,
+        /// Serialized `Vec<ScanFilter>` (MessagePack).
+        filters: Vec<u8>,
+    },
 }

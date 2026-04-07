@@ -1,4 +1,4 @@
-//! KV collection DDL: parsing `CREATE COLLECTION ... WITH storage = 'kv'`.
+//! KV collection DDL: parsing `CREATE COLLECTION name TYPE KEY_VALUE (schema)`.
 //!
 //! Validates PRIMARY KEY requirement, key type restrictions, TTL expressions,
 //! and optional capacity hints. Produces `CollectionType::KeyValue(KvConfig)`.
@@ -7,9 +7,6 @@ use pgwire::error::PgWireResult;
 
 use super::super::types::sqlstate_error;
 use super::collection::parse_typed_schema;
-
-// Re-export for use from DDL dispatch.
-pub(super) use nodedb_types::kv_parsing::is_kv_storage_mode;
 
 /// Parse a KV collection DDL statement into a `CollectionType::KeyValue`.
 ///
@@ -162,22 +159,7 @@ fn parse_kv_capacity(upper: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use nodedb_types::kv_parsing::{
-        find_with_option_end, is_kv_storage_mode, parse_interval_to_ms,
-    };
-
-    #[test]
-    fn detect_kv_storage_mode() {
-        assert!(is_kv_storage_mode("WITH STORAGE = 'KV'"));
-        assert!(is_kv_storage_mode("WITH STORAGE KV"));
-        assert!(is_kv_storage_mode("WITH STORAGE='KV'"));
-        assert!(is_kv_storage_mode(
-            "WITH STORAGE = 'KV', TTL = INTERVAL '1H'"
-        ));
-        assert!(!is_kv_storage_mode("WITH STORAGE = 'STRICT'"));
-        assert!(!is_kv_storage_mode("WITH STORAGE = 'COLUMNAR'"));
-        assert!(!is_kv_storage_mode("CREATE COLLECTION KV_STUFF"));
-    }
+    use nodedb_types::kv_parsing::{find_with_option_end, parse_interval_to_ms};
 
     #[test]
     fn interval_parsing_short_form() {

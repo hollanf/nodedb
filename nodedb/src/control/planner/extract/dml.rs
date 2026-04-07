@@ -3,7 +3,17 @@
 use datafusion::logical_expr::{LogicalPlan, Operator};
 use datafusion::prelude::*;
 
-use super::super::expr_convert::{expr_to_json_value, expr_to_string};
+use super::super::expr_convert::{expr_to_string, expr_to_value};
+
+/// Strip Alias and Cast wrappers to get to the core expression.
+fn strip_alias(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Alias(a) => strip_alias(&a.expr),
+        Expr::Cast(c) => strip_alias(&c.expr),
+        Expr::TryCast(c) => strip_alias(&c.expr),
+        other => other,
+    }
+}
 
 /// Extract SET field assignments from an UPDATE DML input plan.
 ///
@@ -25,11 +35,19 @@ pub(in crate::control::planner) fn extract_update_assignments(
                 if field_name == "id" || field_name == "document_id" {
                     continue;
                 }
-                let value = expr_to_json_value(expr);
-                let value_bytes =
-                    serde_json::to_vec(&value).map_err(|e| crate::Error::PlanError {
+                // Skip Column references — they represent unchanged columns that DataFusion
+                // carries through the UPDATE projection. Only Literal (or Alias(Literal))
+                // expressions are actual SET assignments.
+                let core = strip_alias(expr);
+                if matches!(core, Expr::Column(_)) {
+                    continue;
+                }
+                let value = expr_to_value(core);
+                let value_bytes = nodedb_types::value_to_msgpack(&value).map_err(|e| {
+                    crate::Error::PlanError {
                         detail: format!("failed to serialize update value: {e}"),
-                    })?;
+                    }
+                })?;
                 updates.push((field_name, value_bytes));
             }
             Ok(updates)
@@ -41,8 +59,12 @@ pub(in crate::control::planner) fn extract_update_assignments(
     }
 }
 
-/// Collect document IDs from equality predicates (`id = 'value'` OR `id = 'value2'`).
-pub(in crate::control::planner) fn collect_eq_ids(expr: &Expr, ids: &mut Vec<String>) {
+/// Collect primary key values from equality predicates (`pk_col = 'value'` OR chains).
+pub(in crate::control::planner) fn collect_eq_ids(
+    expr: &Expr,
+    pk_col: &str,
+    ids: &mut Vec<String>,
+) {
     match expr {
         Expr::BinaryExpr(binary) if binary.op == Operator::Eq => {
             let (col_name, value) = match (&*binary.left, &*binary.right) {
@@ -50,17 +72,17 @@ pub(in crate::control::planner) fn collect_eq_ids(expr: &Expr, ids: &mut Vec<Str
                 (Expr::Literal(lit, _), Expr::Column(col)) => (col.name.as_str(), lit.to_string()),
                 _ => return,
             };
-            if col_name == "id" || col_name == "document_id" {
+            if col_name == pk_col {
                 ids.push(value.trim_matches('\'').trim_matches('"').to_string());
             }
         }
         Expr::BinaryExpr(binary) if binary.op == Operator::Or => {
-            collect_eq_ids(&binary.left, ids);
-            collect_eq_ids(&binary.right, ids);
+            collect_eq_ids(&binary.left, pk_col, ids);
+            collect_eq_ids(&binary.right, pk_col, ids);
         }
         Expr::BinaryExpr(binary) if binary.op == Operator::And => {
-            collect_eq_ids(&binary.left, ids);
-            collect_eq_ids(&binary.right, ids);
+            collect_eq_ids(&binary.left, pk_col, ids);
+            collect_eq_ids(&binary.right, pk_col, ids);
         }
         _ => {}
     }
@@ -96,20 +118,21 @@ pub(in crate::control::planner) fn extract_insert_values(
 
                     let doc_id = exprs.first().map(|e| expr_to_string(e)).unwrap_or_default();
 
-                    let mut obj = serde_json::Map::new();
+                    let mut obj = std::collections::HashMap::new();
                     for (i, expr) in exprs.iter().enumerate() {
                         let field_name = schema
                             .get(i)
                             .map(|f| f.name().clone())
                             .unwrap_or_else(|| format!("column{i}"));
-                        let val = expr_to_json_value(expr);
-                        obj.insert(field_name, val);
+                        obj.insert(field_name, expr_to_value(expr));
                     }
 
-                    let value_bytes =
-                        serde_json::to_vec(&obj).map_err(|e| crate::Error::PlanError {
-                            detail: format!("failed to serialize insert values: {e}"),
-                        })?;
+                    let value_bytes = nodedb_types::value_to_msgpack(&nodedb_types::Value::Object(
+                        obj,
+                    ))
+                    .map_err(|e| crate::Error::PlanError {
+                        detail: format!("failed to serialize insert values: {e}"),
+                    })?;
                     results.push((doc_id, value_bytes));
                 }
                 return Ok(results);
@@ -129,17 +152,16 @@ pub(in crate::control::planner) fn extract_insert_values(
                 } else {
                     continue;
                 };
-                let mut obj = serde_json::Map::new();
+                let mut obj = std::collections::HashMap::new();
                 for (i, expr) in row.iter().enumerate() {
                     let field_name = schema
                         .get(i)
                         .map(|f| f.name().clone())
                         .unwrap_or_else(|| format!("column{i}"));
-                    let val = expr_to_json_value(expr);
-                    obj.insert(field_name, val);
+                    obj.insert(field_name, expr_to_value(expr));
                 }
-                let value_bytes =
-                    serde_json::to_vec(&obj).map_err(|e| crate::Error::PlanError {
+                let value_bytes = nodedb_types::value_to_msgpack(&nodedb_types::Value::Object(obj))
+                    .map_err(|e| crate::Error::PlanError {
                         detail: format!("failed to serialize insert values: {e}"),
                     })?;
                 results.push((doc_id, value_bytes));
@@ -202,19 +224,22 @@ fn resolve_projection_expr<'a>(expr: &'a Expr, row: &'a [Expr]) -> &'a Expr {
 /// targets) vs bulk operations (complex WHERE predicates).
 pub(in crate::control::planner) fn extract_point_targets(
     plan: &LogicalPlan,
-    _collection: &str,
+    pk_col: &str,
 ) -> crate::Result<Vec<String>> {
     match plan {
         LogicalPlan::Filter(filter) => {
             let mut ids = Vec::new();
-            collect_eq_ids(&filter.predicate, &mut ids);
+            collect_eq_ids(&filter.predicate, pk_col, &mut ids);
             Ok(ids)
         }
+        // UPDATE wraps the Filter in a Projection (the SET assignments).
+        LogicalPlan::Projection(proj) => extract_point_targets(&proj.input, pk_col),
+        LogicalPlan::SubqueryAlias(alias) => extract_point_targets(&alias.input, pk_col),
         LogicalPlan::TableScan(_) => Err(crate::Error::PlanError {
-            detail: "DELETE without WHERE clause is not supported. Use DROP COLLECTION to remove all data.".into(),
+            detail: "operation without WHERE clause is not supported".into(),
         }),
         _ => Err(crate::Error::PlanError {
-            detail: format!("unsupported DELETE input plan: {}", plan.display()),
+            detail: format!("unsupported input plan: {}", plan.display()),
         }),
     }
 }

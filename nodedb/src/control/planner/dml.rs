@@ -151,7 +151,7 @@ impl PlanConverter {
             }
             WriteOp::Delete => {
                 // Try point delete (WHERE id = 'value') first.
-                let doc_ids = extract_point_targets(&dml.input, &collection).unwrap_or_default();
+                let doc_ids = extract_point_targets(&dml.input, "id").unwrap_or_default();
 
                 if !doc_ids.is_empty() {
                     return Ok(doc_ids
@@ -188,7 +188,7 @@ impl PlanConverter {
                 }
 
                 // Try point update (WHERE id = 'value') first.
-                let doc_ids = extract_point_targets(&dml.input, &collection).unwrap_or_default();
+                let doc_ids = extract_point_targets(&dml.input, "id").unwrap_or_default();
 
                 if !doc_ids.is_empty() {
                     return Ok(doc_ids

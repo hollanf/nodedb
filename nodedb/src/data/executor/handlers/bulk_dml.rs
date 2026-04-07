@@ -40,14 +40,35 @@ impl CoreLoop {
                 detail: format!("open table: {e}"),
             })?;
 
+        // Check if this is a strict (Binary Tuple) collection.
+        let config_key = format!("{tid}:{collection}");
+        let strict_schema = self.doc_configs.get(&config_key).and_then(|c| {
+            if let crate::bridge::physical_plan::StorageMode::Strict { ref schema } = c.storage_mode
+            {
+                Some(schema.clone())
+            } else {
+                None
+            }
+        });
+
         let mut ids = Vec::new();
         if let Ok(range) = table.range(prefix.as_str()..end.as_str()) {
             for entry in range.flatten() {
                 let key = entry.0.value();
                 let value_bytes = entry.1.value();
-                if filters.iter().all(|f| f.matches_binary(value_bytes))
-                    && let Some(doc_id) = key.strip_prefix(&prefix)
-                {
+                let matches = if let Some(ref schema) = strict_schema {
+                    // Strict: Binary Tuple → Value → MessagePack → matches_binary.
+                    match super::super::strict_format::binary_tuple_to_json(value_bytes, schema) {
+                        Some(doc) => {
+                            let msgpack = super::super::doc_format::encode_to_msgpack(&doc);
+                            filters.iter().all(|f| f.matches_binary(&msgpack))
+                        }
+                        None => false,
+                    }
+                } else {
+                    filters.iter().all(|f| f.matches_binary(value_bytes))
+                };
+                if matches && let Some(doc_id) = key.strip_prefix(&prefix) {
                     ids.push(doc_id.to_string());
                 }
             }
@@ -108,6 +129,16 @@ impl CoreLoop {
             }
         };
 
+        // Check if this is a strict (Binary Tuple) collection.
+        let strict_schema = self.doc_configs.get(&config_key).and_then(|c| {
+            if let crate::bridge::physical_plan::StorageMode::Strict { ref schema } = c.storage_mode
+            {
+                Some(schema.clone())
+            } else {
+                None
+            }
+        });
+
         // Apply updates to each matching document.
         let mut affected = 0u64;
         let mut returned_docs: Vec<serde_json::Value> = if returning {
@@ -119,18 +150,33 @@ impl CoreLoop {
         for doc_id in &matching_ids {
             match self.sparse.get(tid, collection, doc_id) {
                 Ok(Some(current_bytes)) => {
-                    let mut doc = match super::super::doc_format::decode_document(&current_bytes) {
-                        Some(v) => v,
-                        None => continue,
+                    // Decode current value — format depends on storage mode.
+                    let mut doc = if let Some(ref schema) = strict_schema {
+                        match super::super::strict_format::binary_tuple_to_json(
+                            &current_bytes,
+                            schema,
+                        ) {
+                            Some(v) => v,
+                            None => continue,
+                        }
+                    } else {
+                        match super::super::doc_format::decode_document(&current_bytes) {
+                            Some(v) => v,
+                            None => continue,
+                        }
                     };
                     if let Some(obj) = doc.as_object_mut() {
                         for (field, value_bytes) in updates {
-                            let val: serde_json::Value = match sonic_rs::from_slice(value_bytes) {
-                                Ok(v) => v,
-                                Err(_) => serde_json::Value::String(
-                                    String::from_utf8_lossy(value_bytes).into_owned(),
-                                ),
-                            };
+                            let val: serde_json::Value =
+                                if let Ok(v) = nodedb_types::value_from_msgpack(value_bytes) {
+                                    v.into()
+                                } else if let Ok(v) = sonic_rs::from_slice(value_bytes) {
+                                    v
+                                } else {
+                                    serde_json::Value::String(
+                                        String::from_utf8_lossy(value_bytes).into_owned(),
+                                    )
+                                };
                             obj.insert(field.clone(), val);
                         }
                     }
@@ -153,7 +199,23 @@ impl CoreLoop {
                         );
                         continue;
                     }
-                    let updated_bytes = super::super::doc_format::encode_to_msgpack(&doc);
+                    // Re-encode — format depends on storage mode.
+                    let updated_bytes = if let Some(ref schema) = strict_schema {
+                        let ndb_val: nodedb_types::Value = doc.clone().into();
+                        match super::super::strict_format::value_to_binary_tuple(&ndb_val, schema) {
+                            Ok(bytes) => bytes,
+                            Err(e) => {
+                                tracing::warn!(
+                                    %doc_id,
+                                    error = %e,
+                                    "strict re-encode failed, skipping document"
+                                );
+                                continue;
+                            }
+                        }
+                    } else {
+                        super::super::doc_format::encode_to_msgpack(&doc)
+                    };
                     if self
                         .sparse
                         .put(tid, collection, doc_id, &updated_bytes)

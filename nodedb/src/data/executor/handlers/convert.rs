@@ -125,7 +125,7 @@ impl CoreLoop {
         let mut errors = 0u64;
 
         for (doc_id, doc_bytes) in &docs {
-            match super::super::strict_format::json_to_binary_tuple(doc_bytes, &schema) {
+            match super::super::strict_format::bytes_to_binary_tuple(doc_bytes, &schema) {
                 Ok(tuple_bytes) => {
                     if let Err(e) = self.sparse.put(tid, collection, doc_id, &tuple_bytes) {
                         tracing::warn!(doc_id, error = %e, "failed to write converted doc");

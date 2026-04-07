@@ -2,6 +2,7 @@ pub mod aggregate;
 pub mod bulk_dml;
 pub mod columnar_agg;
 pub mod columnar_filter;
+pub mod columnar_mutation;
 pub mod columnar_read;
 pub mod columnar_write;
 pub mod compact;

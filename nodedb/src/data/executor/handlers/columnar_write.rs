@@ -1,21 +1,20 @@
 //! Columnar base insert handler.
 //!
-//! Writes rows to the columnar memtable. Accepts JSON payload (array of
-//! objects). Creates the memtable on first insert with schema inferred
+//! Writes rows to `nodedb-columnar`'s `MutationEngine`. Accepts JSON payload
+//! (array of objects). Creates the engine on first insert with schema inferred
 //! from the first row.
 
-use sonic_rs;
+use nodedb_columnar::MutationEngine;
+use nodedb_types::columnar::{ColumnDef, ColumnType, ColumnarSchema};
+use nodedb_types::value::Value;
 
 use crate::bridge::envelope::{ErrorCode, Payload, Response, Status};
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
-use crate::engine::timeseries::columnar_memtable::{
-    ColumnType, ColumnValue, ColumnarMemtable, ColumnarMemtableConfig, ColumnarSchema,
-};
 
 impl CoreLoop {
-    /// Execute a columnar insert: write rows from JSON payload to memtable.
+    /// Execute a columnar insert: write rows from JSON payload to MutationEngine.
     pub(in crate::data::executor) fn execute_columnar_insert(
         &mut self,
         task: &ExecutionTask,
@@ -23,15 +22,15 @@ impl CoreLoop {
         payload: &[u8],
         _format: &str,
     ) -> Response {
-        // Parse JSON payload: expect array of objects or single object.
-        let rows: Vec<serde_json::Value> = match sonic_rs::from_slice(payload) {
-            Ok(serde_json::Value::Array(arr)) => arr,
-            Ok(obj @ serde_json::Value::Object(_)) => vec![obj],
+        // Parse payload: zerompk array/object of nodedb_types::Value.
+        let ndb_rows: Vec<nodedb_types::Value> = match nodedb_types::value_from_msgpack(payload) {
+            Ok(nodedb_types::Value::Array(arr)) => arr,
+            Ok(v @ nodedb_types::Value::Object(_)) => vec![v],
             Ok(_) => {
                 return self.response_error(
                     task,
                     ErrorCode::Internal {
-                        detail: "payload must be a JSON array of objects or a single object".into(),
+                        detail: "payload must be an array or object".into(),
                     },
                 );
             }
@@ -39,13 +38,13 @@ impl CoreLoop {
                 return self.response_error(
                     task,
                     ErrorCode::Internal {
-                        detail: format!("invalid JSON payload: {e}"),
+                        detail: format!("invalid payload: {e}"),
                     },
                 );
             }
         };
 
-        if rows.is_empty() {
+        if ndb_rows.is_empty() {
             return self.response_error(
                 task,
                 ErrorCode::Internal {
@@ -54,92 +53,49 @@ impl CoreLoop {
             );
         }
 
-        // Ensure memtable exists (auto-create on first write).
-        if !self.columnar_memtables.contains_key(collection) {
-            let schema = infer_schema_from_json(&rows[0]);
-            let config = ColumnarMemtableConfig {
-                max_memory_bytes: 64 * 1024 * 1024,
-                hard_memory_limit: 80 * 1024 * 1024,
-                max_tag_cardinality: 100_000,
-            };
-            let mt = ColumnarMemtable::new(schema, config);
-            self.columnar_memtables.insert(collection.to_string(), mt);
+        // Ensure MutationEngine exists (auto-create on first write).
+        if !self.columnar_engines.contains_key(collection) {
+            let schema = infer_schema_from_value(&ndb_rows[0]);
+            let engine = MutationEngine::new(collection.to_string(), schema);
+            self.columnar_engines.insert(collection.to_string(), engine);
         }
 
-        let Some(mt) = self.columnar_memtables.get_mut(collection) else {
+        let Some(engine) = self.columnar_engines.get_mut(collection) else {
             return self.response_error(
                 task,
                 ErrorCode::Internal {
-                    detail: "columnar memtable missing after insert".into(),
+                    detail: "columnar engine missing after create".into(),
                 },
             );
         };
-        let schema = mt.schema().clone();
+
+        let schema = engine.schema().clone();
         let mut accepted = 0u64;
 
-        for row in &rows {
-            let obj = match row.as_object() {
-                Some(o) => o,
-                None => continue,
+        for row in &ndb_rows {
+            let obj = match row {
+                nodedb_types::Value::Object(m) => m,
+                _ => continue,
             };
 
-            // Build column values in schema order, collecting owned strings
-            // for Symbol columns so we can borrow them in ColumnValue.
-            let mut string_values: Vec<String> = Vec::new();
-            let mut raw_values: Vec<(usize, &ColumnType, Option<i64>, Option<f64>)> = Vec::new();
-
-            for (idx, (col_name, col_type)) in schema.columns.iter().enumerate() {
-                match obj.get(col_name) {
-                    Some(serde_json::Value::Number(n)) => match col_type {
-                        ColumnType::Float64 => {
-                            raw_values.push((idx, col_type, None, Some(n.as_f64().unwrap_or(0.0))));
-                        }
-                        ColumnType::Int64 | ColumnType::Timestamp => {
-                            raw_values.push((idx, col_type, Some(n.as_i64().unwrap_or(0)), None));
-                        }
-                        ColumnType::Symbol => {
-                            string_values.push(n.to_string());
-                            raw_values.push((idx, col_type, None, None));
-                        }
-                    },
-                    Some(serde_json::Value::String(s)) => {
-                        string_values.push(s.clone());
-                        raw_values.push((idx, col_type, None, None));
-                    }
-                    Some(serde_json::Value::Bool(b)) => {
-                        raw_values.push((idx, col_type, Some(if *b { 1 } else { 0 }), None));
-                    }
-                    _ => match col_type {
-                        ColumnType::Float64 => raw_values.push((idx, col_type, None, Some(0.0))),
-                        ColumnType::Int64 | ColumnType::Timestamp => {
-                            raw_values.push((idx, col_type, Some(0), None))
-                        }
-                        ColumnType::Symbol => {
-                            string_values.push(String::new());
-                            raw_values.push((idx, col_type, None, None));
-                        }
-                    },
-                }
-            }
-
-            // Build ColumnValue slice. Symbol values reference the owned strings.
-            let mut str_idx = 0;
-            let values: Vec<ColumnValue<'_>> = raw_values
+            // Build Value slice in schema order.
+            let values: Vec<Value> = schema
+                .columns
                 .iter()
-                .map(|(_, col_type, int_val, float_val)| match col_type {
-                    ColumnType::Timestamp => ColumnValue::Timestamp(int_val.unwrap_or(0)),
-                    ColumnType::Float64 => ColumnValue::Float64(float_val.unwrap_or(0.0)),
-                    ColumnType::Int64 => ColumnValue::Int64(int_val.unwrap_or(0)),
-                    ColumnType::Symbol => {
-                        let s = &string_values[str_idx];
-                        str_idx += 1;
-                        ColumnValue::Symbol(s.as_str())
-                    }
-                })
+                .map(|col| ndb_field_to_value(obj.get(&col.name), &col.column_type))
                 .collect();
 
-            let _ = mt.ingest_row(0, &values);
-            accepted += 1;
+            match engine.insert(&values) {
+                Ok(_) => accepted += 1,
+                Err(e) => {
+                    tracing::warn!(
+                        core = self.core_id,
+                        %collection,
+                        error = %e,
+                        "columnar insert row failed"
+                    );
+                }
+            }
         }
 
         self.checkpoint_coordinator
@@ -173,131 +129,112 @@ impl CoreLoop {
 }
 
 impl CoreLoop {
-    /// Ingest a single JSON document into the columnar memtable for a collection.
+    /// Ingest a single JSON document into the columnar engine for a collection.
     ///
-    /// Creates the memtable on first call. Used by the spatial insert path
-    /// to ensure spatial data is available for columnar scans and aggregates.
+    /// Creates the engine on first call. Used by the spatial insert path.
     pub(in crate::data::executor) fn ingest_doc_to_columnar(
         &mut self,
         collection: &str,
         obj: &serde_json::Map<String, serde_json::Value>,
     ) {
-        // Ensure memtable exists.
-        if !self.columnar_memtables.contains_key(collection) {
+        if !self.columnar_engines.contains_key(collection) {
             let schema = infer_schema_from_json(&serde_json::Value::Object(obj.clone()));
-            let config = ColumnarMemtableConfig {
-                max_memory_bytes: 64 * 1024 * 1024,
-                hard_memory_limit: 80 * 1024 * 1024,
-                max_tag_cardinality: 100_000,
-            };
-            let mt = ColumnarMemtable::new(schema, config);
-            self.columnar_memtables.insert(collection.to_string(), mt);
+            let engine = MutationEngine::new(collection.to_string(), schema);
+            self.columnar_engines.insert(collection.to_string(), engine);
         }
 
-        let Some(mt) = self.columnar_memtables.get_mut(collection) else {
+        let Some(engine) = self.columnar_engines.get_mut(collection) else {
             return;
         };
-        let schema = mt.schema().clone();
+        let schema = engine.schema().clone();
 
-        // Build owned string values for Symbol columns (need stable references).
-        let mut string_values: Vec<String> = Vec::new();
-        let mut raw_values: Vec<(&ColumnType, Option<i64>, Option<f64>)> = Vec::new();
-
-        for (col_name, col_type) in &schema.columns {
-            match obj.get(col_name) {
-                Some(serde_json::Value::Number(n)) => match col_type {
-                    ColumnType::Float64 => {
-                        raw_values.push((col_type, None, Some(n.as_f64().unwrap_or(0.0))));
-                    }
-                    ColumnType::Int64 | ColumnType::Timestamp => {
-                        raw_values.push((col_type, Some(n.as_i64().unwrap_or(0)), None));
-                    }
-                    ColumnType::Symbol => {
-                        string_values.push(n.to_string());
-                        raw_values.push((col_type, None, None));
-                    }
-                },
-                Some(serde_json::Value::String(s)) => {
-                    string_values.push(s.clone());
-                    raw_values.push((col_type, None, None));
-                }
-                Some(serde_json::Value::Bool(b)) => {
-                    raw_values.push((col_type, Some(if *b { 1 } else { 0 }), None));
-                }
-                _ => match col_type {
-                    ColumnType::Float64 => raw_values.push((col_type, None, Some(0.0))),
-                    ColumnType::Int64 | ColumnType::Timestamp => {
-                        raw_values.push((col_type, Some(0), None))
-                    }
-                    ColumnType::Symbol => {
-                        string_values.push(String::new());
-                        raw_values.push((col_type, None, None));
-                    }
-                },
-            }
-        }
-
-        let mut str_idx = 0;
-        let values: Vec<ColumnValue<'_>> = raw_values
+        let ndb_obj: std::collections::HashMap<String, Value> = obj
             .iter()
-            .map(|(col_type, int_val, float_val)| match col_type {
-                ColumnType::Timestamp => ColumnValue::Timestamp(int_val.unwrap_or(0)),
-                ColumnType::Float64 => ColumnValue::Float64(float_val.unwrap_or(0.0)),
-                ColumnType::Int64 => ColumnValue::Int64(int_val.unwrap_or(0)),
-                ColumnType::Symbol => {
-                    let s = &string_values[str_idx];
-                    str_idx += 1;
-                    ColumnValue::Symbol(s.as_str())
-                }
-            })
+            .map(|(k, v)| (k.clone(), Value::from(v.clone())))
+            .collect();
+        let values: Vec<Value> = schema
+            .columns
+            .iter()
+            .map(|col| ndb_field_to_value(ndb_obj.get(&col.name), &col.column_type))
             .collect();
 
-        let _ = mt.ingest_row(0, &values);
+        let _ = engine.insert(&values);
     }
 }
 
-/// Infer a columnar schema from a JSON object (first row).
-pub(super) fn infer_schema_from_json(row: &serde_json::Value) -> ColumnarSchema {
-    let obj = match row.as_object() {
-        Some(o) => o,
-        None => {
-            return ColumnarSchema {
-                columns: vec![("value".into(), ColumnType::Float64)],
-                timestamp_idx: 0,
-                codecs: Vec::new(),
-            };
+/// Coerce a `nodedb_types::Value` field to match the column type.
+fn ndb_field_to_value(val: Option<&Value>, col_type: &ColumnType) -> Value {
+    let Some(val) = val else { return Value::Null };
+    match (col_type, val) {
+        (_, Value::Null) => Value::Null,
+        (ColumnType::Int64, Value::Integer(_)) => val.clone(),
+        (ColumnType::Int64, Value::Float(f)) => Value::Integer(*f as i64),
+        (ColumnType::Int64, Value::String(s)) => {
+            s.parse::<i64>().map(Value::Integer).unwrap_or(Value::Null)
+        }
+        (ColumnType::Float64, Value::Float(_)) => val.clone(),
+        (ColumnType::Float64, Value::Integer(n)) => Value::Float(*n as f64),
+        (ColumnType::Float64, Value::String(s)) => {
+            s.parse::<f64>().map(Value::Float).unwrap_or(Value::Null)
+        }
+        (ColumnType::Bool, Value::Bool(_)) => val.clone(),
+        (ColumnType::String, Value::String(_)) => val.clone(),
+        (ColumnType::Timestamp, Value::Integer(n)) => {
+            Value::DateTime(nodedb_types::NdbDateTime::from_millis(*n))
+        }
+        (ColumnType::Timestamp, Value::Float(f)) => {
+            Value::DateTime(nodedb_types::NdbDateTime::from_millis(*f as i64))
+        }
+        (ColumnType::Timestamp, Value::String(s)) => nodedb_types::datetime::NdbDateTime::parse(s)
+            .map(Value::DateTime)
+            .unwrap_or_else(|| Value::String(s.clone())),
+        (ColumnType::Uuid, Value::String(_)) => val.clone(),
+        // Fallback: integers as floats, strings as strings.
+        (ColumnType::Float64, _) => Value::Null,
+        (ColumnType::Int64, _) => Value::Null,
+        _ => val.clone(),
+    }
+}
+
+/// Infer a columnar schema from a `nodedb_types::Value::Object` (first row).
+fn infer_schema_from_value(row: &Value) -> ColumnarSchema {
+    let obj = match row {
+        Value::Object(m) => m,
+        _ => {
+            return ColumnarSchema::new(vec![ColumnDef::required("value", ColumnType::Float64)])
+                .expect("single-column schema");
         }
     };
 
     let mut columns = Vec::new();
-    let mut timestamp_idx = 0;
-
-    for (i, (key, val)) in obj.iter().enumerate() {
-        let col_type = match val {
-            serde_json::Value::Number(n) if n.is_f64() => ColumnType::Float64,
-            serde_json::Value::Number(_) => ColumnType::Int64,
-            serde_json::Value::Bool(_) => ColumnType::Int64,
-            serde_json::Value::String(_) => ColumnType::Symbol,
-            _ => ColumnType::Symbol,
-        };
-
-        // Detect timestamp column by name.
+    for (key, val) in obj {
         let lower = key.to_lowercase();
-        if lower == "timestamp" || lower == "ts" || lower == "time" {
-            columns.push((key.clone(), ColumnType::Timestamp));
-            timestamp_idx = i;
+        let col_type = if lower == "timestamp" || lower == "ts" || lower == "time" {
+            ColumnType::Timestamp
         } else {
-            columns.push((key.clone(), col_type));
+            match val {
+                Value::Float(_) => ColumnType::Float64,
+                Value::Integer(_) => ColumnType::Int64,
+                Value::Bool(_) => ColumnType::Bool,
+                _ => ColumnType::String,
+            }
+        };
+        if lower == "id" {
+            columns.push(ColumnDef::required(key.clone(), col_type).with_primary_key());
+        } else {
+            columns.push(ColumnDef::nullable(key.clone(), col_type));
         }
     }
 
     if columns.is_empty() {
-        columns.push(("value".into(), ColumnType::Float64));
+        columns.push(ColumnDef::required("value", ColumnType::Float64));
     }
 
-    ColumnarSchema {
-        columns,
-        timestamp_idx,
-        codecs: Vec::new(),
-    }
+    ColumnarSchema::new(columns).expect("inferred schema must be valid")
+}
+
+/// Infer a columnar schema from a JSON object — used by the spatial insert path.
+pub(super) fn infer_schema_from_json(row: &serde_json::Value) -> ColumnarSchema {
+    let ndb: Value = row.clone().into();
+    infer_schema_from_value(&ndb)
 }

@@ -401,6 +401,17 @@ impl CoreLoop {
                 format,
             }) => self.execute_columnar_insert(task, collection, payload, format),
 
+            PhysicalPlan::Columnar(ColumnarOp::Update {
+                collection,
+                filters,
+                updates,
+            }) => self.execute_columnar_update(task, collection, filters, updates),
+
+            PhysicalPlan::Columnar(ColumnarOp::Delete {
+                collection,
+                filters,
+            }) => self.execute_columnar_delete(task, collection, filters),
+
             PhysicalPlan::Timeseries(TimeseriesOp::Scan {
                 collection,
                 time_range,

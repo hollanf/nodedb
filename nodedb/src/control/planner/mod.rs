@@ -14,6 +14,7 @@ mod join;
 pub mod physical;
 pub mod procedural;
 pub mod rls_injection;
+mod schemaless_dml;
 mod search;
 pub mod sql_expr_convert;
 pub mod stream_table;

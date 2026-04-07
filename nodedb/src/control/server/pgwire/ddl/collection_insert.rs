@@ -185,7 +185,10 @@ pub async fn insert_document(
     };
 
     let tenant_id = identity.tenant_id;
-    let vshard_id = crate::types::VShardId::from_key(parsed.doc_id.as_bytes());
+    // Route by collection name so INSERT and subsequent PointGet/PointUpdate/PointDelete
+    // all land on the same core. Routing by doc_id (from_key) would scatter documents
+    // across cores while reads always route by collection (from_collection).
+    let vshard_id = crate::types::VShardId::from_collection(&parsed.coll_name);
 
     // Convert fields to HashMap<String, nodedb_types::Value> for trigger fire functions.
     let fields_as_hm: std::collections::HashMap<String, nodedb_types::Value> = parsed
@@ -396,7 +399,7 @@ pub async fn upsert_document(
     };
 
     let tenant_id = identity.tenant_id;
-    let vshard_id = crate::types::VShardId::from_key(parsed.doc_id.as_bytes());
+    let vshard_id = crate::types::VShardId::from_collection(&parsed.coll_name);
 
     // Convert fields to HashMap<String, nodedb_types::Value> for trigger fire functions.
     let upsert_fields_as_hm: std::collections::HashMap<String, nodedb_types::Value> = parsed
