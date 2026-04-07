@@ -80,6 +80,8 @@ pub fn plan_join_from_select(
             join_type,
             condition,
             limit: 10000,
+            projection: Vec::new(),
+            filters: Vec::new(),
         };
     }
 
@@ -91,9 +93,9 @@ pub fn plan_join_from_select(
         (Vec::new(), None)
     };
 
-    // Apply remaining WHERE as filters on the join plan.
-    let _projection = super::select::convert_projection(&select.projection)?;
-    let _filters = match &effective_where {
+    // Apply remaining WHERE as filters and SELECT projection on the join plan.
+    let projection = super::select::convert_projection(&select.projection)?;
+    let filters = match &effective_where {
         Some(expr) => super::select::convert_where_to_filters(expr)?,
         None => Vec::new(),
     };
@@ -107,6 +109,8 @@ pub fn plan_join_from_select(
             join_type: sq.join_type,
             condition: None,
             limit: 10000,
+            projection: Vec::new(),
+            filters: Vec::new(),
         };
     }
 
@@ -132,8 +136,16 @@ pub fn plan_join_from_select(
         }));
     }
 
-    // TODO: attach projection and filters to the join plan
-    // For now, the Origin mapper handles projection post-join.
+    // Attach SELECT projection and WHERE filters to the outermost join.
+    if let SqlPlan::Join {
+        projection: ref mut proj,
+        filters: ref mut filt,
+        ..
+    } = current_plan
+    {
+        *proj = projection;
+        *filt = filters;
+    }
     Ok(Some(current_plan))
 }
 

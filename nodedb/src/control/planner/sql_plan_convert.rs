@@ -4,8 +4,7 @@
 //! serializes filters to msgpack, and handles broadcast join decisions.
 
 use nodedb_sql::types::{
-    AggregateExpr, EngineType, Filter, FilterExpr, JoinType, Projection, SortKey, SqlExpr, SqlPlan,
-    SqlValue,
+    AggregateExpr, EngineType, Filter, FilterExpr, Projection, SortKey, SqlExpr, SqlPlan, SqlValue,
 };
 
 use std::sync::Arc;
@@ -57,6 +56,7 @@ fn convert_one(
                 tenant_id,
                 vshard_id: VShardId::from_collection(""),
                 plan: PhysicalPlan::Meta(MetaOp::RawResponse { payload }),
+                post_dedup: false,
             }])
         }
 
@@ -121,6 +121,7 @@ fn convert_one(
                 tenant_id,
                 vshard_id: vshard,
                 plan: physical,
+                post_dedup: false,
             }])
         }
 
@@ -147,6 +148,7 @@ fn convert_one(
                 tenant_id,
                 vshard_id: vshard,
                 plan: physical,
+                post_dedup: false,
             }])
         }
 
@@ -188,6 +190,7 @@ fn convert_one(
                 plan: PhysicalPlan::Document(DocumentOp::Truncate {
                     collection: collection.clone(),
                 }),
+                post_dedup: false,
             }])
         }
 
@@ -197,8 +200,33 @@ fn convert_one(
             on,
             join_type,
             limit,
+            projection,
+            filters,
             ..
-        } => convert_join(left, right, on, join_type, *limit, tenant_id),
+        } => {
+            let left_collection = extract_collection_name(left);
+            let right_collection = extract_collection_name(right);
+            let vshard = VShardId::from_collection(&left_collection);
+            let proj_names = extract_projection_names(projection);
+            let filter_bytes = serialize_filters(filters)?;
+
+            Ok(vec![PhysicalTask {
+                tenant_id,
+                vshard_id: vshard,
+                plan: PhysicalPlan::Query(QueryOp::HashJoin {
+                    left_collection,
+                    right_collection,
+                    on: on.to_vec(),
+                    join_type: join_type.as_str().to_string(),
+                    limit: *limit,
+                    post_group_by: Vec::new(),
+                    post_aggregates: Vec::new(),
+                    projection: proj_names,
+                    post_filters: filter_bytes,
+                }),
+                post_dedup: false,
+            }])
+        }
 
         SqlPlan::Aggregate {
             input,
@@ -260,6 +288,7 @@ fn convert_one(
                     gap_fill: gap_fill.clone(),
                     rls_filters: Vec::new(),
                 }),
+                post_dedup: false,
             }])
         }
 
@@ -275,6 +304,7 @@ fn convert_one(
                     format: "json".into(),
                     wal_lsn: None,
                 }),
+                post_dedup: false,
             }])
         }
 
@@ -300,6 +330,7 @@ fn convert_one(
                     field_name: field.clone(),
                     rls_filters: filter_bytes,
                 }),
+                post_dedup: false,
             }])
         }
 
@@ -321,6 +352,7 @@ fn convert_one(
                     fuzzy: *fuzzy,
                     rls_filters: Vec::new(),
                 }),
+                post_dedup: false,
             }])
         }
 
@@ -348,6 +380,7 @@ fn convert_one(
                     filter_bitmap: None,
                     rls_filters: Vec::new(),
                 }),
+                post_dedup: false,
             }])
         }
 
@@ -384,6 +417,7 @@ fn convert_one(
                     projection: proj_names,
                     rls_filters: Vec::new(),
                 }),
+                post_dedup: false,
             }])
         }
 
@@ -392,8 +426,11 @@ fn convert_one(
             for input in inputs {
                 all_tasks.extend(convert_one(input, tenant_id, ctx)?);
             }
-            // TODO: if distinct == true, wrap in a dedup stage.
-            let _ = distinct;
+            if *distinct {
+                for task in &mut all_tasks {
+                    task.post_dedup = true;
+                }
+            }
             Ok(all_tasks)
         }
 
@@ -417,6 +454,7 @@ fn convert_one(
                     distinct: *distinct,
                     limit: *limit,
                 }),
+                post_dedup: false,
             }])
         }
 
@@ -462,6 +500,7 @@ fn convert_insert(
                         value: value_bytes,
                         ttl_ms: 0,
                     }),
+                    post_dedup: false,
                 });
             }
             _ => {
@@ -473,6 +512,7 @@ fn convert_insert(
                         document_id: doc_id,
                         value: value_bytes,
                     }),
+                    post_dedup: false,
                 });
             }
         }
@@ -515,6 +555,7 @@ fn convert_update(
                     key: sql_value_to_bytes(key),
                     updates: field_updates,
                 }),
+                post_dedup: false,
             });
         }
         return Ok(tasks);
@@ -533,6 +574,7 @@ fn convert_update(
                     updates: updates.clone(),
                     returning,
                 }),
+                post_dedup: false,
             });
         }
         Ok(tasks)
@@ -546,6 +588,7 @@ fn convert_update(
                 updates,
                 returning,
             }),
+            post_dedup: false,
         }])
     }
 }
@@ -569,6 +612,7 @@ fn convert_delete(
                 collection: collection.into(),
                 keys,
             }),
+            post_dedup: false,
         }]);
     }
 
@@ -582,6 +626,7 @@ fn convert_delete(
                     collection: collection.into(),
                     document_id: sql_value_to_string(key),
                 }),
+                post_dedup: false,
             });
         }
         Ok(tasks)
@@ -594,37 +639,9 @@ fn convert_delete(
                 collection: collection.into(),
                 filters: filter_bytes,
             }),
+            post_dedup: false,
         }])
     }
-}
-
-fn convert_join(
-    left: &SqlPlan,
-    right: &SqlPlan,
-    on: &[(String, String)],
-    join_type: &JoinType,
-    limit: usize,
-    tenant_id: TenantId,
-) -> crate::Result<Vec<PhysicalTask>> {
-    let left_collection = extract_collection_name(left);
-    let right_collection = extract_collection_name(right);
-    let vshard = VShardId::from_collection(&left_collection);
-
-    let on_pairs: Vec<(String, String)> = on.to_vec();
-
-    Ok(vec![PhysicalTask {
-        tenant_id,
-        vshard_id: vshard,
-        plan: PhysicalPlan::Query(QueryOp::HashJoin {
-            left_collection,
-            right_collection,
-            on: on_pairs,
-            join_type: join_type.as_str().to_string(),
-            limit,
-            post_group_by: Vec::new(),
-            post_aggregates: Vec::new(),
-        }),
-    }])
 }
 
 fn convert_aggregate(
@@ -666,7 +683,10 @@ fn convert_aggregate(
                 limit: *join_limit,
                 post_group_by: group_strs,
                 post_aggregates: agg_pairs,
+                projection: Vec::new(),
+                post_filters: Vec::new(),
             }),
+            post_dedup: false,
         }]);
     }
 
@@ -698,6 +718,7 @@ fn convert_aggregate(
             sub_group_by: Vec::new(),
             sub_aggregates: Vec::new(),
         }),
+        post_dedup: false,
     }])
 }
 
@@ -749,9 +770,50 @@ fn extract_computed_columns(proj: &[Projection]) -> crate::Result<Vec<u8>> {
     })
 }
 
-fn serialize_window_functions(_specs: &[nodedb_sql::types::WindowSpec]) -> crate::Result<Vec<u8>> {
-    // TODO: serialize window function specs.
-    Ok(Vec::new())
+fn serialize_window_functions(specs: &[nodedb_sql::types::WindowSpec]) -> crate::Result<Vec<u8>> {
+    if specs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let bridge_specs: Vec<crate::bridge::window_func::WindowFuncSpec> = specs
+        .iter()
+        .map(|s| crate::bridge::window_func::WindowFuncSpec {
+            alias: s.alias.clone(),
+            func_name: s.function.clone(),
+            args: s.args.iter().map(sql_expr_to_bridge_expr).collect(),
+            partition_by: s
+                .partition_by
+                .iter()
+                .filter_map(|e| match e {
+                    SqlExpr::Column { name, .. } => Some(name.clone()),
+                    _ => None,
+                })
+                .collect(),
+            order_by: s
+                .order_by
+                .iter()
+                .filter_map(|k| match &k.expr {
+                    SqlExpr::Column { name, .. } => Some((name.clone(), k.ascending)),
+                    _ => None,
+                })
+                .collect(),
+            frame: crate::bridge::window_func::WindowFrame::default(),
+        })
+        .collect();
+    zerompk::to_msgpack_vec(&bridge_specs).map_err(|e| crate::Error::Internal {
+        detail: format!("serialize window functions: {e}"),
+    })
+}
+
+/// Convert a `nodedb_sql::types::SqlExpr` (parser AST) to a
+/// `nodedb_query::expr::SqlExpr` (bridge evaluation type).
+fn sql_expr_to_bridge_expr(expr: &SqlExpr) -> crate::bridge::expr_eval::SqlExpr {
+    use crate::bridge::expr_eval::SqlExpr as BExpr;
+    match expr {
+        SqlExpr::Column { name, .. } => BExpr::Column(name.clone()),
+        SqlExpr::Literal(v) => BExpr::Literal(sql_value_to_json(v)),
+        SqlExpr::Wildcard => BExpr::Column("*".into()),
+        _ => BExpr::Literal(serde_json::Value::Null),
+    }
 }
 
 fn convert_sort_keys(keys: &[SortKey]) -> Vec<(String, bool)> {
