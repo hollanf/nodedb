@@ -231,6 +231,75 @@ pub(super) fn encode_raw_document_rows(rows: &[(String, Vec<u8>)]) -> crate::Res
     Ok(buf)
 }
 
+/// Decode concatenated raw scan payloads into `(doc_id, msgpack_data)` pairs.
+///
+/// Input: zero or more msgpack arrays back-to-back, each produced by
+/// `encode_raw_document_rows`. Each array element is a fixmap with
+/// `{id: str, data: msgpack_map}`.
+///
+/// The `data` field's raw bytes are extracted so consumers can run
+/// `extract_field` on them directly.
+pub(super) fn decode_raw_scan_to_docs(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
+    use nodedb_query::msgpack_scan;
+
+    let mut results = Vec::new();
+    let mut pos = 0;
+
+    while pos < bytes.len() {
+        // Read array header.
+        let first = bytes[pos];
+        let (count, hdr_len) = if (0x90..=0x9f).contains(&first) {
+            ((first & 0x0f) as usize, 1)
+        } else if first == 0xdc && pos + 3 <= bytes.len() {
+            (
+                u16::from_be_bytes([bytes[pos + 1], bytes[pos + 2]]) as usize,
+                3,
+            )
+        } else if first == 0xdd && pos + 5 <= bytes.len() {
+            (
+                u32::from_be_bytes([
+                    bytes[pos + 1],
+                    bytes[pos + 2],
+                    bytes[pos + 3],
+                    bytes[pos + 4],
+                ]) as usize,
+                5,
+            )
+        } else {
+            break;
+        };
+
+        let mut inner = pos + hdr_len;
+        for _ in 0..count {
+            if inner >= bytes.len() {
+                break;
+            }
+
+            // Each element: fixmap {id: str, data: msgpack_map}.
+            let elem_start = inner;
+
+            let id = msgpack_scan::extract_field(bytes, elem_start, "id")
+                .and_then(|(s, _e)| msgpack_scan::read_value(bytes, s))
+                .and_then(|v| match v {
+                    nodedb_types::Value::String(s) => Some(s),
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            let data = msgpack_scan::extract_field(bytes, elem_start, "data")
+                .map(|(s, e)| bytes[s..e].to_vec())
+                .unwrap_or_default();
+
+            results.push((id, data));
+
+            inner = msgpack_scan::skip_value(bytes, inner).unwrap_or(bytes.len());
+        }
+        pos = inner;
+    }
+
+    results
+}
+
 /// Write a msgpack array header.
 fn msgpack_write_array_header(buf: &mut Vec<u8>, len: usize) {
     if len < 16 {

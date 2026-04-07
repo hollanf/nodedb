@@ -92,7 +92,7 @@ fn value_to_json(val: &nodedb_types::value::Value) -> serde_json::Value {
 ///
 /// Used by timeseries raw_scan and aggregate handlers that still use the
 /// internal `ColumnarMemtable` (timeseries-specific, not yet migrated).
-pub(super) fn emit_column_value(
+pub(in crate::data::executor) fn emit_column_value(
     mt: &crate::engine::timeseries::columnar_memtable::ColumnarMemtable,
     col_idx: usize,
     col_type: &crate::engine::timeseries::columnar_memtable::ColumnType,

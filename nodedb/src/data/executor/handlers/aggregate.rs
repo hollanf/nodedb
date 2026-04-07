@@ -162,7 +162,6 @@ impl CoreLoop {
             .columnar_memtables
             .get(collection)
             .filter(|mt| !mt.is_empty());
-        let use_columnar = columnar_mt.is_some();
 
         // Fast path: native columnar aggregation.
         // Groups directly on symbol IDs (u32) instead of JSON-serialized strings.
@@ -263,46 +262,12 @@ impl CoreLoop {
 
         let chunk_size = 10_000;
 
-        let scan_result = if let Some(mt) = use_columnar
-            .then(|| self.columnar_memtables.get(collection))
-            .flatten()
-        {
-            let schema = mt.schema();
-            let row_count = (mt.row_count() as usize).min(scan_limit);
-            let col_meta: Vec<_> = schema
-                .columns
-                .iter()
-                .enumerate()
-                .map(|(i, (name, ty))| (i, name.clone(), *ty))
-                .collect();
-
-            for chunk_start in (0..row_count).step_by(chunk_size) {
-                let chunk_end = (chunk_start + chunk_size).min(row_count);
-                for idx in chunk_start..chunk_end {
-                    let mut row = serde_json::Map::new();
-                    for (col_idx, col_name, col_type) in &col_meta {
-                        let col_data = mt.column(*col_idx);
-                        let val = super::columnar_read::emit_column_value(
-                            mt, *col_idx, col_type, col_data, idx,
-                        );
-                        row.insert(col_name.to_string(), val);
-                    }
-                    let bytes = nodedb_types::json_to_msgpack(&serde_json::Value::Object(row))
-                        .unwrap_or_default();
-                    group_doc(
-                        &bytes,
-                        group_by,
-                        &filter_predicates,
-                        use_field_index,
-                        &mut binary_groups,
-                    );
-                }
-            }
-            Ok(())
-        } else {
-            // Sparse path: chunked btree scan.
-            self.sparse
-                .scan_documents_chunked(tid, collection, scan_limit, chunk_size, |chunk| {
+        // Universal scan: routes to the correct engine (KV, columnar, sparse/strict)
+        // and normalizes all results to standard msgpack maps.
+        let scan_result = self
+            .scan_collection(tid, collection, scan_limit)
+            .map(|docs| {
+                for chunk in docs.chunks(chunk_size) {
                     for (_, value) in chunk {
                         group_doc(
                             value,
@@ -312,9 +277,8 @@ impl CoreLoop {
                             &mut binary_groups,
                         );
                     }
-                })
-                .map(|_| ())
-        };
+                }
+            });
 
         match scan_result {
             Ok(()) => {

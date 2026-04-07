@@ -145,6 +145,7 @@ impl CoreLoop {
 
             PhysicalPlan::Query(QueryOp::BroadcastJoin {
                 large_collection,
+                small_collection,
                 broadcast_data,
                 on,
                 join_type,
@@ -153,6 +154,7 @@ impl CoreLoop {
                 task,
                 tid,
                 large_collection,
+                small_collection,
                 broadcast_data,
                 on,
                 join_type,

@@ -154,6 +154,74 @@ pub async fn broadcast_to_all_cores(
     })
 }
 
+/// Broadcast a plan to all cores and return raw binary payloads concatenated.
+///
+/// Unlike `broadcast_to_all_cores` (which merges as JSON), this returns the
+/// raw response bytes. Each core's payload is appended as-is. Used by the
+/// two-phase join: phase 1 scans the right collection across all cores and
+/// collects raw msgpack, phase 2 passes it as `broadcast_data` to the join.
+pub async fn broadcast_raw(
+    shared: &SharedState,
+    tenant_id: TenantId,
+    plan: PhysicalPlan,
+    trace_id: u64,
+) -> crate::Result<Vec<u8>> {
+    let num_cores = match shared.dispatcher.lock() {
+        Ok(d) => d.num_cores(),
+        Err(p) => p.into_inner().num_cores(),
+    };
+
+    let mut receivers = Vec::with_capacity(num_cores);
+    for core_id in 0..num_cores {
+        let request_id = RequestId::new(BROADCAST_COUNTER.fetch_add(1, Ordering::Relaxed));
+        let vshard_id = VShardId::new(core_id as u16);
+        let request = Request {
+            request_id,
+            tenant_id,
+            vshard_id,
+            plan: plan.clone(),
+            deadline: std::time::Instant::now()
+                + std::time::Duration::from_secs(shared.tuning.network.default_deadline_secs),
+            priority: crate::bridge::envelope::Priority::Normal,
+            trace_id,
+            consistency: ReadConsistency::Strong,
+            idempotency_key: None,
+            event_source: crate::event::EventSource::User,
+            user_roles: Vec::new(),
+        };
+
+        let rx = shared.tracker.register_oneshot(request_id);
+        match shared.dispatcher.lock() {
+            Ok(mut d) => d.dispatch_to_core(core_id, request)?,
+            Err(p) => p.into_inner().dispatch_to_core(core_id, request)?,
+        };
+        receivers.push(rx);
+    }
+
+    let mut merged = Vec::new();
+    for rx in receivers {
+        let resp = tokio::time::timeout(
+            std::time::Duration::from_secs(shared.tuning.network.default_deadline_secs),
+            rx,
+        )
+        .await
+        .map_err(|_| crate::Error::Dispatch {
+            detail: "broadcast_raw timeout".into(),
+        })?
+        .map_err(|_| crate::Error::Dispatch {
+            detail: "broadcast_raw channel closed".into(),
+        })?;
+
+        if resp.status == crate::bridge::envelope::Status::Error {
+            continue;
+        }
+        if !resp.payload.is_empty() {
+            merged.extend_from_slice(resp.payload.as_ref());
+        }
+    }
+    Ok(merged)
+}
+
 /// Returns `true` if the plan is an aggregate kind that benefits from Arrow
 /// SIMD post-processing on the Control Plane after multi-core merge.
 fn is_aggregate_plan(plan: &PhysicalPlan) -> bool {

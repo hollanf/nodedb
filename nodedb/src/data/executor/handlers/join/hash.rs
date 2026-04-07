@@ -61,15 +61,29 @@ impl HashIndex {
         &self,
         probe_doc: &[u8],
         probe_keys: &[&str],
+        build_docs: &[(String, Vec<u8>)],
     ) -> (u64, Vec<(usize, usize)>, Vec<usize>) {
         let (hash, probe_ranges) = hash_join_key(probe_doc, probe_keys, &self.state);
         let mut matched = Vec::new();
         if let Some(bucket) = self.buckets.get(&hash) {
             for (doc_idx, idx_ranges) in bucket {
-                // Canonical msgpack encoding guarantees hash equality implies byte equality
-                // for the hashed field ranges. Accept all entries in this bucket.
-                let _ = idx_ranges;
-                matched.push(*doc_idx);
+                // Verify actual byte ranges match — hash collisions are possible.
+                let mut all_match = !probe_ranges.is_empty();
+                for (i, &(ps, pe)) in probe_ranges.iter().enumerate() {
+                    if let Some(&(bs, be)) = idx_ranges.get(i) {
+                        let build_doc = &build_docs[*doc_idx].1;
+                        if pe - ps != be - bs || probe_doc[ps..pe] != build_doc[bs..be] {
+                            all_match = false;
+                            break;
+                        }
+                    } else {
+                        all_match = false;
+                        break;
+                    }
+                }
+                if all_match {
+                    matched.push(*doc_idx);
+                }
             }
         }
         (hash, probe_ranges, matched)
@@ -104,7 +118,7 @@ pub(super) fn probe_hash_index(p: &ProbeParams<'_>) -> Vec<serde_json::Value> {
         if results.len() >= p.limit {
             break;
         }
-        let (_, _, matched_indices) = p.index.probe(value, p.probe_keys);
+        let (_, _, matched_indices) = p.index.probe(value, p.probe_keys, p.index_docs);
 
         if !matched_indices.is_empty() {
             if is_semi {
@@ -182,7 +196,7 @@ impl CoreLoop {
 
         let scan_limit = (limit * 10).min(50000);
 
-        let left_docs = match self.sparse.scan_documents(tid, left_collection, scan_limit) {
+        let left_docs = match self.scan_collection(tid, left_collection, scan_limit) {
             Ok(d) => d,
             Err(e) => {
                 return self.response_error(
@@ -193,10 +207,7 @@ impl CoreLoop {
                 );
             }
         };
-        let right_docs = match self
-            .sparse
-            .scan_documents(tid, right_collection, scan_limit)
-        {
+        let right_docs = match self.scan_collection(tid, right_collection, scan_limit) {
             Ok(d) => d,
             Err(e) => {
                 return self.response_error(
@@ -247,6 +258,7 @@ impl CoreLoop {
         task: &ExecutionTask,
         tid: u32,
         large_collection: &str,
+        small_collection: &str,
         broadcast_data: &[u8],
         on: &[(String, String)],
         join_type: &str,
@@ -255,30 +267,22 @@ impl CoreLoop {
         debug!(
             core = self.core_id,
             %large_collection,
+            %small_collection,
             broadcast_bytes = broadcast_data.len(),
             keys = on.len(),
             %join_type,
             "broadcast join"
         );
 
-        // Deserialize broadcast (small) side from MessagePack Vec<(String, Vec<u8>)>.
-        let small_docs_raw: Vec<(String, Vec<u8>)> = match zerompk::from_msgpack(broadcast_data) {
-            Ok(v) => v,
-            Err(e) => {
-                return self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: format!("broadcast_data deserialization: {e}"),
-                    },
-                );
-            }
-        };
+        // Deserialize broadcast (small) side.
+        // Format: raw msgpack from broadcast_raw — concatenated arrays of
+        // {id, data} maps from each core's document scan. The `data` field
+        // contains the actual document bytes.
+        let small_docs_raw: Vec<(String, Vec<u8>)> =
+            super::super::super::response_codec::decode_raw_scan_to_docs(broadcast_data);
 
         let scan_limit = (limit * 10).min(50000);
-        let large_docs = match self
-            .sparse
-            .scan_documents(tid, large_collection, scan_limit)
-        {
+        let large_docs = match self.scan_collection(tid, large_collection, scan_limit) {
             Ok(d) => d,
             Err(e) => {
                 return self.response_error(
@@ -298,7 +302,6 @@ impl CoreLoop {
         let small_index = HashIndex::build(&small_docs_raw, &small_keys);
 
         // Probe the hash index with large (scanned) side.
-        let small_collection = "broadcast";
         let results = probe_hash_index(&ProbeParams {
             probe_docs: &large_docs,
             index: &small_index,

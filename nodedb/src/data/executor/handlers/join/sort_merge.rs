@@ -59,7 +59,7 @@ impl CoreLoop {
 
         let scan_limit = (limit * 10).min(50000);
 
-        let left_docs = match self.sparse.scan_documents(tid, left_collection, scan_limit) {
+        let left_docs = match self.scan_collection(tid, left_collection, scan_limit) {
             Ok(d) => d,
             Err(e) => {
                 return self.response_error(
@@ -70,10 +70,7 @@ impl CoreLoop {
                 );
             }
         };
-        let right_docs = match self
-            .sparse
-            .scan_documents(tid, right_collection, scan_limit)
-        {
+        let right_docs = match self.scan_collection(tid, right_collection, scan_limit) {
             Ok(d) => d,
             Err(e) => {
                 return self.response_error(

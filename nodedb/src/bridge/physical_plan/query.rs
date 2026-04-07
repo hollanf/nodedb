@@ -36,6 +36,7 @@ pub enum QueryOp {
     /// Broadcast join: small side serialized in the plan.
     BroadcastJoin {
         large_collection: String,
+        small_collection: String,
         broadcast_data: Vec<u8>,
         on: Vec<(String, String)>,
         join_type: String,

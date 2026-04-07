@@ -53,6 +53,68 @@ impl NodeDbPgHandler {
             .await;
         }
 
+        // Cross-shard HashJoin: two-phase execution.
+        // Phase 1: broadcast-scan the right collection to gather all its docs.
+        // Phase 2: send a BroadcastJoin to the left collection's core with
+        //          the right-side docs embedded. Each left-core scans its own
+        //          left-side data and joins locally.
+        if let crate::bridge::envelope::PhysicalPlan::Query(
+            crate::bridge::physical_plan::QueryOp::HashJoin {
+                ref left_collection,
+                ref right_collection,
+                ref on,
+                ref join_type,
+                limit,
+            },
+        ) = task.plan
+        {
+            // Phase 1: broadcast scan the right collection across all cores.
+            // Uses broadcast_raw to get raw binary payloads (no JSON wrapping).
+            let right_scan = crate::bridge::envelope::PhysicalPlan::Document(
+                crate::bridge::physical_plan::DocumentOp::Scan {
+                    collection: right_collection.clone(),
+                    filters: Vec::new(),
+                    limit: (limit * 10).min(50000),
+                    offset: 0,
+                    sort_keys: Vec::new(),
+                    distinct: false,
+                    projection: Vec::new(),
+                    computed_columns: Vec::new(),
+                    window_functions: Vec::new(),
+                },
+            );
+            let broadcast_data = crate::control::server::dispatch_utils::broadcast_raw(
+                &self.state,
+                task.tenant_id,
+                right_scan,
+                0,
+            )
+            .await?;
+
+            // Phase 2: dispatch BroadcastJoin to all cores (each core has a
+            // shard of the left collection; the right side is fully embedded).
+            let on_keys: Vec<(String, String)> =
+                on.iter().map(|(l, r)| (l.clone(), r.clone())).collect();
+
+            let broadcast_plan = crate::bridge::envelope::PhysicalPlan::Query(
+                crate::bridge::physical_plan::QueryOp::BroadcastJoin {
+                    large_collection: left_collection.clone(),
+                    small_collection: right_collection.clone(),
+                    broadcast_data,
+                    on: on_keys,
+                    join_type: join_type.clone(),
+                    limit,
+                },
+            );
+            return crate::control::server::dispatch_utils::broadcast_to_all_cores(
+                &self.state,
+                task.tenant_id,
+                broadcast_plan,
+                0,
+            )
+            .await;
+        }
+
         if let (Some(proposer), Some(tracker)) =
             (&self.state.raft_proposer, &self.state.propose_tracker)
             && let Some(entry) = crate::control::wal_replication::to_replicated_entry(
