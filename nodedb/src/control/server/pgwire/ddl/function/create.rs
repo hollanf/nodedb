@@ -395,4 +395,49 @@ mod tests {
         let sql = "CREATE FUNCTION f(x INT) RETURNS INT AS";
         assert!(parse_create_function(sql).is_err());
     }
+
+    #[test]
+    fn parse_procedural_body() {
+        let sql = "CREATE FUNCTION classify(score INT) RETURNS TEXT AS \
+                    BEGIN \
+                      IF score > 90 THEN RETURN 'excellent'; \
+                      ELSIF score > 70 THEN RETURN 'good'; \
+                      ELSE RETURN 'needs improvement'; \
+                      END IF; \
+                    END";
+        let parsed = parse_create_function(sql).unwrap();
+        assert_eq!(parsed.name, "classify");
+        assert!(parsed.body_sql.starts_with("BEGIN"));
+
+        // Verify the procedural parser can handle the body.
+        use crate::control::planner::procedural::ast::BodyKind;
+        assert!(matches!(
+            BodyKind::detect(&parsed.body_sql),
+            BodyKind::Procedural
+        ));
+        let block = crate::control::planner::procedural::parse_block(&parsed.body_sql);
+        assert!(block.is_ok(), "procedural parse failed: {:?}", block.err());
+    }
+
+    #[test]
+    fn parse_dml_in_procedural_body() {
+        let sql = "CREATE FUNCTION bad_func(x INT) RETURNS INT AS \
+                    BEGIN INSERT INTO t (id) VALUES (x); RETURN x; END";
+        let parsed = parse_create_function(sql).unwrap();
+
+        use crate::control::planner::procedural::ast::BodyKind;
+        assert!(matches!(
+            BodyKind::detect(&parsed.body_sql),
+            BodyKind::Procedural
+        ));
+        let block = crate::control::planner::procedural::parse_block(&parsed.body_sql).unwrap();
+
+        let result = crate::control::planner::procedural::validate_function_block(&block);
+        assert!(result.is_err(), "should reject DML: {:?}", result);
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("DML"),
+            "error should mention DML, got: {err_msg}"
+        );
+    }
 }

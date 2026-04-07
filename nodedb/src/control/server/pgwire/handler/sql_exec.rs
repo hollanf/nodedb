@@ -441,12 +441,27 @@ impl NodeDbPgHandler {
 /// query message (e.g. heredoc input), ensuring `parts[2]` in DDL handlers
 /// never contains a trailing semicolon.
 pub(super) fn split_sql_statements(sql: &str) -> Vec<String> {
+    // Procedural function bodies (AS BEGIN ... END) contain semicolons that
+    // are NOT statement separators. Detect and return as single statement.
+    let upper = sql.to_uppercase();
+    // Detect procedural blocks: any DDL containing a BEGIN...END body.
+    // Standalone "BEGIN" (transaction) is handled separately before split.
+    let has_procedural_block = (upper.contains(" BEGIN ") || upper.contains(" BEGIN\n"))
+        && upper.trim() != "BEGIN"
+        && !upper.starts_with("BEGIN");
+    if has_procedural_block {
+        let trimmed = sql.trim().trim_end_matches(';').trim().to_string();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+        return vec![trimmed];
+    }
+
     let mut stmts = Vec::new();
     let mut current = String::new();
     let mut chars = sql.chars().peekable();
     let mut in_single_quote = false;
     let mut in_double_quote = false;
-    // Simple line-comment skip flag.
     let mut in_line_comment = false;
     let mut in_block_comment = false;
     let mut prev = '\0';
@@ -550,5 +565,25 @@ mod tests {
     fn empty_statements_discarded() {
         let stmts = split_sql_statements(";;  ;SELECT 1;;");
         assert_eq!(stmts, vec!["SELECT 1"]);
+    }
+
+    #[test]
+    fn procedural_begin_end_not_split() {
+        let sql = "CREATE FUNCTION f(x INT) RETURNS TEXT AS \
+                    BEGIN IF x > 0 THEN RETURN 'pos'; ELSE RETURN 'neg'; END IF; END";
+        let stmts = split_sql_statements(sql);
+        assert_eq!(stmts.len(), 1);
+        assert!(stmts[0].starts_with("CREATE FUNCTION"));
+        assert!(stmts[0].ends_with("END"));
+    }
+
+    #[test]
+    fn procedural_with_trailing_semicolon() {
+        let sql = "CREATE FUNCTION f(x INT) RETURNS INT AS \
+                    BEGIN RETURN x; END;";
+        let stmts = split_sql_statements(sql);
+        assert_eq!(stmts.len(), 1);
+        assert!(stmts[0].contains("BEGIN"));
+        assert!(stmts[0].ends_with("END"));
     }
 }
