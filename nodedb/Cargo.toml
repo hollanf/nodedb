@@ -52,6 +52,7 @@ toml = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 sonic-rs = { workspace = true }
+chrono = { workspace = true }
 redb = { workspace = true }
 crc32c = { workspace = true }
 zerompk = { workspace = true }

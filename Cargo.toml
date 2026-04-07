@@ -138,6 +138,7 @@ toml = "0.8"
 anyhow = "1"
 serde_json = "1"
 sonic-rs = "0.5"
+chrono = { version = "0.4", features = ["std"], default-features = false }
 
 # MessagePack
 rmpv = "1"

@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use sonic_rs::{JsonContainerTrait, JsonValueTrait};
+
 use crate::bridge::envelope::{ErrorCode, Payload, Response, Status};
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::response_codec;
@@ -73,6 +75,7 @@ impl CoreLoop {
 
         match format {
             "ilp" => self.execute_ilp_ingest(task, collection, payload, wal_lsn, now_ms),
+            "json" => self.execute_json_ingest(task, collection, payload, wal_lsn, now_ms),
             _ => self.response_error(
                 task,
                 ErrorCode::Internal {
@@ -281,4 +284,152 @@ impl CoreLoop {
             error_code: None,
         }
     }
+
+    /// Ingest JSON row objects from SQL INSERT path.
+    ///
+    /// Payload is a JSON array like: `[{"id":"e1","ts":"2024-01-01T00:00:00Z","value":42.0}]`.
+    /// Converts each row to an ILP line and delegates to the ILP ingest path.
+    fn execute_json_ingest(
+        &mut self,
+        task: &ExecutionTask,
+        collection: &str,
+        payload: &[u8],
+        wal_lsn: Option<u64>,
+        now_ms: i64,
+    ) -> Response {
+        let rows: sonic_rs::Array = match sonic_rs::from_slice(payload) {
+            Ok(r) => r,
+            Err(e) => {
+                return self.response_error(
+                    task,
+                    ErrorCode::Internal {
+                        detail: format!("JSON parse error: {e}"),
+                    },
+                );
+            }
+        };
+
+        if rows.is_empty() {
+            return self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: "empty JSON rows array".into(),
+                },
+            );
+        }
+
+        // Convert JSON rows to ILP text.
+        // The collection name serves as the ILP measurement.
+        // Strip tenant scope prefix if present (e.g., "1:events" → "events").
+        let measurement = collection
+            .split_once(':')
+            .map(|(_, name)| name)
+            .unwrap_or(collection);
+
+        // Validate measurement name: only [a-zA-Z0-9_-] allowed.
+        // ILP special characters (space, comma, =, newline) in measurement names corrupt the line.
+        if !measurement
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: format!(
+                        "invalid measurement name '{measurement}': only [a-zA-Z0-9_-] allowed"
+                    ),
+                },
+            );
+        }
+
+        let mut ilp_buf = String::new();
+        for row_val in rows.iter() {
+            let obj = match row_val.as_object() {
+                Some(o) => o,
+                None => continue,
+            };
+
+            let mut fields = Vec::new();
+            let mut timestamp_ns: Option<i64> = None;
+
+            for (key, val) in obj.iter() {
+                let lower = key.to_lowercase();
+                if lower == "ts" || lower == "timestamp" || lower == "time" {
+                    if let Some(s) = val.as_str() {
+                        timestamp_ns = parse_ts_string_to_nanos(s);
+                    } else if let Some(n) = val.as_i64() {
+                        // Treat integer timestamps as milliseconds → convert to ns.
+                        timestamp_ns = Some(n * 1_000_000);
+                    } else if let Some(f) = val.as_f64() {
+                        timestamp_ns = Some(f as i64 * 1_000_000);
+                    }
+                    continue;
+                }
+
+                if let Some(f) = val.as_f64() {
+                    fields.push(format!("{key}={f}"));
+                } else if let Some(n) = val.as_i64() {
+                    fields.push(format!("{key}={n}i"));
+                } else if let Some(s) = val.as_str() {
+                    fields.push(format!("{key}=\"{}\"", s.replace('\"', "\\\"")));
+                } else if let Some(b) = val.as_bool() {
+                    fields.push(format!("{key}={b}"));
+                }
+            }
+
+            if fields.is_empty() {
+                continue;
+            }
+
+            ilp_buf.push_str(measurement);
+            ilp_buf.push(' ');
+            ilp_buf.push_str(&fields.join(","));
+            if let Some(ts) = timestamp_ns {
+                ilp_buf.push(' ');
+                ilp_buf.push_str(&ts.to_string());
+            }
+            ilp_buf.push('\n');
+        }
+
+        if ilp_buf.is_empty() {
+            return self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: "no valid rows in JSON payload".into(),
+                },
+            );
+        }
+
+        // Delegate to the ILP ingest path.
+        self.execute_ilp_ingest(task, collection, ilp_buf.as_bytes(), wal_lsn, now_ms)
+    }
+}
+
+/// Parse a datetime string to nanoseconds since Unix epoch.
+///
+/// Accepts RFC3339 / ISO8601 with timezone (e.g., "2024-01-01T00:00:00Z"),
+/// and common datetime formats without timezone (treated as UTC).
+/// Returns nanoseconds since Unix epoch, or `None` if the string cannot be parsed.
+fn parse_ts_string_to_nanos(s: &str) -> Option<i64> {
+    use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+
+    // Try RFC3339 first (includes timezone info).
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return dt.timestamp_nanos_opt();
+    }
+
+    // Try common space-separated format "YYYY-MM-DD HH:MM:SS[.frac]".
+    let formats = [
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S",
+    ];
+    for fmt in &formats {
+        if let Ok(ndt) = NaiveDateTime::parse_from_str(s, fmt) {
+            return Utc.from_utc_datetime(&ndt).timestamp_nanos_opt();
+        }
+    }
+
+    None
 }

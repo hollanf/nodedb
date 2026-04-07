@@ -138,6 +138,15 @@ impl CoreLoop {
                     &mut series_keys,
                     now_ms,
                 );
+
+                // Reserve memory in the governor to match what was replayed,
+                // so that subsequent flush_ts_collection releases stay balanced.
+                if accepted > 0
+                    && let Some(ref gov) = self.governor
+                {
+                    let _ = gov.try_reserve(nodedb_mem::EngineId::Timeseries, accepted * 24);
+                }
+
                 replayed += accepted;
             } else {
                 // Binary payload — try msgpack-encoded samples.
@@ -158,7 +167,14 @@ impl CoreLoop {
                             },
                         );
                     }
-                    replayed += batch.samples.len();
+                    let sample_count = batch.samples.len();
+                    if sample_count > 0
+                        && let Some(ref gov) = self.governor
+                    {
+                        let _ =
+                            gov.try_reserve(nodedb_mem::EngineId::Timeseries, sample_count * 24);
+                    }
+                    replayed += sample_count;
                 }
             }
         }
