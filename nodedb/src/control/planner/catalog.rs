@@ -247,20 +247,51 @@ fn collection_to_arrow_schema(
             Arc::new(Schema::new(fields))
         }
 
-        // Schemaless document: dynamic fields — expose id + raw document blob.
-        CollectionType::Document(DocumentMode::Schemaless) => Arc::new(Schema::new(vec![
-            Field::new("id", DataType::Utf8, false),
-            Field::new("document", DataType::Utf8, true),
-        ])),
+        // Schemaless document: expose tracked fields if any, else id + document.
+        CollectionType::Document(DocumentMode::Schemaless) => {
+            if coll.fields.is_empty() {
+                Arc::new(Schema::new(vec![
+                    Field::new("id", DataType::Utf8, false),
+                    Field::new("document", DataType::Utf8, true),
+                ]))
+            } else {
+                let mut fields = vec![Field::new("id", DataType::Utf8, false)];
+                for (name, type_str) in &coll.fields {
+                    let dt = match type_str.to_uppercase().as_str() {
+                        "INT" | "INTEGER" | "INT4" | "INT8" | "BIGINT" => DataType::Int64,
+                        "FLOAT" | "FLOAT4" | "FLOAT8" | "FLOAT64" | "DOUBLE" | "REAL" => {
+                            DataType::Float64
+                        }
+                        "BOOL" | "BOOLEAN" => DataType::Boolean,
+                        _ => DataType::Utf8,
+                    };
+                    fields.push(Field::new(name, dt, true));
+                }
+                // Keep document blob for raw access.
+                fields.push(Field::new("document", DataType::Utf8, true));
+                Arc::new(Schema::new(fields))
+            }
+        }
 
-        // Key-Value: full schema lives in KvConfig.
+        // Key-Value: declared columns + implicit nullable `value TEXT` catch-all.
+        // Declared columns cover the key (PK) and any typed value fields.
+        // The implicit `value` column lets callers store arbitrary blobs without
+        // declaring every field in the schema — that's the whole point of KV.
         CollectionType::KeyValue(config) => {
-            let fields = config
+            let mut fields: Vec<Field> = config
                 .schema
                 .columns
                 .iter()
                 .map(|c| Field::new(&c.name, column_type_to_arrow(&c.column_type), c.nullable))
-                .collect::<Vec<_>>();
+                .collect();
+            // Add implicit `value` field only when no non-PK typed fields are declared.
+            // If the user declared typed value fields (e.g. counter INT, label TEXT),
+            // they manage the schema explicitly — no implicit field needed.
+            let has_value = config.schema.columns.iter().any(|c| c.name == "value");
+            let has_typed_value_fields = config.schema.columns.iter().any(|c| !c.primary_key);
+            if !has_value && !has_typed_value_fields {
+                fields.push(Field::new("value", DataType::Utf8, true));
+            }
             Arc::new(Schema::new(fields))
         }
 

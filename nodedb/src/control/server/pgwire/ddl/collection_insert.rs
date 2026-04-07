@@ -46,10 +46,6 @@ fn parse_write_statement(
     if let Some(catalog) = state.credentials.catalog()
         && let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), &coll_name)
     {
-        // Skip if collection has typed fields (handled by DataFusion).
-        if !coll.fields.is_empty() {
-            return None;
-        }
         // Skip non-schemaless collections — they need schema-aware insert
         // (strict, columnar, timeseries, spatial) or engine-specific insert
         // (KV). Dispatch these to DataFusion / Data Plane instead.
@@ -306,6 +302,32 @@ pub async fn insert_document(
     .await
     {
         return Some(Err(sqlstate_error("XX000", &e.to_string())));
+    }
+
+    // Track field names in catalog so DataFusion can resolve them in queries.
+    // This makes schemaless fields visible for WHERE, GROUP BY, ORDER BY, etc.
+    if let Some(catalog) = state.credentials.catalog() {
+        if let Ok(Some(mut coll)) = catalog.get_collection(tenant_id.as_u32(), &parsed.coll_name) {
+            let mut changed = false;
+            for (name, val) in &fields {
+                if name == "id" {
+                    continue;
+                }
+                if !coll.fields.iter().any(|(n, _)| n == name) {
+                    let type_str = match val {
+                        serde_json::Value::Number(n) if n.is_f64() => "FLOAT",
+                        serde_json::Value::Number(_) => "INT",
+                        serde_json::Value::Bool(_) => "BOOL",
+                        _ => "TEXT",
+                    };
+                    coll.fields.push((name.clone(), type_str.to_string()));
+                    changed = true;
+                }
+            }
+            if changed {
+                let _ = catalog.put_collection(&coll);
+            }
+        }
     }
 
     // Fire SYNC AFTER INSERT triggers (execute in write path, same transaction).
