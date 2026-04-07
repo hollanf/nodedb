@@ -110,6 +110,26 @@ pub(super) fn probe_hash_index(p: &ProbeParams<'_>) -> Vec<serde_json::Value> {
     let is_right = p.join_type == "right" || p.join_type == "full";
     let is_semi = p.join_type == "semi";
     let is_anti = p.join_type == "anti";
+    let is_cross = p.join_type == "cross";
+
+    // Cross join: cartesian product (no hash lookup needed).
+    if is_cross {
+        let mut results = Vec::new();
+        for (_, left_val) in p.probe_docs {
+            for (_, right_val) in p.index_docs {
+                if results.len() >= p.limit {
+                    return results;
+                }
+                results.push(merge_join_docs_binary(
+                    left_val,
+                    Some(right_val),
+                    p.probe_collection,
+                    p.index_collection,
+                ));
+            }
+        }
+        return results;
+    }
 
     let mut index_matched: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut results = Vec::new();

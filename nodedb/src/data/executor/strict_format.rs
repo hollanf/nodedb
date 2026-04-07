@@ -150,22 +150,17 @@ fn coerce_value(val: &Value, col_type: &ColumnType, col_name: &str) -> Result<Va
         ColumnType::Vector(dim) => match val {
             Value::Bytes(b) if b.len() == *dim as usize * 4 => Ok(val.clone()),
             Value::Array(arr) => {
-                let floats: Vec<f32> = arr
-                    .iter()
-                    .filter_map(|v| match v {
-                        Value::Float(f) => Some(*f as f32),
-                        Value::Integer(n) => Some(*n as f32),
-                        _ => None,
-                    })
-                    .collect();
-                if floats.len() != *dim as usize {
-                    return Err(format!(
-                        "column '{col_name}': expected VECTOR({dim}), got {} elements",
-                        floats.len()
-                    ));
+                let floats = extract_vector_floats(arr);
+                validate_and_encode_vector(col_name, *dim, &floats)
+            }
+            Value::String(s) => {
+                // UPDATE path may serialize ARRAY literal as string — parse it.
+                match parse_vector_string(s) {
+                    Some(floats) => validate_and_encode_vector(col_name, *dim, &floats),
+                    None => Err(format!(
+                        "column '{col_name}': expected VECTOR array, got String({s:?})"
+                    )),
                 }
-                let bytes: Vec<u8> = floats.iter().flat_map(|f| f.to_le_bytes()).collect();
-                Ok(Value::Bytes(bytes))
             }
             _ => Err(format!(
                 "column '{col_name}': expected VECTOR array, got {val:?}"
@@ -173,6 +168,84 @@ fn coerce_value(val: &Value, col_type: &ColumnType, col_name: &str) -> Result<Va
         },
         ColumnType::Geometry => Ok(Value::String(format!("{val:?}"))),
     }
+}
+
+/// Extract f32 floats from a `Value::Array`.
+fn extract_vector_floats(arr: &[Value]) -> Vec<f32> {
+    arr.iter()
+        .filter_map(|v| match v {
+            Value::Float(f) => Some(*f as f32),
+            Value::Integer(n) => Some(*n as f32),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Validate dimension count and encode as little-endian bytes.
+fn validate_and_encode_vector(col_name: &str, dim: u32, floats: &[f32]) -> Result<Value, String> {
+    if floats.len() != dim as usize {
+        return Err(format!(
+            "column '{col_name}': expected VECTOR({dim}), got {} elements",
+            floats.len()
+        ));
+    }
+    let bytes: Vec<u8> = floats.iter().flat_map(|f| f.to_le_bytes()).collect();
+    Ok(Value::Bytes(bytes))
+}
+
+/// Parse a vector from string representations that may arrive via UPDATE path.
+///
+/// Handles formats like:
+/// - `"ArrayLiteral([Literal(Float(0.9)), Literal(Float(0.1)), ...])"` (sqlparser debug repr)
+/// - `"ARRAY[0.1, 0.2, 0.3]"` (SQL literal)
+/// - `"[0.1, 0.2, 0.3]"` (JSON-style)
+fn parse_vector_string(s: &str) -> Option<Vec<f32>> {
+    // Try ARRAY[...] SQL literal format.
+    let upper = s.to_uppercase();
+    if upper.starts_with("ARRAY[") {
+        let start = s.find('[')? + 1;
+        let end = s.rfind(']')?;
+        if end <= start {
+            return None;
+        }
+        let inner = &s[start..end];
+        let floats: Vec<f32> = inner
+            .split(',')
+            .filter_map(|tok| tok.trim().parse::<f32>().ok())
+            .collect();
+        if !floats.is_empty() {
+            return Some(floats);
+        }
+    }
+
+    // Try JSON-style [0.1, 0.2, ...] format.
+    if s.starts_with('[') && s.ends_with(']') {
+        let inner = &s[1..s.len() - 1];
+        let floats: Vec<f32> = inner
+            .split(',')
+            .filter_map(|tok| tok.trim().parse::<f32>().ok())
+            .collect();
+        if !floats.is_empty() {
+            return Some(floats);
+        }
+    }
+
+    // Try sqlparser debug repr: "ArrayLiteral([Literal(Float(0.9)), ...])"
+    if s.starts_with("ArrayLiteral(") {
+        let floats: Vec<f32> = s
+            .split("Float(")
+            .skip(1)
+            .filter_map(|chunk| {
+                let end = chunk.find(')')?;
+                chunk[..end].parse::<f32>().ok()
+            })
+            .collect();
+        if !floats.is_empty() {
+            return Some(floats);
+        }
+    }
+
+    None
 }
 
 /// Convert a typed `Value` to JSON (for pgwire output only).

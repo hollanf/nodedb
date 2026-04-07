@@ -80,7 +80,9 @@ impl CoreLoop {
                 options.max_visited,
             ),
 
-            GraphOp::Algo { algorithm, params } => self.execute_graph_algo(task, algorithm, params),
+            GraphOp::Algo { algorithm, params } => {
+                self.execute_graph_algo(task, tid, algorithm, params)
+            }
 
             GraphOp::Match { query } => self.execute_graph_match(task, query),
         }

@@ -8,6 +8,7 @@ use tracing::debug;
 
 use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::scoping::scoped_node;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::graph::algo::params::{AlgoParams, GraphAlgorithm};
 
@@ -15,6 +16,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_graph_algo(
         &self,
         task: &ExecutionTask,
+        tid: u32,
         algorithm: &GraphAlgorithm,
         params: &AlgoParams,
     ) -> Response {
@@ -34,6 +36,18 @@ impl CoreLoop {
                 },
             );
         }
+
+        // Scope source_node with tenant_id so it matches CSR node keys.
+        // Only clone params when source_node needs to be rewritten.
+        let scoped_params;
+        let params = if params.source_node.is_some() {
+            let mut p = params.clone();
+            p.source_node = p.source_node.map(|n| scoped_node(tid, &n));
+            scoped_params = p;
+            &scoped_params
+        } else {
+            params
+        };
 
         use crate::engine::graph::algo;
 

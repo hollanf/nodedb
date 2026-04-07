@@ -122,15 +122,15 @@ impl CoreLoop {
                 Ok(docs) if docs.is_empty() => {
                     // Sparse empty — try KV / columnar engines.
                     let fallback = self.scan_collection(tid, collection, fetch_limit);
-                    if let Ok(ref docs) = fallback {
-                        if !docs.is_empty() {
-                            warn!(
-                                core = self.core_id,
-                                %collection,
-                                count = docs.len(),
-                                "document scan fallback to scan_collection"
-                            );
-                        }
+                    if let Ok(ref docs) = fallback
+                        && !docs.is_empty()
+                    {
+                        warn!(
+                            core = self.core_id,
+                            %collection,
+                            count = docs.len(),
+                            "document scan fallback to scan_collection"
+                        );
                     }
                     fallback
                 }
@@ -217,16 +217,16 @@ impl CoreLoop {
                         .into_iter()
                         .skip(offset)
                         .take(limit)
-                        .filter_map(|(doc_id, val)| {
+                        .map(|(doc_id, val)| {
                             let data = super::super::super::strict_format::binary_tuple_to_json(
                                 &val, schema,
                             )
                             .unwrap_or(serde_json::Value::Null);
                             let projected = apply_projection(data, &computed_cols, projection);
-                            Some(super::super::super::response_codec::DocumentRow {
+                            super::super::super::response_codec::DocumentRow {
                                 id: doc_id,
                                 data: projected,
-                            })
+                            }
                         })
                         .collect();
                     return self.send_document_rows_transformed(task, &result, stream_chunk_size);
