@@ -42,6 +42,7 @@ impl CoreLoop {
                 on,
                 join_type,
                 limit,
+                ..
             }) => self.execute_hash_join(
                 task,
                 tid,
@@ -150,6 +151,7 @@ impl CoreLoop {
                 on,
                 join_type,
                 limit,
+                ..
             }) => self.execute_broadcast_join(
                 task,
                 tid,

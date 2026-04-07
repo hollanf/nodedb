@@ -174,11 +174,6 @@ impl PlanConverter {
         agg: &datafusion::logical_expr::Aggregate,
         tenant_id: TenantId,
     ) -> crate::Result<Vec<PhysicalTask>> {
-        let collection = extract_table_name(&agg.input).ok_or_else(|| crate::Error::PlanError {
-            detail: "GROUP BY requires a table scan input".into(),
-        })?;
-        let vshard = VShardId::from_collection(&collection);
-
         // Extract GROUP BY columns (filtering out time_bucket expressions
         // which are handled separately via bucket_interval_ms).
         let group_by: Vec<String> = agg
@@ -192,6 +187,17 @@ impl PlanConverter {
                 }
             })
             .collect();
+
+        // Check if the aggregate input is a JOIN — if so, produce a HashJoin
+        // with post-aggregation fields instead of a standalone Aggregate plan.
+        if let Some(join) = find_join_in_plan(&agg.input) {
+            return self.convert_aggregate_over_join(join, &group_by, &agg.aggr_expr, tenant_id);
+        }
+
+        let collection = extract_table_name(&agg.input).ok_or_else(|| crate::Error::PlanError {
+            detail: "GROUP BY requires a table scan input".into(),
+        })?;
+        let vshard = VShardId::from_collection(&collection);
 
         // Extract aggregate expressions: (op, field).
         let mut aggregates = Vec::new();
@@ -286,6 +292,68 @@ impl PlanConverter {
                 sub_aggregates: Vec::new(),
             }),
         }])
+    }
+
+    /// Convert an Aggregate over a Join into a HashJoin with post-aggregation.
+    fn convert_aggregate_over_join(
+        &self,
+        join: &datafusion::logical_expr::Join,
+        group_by: &[String],
+        aggr_exprs: &[Expr],
+        tenant_id: TenantId,
+    ) -> crate::Result<Vec<PhysicalTask>> {
+        // Extract aggregate functions.
+        let mut aggregates = Vec::new();
+        for expr in aggr_exprs {
+            if let Expr::AggregateFunction(func) = expr {
+                let mut op = func.func.name().to_lowercase();
+                let field = func
+                    .params
+                    .args
+                    .first()
+                    .map(|a| match a {
+                        Expr::Column(col) => col.name.clone(),
+                        Expr::Literal(..) => "*".into(),
+                        _ => format!("{a}"),
+                    })
+                    .unwrap_or_else(|| "*".into());
+                if func.params.distinct {
+                    op = format!("{op}_distinct");
+                }
+                aggregates.push((op, field));
+            }
+        }
+
+        // Convert the join, then attach post-aggregation fields to the plan.
+        let mut tasks = super::join::convert_join(join, tenant_id)?;
+        for task in &mut tasks {
+            match &mut task.plan {
+                PhysicalPlan::Query(QueryOp::HashJoin {
+                    post_group_by,
+                    post_aggregates,
+                    ..
+                }) => {
+                    *post_group_by = group_by.to_vec();
+                    *post_aggregates = aggregates.clone();
+                }
+                _ => {}
+            }
+        }
+        Ok(tasks)
+    }
+}
+
+/// Recursively find a `Join` node in the logical plan (through Projection/Filter).
+fn find_join_in_plan(
+    plan: &datafusion::logical_expr::LogicalPlan,
+) -> Option<&datafusion::logical_expr::Join> {
+    use datafusion::logical_expr::LogicalPlan;
+    match plan {
+        LogicalPlan::Join(join) => Some(join),
+        LogicalPlan::Projection(proj) => find_join_in_plan(&proj.input),
+        LogicalPlan::Filter(filter) => find_join_in_plan(&filter.input),
+        LogicalPlan::SubqueryAlias(alias) => find_join_in_plan(&alias.input),
+        _ => None,
     }
 }
 

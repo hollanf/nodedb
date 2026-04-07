@@ -65,6 +65,8 @@ impl NodeDbPgHandler {
                 ref on,
                 ref join_type,
                 limit,
+                ref post_group_by,
+                ref post_aggregates,
             },
         ) = task.plan
         {
@@ -96,6 +98,10 @@ impl NodeDbPgHandler {
             let on_keys: Vec<(String, String)> =
                 on.iter().map(|(l, r)| (l.clone(), r.clone())).collect();
 
+            let has_post_agg = !post_group_by.is_empty() || !post_aggregates.is_empty();
+            let post_group_by = post_group_by.clone();
+            let post_aggregates = post_aggregates.clone();
+
             let broadcast_plan = crate::bridge::envelope::PhysicalPlan::Query(
                 crate::bridge::physical_plan::QueryOp::BroadcastJoin {
                     large_collection: left_collection.clone(),
@@ -104,15 +110,29 @@ impl NodeDbPgHandler {
                     on: on_keys,
                     join_type: join_type.clone(),
                     limit,
+                    post_group_by: Vec::new(),
+                    post_aggregates: Vec::new(),
                 },
             );
-            return crate::control::server::dispatch_utils::broadcast_to_all_cores(
+            let mut resp = crate::control::server::dispatch_utils::broadcast_to_all_cores(
                 &self.state,
                 task.tenant_id,
                 broadcast_plan,
                 0,
             )
-            .await;
+            .await?;
+
+            // Post-join aggregation: if the original query had GROUP BY on join
+            // results, aggregate them now in the Control Plane.
+            if has_post_agg {
+                resp = crate::control::server::post_aggregate::apply_post_aggregation(
+                    resp,
+                    &post_group_by,
+                    &post_aggregates,
+                )?;
+            }
+
+            return Ok(resp);
         }
 
         if let (Some(proposer), Some(tracker)) =

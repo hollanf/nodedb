@@ -109,6 +109,8 @@ pub(super) fn convert_join(join: &Join, tenant_id: TenantId) -> crate::Result<Ve
                 on: on_keys,
                 join_type: join_type_str.to_string(),
                 limit: 1000,
+                post_group_by: Vec::new(),
+                post_aggregates: Vec::new(),
             }),
         }]);
     }
@@ -125,6 +127,8 @@ pub(super) fn convert_join(join: &Join, tenant_id: TenantId) -> crate::Result<Ve
             on: on_keys,
             join_type: join_type_str.to_string(),
             limit: 1000,
+            post_group_by: Vec::new(),
+            post_aggregates: Vec::new(),
         }),
     }])
 }

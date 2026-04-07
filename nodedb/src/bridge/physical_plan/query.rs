@@ -31,6 +31,10 @@ pub enum QueryOp {
         on: Vec<(String, String)>,
         join_type: String,
         limit: usize,
+        /// Post-join GROUP BY columns (empty = no aggregation).
+        post_group_by: Vec<String>,
+        /// Post-join aggregates: (op, field) pairs (empty = no aggregation).
+        post_aggregates: Vec<(String, String)>,
     },
 
     /// Broadcast join: small side serialized in the plan.
@@ -41,6 +45,10 @@ pub enum QueryOp {
         on: Vec<(String, String)>,
         join_type: String,
         limit: usize,
+        /// Post-join GROUP BY columns (empty = no aggregation).
+        post_group_by: Vec<String>,
+        /// Post-join aggregates: (op, field) pairs (empty = no aggregation).
+        post_aggregates: Vec<(String, String)>,
     },
 
     /// Shuffle join: repartition by join key via SPSC.
