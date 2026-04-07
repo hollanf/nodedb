@@ -281,6 +281,9 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
             | VectorOp::Rebuild { .. },
         ) => Permission::Alter,
 
+        // Pre-computed responses (constant queries like SELECT 1).
+        PhysicalPlan::Meta(MetaOp::RawResponse { .. }) => Permission::Read,
+
         // Control operations.
         PhysicalPlan::Meta(MetaOp::Cancel { .. }) => Permission::Admin,
 

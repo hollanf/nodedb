@@ -41,6 +41,25 @@ fn convert_one(
     ctx: &ConvertContext,
 ) -> crate::Result<Vec<PhysicalTask>> {
     match plan {
+        SqlPlan::ConstantResult { columns, values } => {
+            // Build a single-row result as Value::Object → zerompk.
+            let mut map = std::collections::HashMap::new();
+            for (col, val) in columns.iter().zip(values.iter()) {
+                map.insert(col.clone(), sql_value_to_nodedb_value(val));
+            }
+            let row = nodedb_types::Value::Object(map);
+            let payload =
+                nodedb_types::value_to_msgpack(&row).map_err(|e| crate::Error::Serialization {
+                    format: "msgpack".into(),
+                    detail: format!("constant result: {e}"),
+                })?;
+            Ok(vec![PhysicalTask {
+                tenant_id,
+                vshard_id: VShardId::from_collection(""),
+                plan: PhysicalPlan::Meta(MetaOp::RawResponse { payload }),
+            }])
+        }
+
         SqlPlan::Scan {
             collection,
             engine,

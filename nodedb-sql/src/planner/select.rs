@@ -59,12 +59,36 @@ fn plan_select(
     // 1. Resolve FROM tables.
     let scope = TableScope::resolve_from(catalog, &select.from)?;
 
-    // 2. Check for JOINs.
+    // 2. Handle constant queries (no FROM clause): SELECT 1, SELECT 'hello', etc.
+    if select.from.is_empty() {
+        let projection = convert_projection(&select.projection)?;
+        let mut columns = Vec::new();
+        let mut values = Vec::new();
+        for (i, proj) in projection.iter().enumerate() {
+            match proj {
+                Projection::Computed { expr, alias } => {
+                    columns.push(alias.clone());
+                    values.push(eval_constant_expr(expr));
+                }
+                Projection::Column(name) => {
+                    columns.push(name.clone());
+                    values.push(SqlValue::Null);
+                }
+                _ => {
+                    columns.push(format!("col{i}"));
+                    values.push(SqlValue::Null);
+                }
+            }
+        }
+        return Ok(SqlPlan::ConstantResult { columns, values });
+    }
+
+    // 3. Check for JOINs.
     if let Some(plan) = try_plan_join(select, &scope, catalog, functions)? {
         return Ok(plan);
     }
 
-    // 3. Single-table query.
+    // 4. Single-table query.
     let table = scope.single_table().ok_or_else(|| SqlError::Unsupported {
         detail: "multi-table FROM without JOIN".into(),
     })?;
@@ -586,6 +610,38 @@ fn extract_func_args(func: &ast::Function) -> Result<Vec<ast::Expr>> {
             })
             .collect()),
         _ => Ok(Vec::new()),
+    }
+}
+
+/// Evaluate a constant SqlExpr to a SqlValue.
+fn eval_constant_expr(expr: &SqlExpr) -> SqlValue {
+    match expr {
+        SqlExpr::Literal(v) => v.clone(),
+        SqlExpr::UnaryOp {
+            op: UnaryOp::Neg,
+            expr,
+        } => match eval_constant_expr(expr) {
+            SqlValue::Int(i) => SqlValue::Int(-i),
+            SqlValue::Float(f) => SqlValue::Float(-f),
+            other => other,
+        },
+        SqlExpr::BinaryOp { left, op, right } => {
+            let l = eval_constant_expr(left);
+            let r = eval_constant_expr(right);
+            match (l, op, r) {
+                (SqlValue::Int(a), BinaryOp::Add, SqlValue::Int(b)) => SqlValue::Int(a + b),
+                (SqlValue::Int(a), BinaryOp::Sub, SqlValue::Int(b)) => SqlValue::Int(a - b),
+                (SqlValue::Int(a), BinaryOp::Mul, SqlValue::Int(b)) => SqlValue::Int(a * b),
+                (SqlValue::Float(a), BinaryOp::Add, SqlValue::Float(b)) => SqlValue::Float(a + b),
+                (SqlValue::Float(a), BinaryOp::Sub, SqlValue::Float(b)) => SqlValue::Float(a - b),
+                (SqlValue::Float(a), BinaryOp::Mul, SqlValue::Float(b)) => SqlValue::Float(a * b),
+                (SqlValue::String(a), BinaryOp::Concat, SqlValue::String(b)) => {
+                    SqlValue::String(format!("{a}{b}"))
+                }
+                _ => SqlValue::Null,
+            }
+        }
+        _ => SqlValue::Null,
     }
 }
 

@@ -363,6 +363,10 @@ impl CoreLoop {
                 }
             }
 
+            PhysicalPlan::Meta(MetaOp::RawResponse { payload }) => {
+                self.response_with_payload(task, payload.clone())
+            }
+
             PhysicalPlan::Meta(MetaOp::QueryLastValue {
                 collection,
                 series_id,

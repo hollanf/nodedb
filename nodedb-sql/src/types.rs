@@ -6,6 +6,14 @@
 /// The top-level plan produced by the SQL planner.
 #[derive(Debug, Clone)]
 pub enum SqlPlan {
+    // ── Constant ──
+    /// Query with no FROM clause: SELECT 1, SELECT 'hello' AS name, etc.
+    /// Produces a single row with evaluated constant expressions.
+    ConstantResult {
+        columns: Vec<String>,
+        values: Vec<SqlValue>,
+    },
+
     // ── Reads ──
     Scan {
         collection: String,

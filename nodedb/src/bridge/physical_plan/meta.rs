@@ -70,6 +70,10 @@ pub enum MetaOp {
         source_collection: String,
     },
 
+    /// Pre-computed response payload. The Data Plane echoes it back without
+    /// touching any engine. Used for constant queries (SELECT 1 AS value).
+    RawResponse { payload: Vec<u8> },
+
     /// Purge ALL data for a tenant across every engine and cache.
     ///
     /// Deletes documents, indexes, vectors, graph edges, timeseries,

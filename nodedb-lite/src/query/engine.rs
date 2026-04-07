@@ -81,6 +81,15 @@ impl<S: StorageEngine> LiteQueryEngine<S> {
 
     fn execute_plan(&self, plan: &SqlPlan) -> Result<QueryResult, LiteError> {
         match plan {
+            SqlPlan::ConstantResult { columns, values } => {
+                let row = values.iter().map(sql_value_to_value).collect();
+                Ok(QueryResult {
+                    columns: columns.clone(),
+                    rows: vec![row],
+                    rows_affected: 0,
+                })
+            }
+
             SqlPlan::Scan {
                 collection, engine, ..
             } => self.execute_scan(collection, engine),
@@ -283,6 +292,17 @@ fn sql_value_to_loro(v: &SqlValue) -> loro::LoroValue {
         SqlValue::Bool(b) => loro::LoroValue::Bool(*b),
         SqlValue::Null => loro::LoroValue::Null,
         _ => loro::LoroValue::Null,
+    }
+}
+
+fn sql_value_to_value(v: &nodedb_sql::types::SqlValue) -> Value {
+    match v {
+        nodedb_sql::types::SqlValue::Int(i) => Value::Integer(*i),
+        nodedb_sql::types::SqlValue::Float(f) => Value::Float(*f),
+        nodedb_sql::types::SqlValue::String(s) => Value::String(s.clone()),
+        nodedb_sql::types::SqlValue::Bool(b) => Value::Bool(*b),
+        nodedb_sql::types::SqlValue::Null => Value::Null,
+        _ => Value::Null,
     }
 }
 
