@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::*;
-use datafusion::arrow::datatypes::DataType;
+use arrow::array::*;
+use arrow::datatypes::DataType;
 use nodedb_types::Value;
 
 /// Extract a single scalar value from an Arrow array at the given row index.
@@ -87,10 +87,9 @@ pub fn arrow_scalar_to_value(col: &Arc<dyn Array>, row: usize) -> Value {
             .map(|a| Value::String(a.value(row).to_string()))
             .unwrap_or(Value::Null),
         _ => {
-            // Fallback: format as string via ScalarValue.
-            let scalar = datafusion::common::ScalarValue::try_from_array(col, row);
-            match scalar {
-                Ok(s) => Value::String(s.to_string()),
+            // Fallback: format as display string.
+            match arrow::util::display::array_value_to_string(col, row) {
+                Ok(s) => Value::String(s),
                 Err(_) => Value::Null,
             }
         }

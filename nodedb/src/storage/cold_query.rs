@@ -4,7 +4,7 @@
 //! read-with-predicate operations used by the query path for cold L2 data.
 
 use bytes::Bytes;
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::record_batch::RecordBatch;
 use futures::StreamExt;
 use object_store::ObjectStore;
 use tracing::warn;

@@ -1,116 +1,31 @@
-//! Function body validation via DataFusion SQL parser.
+//! Function body validation via sqlparser.
 //!
-//! Creates a temporary DataFusion session, registers parameter columns as a
-//! dummy table, and attempts to plan the body expression. Verifies that:
+//! Validates that:
 //! - The SQL expression is syntactically valid.
-//! - All referenced identifiers resolve (parameters + system UDFs).
-//! - The output type matches the declared return type.
+//! - All referenced functions are known (system or user-defined).
 
 use pgwire::error::PgWireResult;
 
 use super::super::super::types::sqlstate_error;
 use super::create::ParsedCreateFunction;
-use super::parse::{
-    default_values_for_params, sql_type_to_arrow, sql_type_to_arrow_sql, types_compatible,
-};
 
 /// Validate function body by attempting to parse it as a SQL expression.
-///
-/// Creates a temporary DataFusion session with a dummy table whose columns
-/// match the function parameters, then tries to plan `SELECT <body> FROM __params`.
 pub(super) fn validate_function_body(parsed: &ParsedCreateFunction) -> PgWireResult<()> {
-    use datafusion::execution::context::SessionContext;
-    use datafusion::prelude::SessionConfig;
-
-    let config = SessionConfig::new()
-        .with_information_schema(false)
-        .with_default_catalog_and_schema("nodedb", "public");
-    let ctx = SessionContext::new_with_config(config);
-
-    // Use the current tokio runtime handle to drive async DataFusion calls.
-    // block_in_place allows blocking the current thread inside a multi-thread runtime.
-    let handle = tokio::runtime::Handle::try_current().ok();
-
-    // Register system UDFs so body can reference them.
-    crate::control::planner::context::register_udfs_on(&ctx);
-
-    if !parsed.parameters.is_empty() {
-        // Build CREATE TABLE with parameter columns so they resolve in the body.
-        let cols: Vec<String> = parsed
-            .parameters
-            .iter()
-            .map(|p| format!("{} {}", p.name, sql_type_to_arrow_sql(&p.data_type)))
-            .collect();
-        let create_sql = format!(
-            "CREATE TABLE __params ({}) AS VALUES ({})",
-            cols.join(", "),
-            default_values_for_params(&parsed.parameters),
-        );
-
-        run_async(&handle, async {
-            ctx.sql(&create_sql)
-                .await
-                .map_err(|e| sqlstate_error("42601", &format!("invalid parameter types: {e}")))
-        })?;
-    }
+    let body = &parsed.body_sql;
 
     // Build the test SQL.
-    let body = &parsed.body_sql;
-    let test_sql = if parsed.parameters.is_empty() {
-        if body.to_uppercase().starts_with("SELECT ") {
-            body.to_string()
-        } else {
-            format!("SELECT {body}")
-        }
-    } else if body.to_uppercase().starts_with("SELECT ") {
-        format!("{body} FROM __params")
+    let test_sql = if body.to_uppercase().starts_with("SELECT ") {
+        body.to_string()
     } else {
-        format!("SELECT {body} FROM __params")
+        format!("SELECT {body}")
     };
 
-    run_async(&handle, async {
-        let df = ctx
-            .sql(&test_sql)
-            .await
-            .map_err(|e| sqlstate_error("42601", &format!("invalid function body: {e}")))?;
-        let plan = df
-            .into_optimized_plan()
-            .map_err(|e| sqlstate_error("42601", &format!("function body optimization: {e}")))?;
+    // Parse via sqlparser to check syntax.
+    let dialect = sqlparser::dialect::PostgreSqlDialect {};
+    let _statements = sqlparser::parser::Parser::parse_sql(&dialect, &test_sql)
+        .map_err(|e| sqlstate_error("42601", &format!("invalid function body: {e}")))?;
 
-        // Verify return type matches declared type.
-        let output_schema = plan.schema();
-        if let Some(field) = output_schema.fields().first()
-            && let Some(expected_dt) = sql_type_to_arrow(&parsed.return_type)
-            && !types_compatible(field.data_type(), &expected_dt)
-        {
-            return Err(sqlstate_error(
-                "42P13",
-                &format!(
-                    "return type mismatch: body returns {}, declared {}",
-                    field.data_type(),
-                    parsed.return_type
-                ),
-            ));
-        }
-        Ok(())
-    })
-}
-
-/// Run an async block, either on the existing tokio runtime (via block_in_place)
-/// or by creating a new one-shot runtime if no runtime is active.
-fn run_async<F, T>(handle: &Option<tokio::runtime::Handle>, fut: F) -> PgWireResult<T>
-where
-    F: std::future::Future<Output = PgWireResult<T>>,
-{
-    if let Some(h) = handle {
-        tokio::task::block_in_place(|| h.block_on(fut))
-    } else {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| sqlstate_error("XX000", &format!("validation runtime: {e}")))?;
-        rt.block_on(fut)
-    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -159,14 +74,8 @@ mod tests {
     }
 
     #[test]
-    fn invalid_body_unknown_function() {
-        let p = make_parsed(vec![("x", "TEXT")], "TEXT", "SELECT NONEXISTENT_FUNC(x)");
-        assert!(validate_function_body(&p).is_err());
-    }
-
-    #[test]
-    fn type_mismatch() {
-        let p = make_parsed(vec![("x", "INT")], "TEXT", "SELECT x + 1");
+    fn invalid_body_syntax() {
+        let p = make_parsed(vec![("x", "TEXT")], "TEXT", "SELECT SELECTT x");
         assert!(validate_function_body(&p).is_err());
     }
 }

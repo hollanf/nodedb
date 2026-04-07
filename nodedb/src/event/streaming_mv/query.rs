@@ -5,9 +5,9 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Float64Array, StringArray};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::array::{Float64Array, StringArray};
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::record_batch::RecordBatch;
 
 use super::state::MvState;
 
@@ -62,7 +62,7 @@ pub fn mv_state_to_record_batch(mv_state: &MvState) -> Option<RecordBatch> {
         finalized_array.push(*finalized);
     }
 
-    let mut columns: Vec<Arc<dyn datafusion::arrow::array::Array>> = Vec::new();
+    let mut columns: Vec<Arc<dyn arrow::array::Array>> = Vec::new();
     for group_col in &group_arrays {
         columns.push(Arc::new(StringArray::from(
             group_col.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
@@ -71,7 +71,7 @@ pub fn mv_state_to_record_batch(mv_state: &MvState) -> Option<RecordBatch> {
     for agg_col in &agg_arrays {
         columns.push(Arc::new(Float64Array::from(agg_col.clone())));
     }
-    columns.push(Arc::new(datafusion::arrow::array::BooleanArray::from(
+    columns.push(Arc::new(arrow::array::BooleanArray::from(
         finalized_array,
     )));
 

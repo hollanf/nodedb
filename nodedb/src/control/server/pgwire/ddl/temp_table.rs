@@ -105,8 +105,8 @@ pub fn drop_temp_table_if_exists(
 }
 
 /// Parse column definitions from `CREATE TEMPORARY TABLE name (col1 type1, ...)`.
-fn parse_temp_table_schema(sql: &str) -> PgWireResult<datafusion::arrow::datatypes::Schema> {
-    use datafusion::arrow::datatypes::{Field, Schema};
+fn parse_temp_table_schema(sql: &str) -> PgWireResult<arrow::datatypes::Schema> {
+    use arrow::datatypes::{Field, Schema};
 
     let paren_start = sql.find('(').ok_or_else(|| {
         PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -164,8 +164,8 @@ fn parse_temp_table_schema(sql: &str) -> PgWireResult<datafusion::arrow::datatyp
 }
 
 /// Map SQL type name to Arrow DataType.
-fn sql_type_to_arrow(type_str: &str) -> datafusion::arrow::datatypes::DataType {
-    use datafusion::arrow::datatypes::DataType;
+fn sql_type_to_arrow(type_str: &str) -> arrow::datatypes::DataType {
+    use arrow::datatypes::DataType;
     match type_str {
         "INT" | "INT4" | "INTEGER" => DataType::Int32,
         "BIGINT" | "INT8" => DataType::Int64,
@@ -176,7 +176,7 @@ fn sql_type_to_arrow(type_str: &str) -> datafusion::arrow::datatypes::DataType {
         "TEXT" | "VARCHAR" | "STRING" => DataType::Utf8,
         "BYTEA" | "BYTES" => DataType::Binary,
         "TIMESTAMP" | "TIMESTAMPTZ" => {
-            DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Microsecond, None)
+            DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None)
         }
         "DATE" => DataType::Date32,
         _ => DataType::Utf8,

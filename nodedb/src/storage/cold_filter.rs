@@ -16,8 +16,8 @@
 //! for queries that have filter predicates.
 
 use bytes::Bytes;
-use datafusion::arrow::array::{Array, Float64Array, Int64Array, RecordBatch, StringArray};
-use datafusion::arrow::datatypes::DataType;
+use arrow::array::{Array, Float64Array, Int64Array, RecordBatch, StringArray};
+use arrow::datatypes::DataType;
 use parquet::arrow::ProjectionMask;
 use parquet::arrow::arrow_reader::{ArrowPredicateFn, ParquetRecordBatchReaderBuilder, RowFilter};
 use parquet::file::metadata::RowGroupMetaData;
@@ -100,7 +100,7 @@ pub fn read_parquet_filtered(
                 })
                 .collect();
 
-            Ok(datafusion::arrow::array::BooleanArray::from(mask))
+            Ok(arrow::array::BooleanArray::from(mask))
         });
 
         let row_filter = RowFilter::new(vec![Box::new(predicate)]);
@@ -253,7 +253,7 @@ fn stat_min_lte(stats: &Statistics, value: &serde_json::Value) -> bool {
 fn record_batch_row_to_json(
     batch: &RecordBatch,
     row_idx: usize,
-    schema: &datafusion::arrow::datatypes::Schema,
+    schema: &arrow::datatypes::Schema,
 ) -> serde_json::Value {
     let mut map = serde_json::Map::new();
 
@@ -284,7 +284,7 @@ fn record_batch_row_to_json(
                 })
             }
             _ => Some(serde_json::Value::String(
-                datafusion::arrow::util::display::array_value_to_string(col, row_idx)
+                arrow::util::display::array_value_to_string(col, row_idx)
                     .unwrap_or_default(),
             )),
         };
@@ -360,8 +360,8 @@ pub fn batches_to_document_rows(batches: &[RecordBatch]) -> Vec<(String, Vec<u8>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::array::ArrayRef;
-    use datafusion::arrow::datatypes::{Field, Schema};
+    use arrow::array::ArrayRef;
+    use arrow::datatypes::{Field, Schema};
     use std::sync::Arc;
 
     fn make_test_parquet(rows: &[(&str, i64, &str)]) -> Vec<u8> {

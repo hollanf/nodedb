@@ -36,6 +36,7 @@ nodedb-spatial = { workspace = true }
 nodedb-graph = { workspace = true }
 nodedb-vector = { workspace = true, features = ["collection"] }
 nodedb-sql = { workspace = true }
+arrow = { workspace = true }
 
 # Async runtime (Control Plane)
 tokio = { workspace = true }

@@ -1,8 +1,11 @@
 //! Expression evaluation helpers for the statement executor.
 //!
-//! Evaluates SQL expressions via DataFusion and converts results to
-//! Rust types (bool, i64, nodedb_types::Value). Used by ASSIGN, IF/WHILE
-//! conditions, FOR bounds, and OUT parameter capture.
+//! Evaluates SQL expressions and converts results to Rust types (bool, i64,
+//! nodedb_types::Value). Used by ASSIGN, IF/WHILE conditions, FOR bounds,
+//! and OUT parameter capture.
+//!
+//! Uses DataFusion for complex expression evaluation (arithmetic, CASE, etc.).
+//! Literal fast paths avoid DataFusion for simple constants.
 
 use crate::control::state::SharedState;
 use crate::types::TenantId;
@@ -29,13 +32,13 @@ pub async fn evaluate_condition(
             let col = batch.column(0);
             if let Some(bool_arr) = col
                 .as_any()
-                .downcast_ref::<datafusion::arrow::array::BooleanArray>()
+                .downcast_ref::<arrow::array::BooleanArray>()
             {
                 return Ok(bool_arr.value(0));
             }
             if let Some(int_arr) = col
                 .as_any()
-                .downcast_ref::<datafusion::arrow::array::Int32Array>()
+                .downcast_ref::<arrow::array::Int32Array>()
             {
                 return Ok(int_arr.value(0) != 0);
             }
@@ -64,13 +67,13 @@ pub async fn evaluate_int(
             let col = batch.column(0);
             if let Some(arr) = col
                 .as_any()
-                .downcast_ref::<datafusion::arrow::array::Int64Array>()
+                .downcast_ref::<arrow::array::Int64Array>()
             {
                 return Ok(arr.value(0));
             }
             if let Some(arr) = col
                 .as_any()
-                .downcast_ref::<datafusion::arrow::array::Int32Array>()
+                .downcast_ref::<arrow::array::Int32Array>()
             {
                 return Ok(arr.value(0) as i64);
             }
@@ -128,13 +131,13 @@ pub async fn evaluate_to_value(
 /// Execute a SQL expression via DataFusion and return the result batches.
 ///
 /// Wraps the expression in `SELECT (<expr>) as __result` and collects.
-/// Uses a standalone DataFusion session (not QueryContext) for scalar evaluation.
+/// Uses a standalone DataFusion session for scalar evaluation only.
 pub async fn eval_sql_expr(
     _state: &SharedState,
     _tenant_id: TenantId,
     expr: &str,
     context: &str,
-) -> crate::Result<Vec<datafusion::arrow::record_batch::RecordBatch>> {
+) -> crate::Result<Vec<arrow::record_batch::RecordBatch>> {
     let session = datafusion::execution::context::SessionContext::new();
     let select_sql = format!("SELECT ({expr}) as __result");
     let df = session

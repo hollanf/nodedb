@@ -130,7 +130,10 @@ snap = "1"
 flate2 = "1"
 tonic = "0.14"
 
-# Query engine
+# Arrow (columnar format)
+arrow = { version = "58", default-features = false, features = ["ipc"] }
+
+# Query engine (retained for procedural executor + function body validation)
 datafusion = { version = "53", default-features = false, features = ["sql"] }
 datafusion-common = "53"
 datafusion-execution = "53"

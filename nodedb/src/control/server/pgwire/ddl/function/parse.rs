@@ -3,7 +3,7 @@
 //! SQL type mapping, identifier validation, parameter parsing, and
 //! utility functions used by both CREATE and DROP handlers.
 
-use datafusion::arrow::datatypes::DataType;
+use arrow::datatypes::DataType;
 use pgwire::error::PgWireResult;
 
 use crate::control::security::catalog::FunctionParam;

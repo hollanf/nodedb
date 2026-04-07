@@ -13,9 +13,9 @@
 
 use std::sync::Arc;
 
-use datafusion::arrow::array::{ArrayRef, Float64Array, Int64Array, StringArray};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::array::{ArrayRef, Float64Array, Int64Array, StringArray};
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::record_batch::RecordBatch;
 
 /// Convert a JSON array of document rows into an Arrow RecordBatch.
 ///
@@ -163,9 +163,9 @@ pub fn arrow_sum(batch: &RecordBatch, column_name: &str) -> Option<f64> {
     let array = batch.column(idx);
 
     if let Some(f64_arr) = array.as_any().downcast_ref::<Float64Array>() {
-        Some(datafusion::arrow::compute::kernels::aggregate::sum(f64_arr).unwrap_or(0.0))
+        Some(arrow::compute::kernels::aggregate::sum(f64_arr).unwrap_or(0.0))
     } else if let Some(i64_arr) = array.as_any().downcast_ref::<Int64Array>() {
-        let sum = datafusion::arrow::compute::kernels::aggregate::sum(i64_arr).unwrap_or(0);
+        let sum = arrow::compute::kernels::aggregate::sum(i64_arr).unwrap_or(0);
         Some(sum as f64)
     } else {
         None
@@ -178,9 +178,9 @@ pub fn arrow_min(batch: &RecordBatch, column_name: &str) -> Option<f64> {
     let array = batch.column(idx);
 
     if let Some(f64_arr) = array.as_any().downcast_ref::<Float64Array>() {
-        datafusion::arrow::compute::kernels::aggregate::min(f64_arr)
+        arrow::compute::kernels::aggregate::min(f64_arr)
     } else if let Some(i64_arr) = array.as_any().downcast_ref::<Int64Array>() {
-        datafusion::arrow::compute::kernels::aggregate::min(i64_arr).map(|v| v as f64)
+        arrow::compute::kernels::aggregate::min(i64_arr).map(|v| v as f64)
     } else {
         None
     }
@@ -192,9 +192,9 @@ pub fn arrow_max(batch: &RecordBatch, column_name: &str) -> Option<f64> {
     let array = batch.column(idx);
 
     if let Some(f64_arr) = array.as_any().downcast_ref::<Float64Array>() {
-        datafusion::arrow::compute::kernels::aggregate::max(f64_arr)
+        arrow::compute::kernels::aggregate::max(f64_arr)
     } else if let Some(i64_arr) = array.as_any().downcast_ref::<Int64Array>() {
-        datafusion::arrow::compute::kernels::aggregate::max(i64_arr).map(|v| v as f64)
+        arrow::compute::kernels::aggregate::max(i64_arr).map(|v| v as f64)
     } else {
         None
     }
@@ -223,7 +223,7 @@ pub fn arrow_avg(batch: &RecordBatch, column_name: &str) -> Option<f64> {
 /// Used by the Control Plane to receive Arrow data from the Data Plane
 /// across the SPSC bridge.
 pub fn decode_arrow_ipc(bytes: &[u8]) -> Option<RecordBatch> {
-    use datafusion::arrow::ipc::reader::StreamReader;
+    use arrow::ipc::reader::StreamReader;
     let cursor = std::io::Cursor::new(bytes);
     let mut reader = StreamReader::try_new(cursor, None).ok()?;
     reader.next()?.ok()
