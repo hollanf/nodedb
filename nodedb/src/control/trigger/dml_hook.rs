@@ -163,6 +163,47 @@ fn deserialize_value_to_fields(value: &[u8]) -> HashMap<String, nodedb_types::Va
     HashMap::new()
 }
 
+/// Patch a `PhysicalTask` with mutated fields from a BEFORE trigger.
+///
+/// Serializes the mutated fields to MessagePack and replaces the value
+/// payload in the underlying `PointPut` or `Upsert` operation.
+/// For `PointUpdate`, the updates are re-derived from the mutated fields.
+pub fn patch_task_with_mutated_fields(
+    task: &mut crate::control::planner::physical::PhysicalTask,
+    mutated: &HashMap<String, nodedb_types::Value>,
+) {
+    use crate::bridge::envelope::PhysicalPlan;
+
+    let json_obj: serde_json::Map<String, serde_json::Value> = mutated
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::Value::from(v.clone())))
+        .collect();
+    let json_val = serde_json::Value::Object(json_obj);
+    let new_bytes = match nodedb_types::value_to_msgpack(&nodedb_types::Value::from(json_val)) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+
+    match &mut task.plan {
+        PhysicalPlan::Document(DocumentOp::PointPut { value, .. })
+        | PhysicalPlan::Document(DocumentOp::Upsert { value, .. }) => {
+            *value = new_bytes;
+        }
+        PhysicalPlan::Document(DocumentOp::PointUpdate { updates, .. }) => {
+            // Re-derive field-level updates from the full mutated row.
+            *updates = mutated
+                .iter()
+                .filter_map(|(k, v)| {
+                    nodedb_types::value_to_msgpack(v)
+                        .ok()
+                        .map(|b| (k.clone(), b))
+                })
+                .collect();
+        }
+        _ => {}
+    }
+}
+
 /// Fetch the current document as a field map (for OLD row bindings).
 ///
 /// Issues a PointGet to the Data Plane and deserializes the response.
@@ -230,11 +271,24 @@ pub fn has_triggers(state: &SharedState, tenant_id: TenantId, collection: &str) 
             .is_empty()
 }
 
-/// Fire BEFORE + INSTEAD OF triggers for a point write, returning whether
-/// the dispatch should proceed.
+/// Result of firing BEFORE + INSTEAD OF triggers before dispatch.
+pub enum PreDispatchResult {
+    /// INSTEAD OF trigger handled the write — skip normal dispatch.
+    Handled,
+    /// Proceed with dispatch. If a BEFORE trigger mutated the row,
+    /// `mutated_fields` contains the new fields to use instead of the original.
+    Proceed {
+        mutated_fields: Option<HashMap<String, nodedb_types::Value>>,
+    },
+}
+
+/// Fire BEFORE + INSTEAD OF triggers for a point write.
 ///
-/// Returns `true` if the caller should proceed with normal dispatch.
-/// Returns `false` if an INSTEAD OF trigger handled the write (skip dispatch).
+/// Returns `PreDispatchResult::Proceed` if the caller should dispatch normally.
+/// The `mutated_fields` inside may contain fields modified by a BEFORE trigger —
+/// the caller MUST use these to patch the task before dispatch.
+///
+/// Returns `PreDispatchResult::Handled` if an INSTEAD OF trigger handled the write.
 ///
 /// On BEFORE trigger error (RAISE EXCEPTION), the error propagates and
 /// the caller should abort the write.
@@ -246,7 +300,7 @@ pub async fn fire_pre_dispatch_triggers(
     info: &DmlWriteInfo,
     old_row: &Option<HashMap<String, nodedb_types::Value>>,
     cascade_depth: u32,
-) -> crate::Result<bool> {
+) -> crate::Result<PreDispatchResult> {
     // Check INSTEAD OF first — if it handles the write, skip everything else.
     match info.event {
         DmlEvent::Insert => {
@@ -261,7 +315,7 @@ pub async fn fire_pre_dispatch_triggers(
                 )
                 .await?
                 {
-                    InsteadOfResult::Handled => return Ok(false),
+                    InsteadOfResult::Handled => return Ok(PreDispatchResult::Handled),
                     InsteadOfResult::NoTrigger => {}
                 }
             }
@@ -281,7 +335,7 @@ pub async fn fire_pre_dispatch_triggers(
             )
             .await?
             {
-                InsteadOfResult::Handled => return Ok(false),
+                InsteadOfResult::Handled => return Ok(PreDispatchResult::Handled),
                 InsteadOfResult::NoTrigger => {}
             }
         }
@@ -298,19 +352,17 @@ pub async fn fire_pre_dispatch_triggers(
             )
             .await?
             {
-                InsteadOfResult::Handled => return Ok(false),
+                InsteadOfResult::Handled => return Ok(PreDispatchResult::Handled),
                 InsteadOfResult::NoTrigger => {}
             }
         }
     }
 
-    // Fire BEFORE triggers.
-    match info.event {
+    // Fire BEFORE triggers — capture mutated fields from INSERT/UPDATE.
+    let mutated_fields = match info.event {
         DmlEvent::Insert => {
             if let Some(ref new_fields) = info.new_fields {
-                // BEFORE INSERT can validate/reject. Mutation support is via the
-                // checklist's TODO — for now it validates only.
-                fire_before::fire_before_insert(
+                let mutated = fire_before::fire_before_insert(
                     state,
                     identity,
                     tenant_id,
@@ -319,13 +371,20 @@ pub async fn fire_pre_dispatch_triggers(
                     cascade_depth,
                 )
                 .await?;
+                if mutated != *new_fields {
+                    Some(mutated)
+                } else {
+                    None
+                }
+            } else {
+                None
             }
         }
         DmlEvent::Update => {
             let empty = HashMap::new();
             let old_fields = old_row.as_ref().unwrap_or(&empty);
             let new_fields = info.new_fields.as_ref().unwrap_or(&empty);
-            fire_before::fire_before_update(
+            let mutated = fire_before::fire_before_update(
                 state,
                 identity,
                 tenant_id,
@@ -335,6 +394,11 @@ pub async fn fire_pre_dispatch_triggers(
                 cascade_depth,
             )
             .await?;
+            if mutated != *new_fields {
+                Some(mutated)
+            } else {
+                None
+            }
         }
         DmlEvent::Delete => {
             let empty = HashMap::new();
@@ -348,10 +412,11 @@ pub async fn fire_pre_dispatch_triggers(
                 cascade_depth,
             )
             .await?;
+            None
         }
-    }
+    };
 
-    Ok(true)
+    Ok(PreDispatchResult::Proceed { mutated_fields })
 }
 
 /// Fire SYNC AFTER ROW + SYNC AFTER STATEMENT triggers post-dispatch.
