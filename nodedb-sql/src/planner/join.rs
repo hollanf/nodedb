@@ -13,7 +13,7 @@ use crate::types::*;
 pub fn plan_join_from_select(
     select: &Select,
     scope: &TableScope,
-    _catalog: &dyn SqlCatalog,
+    catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
 ) -> Result<Option<SqlPlan>> {
     let from = &select.from[0];
@@ -83,13 +83,32 @@ pub fn plan_join_from_select(
         };
     }
 
-    // Apply WHERE as filters on the join plan.
-    // Apply projection.
+    // Extract subqueries from WHERE and wrap as additional joins.
+    let (subquery_joins, effective_where) = if let Some(expr) = &select.selection {
+        let extraction = super::subquery::extract_subqueries(expr, catalog, functions)?;
+        (extraction.joins, extraction.remaining_where)
+    } else {
+        (Vec::new(), None)
+    };
+
+    // Apply remaining WHERE as filters on the join plan.
     let _projection = super::select::convert_projection(&select.projection)?;
-    let _filters = match &select.selection {
+    let _filters = match &effective_where {
         Some(expr) => super::select::convert_where_to_filters(expr)?,
         None => Vec::new(),
     };
+
+    // Wrap with subquery joins (semi/anti/cross) if any.
+    for sq in subquery_joins {
+        current_plan = SqlPlan::Join {
+            left: Box::new(current_plan),
+            right: Box::new(sq.inner_plan),
+            on: vec![(sq.outer_column, sq.inner_column)],
+            join_type: sq.join_type,
+            condition: None,
+            limit: 10000,
+        };
+    }
 
     // Check if there's aggregation on the join.
     let group_by_non_empty = match &select.group_by {
@@ -124,15 +143,15 @@ type JoinSpec = (JoinType, Vec<(String, String)>, Option<SqlExpr>);
 /// Extract join type, equi-join keys, and non-equi condition.
 fn extract_join_spec(op: &ast::JoinOperator) -> Result<JoinSpec> {
     match op {
-        ast::JoinOperator::Inner(constraint) => {
+        ast::JoinOperator::Inner(constraint) | ast::JoinOperator::Join(constraint) => {
             let (keys, cond) = extract_join_constraint(constraint)?;
             Ok((JoinType::Inner, keys, cond))
         }
-        ast::JoinOperator::LeftOuter(constraint) => {
+        ast::JoinOperator::Left(constraint) | ast::JoinOperator::LeftOuter(constraint) => {
             let (keys, cond) = extract_join_constraint(constraint)?;
             Ok((JoinType::Left, keys, cond))
         }
-        ast::JoinOperator::RightOuter(constraint) => {
+        ast::JoinOperator::Right(constraint) | ast::JoinOperator::RightOuter(constraint) => {
             let (keys, cond) = extract_join_constraint(constraint)?;
             Ok((JoinType::Right, keys, cond))
         }
@@ -143,6 +162,14 @@ fn extract_join_spec(op: &ast::JoinOperator) -> Result<JoinSpec> {
         ast::JoinOperator::CrossJoin(constraint) => {
             let (keys, cond) = extract_join_constraint(constraint)?;
             Ok((JoinType::Cross, keys, cond))
+        }
+        ast::JoinOperator::Semi(constraint) | ast::JoinOperator::LeftSemi(constraint) => {
+            let (keys, cond) = extract_join_constraint(constraint)?;
+            Ok((JoinType::Semi, keys, cond))
+        }
+        ast::JoinOperator::Anti(constraint) | ast::JoinOperator::LeftAnti(constraint) => {
+            let (keys, cond) = extract_join_constraint(constraint)?;
+            Ok((JoinType::Anti, keys, cond))
         }
         _ => Err(SqlError::Unsupported {
             detail: format!("join type: {op:?}"),

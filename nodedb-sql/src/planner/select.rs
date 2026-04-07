@@ -93,8 +93,16 @@ fn plan_select(
         detail: "multi-table FROM without JOIN".into(),
     })?;
 
-    // 4. Convert WHERE filters.
-    let filters = match &select.selection {
+    // 4. Extract subqueries from WHERE and rewrite as semi/anti joins.
+    let (subquery_joins, effective_where) = if let Some(expr) = &select.selection {
+        let extraction = super::subquery::extract_subqueries(expr, catalog, functions)?;
+        (extraction.joins, extraction.remaining_where)
+    } else {
+        (Vec::new(), None)
+    };
+
+    // 5. Convert remaining WHERE filters.
+    let filters = match &effective_where {
         Some(expr) => {
             // Check for search-triggering functions in WHERE.
             if let Some(plan) = try_extract_where_search(expr, table, functions)? {
@@ -105,19 +113,32 @@ fn plan_select(
         None => Vec::new(),
     };
 
-    // 5. Check for GROUP BY / aggregation.
+    // 6. Check for GROUP BY / aggregation.
     if has_aggregation(select, functions) {
-        return super::aggregate::plan_aggregate(select, table, &filters, &scope, functions);
+        let mut plan =
+            super::aggregate::plan_aggregate(select, table, &filters, &scope, functions)?;
+        // Wrap with subquery joins if any.
+        for sq in subquery_joins {
+            plan = SqlPlan::Join {
+                left: Box::new(plan),
+                right: Box::new(sq.inner_plan),
+                on: vec![(sq.outer_column, sq.inner_column)],
+                join_type: sq.join_type,
+                condition: None,
+                limit: 10000,
+            };
+        }
+        return Ok(plan);
     }
 
-    // 6. Convert projection.
+    // 7. Convert projection.
     let projection = convert_projection(&select.projection)?;
 
-    // 7. Convert window functions (SELECT with OVER).
+    // 8. Convert window functions (SELECT with OVER).
     let window_functions = super::window::extract_window_functions(&select.projection, functions)?;
 
-    // 8. Build base scan plan.
-    Ok(SqlPlan::Scan {
+    // 9. Build base scan plan.
+    let mut plan = SqlPlan::Scan {
         collection: table.name.clone(),
         engine: table.info.engine,
         filters,
@@ -127,7 +148,21 @@ fn plan_select(
         offset: 0,
         distinct: select.distinct.is_some(),
         window_functions,
-    })
+    };
+
+    // 10. Wrap with subquery joins (semi/anti) if any.
+    for sq in subquery_joins {
+        plan = SqlPlan::Join {
+            left: Box::new(plan),
+            right: Box::new(sq.inner_plan),
+            on: vec![(sq.outer_column, sq.inner_column)],
+            join_type: sq.join_type,
+            condition: None,
+            limit: 10000,
+        };
+    }
+
+    Ok(plan)
 }
 
 /// Check if a SELECT has aggregation (GROUP BY or aggregate functions in projection).
