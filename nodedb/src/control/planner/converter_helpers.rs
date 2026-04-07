@@ -106,6 +106,7 @@ impl PlanConverter {
         }
 
         // Index-ordered scan optimization (single ASC field with LIMIT).
+        // Falls back to full scan + sort in the Data Plane if no index exists.
         if sort.expr.len() == 1
             && sort.expr[0].asc
             && let Expr::Column(col) = &sort.expr[0].expr

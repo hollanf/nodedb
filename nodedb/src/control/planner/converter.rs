@@ -317,7 +317,7 @@ impl PlanConverter {
                             }]);
                         }
                         // Document (schemaless/strict) or unknown: try
-                        // point-get, range-scan, then full document scan.
+                        // point-get, then full document scan with filters.
                         Some(CollectionType::Document(_)) | None => {
                             if let Some(task) = self.try_point_get(
                                 &collection,
@@ -325,15 +325,6 @@ impl PlanConverter {
                                 tenant_id,
                                 vshard,
                             )? {
-                                return Ok(vec![task]);
-                            }
-
-                            if let Some(task) = try_range_scan_from_predicate(
-                                &collection,
-                                &filter.predicate,
-                                tenant_id,
-                                vshard,
-                            ) {
                                 return Ok(vec![task]);
                             }
 

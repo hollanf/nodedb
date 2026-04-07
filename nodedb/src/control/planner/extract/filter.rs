@@ -9,6 +9,16 @@ use crate::bridge::scan_filter::ScanFilter;
 
 use super::super::expr_convert::expr_to_json_value;
 
+/// Strip Cast/TryCast/Alias wrappers to get to the core expression.
+fn strip_cast(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Cast(c) => strip_cast(&c.expr),
+        Expr::TryCast(c) => strip_cast(&c.expr),
+        Expr::Alias(a) => strip_cast(&a.expr),
+        other => other,
+    }
+}
+
 /// Convert a DataFusion expression to scan filter predicates.
 pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<ScanFilter> {
     match expr {
@@ -60,7 +70,7 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
                 _ => return Vec::new(),
             };
 
-            let (field, value) = match (&*binary.left, &*binary.right) {
+            let (field, value) = match (strip_cast(&binary.left), strip_cast(&binary.right)) {
                 (Expr::Column(col), Expr::Literal(lit, meta)) => (
                     col.name.clone(),
                     nodedb_types::Value::from(expr_to_json_value(&Expr::Literal(
@@ -86,7 +96,7 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
             }]
         }
         Expr::Like(like) => {
-            if let Expr::Column(col) = &*like.expr {
+            if let Expr::Column(col) = strip_cast(&like.expr) {
                 let pattern = nodedb_types::Value::from(expr_to_json_value(&like.pattern));
                 let op = if like.case_insensitive {
                     if like.negated { "not_ilike" } else { "ilike" }
@@ -106,7 +116,7 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
             }
         }
         Expr::IsNull(inner) => {
-            if let Expr::Column(col) = inner.as_ref() {
+            if let Expr::Column(col) = strip_cast(inner) {
                 vec![ScanFilter {
                     field: col.name.clone(),
                     op: "is_null".into(),
@@ -118,7 +128,7 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
             }
         }
         Expr::IsNotNull(inner) => {
-            if let Expr::Column(col) = inner.as_ref() {
+            if let Expr::Column(col) = strip_cast(inner) {
                 vec![ScanFilter {
                     field: col.name.clone(),
                     op: "is_not_null".into(),
@@ -130,7 +140,7 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
             }
         }
         Expr::Between(between) => {
-            if let Expr::Column(col) = &*between.expr {
+            if let Expr::Column(col) = strip_cast(&between.expr) {
                 let low = nodedb_types::Value::from(expr_to_json_value(&between.low));
                 let high = nodedb_types::Value::from(expr_to_json_value(&between.high));
                 if between.negated {
@@ -177,7 +187,7 @@ pub(in crate::control::planner) fn expr_to_scan_filters(expr: &Expr) -> Vec<Scan
             list,
             negated,
         }) => {
-            if let Expr::Column(col) = expr.as_ref() {
+            if let Expr::Column(col) = strip_cast(expr) {
                 let values: Vec<nodedb_types::Value> = list
                     .iter()
                     .map(|e| nodedb_types::Value::from(expr_to_json_value(e)))
