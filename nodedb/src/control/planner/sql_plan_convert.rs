@@ -252,9 +252,17 @@ fn convert_one(
             let proj_names = extract_projection_names(projection);
             let filter_bytes = serialize_filters(filters)?;
 
+            // Check if the left side is a nested join (multi-way join).
+            // If so, convert the inner join to a physical plan and pass it
+            // as `inline_left` so the executor runs it first.
+            let inline_left = if matches!(left.as_ref(), SqlPlan::Join { .. }) {
+                let inner_tasks = convert_one(left, tenant_id, ctx)?;
+                inner_tasks.into_iter().next().map(|t| Box::new(t.plan))
+            } else {
+                None
+            };
+
             // RIGHT JOIN → swap sides and convert to LEFT JOIN.
-            // This avoids the broadcast-join problem where per-core unmatched
-            // right-side emission causes N× duplication across cores.
             let mut on_keys = on.to_vec();
             let effective_join_type = if join_type.as_str() == "right" {
                 std::mem::swap(&mut left_collection, &mut right_collection);
@@ -279,6 +287,7 @@ fn convert_one(
                     post_aggregates: Vec::new(),
                     projection: proj_names,
                     post_filters: filter_bytes,
+                    inline_left,
                 }),
                 post_set_op: PostSetOp::None,
             }])
@@ -558,6 +567,16 @@ fn convert_one(
             }])
         }
 
+        SqlPlan::Cte { definitions, outer } => {
+            // Inline CTE definitions: replace scans on CTE names with the
+            // CTE's actual subquery plan.
+            let mut resolved = *outer.clone();
+            for (name, cte_plan) in definitions {
+                resolved = inline_cte(&resolved, name, cte_plan);
+            }
+            convert_one(&resolved, tenant_id, ctx)
+        }
+
         _ => Err(crate::Error::PlanError {
             detail: format!("unsupported SqlPlan variant: {plan:?}"),
         }),
@@ -809,6 +828,7 @@ fn convert_aggregate(
                 post_aggregates: agg_pairs,
                 projection: Vec::new(),
                 post_filters: Vec::new(),
+                inline_left: None,
             }),
             post_set_op: PostSetOp::None,
         }]);
@@ -989,6 +1009,147 @@ fn convert_sort_keys(keys: &[SortKey]) -> Vec<(String, bool)> {
         .collect()
 }
 
+/// Replace scans on `cte_name` with the CTE's actual subquery plan.
+fn inline_cte(plan: &SqlPlan, cte_name: &str, cte_plan: &SqlPlan) -> SqlPlan {
+    match plan {
+        // Direct scan on CTE name → replace with CTE plan.
+        SqlPlan::Scan {
+            collection,
+            filters,
+            projection,
+            sort_keys,
+            limit,
+            offset,
+            distinct,
+            ..
+        } if collection == cte_name => {
+            // If the outer query adds filters/sort/limit, wrap the CTE plan.
+            // For simple SELECT * FROM cte, just return the CTE plan directly.
+            if filters.is_empty()
+                && sort_keys.is_empty()
+                && limit.is_none()
+                && !distinct
+                && projection.is_empty()
+            {
+                cte_plan.clone()
+            } else {
+                // Merge outer constraints onto the CTE plan if it's also a Scan.
+                if let SqlPlan::Scan {
+                    collection: inner_col,
+                    engine: inner_eng,
+                    filters: inner_f,
+                    projection: inner_p,
+                    sort_keys: inner_s,
+                    limit: inner_l,
+                    offset: inner_o,
+                    distinct: inner_d,
+                    window_functions: inner_w,
+                } = cte_plan
+                {
+                    let mut merged_filters = inner_f.clone();
+                    merged_filters.extend(filters.iter().cloned());
+                    SqlPlan::Scan {
+                        collection: inner_col.clone(),
+                        engine: *inner_eng,
+                        filters: merged_filters,
+                        // Outer projection overrides inner; empty means "inherit from CTE".
+                        projection: if projection.is_empty() {
+                            inner_p.clone()
+                        } else {
+                            projection.clone()
+                        },
+                        sort_keys: if sort_keys.is_empty() {
+                            inner_s.clone()
+                        } else {
+                            sort_keys.clone()
+                        },
+                        limit: limit.or(*inner_l),
+                        // offset 0 = unspecified → inherit CTE's offset.
+                        offset: if *offset > 0 { *offset } else { *inner_o },
+                        distinct: *distinct || *inner_d,
+                        window_functions: inner_w.clone(),
+                    }
+                } else {
+                    cte_plan.clone()
+                }
+            }
+        }
+
+        // Aggregate referencing CTE → inline into the input.
+        SqlPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+            having,
+            limit,
+        } => SqlPlan::Aggregate {
+            input: Box::new(inline_cte(input, cte_name, cte_plan)),
+            group_by: group_by.clone(),
+            aggregates: aggregates.clone(),
+            having: having.clone(),
+            limit: *limit,
+        },
+
+        // JOIN referencing CTE on either side.
+        SqlPlan::Join {
+            left,
+            right,
+            on,
+            join_type,
+            condition,
+            limit,
+            projection,
+            filters,
+        } => SqlPlan::Join {
+            left: Box::new(inline_cte(left, cte_name, cte_plan)),
+            right: Box::new(inline_cte(right, cte_name, cte_plan)),
+            on: on.clone(),
+            join_type: *join_type,
+            condition: condition.clone(),
+            limit: *limit,
+            projection: projection.clone(),
+            filters: filters.clone(),
+        },
+
+        // Union referencing CTE → inline into all inputs.
+        SqlPlan::Union { inputs, distinct } => SqlPlan::Union {
+            inputs: inputs
+                .iter()
+                .map(|i| inline_cte(i, cte_name, cte_plan))
+                .collect(),
+            distinct: *distinct,
+        },
+
+        // Intersect referencing CTE → inline into both sides.
+        SqlPlan::Intersect { left, right, all } => SqlPlan::Intersect {
+            left: Box::new(inline_cte(left, cte_name, cte_plan)),
+            right: Box::new(inline_cte(right, cte_name, cte_plan)),
+            all: *all,
+        },
+
+        // Except referencing CTE → inline into both sides.
+        SqlPlan::Except { left, right, all } => SqlPlan::Except {
+            left: Box::new(inline_cte(left, cte_name, cte_plan)),
+            right: Box::new(inline_cte(right, cte_name, cte_plan)),
+            all: *all,
+        },
+
+        // INSERT ... SELECT referencing CTE → inline into the source subquery.
+        SqlPlan::InsertSelect {
+            target,
+            source,
+            limit,
+        } => SqlPlan::InsertSelect {
+            target: target.clone(),
+            source: Box::new(inline_cte(source, cte_name, cte_plan)),
+            limit: *limit,
+        },
+
+        // No CTE reference — return as-is.
+        _ => plan.clone(),
+    }
+}
+
 /// Convert SqlPlan filters to ScanFilter msgpack bytes.
 fn serialize_filters(filters: &[Filter]) -> crate::Result<Vec<u8>> {
     if filters.is_empty() {
@@ -1120,6 +1281,18 @@ fn sql_expr_to_scan_filters(expr: &SqlExpr) -> Vec<nodedb_query::scan_filter::Sc
         SqlExpr::BinaryOp { left, op, right } => {
             let field = match left.as_ref() {
                 SqlExpr::Column { name, .. } => name.clone(),
+                SqlExpr::Function { name, args, .. } => {
+                    // HAVING: COUNT(*) > 2 → field = "count_all"
+                    let arg = args
+                        .first()
+                        .map(|a| match a {
+                            SqlExpr::Column { name, .. } => name.clone(),
+                            SqlExpr::Literal(nodedb_sql::types::SqlValue::String(s)) => s.clone(),
+                            _ => "*".to_string(),
+                        })
+                        .unwrap_or_else(|| "*".to_string());
+                    format!("{name}_{arg}").replace('*', "all")
+                }
                 _ => return vec![match_all()],
             };
             let value = match right.as_ref() {

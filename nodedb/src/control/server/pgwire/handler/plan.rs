@@ -123,6 +123,7 @@ pub(super) fn describe_plan(plan: &PhysicalPlan) -> PlanKind {
         | PhysicalPlan::Query(QueryOp::Aggregate { .. })
         | PhysicalPlan::Query(QueryOp::FacetCounts { .. })
         | PhysicalPlan::Query(QueryOp::HashJoin { .. })
+        | PhysicalPlan::Query(QueryOp::InlineHashJoin { .. })
         | PhysicalPlan::Graph(GraphOp::Algo { .. })
         | PhysicalPlan::Graph(GraphOp::Match { .. }) => PlanKind::MultiRow,
 

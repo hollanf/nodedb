@@ -27,10 +27,6 @@ impl NodeDbPgHandler {
         }
 
         // Cross-shard HashJoin: two-phase execution.
-        // Phase 1: broadcast-scan the right collection to gather all its docs.
-        // Phase 2: send a BroadcastJoin to the left collection's core with
-        //          the right-side docs embedded. Each left-core scans its own
-        //          left-side data and joins locally.
         if let crate::bridge::envelope::PhysicalPlan::Query(
             crate::bridge::physical_plan::QueryOp::HashJoin {
                 ref left_collection,
@@ -42,9 +38,78 @@ impl NodeDbPgHandler {
                 ref post_aggregates,
                 ref projection,
                 ref post_filters,
+                ref inline_left,
             },
         ) = task.plan
         {
+            // Multi-way join: execute inner join first, gather right side,
+            // then send both as a BroadcastJoin to a single core.
+            if let Some(inner_plan) = inline_left {
+                // Step 1: Execute the inner join via recursive dispatch.
+                let inner_task = crate::control::planner::physical::PhysicalTask {
+                    tenant_id: task.tenant_id,
+                    vshard_id: task.vshard_id,
+                    plan: inner_plan.as_ref().clone(),
+                    post_set_op: crate::control::planner::physical::PostSetOp::None,
+                };
+                let inner_resp = Box::pin(self.dispatch_task(inner_task)).await?;
+                let left_data: Vec<u8> = inner_resp.payload.as_ref().to_vec();
+
+                // Step 2: Broadcast-scan the right collection.
+                let right_scan = crate::bridge::envelope::PhysicalPlan::Document(
+                    crate::bridge::physical_plan::DocumentOp::Scan {
+                        collection: right_collection.clone(),
+                        filters: Vec::new(),
+                        limit: (limit * 10).min(50000),
+                        offset: 0,
+                        sort_keys: Vec::new(),
+                        distinct: false,
+                        projection: Vec::new(),
+                        computed_columns: Vec::new(),
+                        window_functions: Vec::new(),
+                    },
+                );
+                let right_data = crate::control::server::dispatch_utils::broadcast_raw(
+                    &self.state,
+                    task.tenant_id,
+                    right_scan,
+                    0,
+                )
+                .await?;
+
+                // Step 3: Dispatch a HashJoin to core 0 with both sides embedded
+                // as inline data (no collection scanning needed).
+                let on_keys: Vec<(String, String)> =
+                    on.iter().map(|(l, r)| (l.clone(), r.clone())).collect();
+                let join_plan = crate::bridge::envelope::PhysicalPlan::Query(
+                    crate::bridge::physical_plan::QueryOp::InlineHashJoin {
+                        left_data,
+                        right_data,
+                        on: on_keys,
+                        join_type: join_type.clone(),
+                        limit,
+                        projection: projection.clone(),
+                        post_filters: post_filters.clone(),
+                    },
+                );
+                let join_task = crate::control::planner::physical::PhysicalTask {
+                    tenant_id: task.tenant_id,
+                    vshard_id: task.vshard_id,
+                    plan: join_plan,
+                    post_set_op: crate::control::planner::physical::PostSetOp::None,
+                };
+                let mut resp = self.dispatch_local(join_task).await?;
+
+                let has_post_agg = !post_group_by.is_empty() || !post_aggregates.is_empty();
+                if has_post_agg {
+                    resp = crate::control::server::post_aggregate::apply_post_aggregation(
+                        resp,
+                        post_group_by,
+                        post_aggregates,
+                    )?;
+                }
+                return Ok(resp);
+            }
             // Phase 1: broadcast scan the right collection across all cores.
             // Uses broadcast_raw to get raw binary payloads (no JSON wrapping).
             let right_scan = crate::bridge::envelope::PhysicalPlan::Document(

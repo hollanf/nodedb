@@ -39,6 +39,24 @@ pub enum QueryOp {
         projection: Vec<String>,
         /// Post-join WHERE filter predicates (MessagePack).
         post_filters: Vec<u8>,
+        /// Inline left sub-plan for multi-way joins. When set, the executor
+        /// runs this sub-plan first and uses its result as the left side
+        /// instead of scanning `left_collection`.
+        inline_left: Option<Box<crate::bridge::envelope::PhysicalPlan>>,
+    },
+
+    /// Inline hash join: both sides are pre-gathered msgpack data.
+    /// Used for multi-way joins where the left side is the result of another join.
+    InlineHashJoin {
+        /// Left side: msgpack array of maps (from inner join result).
+        left_data: Vec<u8>,
+        /// Right side: raw broadcast scan data.
+        right_data: Vec<u8>,
+        on: Vec<(String, String)>,
+        join_type: String,
+        limit: usize,
+        projection: Vec<String>,
+        post_filters: Vec<u8>,
     },
 
     /// Broadcast join: small side serialized in the plan.

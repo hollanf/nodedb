@@ -194,6 +194,7 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
         PhysicalPlan::Query(
             QueryOp::Aggregate { .. }
             | QueryOp::HashJoin { .. }
+            | QueryOp::InlineHashJoin { .. }
             | QueryOp::PartialAggregate { .. }
             | QueryOp::BroadcastJoin { .. }
             | QueryOp::ShuffleJoin { .. }

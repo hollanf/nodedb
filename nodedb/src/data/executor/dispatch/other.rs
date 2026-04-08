@@ -44,12 +44,33 @@ impl CoreLoop {
                 limit,
                 projection,
                 post_filters,
+                inline_left,
                 ..
             }) => self.execute_hash_join(
                 task,
                 tid,
                 left_collection,
                 right_collection,
+                on,
+                join_type,
+                *limit,
+                projection,
+                post_filters,
+                inline_left.as_deref(),
+            ),
+
+            PhysicalPlan::Query(QueryOp::InlineHashJoin {
+                left_data,
+                right_data,
+                on,
+                join_type,
+                limit,
+                projection,
+                post_filters,
+            }) => self.execute_inline_hash_join(
+                task,
+                left_data,
+                right_data,
                 on,
                 join_type,
                 *limit,
@@ -180,7 +201,6 @@ impl CoreLoop {
                 ..
             }) => {
                 // ShuffleJoin executes as a local hash join on the target core.
-                // Both collections' data is accessible from this core's sparse engine.
                 self.execute_hash_join(
                     task,
                     tid,
@@ -191,6 +211,7 @@ impl CoreLoop {
                     *limit,
                     &[],
                     &[],
+                    None,
                 )
             }
 

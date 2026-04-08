@@ -17,7 +17,16 @@ use super::task::ExecutionTask;
 impl CoreLoop {
     /// Execute a physical plan. Dispatches to the appropriate sub-dispatcher.
     pub(in crate::data::executor) fn execute(&mut self, task: &ExecutionTask) -> Response {
-        match task.plan() {
+        self.execute_plan(task, task.plan())
+    }
+
+    /// Execute an arbitrary physical plan (used for inline sub-plans in multi-way joins).
+    pub(in crate::data::executor) fn execute_plan(
+        &mut self,
+        task: &ExecutionTask,
+        plan: &PhysicalPlan,
+    ) -> Response {
+        match plan {
             PhysicalPlan::Document(op) => self.dispatch_document(task, op),
             PhysicalPlan::Vector(op) => self.dispatch_vector(task, op),
             PhysicalPlan::Crdt(op) => self.dispatch_crdt(task, op),

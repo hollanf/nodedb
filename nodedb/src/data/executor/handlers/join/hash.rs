@@ -212,6 +212,7 @@ pub(super) fn probe_hash_index(p: &ProbeParams<'_>) -> Vec<Vec<u8>> {
 
 impl CoreLoop {
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::data::executor) fn execute_hash_join(
         &mut self,
         task: &ExecutionTask,
@@ -223,6 +224,7 @@ impl CoreLoop {
         limit: usize,
         projection: &[String],
         post_filter_bytes: &[u8],
+        inline_left: Option<&crate::bridge::envelope::PhysicalPlan>,
     ) -> Response {
         debug!(
             core = self.core_id,
@@ -230,20 +232,33 @@ impl CoreLoop {
             %right_collection,
             keys = on.len(),
             %join_type,
+            inline = inline_left.is_some(),
             "hash join"
         );
 
         let scan_limit = (limit * 10).min(50000);
 
-        let left_docs = match self.scan_collection(tid, left_collection, scan_limit) {
-            Ok(d) => d,
-            Err(e) => {
-                return self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                );
+        // If inline_left is set, execute the sub-plan to get left side docs.
+        let left_docs = if let Some(sub_plan) = inline_left {
+            let sub_response = self.execute_plan(task, sub_plan);
+            match super::super::super::response_codec::decode_response_to_docs(&sub_response) {
+                Some(docs) => docs,
+                None => {
+                    // Sub-plan returned no decodable rows — pass through the response.
+                    return sub_response;
+                }
+            }
+        } else {
+            match self.scan_collection(tid, left_collection, scan_limit) {
+                Ok(d) => d,
+                Err(e) => {
+                    return self.response_error(
+                        task,
+                        ErrorCode::Internal {
+                            detail: e.to_string(),
+                        },
+                    );
+                }
             }
         };
         let right_docs = match self.scan_collection(tid, right_collection, scan_limit) {
@@ -288,6 +303,119 @@ impl CoreLoop {
         }
 
         // Apply post-join projection (binary — no JSON roundtrip).
+        if !projection.is_empty() && !projection.iter().any(|p| p == "*") {
+            for row in &mut results {
+                *row = super::binary_row_project(row, projection);
+            }
+        }
+
+        let payload = super::super::super::response_codec::encode_binary_rows(&results);
+        self.response_with_payload(task, payload)
+    }
+
+    /// Inline hash join: both sides are pre-gathered as msgpack data.
+    /// Used for multi-way joins where the left side is an inner join result.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::data::executor) fn execute_inline_hash_join(
+        &mut self,
+        task: &ExecutionTask,
+        left_data: &[u8],
+        right_data: &[u8],
+        on: &[(String, String)],
+        join_type: &str,
+        limit: usize,
+        projection: &[String],
+        post_filter_bytes: &[u8],
+    ) -> Response {
+        debug!(
+            core = self.core_id,
+            left_bytes = left_data.len(),
+            right_bytes = right_data.len(),
+            keys = on.len(),
+            %join_type,
+            "inline hash join"
+        );
+
+        // Decode left side: msgpack array or JSON array (from inner join result).
+        let left_docs =
+            match super::super::super::response_codec::decode_response_to_docs_from_bytes(left_data)
+            {
+                Some(d) => d,
+                None => {
+                    return self.response_with_payload(
+                        task,
+                        super::super::super::response_codec::encode_binary_rows(&[]),
+                    );
+                }
+            };
+
+        // Decode right side: broadcast_raw format ({id, data} wrapper maps).
+        let right_docs = super::super::super::response_codec::decode_raw_scan_to_docs(right_data);
+
+        tracing::warn!(
+            core = self.core_id,
+            left_count = left_docs.len(),
+            right_count = right_docs.len(),
+            "inline hash join: decoded both sides"
+        );
+
+        // Left docs come from a merged join result where field names are
+        // prefixed as "collection.field". The join keys from the planner are
+        // unqualified (e.g. "id"). Resolve qualified names by scanning the
+        // first left doc for fields ending in ".{key}".
+        let mut left_key_strs: Vec<String> = on.iter().map(|(l, _)| l.clone()).collect();
+        if let Some((_, first_doc)) = left_docs.first() {
+            for key in &mut left_key_strs {
+                // If the key doesn't exist directly, find a qualified version.
+                if msgpack_scan::extract_field(first_doc, 0, key).is_none() {
+                    let suffix = format!(".{key}");
+                    // Scan the map for a key ending with ".{key}".
+                    if let Some((count, mut pos)) = msgpack_scan::map_header(first_doc, 0) {
+                        for _ in 0..count {
+                            if let Some(field_name) = msgpack_scan::read_str(first_doc, pos)
+                                && field_name.ends_with(&suffix)
+                            {
+                                *key = field_name.to_string();
+                                break;
+                            }
+                            pos = match msgpack_scan::skip_value(first_doc, pos) {
+                                Some(p) => p,
+                                None => break,
+                            };
+                            pos = match msgpack_scan::skip_value(first_doc, pos) {
+                                Some(p) => p,
+                                None => break,
+                            };
+                        }
+                    }
+                }
+            }
+        }
+        let left_keys: Vec<&str> = left_key_strs.iter().map(|s| s.as_str()).collect();
+        let right_keys: Vec<&str> = on.iter().map(|(_, r)| r.as_str()).collect();
+
+        let right_index = HashIndex::build(&right_docs, &right_keys);
+
+        let mut results = probe_hash_index(&ProbeParams {
+            probe_docs: &left_docs,
+            index: &right_index,
+            index_docs: &right_docs,
+            probe_keys: &left_keys,
+            join_type,
+            limit,
+            probe_collection: "inline_left",
+            index_collection: "inline_right",
+            emit_unmatched_right: true,
+        });
+
+        if !post_filter_bytes.is_empty() {
+            let filters: Vec<crate::bridge::scan_filter::ScanFilter> =
+                zerompk::from_msgpack(post_filter_bytes).unwrap_or_default();
+            if !filters.is_empty() {
+                results.retain(|row| super::binary_row_matches_filters(row, &filters));
+            }
+        }
+
         if !projection.is_empty() && !projection.iter().any(|p| p == "*") {
             for row in &mut results {
                 *row = super::binary_row_project(row, projection);
