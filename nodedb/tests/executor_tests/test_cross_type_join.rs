@@ -296,6 +296,7 @@ fn single_core_cross_type_hash_join() {
             post_aggregates: Vec::new(),
             projection: Vec::new(),
             post_filters: Vec::new(),
+            inline_left: None,
         }),
     );
 
@@ -373,6 +374,7 @@ fn single_core_left_join_with_nulls() {
             post_aggregates: Vec::new(),
             projection: Vec::new(),
             post_filters: Vec::new(),
+            inline_left: None,
         }),
     );
 
