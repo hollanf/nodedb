@@ -1,6 +1,8 @@
 //! Aggregate plan conversion and projection/window helpers.
 
-use nodedb_sql::types::{AggregateExpr, EngineType, Filter, Projection, SqlExpr, SqlPlan};
+use nodedb_sql::types::{
+    AggregateExpr, EngineType, Filter, Projection, SqlExpr, SqlPlan, WindowSpec,
+};
 
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::*;
@@ -216,20 +218,33 @@ fn group_by_to_strings(exprs: &[SqlExpr]) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn extract_projection_names(proj: &[Projection]) -> Vec<String> {
+pub(super) fn extract_projection_names(
+    proj: &[Projection],
+    window_functions: &[WindowSpec],
+) -> Vec<String> {
     proj.iter()
         .filter_map(|p| match p {
             Projection::Column(name) => Some(name.clone()),
+            Projection::Computed { alias, .. }
+                if window_functions.iter().any(|spec| spec.alias == *alias) =>
+            {
+                Some(alias.clone())
+            }
             _ => None,
         })
         .collect()
 }
 
-pub(super) fn extract_computed_columns(proj: &[Projection]) -> crate::Result<Vec<u8>> {
+pub(super) fn extract_computed_columns(
+    proj: &[Projection],
+    window_functions: &[WindowSpec],
+) -> crate::Result<Vec<u8>> {
     let computed: Vec<crate::bridge::expr_eval::ComputedColumn> = proj
         .iter()
         .filter_map(|p| match p {
-            Projection::Computed { expr, alias } => {
+            Projection::Computed { expr, alias }
+                if !window_functions.iter().any(|spec| spec.alias == *alias) =>
+            {
                 Some(crate::bridge::expr_eval::ComputedColumn {
                     alias: alias.clone(),
                     expr: sql_expr_to_bridge_expr(expr),
@@ -244,6 +259,54 @@ pub(super) fn extract_computed_columns(proj: &[Projection]) -> crate::Result<Vec
     zerompk::to_msgpack_vec(&computed).map_err(|e| crate::Error::Internal {
         detail: format!("serialize computed columns: {e}"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_computed_columns, extract_projection_names};
+    use nodedb_sql::types::{Projection, SqlExpr, WindowSpec};
+
+    #[test]
+    fn window_aliases_stay_in_projection_and_out_of_computed_columns() {
+        let projection = vec![
+            Projection::Column("name".into()),
+            Projection::Computed {
+                expr: SqlExpr::Function {
+                    name: "row_number".into(),
+                    args: Vec::new(),
+                    distinct: false,
+                },
+                alias: "rn".into(),
+            },
+            Projection::Computed {
+                expr: SqlExpr::Column {
+                    table: None,
+                    name: "age".into(),
+                },
+                alias: "age_copy".into(),
+            },
+        ];
+        let window_functions = vec![WindowSpec {
+            function: "row_number".into(),
+            args: Vec::new(),
+            partition_by: Vec::new(),
+            order_by: Vec::new(),
+            alias: "rn".into(),
+        }];
+
+        assert_eq!(
+            extract_projection_names(&projection, &window_functions),
+            vec!["name".to_string(), "rn".to_string()]
+        );
+
+        let computed_bytes =
+            extract_computed_columns(&projection, &window_functions).expect("serialize computed");
+        let computed: Vec<crate::bridge::expr_eval::ComputedColumn> =
+            zerompk::from_msgpack(&computed_bytes).expect("deserialize computed");
+
+        assert_eq!(computed.len(), 1);
+        assert_eq!(computed[0].alias, "age_copy");
+    }
 }
 
 pub(super) fn serialize_window_functions(

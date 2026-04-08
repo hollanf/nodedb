@@ -31,10 +31,10 @@ pub(super) fn convert_scan(
     tenant_id: TenantId,
 ) -> crate::Result<Vec<PhysicalTask>> {
     let filter_bytes = serialize_filters(filters)?;
-    let proj_names = extract_projection_names(projection);
+    let proj_names = extract_projection_names(projection, window_functions);
     let sort = convert_sort_keys(sort_keys);
     let vshard = VShardId::from_collection(collection);
-    let computed_bytes = super::aggregate::extract_computed_columns(projection)?;
+    let computed_bytes = super::aggregate::extract_computed_columns(projection, window_functions)?;
     let window_bytes = super::aggregate::serialize_window_functions(window_functions)?;
 
     let physical = match engine {
@@ -127,7 +127,7 @@ pub(super) fn convert_join(
 ) -> crate::Result<Vec<PhysicalTask>> {
     let mut left_collection = extract_collection_name(left);
     let mut right_collection = extract_collection_name(right);
-    let proj_names = extract_projection_names(projection);
+    let proj_names = extract_projection_names(projection, &[]);
     let filter_bytes = serialize_filters(filters)?;
 
     // Check if the left side is a nested join (multi-way join).
@@ -207,7 +207,7 @@ pub(super) fn convert_timeseries_scan(
         ));
     }
 
-    let proj_names = extract_projection_names(projection);
+    let proj_names = extract_projection_names(projection, &[]);
     let vshard = VShardId::from_collection(collection);
     Ok(vec![PhysicalTask {
         tenant_id,
@@ -344,7 +344,7 @@ pub(super) fn convert_spatial_scan(
 ) -> crate::Result<Vec<PhysicalTask>> {
     let vshard = VShardId::from_collection(collection);
     let attr_bytes = serialize_filters(attribute_filters)?;
-    let proj_names = extract_projection_names(projection);
+    let proj_names = extract_projection_names(projection, &[]);
     let sp = match predicate {
         nodedb_sql::types::SpatialPredicate::DWithin => SpatialPredicate::DWithin,
         nodedb_sql::types::SpatialPredicate::Contains => SpatialPredicate::Contains,
