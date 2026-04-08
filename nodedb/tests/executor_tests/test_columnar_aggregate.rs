@@ -1,6 +1,6 @@
 use crate::helpers::{make_ctx, payload_value, send_ok};
 use nodedb::bridge::envelope::PhysicalPlan;
-use nodedb::bridge::physical_plan::{ColumnarOp, QueryOp};
+use nodedb::bridge::physical_plan::{AggregateSpec, ColumnarOp, QueryOp};
 
 #[test]
 fn aggregate_count_reads_plain_columnar_engine_rows() {
@@ -38,7 +38,12 @@ fn aggregate_count_reads_plain_columnar_engine_rows() {
         PhysicalPlan::Query(QueryOp::Aggregate {
             collection: "weather".into(),
             group_by: Vec::new(),
-            aggregates: vec![("count".into(), "*".into())],
+            aggregates: vec![AggregateSpec {
+                function: "count".into(),
+                alias: "count_all".into(),
+                field: "*".into(),
+                expr: None,
+            }],
             filters: Vec::new(),
             having: Vec::new(),
             limit: 10,

@@ -24,7 +24,9 @@ pub fn evaluate_generated_columns(
 
     for idx in order {
         let spec = &specs[idx];
-        let computed = spec.expr.eval(doc);
+        let doc_val = nodedb_types::Value::from(doc.clone());
+        let result = spec.expr.eval(&doc_val);
+        let computed = serde_json::Value::from(result);
         if let Some(obj) = doc.as_object_mut() {
             obj.insert(spec.name.clone(), computed);
         }

@@ -20,12 +20,14 @@ pub fn check_transition_predicates(
     old_doc: &serde_json::Value,
     new_doc: &serde_json::Value,
 ) -> Result<(), ErrorCode> {
+    let old_val = nodedb_types::Value::from(old_doc.clone());
+    let new_val = nodedb_types::Value::from(new_doc.clone());
     for check in checks {
-        let result = check.predicate.eval_with_old(new_doc, old_doc);
+        let result = check.predicate.eval_with_old(&new_val, &old_val);
         let passed = match result {
-            serde_json::Value::Bool(b) => b,
-            serde_json::Value::Null => false, // NULL treated as FALSE for constraint purposes.
-            _ => true,                        // Non-boolean non-null values are truthy.
+            nodedb_types::Value::Bool(b) => b,
+            nodedb_types::Value::Null => false, // NULL treated as FALSE for constraint purposes.
+            _ => true,                          // Non-boolean non-null values are truthy.
         };
         if !passed {
             return Err(ErrorCode::TransitionCheckViolation {
@@ -53,7 +55,7 @@ mod tests {
         // Predicate: TRUE (literal)
         let check = make_check(
             "always_pass",
-            SqlExpr::Literal(serde_json::Value::Bool(true)),
+            SqlExpr::Literal(nodedb_types::Value::Bool(true)),
         );
         let old = serde_json::json!({"x": 1});
         let new = serde_json::json!({"x": 2});
@@ -64,7 +66,7 @@ mod tests {
     fn simple_false_predicate() {
         let check = make_check(
             "always_fail",
-            SqlExpr::Literal(serde_json::Value::Bool(false)),
+            SqlExpr::Literal(nodedb_types::Value::Bool(false)),
         );
         let old = serde_json::json!({"x": 1});
         let new = serde_json::json!({"x": 2});
@@ -79,7 +81,7 @@ mod tests {
             SqlExpr::BinaryOp {
                 left: Box::new(SqlExpr::OldColumn("sealed".into())),
                 op: BinaryOp::Eq,
-                right: Box::new(SqlExpr::Literal(serde_json::Value::Bool(false))),
+                right: Box::new(SqlExpr::Literal(nodedb_types::Value::Bool(false))),
             },
         );
 
@@ -124,8 +126,8 @@ mod tests {
 
     #[test]
     fn multiple_checks_all_must_pass() {
-        let c1 = make_check("c1", SqlExpr::Literal(serde_json::Value::Bool(true)));
-        let c2 = make_check("c2", SqlExpr::Literal(serde_json::Value::Bool(false)));
+        let c1 = make_check("c1", SqlExpr::Literal(nodedb_types::Value::Bool(true)));
+        let c2 = make_check("c2", SqlExpr::Literal(nodedb_types::Value::Bool(false)));
         let old = serde_json::json!({});
         let new = serde_json::json!({});
         // c1 passes but c2 fails → overall failure

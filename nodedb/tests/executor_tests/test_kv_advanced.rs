@@ -349,7 +349,8 @@ fn kv_field_get_and_set() {
             key: b"u1".to_vec(),
             updates: vec![(
                 "region".into(),
-                zerompk::to_msgpack_vec(&nodedb_types::Value::String("eu-west".into())).unwrap(),
+                nodedb_types::value_to_msgpack(&nodedb_types::Value::String("eu-west".into()))
+                    .unwrap(),
             )],
         }),
     );

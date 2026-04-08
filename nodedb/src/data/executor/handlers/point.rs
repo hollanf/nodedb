@@ -447,12 +447,12 @@ impl CoreLoop {
                         detail: format!("generated column evaluation failed: {e:?}"),
                     });
                 }
-                sonic_rs::to_vec(&doc).unwrap_or_else(|_| value.to_vec())
+                super::super::doc_format::encode_to_msgpack(&doc)
             } else {
                 value.to_vec()
             }
         } else {
-            value.to_vec()
+            super::super::doc_format::json_to_msgpack(value)
         };
         let value = &value;
 

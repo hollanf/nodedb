@@ -190,7 +190,12 @@ fn array_agg_aggregate() {
         PhysicalPlan::Query(QueryOp::Aggregate {
             collection: "products".into(),
             group_by: vec!["brand".into()],
-            aggregates: vec![("array_agg".into(), "color".into())],
+            aggregates: vec![nodedb::bridge::physical_plan::AggregateSpec {
+                function: "array_agg".into(),
+                alias: "array_agg_color".into(),
+                field: "color".into(),
+                expr: None,
+            }],
             filters: Vec::new(),
             having: Vec::new(),
             limit: 100,
@@ -220,11 +225,11 @@ fn array_length_function() {
     let expr = nodedb_query::expr_parse::parse_generated_expr("array_length(tags)")
         .unwrap()
         .0;
-    let doc = serde_json::json!({"tags": ["a", "b", "c"]});
-    assert_eq!(expr.eval(&doc), serde_json::json!(3));
+    let doc = nodedb_types::Value::from(serde_json::json!({"tags": ["a", "b", "c"]}));
+    assert_eq!(expr.eval(&doc), nodedb_types::Value::Integer(3));
 
-    let doc2 = serde_json::json!({"tags": []});
-    assert_eq!(expr.eval(&doc2), serde_json::json!(0));
+    let doc2 = nodedb_types::Value::from(serde_json::json!({"tags": []}));
+    assert_eq!(expr.eval(&doc2), nodedb_types::Value::Integer(0));
 }
 
 #[test]
@@ -232,8 +237,15 @@ fn array_append_function() {
     let expr = nodedb_query::expr_parse::parse_generated_expr("array_append(tags, 'new')")
         .unwrap()
         .0;
-    let doc = serde_json::json!({"tags": ["a", "b"]});
-    assert_eq!(expr.eval(&doc), serde_json::json!(["a", "b", "new"]));
+    let doc = nodedb_types::Value::from(serde_json::json!({"tags": ["a", "b"]}));
+    assert_eq!(
+        expr.eval(&doc),
+        nodedb_types::Value::Array(vec![
+            nodedb_types::Value::String("a".into()),
+            nodedb_types::Value::String("b".into()),
+            nodedb_types::Value::String("new".into()),
+        ])
+    );
 }
 
 #[test]
@@ -241,8 +253,14 @@ fn array_remove_function() {
     let expr = nodedb_query::expr_parse::parse_generated_expr("array_remove(tags, 'b')")
         .unwrap()
         .0;
-    let doc = serde_json::json!({"tags": ["a", "b", "c"]});
-    assert_eq!(expr.eval(&doc), serde_json::json!(["a", "c"]));
+    let doc = nodedb_types::Value::from(serde_json::json!({"tags": ["a", "b", "c"]}));
+    assert_eq!(
+        expr.eval(&doc),
+        nodedb_types::Value::Array(vec![
+            nodedb_types::Value::String("a".into()),
+            nodedb_types::Value::String("c".into()),
+        ])
+    );
 }
 
 #[test]

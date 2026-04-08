@@ -14,9 +14,13 @@ fn apply_projection(
     projection: &[String],
 ) -> serde_json::Value {
     if !computed_cols.is_empty() {
+        let doc_val = nodedb_types::Value::from(data.clone());
         let mut out = serde_json::Map::with_capacity(computed_cols.len());
         for cc in computed_cols {
-            out.insert(cc.alias.clone(), cc.expr.eval(&data));
+            out.insert(
+                cc.alias.clone(),
+                serde_json::Value::from(cc.expr.eval(&doc_val)),
+            );
         }
         serde_json::Value::Object(out)
     } else if !projection.is_empty() {

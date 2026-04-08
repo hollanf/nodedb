@@ -60,7 +60,9 @@ fn apply_single_binding(
     source_doc: &serde_json::Value,
 ) -> Result<Option<TargetWrite>, ErrorCode> {
     // 1. Evaluate value_expr against the source document to get the delta.
-    let delta_json = binding.value_expr.eval(source_doc);
+    let source_val = nodedb_types::Value::from(source_doc.clone());
+    let delta_val = binding.value_expr.eval(&source_val);
+    let delta_json = serde_json::Value::from(delta_val);
     let delta = json_to_decimal(&delta_json);
     let Some(delta) = delta else {
         // value_expr evaluated to NULL or non-numeric → skip (no balance change).

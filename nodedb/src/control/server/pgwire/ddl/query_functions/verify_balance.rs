@@ -130,7 +130,8 @@ pub async fn verify_balance(
             if join_val != Some(doc_id) {
                 continue;
             }
-            let delta = mat_def.value_expr.eval(src_doc);
+            let src_val = nodedb_types::Value::from(src_doc.clone());
+            let delta = serde_json::Value::from(mat_def.value_expr.eval(&src_val));
             if let Some(d) = super::helpers::json_to_decimal(&delta) {
                 computed += d;
             }

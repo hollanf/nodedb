@@ -441,22 +441,25 @@ fn parse_value_ref(s: &str) -> PgWireResult<crate::bridge::expr_eval::SqlExpr> {
 
     // Literal: TRUE, FALSE, NULL, quoted string, number.
     if upper == "TRUE" {
-        return Ok(SqlExpr::Literal(serde_json::Value::Bool(true)));
+        return Ok(SqlExpr::Literal(nodedb_types::Value::Bool(true)));
     }
     if upper == "FALSE" {
-        return Ok(SqlExpr::Literal(serde_json::Value::Bool(false)));
+        return Ok(SqlExpr::Literal(nodedb_types::Value::Bool(false)));
     }
     if upper == "NULL" {
-        return Ok(SqlExpr::Literal(serde_json::Value::Null));
+        return Ok(SqlExpr::Literal(nodedb_types::Value::Null));
     }
     if (s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')) {
         let inner = &s[1..s.len() - 1];
-        return Ok(SqlExpr::Literal(serde_json::Value::String(
+        return Ok(SqlExpr::Literal(nodedb_types::Value::String(
             inner.to_string(),
         )));
     }
-    if let Ok(n) = s.parse::<f64>() {
-        return Ok(SqlExpr::Literal(serde_json::json!(n)));
+    if let Ok(i) = s.parse::<i64>() {
+        return Ok(SqlExpr::Literal(nodedb_types::Value::Integer(i)));
+    }
+    if let Ok(f) = s.parse::<f64>() {
+        return Ok(SqlExpr::Literal(nodedb_types::Value::Float(f)));
     }
 
     // Bare column name (resolves against NEW document).
