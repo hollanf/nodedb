@@ -5,8 +5,7 @@ use std::sync::Arc;
 use nodedb_types::protocol::NativeResponse;
 use nodedb_types::value::Value;
 
-use crate::bridge::envelope::{PhysicalPlan, Response, Status};
-use crate::bridge::physical_plan::{DocumentOp, GraphOp, QueryOp, TextOp, VectorOp};
+use crate::bridge::envelope::{Response, Status};
 use crate::control::planner::physical::PhysicalTask;
 use crate::control::server::pgwire::session::TransactionState;
 use crate::data::executor::response_codec;
@@ -207,29 +206,11 @@ async fn execute_planned(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeRe
     }
 }
 
-/// Check if a plan is a read scan that should broadcast to all cores.
-fn is_broadcast_scan(plan: &PhysicalPlan) -> bool {
-    matches!(
-        plan,
-        PhysicalPlan::Document(DocumentOp::Scan { .. })
-            | PhysicalPlan::Query(QueryOp::Aggregate { .. })
-            | PhysicalPlan::Query(QueryOp::PartialAggregate { .. })
-            | PhysicalPlan::Graph(GraphOp::Hop { .. })
-            | PhysicalPlan::Graph(GraphOp::Neighbors { .. })
-            | PhysicalPlan::Graph(GraphOp::Path { .. })
-            | PhysicalPlan::Graph(GraphOp::Subgraph { .. })
-            | PhysicalPlan::Vector(VectorOp::Search { .. })
-            | PhysicalPlan::Text(TextOp::Search { .. })
-            | PhysicalPlan::Text(TextOp::HybridSearch { .. })
-            | PhysicalPlan::Graph(GraphOp::RagFusion { .. })
-    )
-}
-
 /// Dispatch a single PhysicalTask (WAL + Data Plane, or Raft).
 /// Scan operations are broadcast to all cores; point operations use single-core dispatch.
 async fn dispatch_task(ctx: &DispatchCtx<'_>, task: PhysicalTask) -> crate::Result<Response> {
     // Broadcast scans to all cores so we find data regardless of which core stored it.
-    if is_broadcast_scan(&task.plan) {
+    if task.plan.is_broadcast_scan() {
         return dispatch_utils::broadcast_to_all_cores(ctx.state, task.tenant_id, task.plan, 0)
             .await;
     }
@@ -450,5 +431,39 @@ async fn handle_explain(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeRes
             }
         }
         Err(e) => error_to_native(seq, &e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::bridge::envelope::PhysicalPlan;
+    use crate::bridge::physical_plan::{ColumnarOp, DocumentOp};
+
+    #[test]
+    fn columnar_scan_is_broadcast() {
+        let plan = PhysicalPlan::Columnar(ColumnarOp::Scan {
+            collection: "metrics".into(),
+            projection: Vec::new(),
+            limit: 10,
+            filters: Vec::new(),
+            rls_filters: Vec::new(),
+        });
+        assert!(plan.is_broadcast_scan());
+    }
+
+    #[test]
+    fn document_scan_is_still_broadcast() {
+        let plan = PhysicalPlan::Document(DocumentOp::Scan {
+            collection: "docs".into(),
+            filters: Vec::new(),
+            limit: 10,
+            offset: 0,
+            sort_keys: Vec::new(),
+            distinct: false,
+            projection: Vec::new(),
+            computed_columns: Vec::new(),
+            window_functions: Vec::new(),
+        });
+        assert!(plan.is_broadcast_scan());
     }
 }

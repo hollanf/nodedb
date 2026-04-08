@@ -60,3 +60,26 @@ pub enum PhysicalPlan {
     /// Meta / maintenance: WAL, cancel, snapshot, compact, checkpoint.
     Meta(MetaOp),
 }
+
+impl PhysicalPlan {
+    /// Whether this plan is a read/scan operation that must broadcast to all
+    /// Data Plane cores (data is distributed across cores).
+    pub fn is_broadcast_scan(&self) -> bool {
+        matches!(
+            self,
+            PhysicalPlan::Document(DocumentOp::Scan { .. })
+                | PhysicalPlan::Columnar(ColumnarOp::Scan { .. })
+                | PhysicalPlan::Query(QueryOp::Aggregate { .. })
+                | PhysicalPlan::Query(QueryOp::PartialAggregate { .. })
+                | PhysicalPlan::Graph(GraphOp::Hop { .. })
+                | PhysicalPlan::Graph(GraphOp::Neighbors { .. })
+                | PhysicalPlan::Graph(GraphOp::Path { .. })
+                | PhysicalPlan::Graph(GraphOp::Subgraph { .. })
+                | PhysicalPlan::Graph(GraphOp::RagFusion { .. })
+                | PhysicalPlan::Graph(GraphOp::Match { .. })
+                | PhysicalPlan::Vector(VectorOp::Search { .. })
+                | PhysicalPlan::Text(TextOp::Search { .. })
+                | PhysicalPlan::Text(TextOp::HybridSearch { .. })
+        )
+    }
+}
