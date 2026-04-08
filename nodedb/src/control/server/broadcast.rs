@@ -3,6 +3,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use nodedb_query::msgpack_scan;
+
 use crate::bridge::envelope::{PhysicalPlan, Priority, Request, Response};
 use crate::bridge::physical_plan::QueryOp;
 use crate::control::arrow_convert;
@@ -15,7 +17,7 @@ static BROADCAST_COUNTER: AtomicU64 = AtomicU64::new(2_000_000);
 ///
 /// Used for scans (DocumentScan, Aggregate, etc.) where data is distributed
 /// across cores. Each core scans its local storage, and all results are
-/// concatenated. The merged response payload is a JSON array of all results.
+/// concatenated into one msgpack array.
 pub async fn broadcast_to_all_cores(
     shared: &SharedState,
     tenant_id: TenantId,
@@ -54,11 +56,9 @@ pub async fn broadcast_to_all_cores(
         receivers.push(rx);
     }
 
-    // Await all responses and merge raw payloads.
-    // Each core returns a msgpack or JSON payload. We collect raw element bytes
-    // from each core's array response and build one merged JSON array at the end
-    // (JSON only at the API boundary — pgwire/REST).
-    let mut all_elements: Vec<String> = Vec::new();
+    // Await all responses and merge raw msgpack rows. Internal transport stays
+    // msgpack; JSON conversion only happens at API boundaries.
+    let mut all_elements: Vec<Vec<u8>> = Vec::new();
     let mut max_lsn = Lsn::ZERO;
     let mut had_error = false;
     let mut error_msg = String::new();
@@ -97,37 +97,24 @@ pub async fn broadcast_to_all_cores(
             continue;
         }
 
-        // Decode payload to JSON at the merge boundary.
-        let json_text =
-            crate::data::executor::response_codec::decode_payload_to_json(&resp.payload);
-
-        // If it's a JSON array, extract inner elements.
-        if json_text.starts_with('[') && json_text.ends_with(']') {
-            let inner = &json_text[1..json_text.len() - 1];
-            if !inner.trim().is_empty() {
-                all_elements.push(inner.to_string());
-            }
-        } else if !json_text.is_empty() && json_text != "null" {
-            all_elements.push(json_text);
-        }
+        all_elements.extend(extract_msgpack_elements(&resp.payload));
     }
 
-    let merged_payload = format!("[{}]", all_elements.join(",")).into_bytes();
+    let merged_payload = encode_msgpack_array(&all_elements);
 
     if had_error && all_elements.is_empty() {
         return Err(crate::Error::Dispatch { detail: error_msg });
     }
 
     // For aggregate plans, run Arrow SIMD final-aggregation post-processing on
-    // the merged JSON. This converts the merged JSON rows into a columnar
+    // the merged msgpack rows. This converts the merged rows into a columnar
     // RecordBatch and verifies that the Arrow kernels can operate on the
     // result (e.g. SUM/AVG/MIN/MAX over partial results from all cores).
     // The merged_payload itself is returned unchanged — the batch is used for
     // any Control-Plane-side window functions or secondary aggregations added
     // by the planner. Currently this validates the merge and logs schema info.
     if is_aggregate_plan(&plan)
-        && let Ok(json_text) = std::str::from_utf8(&merged_payload)
-        && let Some(batch) = arrow_convert::json_rows_to_record_batch(json_text)
+        && let Some(batch) = arrow_convert::msgpack_rows_to_record_batch(&merged_payload)
     {
         tracing::trace!(
             rows = batch.num_rows(),
@@ -225,4 +212,100 @@ fn is_aggregate_plan(plan: &PhysicalPlan) -> bool {
         PhysicalPlan::Query(QueryOp::Aggregate { .. })
             | PhysicalPlan::Query(QueryOp::PartialAggregate { .. })
     )
+}
+
+fn extract_msgpack_elements(payload: &[u8]) -> Vec<Vec<u8>> {
+    if payload.is_empty() {
+        return Vec::new();
+    }
+
+    let Some((count, mut pos)) = msgpack_scan::array_header(payload, 0) else {
+        tracing::warn!(
+            payload_len = payload.len(),
+            "broadcast_to_all_cores: payload is not a msgpack array; treating as single row"
+        );
+        return vec![payload.to_vec()];
+    };
+
+    let mut rows = Vec::with_capacity(count);
+    for _ in 0..count {
+        if pos >= payload.len() {
+            break;
+        }
+        let start = pos;
+        match msgpack_scan::skip_value(payload, pos) {
+            Some(next) => {
+                rows.push(payload[start..next].to_vec());
+                pos = next;
+            }
+            None => {
+                tracing::warn!(
+                    pos,
+                    payload_len = payload.len(),
+                    "broadcast_to_all_cores: could not skip msgpack element; stopping early"
+                );
+                break;
+            }
+        }
+    }
+    rows
+}
+
+fn encode_msgpack_array(rows: &[Vec<u8>]) -> Vec<u8> {
+    let total_data: usize = rows.iter().map(|row| row.len()).sum();
+    let mut out = Vec::with_capacity(total_data + 5);
+
+    let row_count = rows.len();
+    if row_count < 16 {
+        out.push(0x90 | row_count as u8);
+    } else if row_count <= u16::MAX as usize {
+        out.push(0xdc);
+        out.extend_from_slice(&(row_count as u16).to_be_bytes());
+    } else {
+        out.push(0xdd);
+        out.extend_from_slice(&(row_count as u32).to_be_bytes());
+    }
+
+    for row in rows {
+        out.extend_from_slice(row);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{encode_msgpack_array, extract_msgpack_elements};
+
+    #[test]
+    fn extracts_raw_msgpack_rows_from_array_payload() {
+        let payload =
+            nodedb_types::json_to_msgpack(&serde_json::json!([{"id":"u1"},{"id":"u2"}])).unwrap();
+
+        let rows = extract_msgpack_elements(&payload);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            crate::data::executor::response_codec::decode_payload_to_json(&rows[0]),
+            r#"{"id":"u1"}"#
+        );
+        assert_eq!(
+            crate::data::executor::response_codec::decode_payload_to_json(&rows[1]),
+            r#"{"id":"u2"}"#
+        );
+    }
+
+    #[test]
+    fn reencodes_merged_rows_as_msgpack_array() {
+        let payload_a = nodedb_types::json_to_msgpack(&serde_json::json!([{"id":"u1"}])).unwrap();
+        let payload_b = nodedb_types::json_to_msgpack(&serde_json::json!([{"id":"u2"}])).unwrap();
+
+        let mut rows = extract_msgpack_elements(&payload_a);
+        rows.extend(extract_msgpack_elements(&payload_b));
+        let merged = encode_msgpack_array(&rows);
+
+        assert_eq!(
+            crate::data::executor::response_codec::decode_payload_to_json(&merged),
+            r#"[{"id":"u1"},{"id":"u2"}]"#
+        );
+    }
 }

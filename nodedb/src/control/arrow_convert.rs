@@ -80,6 +80,15 @@ pub fn json_rows_to_record_batch(json_str: &str) -> Option<RecordBatch> {
     RecordBatch::try_new(schema, arrays).ok()
 }
 
+/// Convert a msgpack payload of rows into an Arrow RecordBatch.
+///
+/// This keeps the internal transport in msgpack and only decodes to JSON at
+/// the Arrow conversion boundary.
+pub fn msgpack_rows_to_record_batch(payload: &[u8]) -> Option<RecordBatch> {
+    let json = crate::data::executor::response_codec::decode_payload_to_json(payload);
+    json_rows_to_record_batch(&json)
+}
+
 /// Infer Arrow data type from a JSON value.
 fn infer_arrow_type(value: &serde_json::Value) -> DataType {
     match value {
@@ -264,5 +273,20 @@ mod tests {
     fn empty_input() {
         assert!(json_rows_to_record_batch("[]").is_none());
         assert!(json_rows_to_record_batch("").is_none());
+    }
+
+    #[test]
+    fn msgpack_to_arrow_roundtrip() {
+        let payload = nodedb_types::json_to_msgpack(&serde_json::json!([
+            {"id": "d1", "data": {"name": "alice", "age": 30}},
+            {"id": "d2", "data": {"name": "bob", "age": 25}}
+        ]))
+        .unwrap();
+
+        let batch = msgpack_rows_to_record_batch(&payload).unwrap();
+        assert_eq!(batch.num_rows(), 2);
+        assert!(batch.schema().field_with_name("id").is_ok());
+        assert!(batch.schema().field_with_name("name").is_ok());
+        assert!(batch.schema().field_with_name("age").is_ok());
     }
 }
