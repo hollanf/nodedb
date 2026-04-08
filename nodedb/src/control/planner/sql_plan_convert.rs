@@ -595,7 +595,7 @@ fn convert_insert(
                 // Accumulate rows and emit after the loop.
                 columnar_rows.push(row);
             }
-            _ => {
+            EngineType::DocumentSchemaless | EngineType::DocumentStrict => {
                 let value_bytes = row_to_msgpack(row)?;
                 tasks.push(PhysicalTask {
                     tenant_id,
@@ -606,6 +606,13 @@ fn convert_insert(
                         value: value_bytes,
                     }),
                     post_set_op: PostSetOp::None,
+                });
+            }
+            other => {
+                return Err(crate::Error::PlanError {
+                    detail: format!(
+                        "INSERT into '{collection}': unexpected engine type {other:?}, expected Document/Columnar/Spatial"
+                    ),
                 });
             }
         }
@@ -1322,7 +1329,7 @@ fn rows_to_msgpack_array(
         })
         .collect();
     let val = nodedb_types::Value::Array(arr);
-    zerompk::to_msgpack_vec(&val).map_err(|e| crate::Error::Serialization {
+    nodedb_types::value_to_msgpack(&val).map_err(|e| crate::Error::Serialization {
         format: "msgpack".into(),
         detail: format!("columnar row batch: {e}"),
     })

@@ -3,7 +3,6 @@
 //! These operate on document sets matching ScanFilter predicates,
 //! unlike PointUpdate/PointDelete which require `WHERE id = 'x'`.
 
-use sonic_rs;
 use tracing::{debug, warn};
 
 use crate::bridge::envelope::{ErrorCode, Response};

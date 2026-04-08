@@ -132,7 +132,8 @@ pub(super) fn describe_plan(plan: &PhysicalPlan) -> PlanKind {
 
         // DML operations that return affected row count.
         PhysicalPlan::Document(DocumentOp::PointPut { .. })
-        | PhysicalPlan::Document(DocumentOp::BatchInsert { .. }) => DmlResult("INSERT"),
+        | PhysicalPlan::Document(DocumentOp::BatchInsert { .. })
+        | PhysicalPlan::Columnar(ColumnarOp::Insert { .. }) => DmlResult("INSERT"),
 
         PhysicalPlan::Document(DocumentOp::PointUpdate {
             returning: true, ..
@@ -161,7 +162,7 @@ use PlanKind::DmlResult;
 
 /// Extract affected row count from a JSON payload.
 ///
-/// Looks for `"affected"`, `"truncated"`, or `"inserted"` fields in the JSON.
+/// Looks for `"affected"`, `"truncated"`, `"inserted"`, or `"accepted"` fields in the JSON.
 fn extract_affected_count(payload: &[u8]) -> Option<u64> {
     if payload.is_empty() {
         return None;
@@ -170,6 +171,7 @@ fn extract_affected_count(payload: &[u8]) -> Option<u64> {
     v.get("affected")
         .or_else(|| v.get("truncated"))
         .or_else(|| v.get("inserted"))
+        .or_else(|| v.get("accepted"))
         .and_then(|n| n.as_u64())
 }
 

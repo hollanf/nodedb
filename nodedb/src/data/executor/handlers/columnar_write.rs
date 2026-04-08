@@ -22,7 +22,7 @@ impl CoreLoop {
         payload: &[u8],
         _format: &str,
     ) -> Response {
-        // Parse payload: zerompk array/object of nodedb_types::Value.
+        // Parse payload: msgpack-encoded nodedb_types::Value (array or object).
         let ndb_rows: Vec<nodedb_types::Value> = match nodedb_types::value_from_msgpack(payload) {
             Ok(nodedb_types::Value::Array(arr)) => arr,
             Ok(v @ nodedb_types::Value::Object(_)) => vec![v],
@@ -30,7 +30,7 @@ impl CoreLoop {
                 return self.response_error(
                     task,
                     ErrorCode::Internal {
-                        detail: "payload must be an array or object".into(),
+                        detail: "columnar insert: payload must be array or object".into(),
                     },
                 );
             }
@@ -38,7 +38,7 @@ impl CoreLoop {
                 return self.response_error(
                     task,
                     ErrorCode::Internal {
-                        detail: format!("invalid payload: {e}"),
+                        detail: format!("columnar insert: invalid payload: {e}"),
                     },
                 );
             }
@@ -88,16 +88,23 @@ impl CoreLoop {
             match engine.insert(&values) {
                 Ok(_) => accepted += 1,
                 Err(e) => {
-                    tracing::warn!(
-                        core = self.core_id,
-                        %collection,
-                        error = %e,
-                        "columnar insert row failed"
+                    return self.response_error(
+                        task,
+                        ErrorCode::Internal {
+                            detail: format!("columnar insert failed: {e}"),
+                        },
                     );
                 }
             }
         }
 
+        tracing::debug!(
+            core = self.core_id,
+            %collection,
+            accepted,
+            total = ndb_rows.len(),
+            "columnar insert complete"
+        );
         self.checkpoint_coordinator
             .mark_dirty("columnar", accepted as usize);
 

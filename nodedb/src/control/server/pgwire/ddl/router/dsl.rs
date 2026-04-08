@@ -91,15 +91,8 @@ pub(super) async fn dispatch(
         return Some(super::super::bulk::copy_from(state, identity, parts).await);
     }
 
-    // INSERT INTO — intercept for schemaless collections (DataFusion rejects
-    // columns not in the Arrow schema, but NodeDB collections are document stores).
-    if upper.starts_with("INSERT INTO ")
-        && upper.contains("VALUES")
-        && let Some(result) =
-            super::super::collection_insert::insert_document(state, identity, sql).await
-    {
-        return Some(result);
-    }
+    // INSERT INTO — handled by SQL planner (convert_insert → DocumentOp::PointPut).
+    // No intercept needed; the planner routes by EngineType.
 
     // UPSERT INTO — same as INSERT but merges into existing document if it exists.
     if upper.starts_with("UPSERT INTO ")
@@ -239,34 +232,7 @@ pub(super) async fn dispatch(
         )));
     }
 
-    // TRUNCATE <collection> — fast delete-all without filter scan.
-    if upper.starts_with("TRUNCATE ") {
-        let coll_name = parts.get(1).map(|s| s.to_lowercase()).unwrap_or_default();
-        if coll_name.is_empty() {
-            return Some(Err(super::super::super::types::sqlstate_error(
-                "42601",
-                "TRUNCATE requires a collection name",
-            )));
-        }
-        let tenant_id = identity.tenant_id;
-        let vshard = crate::types::VShardId::from_collection(&coll_name);
-        let plan = crate::bridge::envelope::PhysicalPlan::Document(DocumentOp::Truncate {
-            collection: coll_name,
-        });
-        if let Err(e) = crate::control::server::dispatch_utils::dispatch_to_data_plane(
-            state, tenant_id, vshard, plan, 0,
-        )
-        .await
-        {
-            return Some(Err(super::super::super::types::sqlstate_error(
-                "XX000",
-                &e.to_string(),
-            )));
-        }
-        return Some(Ok(vec![pgwire::api::results::Response::Execution(
-            pgwire::api::results::Tag::new("TRUNCATE"),
-        )]));
-    }
+    // TRUNCATE — handled by SQL planner (plan_truncate_stmt → DocumentOp::Truncate).
 
     None
 }
