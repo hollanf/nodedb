@@ -468,7 +468,7 @@ impl CoreLoop {
                 }
             })?
         } else {
-            super::super::doc_format::json_to_msgpack(value)
+            value.to_vec()
         };
 
         self.sparse
