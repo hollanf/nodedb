@@ -14,7 +14,7 @@ use crate::data::executor::msgpack_utils::write_str;
 /// Returns raw msgpack bytes — no JSON decode, no serde_json::Value.
 /// Uses binary scan to iterate source map entries and writes directly
 /// to the output buffer.
-pub(super) fn merge_join_docs_binary(
+pub fn merge_join_docs_binary(
     left_bytes: &[u8],
     right_bytes: Option<&[u8]>,
     left_collection: &str,
@@ -44,7 +44,7 @@ fn count_map_entries(bytes: &[u8]) -> usize {
 }
 
 /// Write a msgpack map header.
-fn write_map_header(buf: &mut Vec<u8>, len: usize) {
+pub fn write_map_header(buf: &mut Vec<u8>, len: usize) {
     if len < 16 {
         buf.push(0x80 | len as u8);
     } else if len <= u16::MAX as usize {

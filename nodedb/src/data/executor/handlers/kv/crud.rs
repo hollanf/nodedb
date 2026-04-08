@@ -31,13 +31,8 @@ impl CoreLoop {
                 if let Some(ref m) = self.metrics {
                     m.record_kv_get();
                 }
-                // Stored as nodedb_types::Value zerompk; transcode to standard
-                // msgpack map so the response pipeline (json_from_msgpack) can decode it.
-                let payload = nodedb_types::value_from_msgpack(&value)
-                    .ok()
-                    .and_then(|v| nodedb_types::json_to_msgpack(&serde_json::Value::from(v)).ok())
-                    .unwrap_or(value);
-                self.response_with_payload(task, payload)
+                // Value is already standard msgpack — pass through directly.
+                self.response_with_payload(task, value)
             }
             None => self.response_error(task, ErrorCode::NotFound),
         }

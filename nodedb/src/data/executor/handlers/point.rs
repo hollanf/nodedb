@@ -299,18 +299,22 @@ impl CoreLoop {
                 };
 
                 // Apply field-level updates.
+                // value_bytes are standard msgpack (from planner's write_msgpack_value).
                 if let Some(obj) = doc.as_object_mut() {
                     for (field, value_bytes) in updates {
-                        // value_bytes are zerompk nodedb_types::Value (from planner).
                         let val: serde_json::Value =
-                            if let Ok(v) = nodedb_types::value_from_msgpack(value_bytes) {
-                                v.into()
-                            } else if let Ok(v) = sonic_rs::from_slice(value_bytes) {
-                                v
-                            } else {
-                                serde_json::Value::String(
-                                    String::from_utf8_lossy(value_bytes).into_owned(),
-                                )
+                            match nodedb_types::json_from_msgpack(value_bytes) {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    return self.response_error(
+                                        task,
+                                        ErrorCode::Internal {
+                                            detail: format!(
+                                                "update field '{field}': msgpack decode: {e}"
+                                            ),
+                                        },
+                                    );
+                                }
                             };
                         obj.insert(field.clone(), val);
                     }

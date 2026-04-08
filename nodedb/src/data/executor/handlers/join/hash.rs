@@ -177,19 +177,15 @@ pub(super) fn probe_hash_index(p: &ProbeParams<'_>) -> Vec<Vec<u8>> {
                     }
                 }
             }
-        } else if is_anti {
-            if results.len() < p.limit {
-                results.push(merge_join_docs_binary(value, None, p.probe_collection, ""));
-            }
-        } else if is_left {
-            if results.len() < p.limit {
-                results.push(merge_join_docs_binary(
-                    value,
-                    None,
-                    p.probe_collection,
-                    p.index_collection,
-                ));
-            }
+        } else if is_anti && results.len() < p.limit {
+            results.push(merge_join_docs_binary(value, None, p.probe_collection, ""));
+        } else if is_left && results.len() < p.limit {
+            results.push(merge_join_docs_binary(
+                value,
+                None,
+                p.probe_collection,
+                p.index_collection,
+            ));
         }
     }
 

@@ -64,6 +64,33 @@ pub fn plan_insert(ins: &ast::Insert, catalog: &dyn SqlCatalog) -> Result<Vec<Sq
         }]);
     }
 
+    // KV engine: key (= document ID) and value are fundamentally separate.
+    if info.engine == EngineType::KeyValue {
+        let key_idx = columns.iter().position(|c| c == "key");
+        let mut entries = Vec::with_capacity(rows_ast.len());
+        for row_exprs in rows_ast {
+            let key_val = match key_idx {
+                Some(idx) => expr_to_sql_value(&row_exprs[idx])?,
+                None => SqlValue::String(String::new()),
+            };
+            // Value columns = everything except key.
+            let value_cols: Vec<(String, SqlValue)> = columns
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| Some(*i) != key_idx)
+                .map(|(i, col)| {
+                    let val = expr_to_sql_value(&row_exprs[i])?;
+                    Ok((col.clone(), val))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            entries.push((key_val, value_cols));
+        }
+        return Ok(vec![SqlPlan::KvInsert {
+            collection: table_name,
+            entries,
+        }]);
+    }
+
     let rows = convert_value_rows(&columns, rows_ast)?;
     let column_defaults: Vec<(String, String)> = info
         .columns

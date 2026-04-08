@@ -306,7 +306,7 @@ pub(super) fn decode_raw_scan_to_docs(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
 ///
 /// Each row is already a valid msgpack value (typically a map). This just
 /// wraps them in an array header and concatenates — zero decode.
-pub(super) fn encode_binary_rows(rows: &[Vec<u8>]) -> Vec<u8> {
+pub fn encode_binary_rows(rows: &[Vec<u8>]) -> Vec<u8> {
     let data_size: usize = rows.iter().map(|r| r.len()).sum();
     let mut buf = Vec::with_capacity(data_size + 8);
     msgpack_write_array_header(&mut buf, rows.len());
@@ -373,7 +373,7 @@ pub fn decode_payload_to_json(payload: &[u8]) -> String {
             .unwrap_or_else(|_| String::from_utf8_lossy(payload).into_owned());
     }
 
-    // Fall back to JsonValue msgpack format (used by json_to_msgpack / encode_json).
+    // Fall back to generic msgpack format (arrays, maps, etc.).
     match nodedb_types::json_from_msgpack(payload) {
         Ok(value) => sonic_rs::to_string(&value)
             .unwrap_or_else(|_| String::from_utf8_lossy(payload).into_owned()),

@@ -54,14 +54,14 @@ pub async fn broadcast_to_all_cores(
         receivers.push(rx);
     }
 
-    // Await all responses and merge payloads.
-    let mut merged_payload: Vec<u8> = Vec::new();
+    // Await all responses and merge raw payloads.
+    // Each core returns a msgpack or JSON payload. We collect raw element bytes
+    // from each core's array response and build one merged JSON array at the end
+    // (JSON only at the API boundary — pgwire/REST).
+    let mut all_elements: Vec<String> = Vec::new();
     let mut max_lsn = Lsn::ZERO;
     let mut had_error = false;
     let mut error_msg = String::new();
-
-    merged_payload.push(b'[');
-    let mut first = true;
 
     for rx in receivers {
         let resp = tokio::time::timeout(
@@ -93,33 +93,28 @@ pub async fn broadcast_to_all_cores(
             max_lsn = resp.watermark_lsn;
         }
 
-        if !resp.payload.is_empty() {
-            let json_text =
-                crate::data::executor::response_codec::decode_payload_to_json(&resp.payload);
-            let json_bytes = json_text.as_bytes();
+        if resp.payload.is_empty() {
+            continue;
+        }
 
-            if json_bytes.starts_with(b"[") && json_bytes.ends_with(b"]") {
-                let inner = &json_bytes[1..json_bytes.len() - 1];
-                if !inner.is_empty() {
-                    if !first {
-                        merged_payload.push(b',');
-                    }
-                    merged_payload.extend_from_slice(inner);
-                    first = false;
-                }
-            } else if !json_bytes.is_empty() {
-                if !first {
-                    merged_payload.push(b',');
-                }
-                merged_payload.extend_from_slice(json_bytes);
-                first = false;
+        // Decode payload to JSON at the merge boundary.
+        let json_text =
+            crate::data::executor::response_codec::decode_payload_to_json(&resp.payload);
+
+        // If it's a JSON array, extract inner elements.
+        if json_text.starts_with('[') && json_text.ends_with(']') {
+            let inner = &json_text[1..json_text.len() - 1];
+            if !inner.trim().is_empty() {
+                all_elements.push(inner.to_string());
             }
+        } else if !json_text.is_empty() && json_text != "null" {
+            all_elements.push(json_text);
         }
     }
 
-    merged_payload.push(b']');
+    let merged_payload = format!("[{}]", all_elements.join(",")).into_bytes();
 
-    if had_error && first {
+    if had_error && all_elements.is_empty() {
         return Err(crate::Error::Dispatch { detail: error_msg });
     }
 

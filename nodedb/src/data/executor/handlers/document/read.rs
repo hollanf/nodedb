@@ -221,6 +221,7 @@ impl CoreLoop {
                             let data = super::super::super::strict_format::binary_tuple_to_json(
                                 &val, schema,
                             )
+                            .or_else(|| super::super::super::doc_format::decode_document(&val))
                             .unwrap_or(serde_json::Value::Null);
                             let projected = apply_projection(data, &computed_cols, projection);
                             super::super::super::response_codec::DocumentRow {

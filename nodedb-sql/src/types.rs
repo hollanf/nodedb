@@ -49,6 +49,12 @@ pub enum SqlPlan {
         /// Used to auto-generate values for missing columns (e.g. `id` with `UUID_V7`).
         column_defaults: Vec<(String, String)>,
     },
+    /// KV INSERT: key and value are fundamentally separate.
+    /// Each entry is `(key, value_columns)`.
+    KvInsert {
+        collection: String,
+        entries: Vec<(SqlValue, Vec<(String, SqlValue)>)>,
+    },
     InsertSelect {
         target: String,
         source: Box<SqlPlan>,

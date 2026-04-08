@@ -10,6 +10,8 @@
 //! - Columnar → memtable rows → JSON → msgpack
 
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::msgpack_utils::write_str;
+use nodedb_query::msgpack_scan;
 
 impl CoreLoop {
     /// Universal scan: reads from the correct engine for `collection` and
@@ -22,7 +24,7 @@ impl CoreLoop {
     ///
     /// All results are normalized to standard msgpack maps so callers
     /// (aggregate, join, sort, filter) never need engine-specific code.
-    pub(super) fn scan_collection(
+    pub fn scan_collection(
         &self,
         tid: u32,
         collection: &str,
@@ -45,6 +47,7 @@ impl CoreLoop {
     }
 
     /// Scan KV engine entries → standard msgpack.
+    /// Injects the `key` field directly into the msgpack map — no JSON roundtrip.
     fn scan_kv(&self, tid: u32, collection: &str, limit: usize) -> Vec<(String, Vec<u8>)> {
         let now_ms = crate::engine::kv::current_ms();
         let (entries, _next_cursor) =
@@ -53,19 +56,8 @@ impl CoreLoop {
         let mut results = Vec::with_capacity(entries.len());
         for (key, value) in entries {
             let key_str = String::from_utf8_lossy(&key).to_string();
-            // Decode to JSON, inject `key` field, re-encode as standard msgpack.
-            let json: serde_json::Value = nodedb_types::value_from_msgpack(&value)
-                .ok()
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null);
-            let json = if let serde_json::Value::Object(mut map) = json {
-                map.entry("key")
-                    .or_insert(serde_json::Value::String(key_str.clone()));
-                serde_json::Value::Object(map)
-            } else {
-                serde_json::json!({"key": key_str, "value": json})
-            };
-            let mp = super::doc_format::encode_to_msgpack(&json);
+            // Inject "key" field into the msgpack map at binary level.
+            let mp = inject_key_into_msgpack(&value, &key_str);
             results.push((key_str, mp));
         }
         results
@@ -165,5 +157,34 @@ impl CoreLoop {
             }
             Ok(normalized)
         }
+    }
+}
+
+/// Inject a "key" field into a standard msgpack map without JSON roundtrip.
+///
+/// If `value` is a valid msgpack map, returns a new map with "key" prepended.
+/// If `value` is not a map (e.g. raw string/int), wraps as `{"key": k, "value": v}`.
+fn inject_key_into_msgpack(value: &[u8], key: &str) -> Vec<u8> {
+    use crate::data::executor::handlers::join::write_map_header;
+
+    if let Some((count, body_start)) = msgpack_scan::map_header(value, 0) {
+        // Valid map — prepend "key" entry, copy existing entries.
+        let mut buf = Vec::with_capacity(value.len() + key.len() + 16);
+        write_map_header(&mut buf, count + 1);
+        // Write "key" field.
+        write_str(&mut buf, "key");
+        write_str(&mut buf, key);
+        // Copy existing map body (all key-value pairs after the header).
+        buf.extend_from_slice(&value[body_start..]);
+        buf
+    } else {
+        // Not a map — wrap as {"key": k, "value": raw_bytes}.
+        let mut buf = Vec::with_capacity(value.len() + key.len() + 16);
+        write_map_header(&mut buf, 2);
+        write_str(&mut buf, "key");
+        write_str(&mut buf, key);
+        write_str(&mut buf, "value");
+        buf.extend_from_slice(value);
+        buf
     }
 }

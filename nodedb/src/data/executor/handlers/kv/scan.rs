@@ -48,10 +48,8 @@ impl CoreLoop {
         let mut results = Vec::with_capacity(entries.len());
         for (k, v) in &entries {
             let key_str = String::from_utf8_lossy(k).to_string();
-            let json: serde_json::Value = nodedb_types::value_from_msgpack(v)
-                .ok()
-                .map(serde_json::Value::from)
-                .unwrap_or(serde_json::Value::Null);
+            let json: serde_json::Value =
+                nodedb_types::json_from_msgpack(v).unwrap_or(serde_json::Value::Null);
             let obj = if let serde_json::Value::Object(mut map) = json {
                 map.entry("key".to_string())
                     .or_insert(serde_json::Value::String(key_str));

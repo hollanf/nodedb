@@ -168,14 +168,9 @@ impl CoreLoop {
                     if let Some(obj) = doc.as_object_mut() {
                         for (field, value_bytes) in updates {
                             let val: serde_json::Value =
-                                if let Ok(v) = nodedb_types::value_from_msgpack(value_bytes) {
-                                    v.into()
-                                } else if let Ok(v) = sonic_rs::from_slice(value_bytes) {
-                                    v
-                                } else {
-                                    serde_json::Value::String(
-                                        String::from_utf8_lossy(value_bytes).into_owned(),
-                                    )
+                                match nodedb_types::json_from_msgpack(value_bytes) {
+                                    Ok(v) => v,
+                                    Err(_) => continue,
                                 };
                             obj.insert(field.clone(), val);
                         }
