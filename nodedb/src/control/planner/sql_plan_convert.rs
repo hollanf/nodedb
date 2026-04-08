@@ -94,13 +94,15 @@ fn convert_one(
                         rls_filters: Vec::new(),
                     })
                 }
-                EngineType::Columnar => PhysicalPlan::Columnar(ColumnarOp::Scan {
-                    collection: collection.clone(),
-                    projection: proj_names,
-                    limit: limit.unwrap_or(10000),
-                    filters: filter_bytes,
-                    rls_filters: Vec::new(),
-                }),
+                EngineType::Columnar | EngineType::Spatial => {
+                    PhysicalPlan::Columnar(ColumnarOp::Scan {
+                        collection: collection.clone(),
+                        projection: proj_names,
+                        limit: limit.unwrap_or(10000),
+                        filters: filter_bytes,
+                        rls_filters: Vec::new(),
+                    })
+                }
                 EngineType::KeyValue => PhysicalPlan::Kv(KvOp::Scan {
                     collection: collection.clone(),
                     cursor: Vec::new(),
@@ -159,7 +161,8 @@ fn convert_one(
             collection,
             engine,
             rows,
-        } => convert_insert(collection, engine, rows, tenant_id),
+            column_defaults,
+        } => convert_insert(collection, engine, rows, column_defaults, tenant_id),
 
         SqlPlan::Update {
             collection,
@@ -207,11 +210,24 @@ fn convert_one(
             filters,
             ..
         } => {
-            let left_collection = extract_collection_name(left);
-            let right_collection = extract_collection_name(right);
-            let vshard = VShardId::from_collection(&left_collection);
+            let mut left_collection = extract_collection_name(left);
+            let mut right_collection = extract_collection_name(right);
             let proj_names = extract_projection_names(projection);
             let filter_bytes = serialize_filters(filters)?;
+
+            // RIGHT JOIN → swap sides and convert to LEFT JOIN.
+            // This avoids the broadcast-join problem where per-core unmatched
+            // right-side emission causes N× duplication across cores.
+            let mut on_keys = on.to_vec();
+            let effective_join_type = if join_type.as_str() == "right" {
+                std::mem::swap(&mut left_collection, &mut right_collection);
+                on_keys = on_keys.into_iter().map(|(l, r)| (r, l)).collect();
+                "left".to_string()
+            } else {
+                join_type.as_str().to_string()
+            };
+
+            let vshard = VShardId::from_collection(&left_collection);
 
             Ok(vec![PhysicalTask {
                 tenant_id,
@@ -219,8 +235,8 @@ fn convert_one(
                 plan: PhysicalPlan::Query(QueryOp::HashJoin {
                     left_collection,
                     right_collection,
-                    on: on.to_vec(),
-                    join_type: join_type.as_str().to_string(),
+                    on: on_keys,
+                    join_type: effective_join_type,
                     limit: *limit,
                     post_group_by: Vec::new(),
                     post_aggregates: Vec::new(),
@@ -517,10 +533,12 @@ fn convert_insert(
     collection: &str,
     engine: &EngineType,
     rows: &[Vec<(String, SqlValue)>],
+    column_defaults: &[(String, String)],
     tenant_id: TenantId,
 ) -> crate::Result<Vec<PhysicalTask>> {
     let vshard = VShardId::from_collection(collection);
     let mut tasks = Vec::new();
+    let mut columnar_rows: Vec<&Vec<(String, SqlValue)>> = Vec::new();
 
     for row in rows {
         let doc_id = row
@@ -550,6 +568,11 @@ fn convert_insert(
                     post_set_op: PostSetOp::None,
                 });
             }
+            EngineType::Columnar | EngineType::Spatial => {
+                // Columnar/Spatial INSERT: batch into a single ColumnarOp::Insert.
+                // Accumulate rows and emit after the loop.
+                columnar_rows.push(row);
+            }
             _ => {
                 tasks.push(PhysicalTask {
                     tenant_id,
@@ -564,6 +587,22 @@ fn convert_insert(
             }
         }
     }
+
+    // Emit batched ColumnarOp::Insert for columnar/spatial collections.
+    if !columnar_rows.is_empty() {
+        let payload = rows_to_msgpack_array(&columnar_rows, column_defaults)?;
+        tasks.push(PhysicalTask {
+            tenant_id,
+            vshard_id: vshard,
+            plan: PhysicalPlan::Columnar(ColumnarOp::Insert {
+                collection: collection.into(),
+                payload,
+                format: "msgpack".into(),
+            }),
+            post_set_op: PostSetOp::None,
+        });
+    }
+
     Ok(tasks)
 }
 
@@ -709,12 +748,23 @@ fn convert_aggregate(
         ..
     } = input
     {
-        let left_collection = extract_collection_name(left);
-        let right_collection = extract_collection_name(right);
-        let vshard = VShardId::from_collection(&left_collection);
+        let mut left_collection = extract_collection_name(left);
+        let mut right_collection = extract_collection_name(right);
 
         let group_strs = group_by_to_strings(group_by);
         let agg_pairs = aggregates.iter().map(agg_expr_to_pair).collect();
+
+        // RIGHT JOIN → swap sides and convert to LEFT JOIN.
+        let mut on_keys = on.to_vec();
+        let effective_join_type = if join_type.as_str() == "right" {
+            std::mem::swap(&mut left_collection, &mut right_collection);
+            on_keys = on_keys.into_iter().map(|(l, r)| (r, l)).collect();
+            "left".to_string()
+        } else {
+            join_type.as_str().to_string()
+        };
+
+        let vshard = VShardId::from_collection(&left_collection);
 
         return Ok(vec![PhysicalTask {
             tenant_id,
@@ -722,8 +772,8 @@ fn convert_aggregate(
             plan: PhysicalPlan::Query(QueryOp::HashJoin {
                 left_collection,
                 right_collection,
-                on: on.to_vec(),
-                join_type: join_type.as_str().to_string(),
+                on: on_keys,
+                join_type: effective_join_type,
                 limit: *join_limit,
                 post_group_by: group_strs,
                 post_aggregates: agg_pairs,
@@ -1223,6 +1273,96 @@ fn sql_value_to_string(v: &SqlValue) -> String {
         SqlValue::Float(f) => f.to_string(),
         SqlValue::Bool(b) => b.to_string(),
         _ => String::new(),
+    }
+}
+
+fn rows_to_msgpack_array(
+    rows: &[&Vec<(String, SqlValue)>],
+    column_defaults: &[(String, String)],
+) -> crate::Result<Vec<u8>> {
+    let arr: Vec<nodedb_types::Value> = rows
+        .iter()
+        .map(|row| {
+            let mut map = std::collections::HashMap::new();
+            for (key, val) in row.iter() {
+                map.insert(key.clone(), sql_value_to_nodedb_value(val));
+            }
+            // Apply column defaults for missing fields.
+            for (col_name, default_expr) in column_defaults {
+                if !map.contains_key(col_name) {
+                    if let Some(val) = evaluate_default_expr(default_expr) {
+                        map.insert(col_name.clone(), val);
+                    }
+                }
+            }
+            nodedb_types::Value::Object(map)
+        })
+        .collect();
+    let val = nodedb_types::Value::Array(arr);
+    zerompk::to_msgpack_vec(&val).map_err(|e| crate::Error::Serialization {
+        format: "msgpack".into(),
+        detail: format!("columnar row batch: {e}"),
+    })
+}
+
+/// Evaluate a column DEFAULT expression at insert time.
+///
+/// Supports ID generation functions and literal values:
+///   - `UUID_V7` / `UUIDV7` → time-sortable UUID v7
+///   - `UUID_V4` / `UUIDV4` / `UUID` → random UUID v4
+///   - `ULID` → time-sortable ULID
+///   - `CUID2` → collision-resistant unique ID
+///   - `NANOID` → URL-friendly 21-char ID
+///   - `NANOID(N)` → URL-friendly N-char ID
+///   - Integer/float literals → numeric values
+///   - Quoted strings → string values
+fn evaluate_default_expr(expr: &str) -> Option<nodedb_types::Value> {
+    let upper = expr.trim().to_uppercase();
+    match upper.as_str() {
+        "UUID_V7" | "UUIDV7" => Some(nodedb_types::Value::String(nodedb_types::id_gen::uuid_v7())),
+        "UUID_V4" | "UUIDV4" | "UUID" => {
+            Some(nodedb_types::Value::String(nodedb_types::id_gen::uuid_v4()))
+        }
+        "ULID" => Some(nodedb_types::Value::String(nodedb_types::id_gen::ulid())),
+        "CUID2" => Some(nodedb_types::Value::String(nodedb_types::id_gen::cuid2())),
+        "NANOID" => Some(nodedb_types::Value::String(nodedb_types::id_gen::nanoid())),
+        _ => {
+            // NANOID(N) — custom length
+            if upper.starts_with("NANOID(") && upper.ends_with(')') {
+                let len_str = &upper[7..upper.len() - 1];
+                if let Ok(len) = len_str.parse::<usize>() {
+                    return Some(nodedb_types::Value::String(
+                        nodedb_types::id_gen::nanoid_with_length(len),
+                    ));
+                }
+            }
+            // CUID2(N) — custom length
+            if upper.starts_with("CUID2(") && upper.ends_with(')') {
+                let len_str = &upper[6..upper.len() - 1];
+                if let Ok(len) = len_str.parse::<usize>() {
+                    return Some(nodedb_types::Value::String(
+                        nodedb_types::id_gen::cuid2_with_length(len),
+                    ));
+                }
+            }
+            // Numeric literal
+            if let Ok(i) = expr.trim().parse::<i64>() {
+                return Some(nodedb_types::Value::Integer(i));
+            }
+            if let Ok(f) = expr.trim().parse::<f64>() {
+                return Some(nodedb_types::Value::Float(f));
+            }
+            // Quoted string literal
+            let trimmed = expr.trim();
+            if (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+                || (trimmed.starts_with('"') && trimmed.ends_with('"'))
+            {
+                return Some(nodedb_types::Value::String(
+                    trimmed[1..trimmed.len() - 1].to_string(),
+                ));
+            }
+            None
+        }
     }
 }
 

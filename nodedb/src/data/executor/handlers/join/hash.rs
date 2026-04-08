@@ -100,6 +100,10 @@ pub(super) struct ProbeParams<'a> {
     pub(super) limit: usize,
     pub(super) probe_collection: &'a str,
     pub(super) index_collection: &'a str,
+    /// For broadcast RIGHT/FULL joins: only the designated core should emit
+    /// unmatched right-side rows. Other cores set this to `false` to avoid
+    /// N× duplication of unmatched rows across cores.
+    pub(super) emit_unmatched_right: bool,
 }
 
 /// Probe a hash index with probe-side documents and produce join results.
@@ -132,55 +136,71 @@ pub(super) fn probe_hash_index(p: &ProbeParams<'_>) -> Vec<Vec<u8>> {
         return results;
     }
 
-    let mut index_matched: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    // For RIGHT/FULL joins, pre-allocate a complete tracking vector so we
+    // never miss marking a matched index-side row (even if we hit the limit
+    // during the probe loop). This prevents the cartesian product bug where
+    // incomplete tracking causes matched rows to be emitted as unmatched.
+    let mut index_matched: Vec<bool> = if is_right {
+        vec![false; p.index_docs.len()]
+    } else {
+        Vec::new()
+    };
     let mut results = Vec::new();
 
     for (_, value) in p.probe_docs {
-        if results.len() >= p.limit {
+        // For RIGHT/FULL joins, we must complete the full probe to populate
+        // index_matched, even after we have enough result rows.
+        if !is_right && results.len() >= p.limit {
             break;
         }
         let (_, _, matched_indices) = p.index.probe(value, p.probe_keys, p.index_docs);
 
         if !matched_indices.is_empty() {
             if is_semi {
-                results.push(merge_join_docs_binary(value, None, p.probe_collection, ""));
+                if results.len() < p.limit {
+                    results.push(merge_join_docs_binary(value, None, p.probe_collection, ""));
+                }
             } else if is_anti {
                 // Skip — has match.
             } else {
                 for &mi in &matched_indices {
-                    if results.len() >= p.limit {
-                        break;
-                    }
                     if is_right {
-                        index_matched.insert(mi);
+                        index_matched[mi] = true;
                     }
-                    results.push(merge_join_docs_binary(
-                        value,
-                        Some(&p.index_docs[mi].1),
-                        p.probe_collection,
-                        p.index_collection,
-                    ));
+                    if results.len() < p.limit {
+                        results.push(merge_join_docs_binary(
+                            value,
+                            Some(&p.index_docs[mi].1),
+                            p.probe_collection,
+                            p.index_collection,
+                        ));
+                    }
                 }
             }
         } else if is_anti {
-            results.push(merge_join_docs_binary(value, None, p.probe_collection, ""));
+            if results.len() < p.limit {
+                results.push(merge_join_docs_binary(value, None, p.probe_collection, ""));
+            }
         } else if is_left {
-            results.push(merge_join_docs_binary(
-                value,
-                None,
-                p.probe_collection,
-                p.index_collection,
-            ));
+            if results.len() < p.limit {
+                results.push(merge_join_docs_binary(
+                    value,
+                    None,
+                    p.probe_collection,
+                    p.index_collection,
+                ));
+            }
         }
     }
 
     // RIGHT/FULL: emit unmatched index-side rows.
-    if is_right {
+    // In broadcast mode, only the designated core emits these to avoid duplication.
+    if is_right && p.emit_unmatched_right {
         for (i, (_, bytes)) in p.index_docs.iter().enumerate() {
             if results.len() >= p.limit {
                 break;
             }
-            if !index_matched.contains(&i) {
+            if !index_matched[i] {
                 results.push(merge_join_docs_binary(
                     &[],
                     Some(bytes),
@@ -249,6 +269,7 @@ impl CoreLoop {
         let right_index = HashIndex::build(&right_docs, &right_keys);
 
         // Probe the hash index with left (probe) side.
+        // Single-core hash join: always emit unmatched right rows.
         let mut results = probe_hash_index(&ProbeParams {
             probe_docs: &left_docs,
             index: &right_index,
@@ -258,6 +279,7 @@ impl CoreLoop {
             limit,
             probe_collection: left_collection,
             index_collection: right_collection,
+            emit_unmatched_right: true,
         });
 
         // Apply post-join WHERE filters (binary — no JSON roundtrip).
@@ -343,6 +365,9 @@ impl CoreLoop {
         let small_index = HashIndex::build(&small_docs_raw, &small_keys);
 
         // Probe the hash index with large (scanned) side.
+        // Broadcast join: NEVER emit unmatched right-side rows per-core.
+        // The Control Plane handles global unmatched emission after merging
+        // matched IDs from all cores (see dispatch.rs post-join dedup).
         let mut results = probe_hash_index(&ProbeParams {
             probe_docs: &large_docs,
             index: &small_index,
@@ -352,6 +377,7 @@ impl CoreLoop {
             limit,
             probe_collection: large_collection,
             index_collection: small_collection,
+            emit_unmatched_right: false,
         });
 
         // Apply post-join WHERE filters (binary).
