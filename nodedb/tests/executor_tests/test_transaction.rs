@@ -57,6 +57,30 @@ fn transaction_batch_commits_atomically() {
 }
 
 #[test]
+fn transaction_batch_response_uses_outer_request_id() {
+    let (mut core, mut tx, mut rx, _dir) = make_core();
+
+    tx.try_push(nodedb::bridge::dispatch::BridgeRequest {
+        inner: make_request_with_id(
+            42,
+            PhysicalPlan::Meta(MetaOp::TransactionBatch {
+                plans: vec![PhysicalPlan::Document(DocumentOp::PointPut {
+                    collection: "docs".into(),
+                    document_id: "d1".into(),
+                    value: b"{\"name\":\"alice\"}".to_vec(),
+                })],
+            }),
+        ),
+    })
+    .unwrap();
+    core.tick();
+
+    let resp = rx.try_pop().unwrap().inner;
+    assert_eq!(resp.status, Status::Ok);
+    assert_eq!(resp.request_id, nodedb::types::RequestId::new(42));
+}
+
+#[test]
 fn transaction_batch_rollback_on_failure() {
     let (mut core, mut tx, mut rx, _dir) = make_core();
 

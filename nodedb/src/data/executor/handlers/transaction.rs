@@ -180,10 +180,16 @@ impl CoreLoop {
             );
         }
 
-        // Return OK with the last sub-plan's response payload.
-        last_response.status = Status::Ok;
-        last_response.error_code = None;
-        last_response
+        // Return the last sub-plan payload, but keyed to the outer transaction request.
+        Response {
+            request_id: task.request_id(),
+            status: Status::Ok,
+            attempt: 1,
+            partial: false,
+            payload: last_response.payload,
+            watermark_lsn: self.watermark,
+            error_code: None,
+        }
     }
 
     /// Execute a single sub-plan within a transaction, recording undo info.
