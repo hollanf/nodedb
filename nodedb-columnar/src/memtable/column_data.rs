@@ -135,6 +135,11 @@ impl ColumnData {
                 dim: *dim,
                 valid,
             },
+            ColumnType::Json => Self::Bytes {
+                data: Vec::new(),
+                offsets: vec![0],
+                valid,
+            },
         }
     }
 

@@ -176,7 +176,7 @@ fn convert_column_type(ct: &nodedb_types::columnar::ColumnType) -> SqlDataType {
         ColumnType::Float64 => SqlDataType::Float64,
         ColumnType::String => SqlDataType::String,
         ColumnType::Bool => SqlDataType::Bool,
-        ColumnType::Bytes | ColumnType::Geometry => SqlDataType::Bytes,
+        ColumnType::Bytes | ColumnType::Geometry | ColumnType::Json => SqlDataType::Bytes,
         ColumnType::Timestamp => SqlDataType::Timestamp,
         ColumnType::Decimal | ColumnType::Uuid => SqlDataType::String,
         ColumnType::Vector(dim) => SqlDataType::Vector(*dim as usize),

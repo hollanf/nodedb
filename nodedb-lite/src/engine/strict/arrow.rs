@@ -11,7 +11,9 @@ pub fn column_type_to_arrow(ct: &ColumnType) -> arrow::datatypes::DataType {
         ColumnType::Float64 => arrow::datatypes::DataType::Float64,
         ColumnType::String => arrow::datatypes::DataType::Utf8,
         ColumnType::Bool => arrow::datatypes::DataType::Boolean,
-        ColumnType::Bytes | ColumnType::Geometry => arrow::datatypes::DataType::Binary,
+        ColumnType::Bytes | ColumnType::Geometry | ColumnType::Json => {
+            arrow::datatypes::DataType::Binary
+        }
         ColumnType::Timestamp => {
             arrow::datatypes::DataType::Timestamp(arrow::datatypes::TimeUnit::Microsecond, None)
         }

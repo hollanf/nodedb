@@ -147,7 +147,11 @@ fn select_codec(col_type: &ColumnType) -> ColumnCodec {
         ColumnType::Float64 => ColumnTypeHint::Float64,
         ColumnType::Timestamp => ColumnTypeHint::Timestamp,
         ColumnType::String | ColumnType::Geometry => ColumnTypeHint::String,
-        ColumnType::Bool | ColumnType::Bytes | ColumnType::Decimal | ColumnType::Uuid => {
+        ColumnType::Bool
+        | ColumnType::Bytes
+        | ColumnType::Decimal
+        | ColumnType::Uuid
+        | ColumnType::Json => {
             return ColumnCodec::Lz4;
         }
         ColumnType::Vector(_) => {
