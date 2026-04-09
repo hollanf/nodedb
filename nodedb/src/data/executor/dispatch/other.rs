@@ -486,6 +486,7 @@ impl CoreLoop {
                 group_by,
                 aggregates,
                 gap_fill,
+                computed_columns,
                 ..
             }) => {
                 let scoped_coll = format!("{tid}:{collection}");
@@ -500,6 +501,7 @@ impl CoreLoop {
                         group_by,
                         aggregates,
                         gap_fill,
+                        computed_columns,
                     },
                 )
             }

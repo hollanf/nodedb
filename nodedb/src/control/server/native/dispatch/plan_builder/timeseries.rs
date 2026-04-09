@@ -29,6 +29,7 @@ pub(crate) fn build_scan(fields: &TextFields, collection: &str) -> crate::Result
         group_by: Vec::new(),
         aggregates: Vec::new(),
         gap_fill: String::new(),
+        computed_columns: Vec::new(),
         rls_filters: Vec::new(),
     }))
 }

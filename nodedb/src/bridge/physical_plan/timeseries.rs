@@ -26,6 +26,9 @@ pub enum TimeseriesOp {
         /// Empty = no gap-fill. Otherwise: "null", "prev", "linear", or literal value.
         /// Only applied when `bucket_interval_ms > 0`.
         gap_fill: String,
+        /// Serialized `Vec<ComputedColumn>` for scalar projection expressions
+        /// (e.g. `time_bucket('1h', timestamp)`). Applied per-row in raw scan mode.
+        computed_columns: Vec<u8>,
         /// RLS post-scan filters (applied after time-range pruning).
         rls_filters: Vec<u8>,
     },

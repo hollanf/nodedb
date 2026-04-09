@@ -13,17 +13,32 @@ use crate::engine::timeseries::columnar_segment::ColumnarSegmentReader;
 
 use super::super::columnar_filter;
 
+/// Parameters for a timeseries raw scan (no aggregation).
+pub(in crate::data::executor) struct RawScanParams<'a> {
+    pub task: &'a ExecutionTask,
+    pub collection: &'a str,
+    pub time_range: (i64, i64),
+    pub limit: usize,
+    pub filter_predicates: &'a [crate::bridge::scan_filter::ScanFilter],
+    pub has_filters: bool,
+    pub computed_columns: &'a [u8],
+}
+
 impl CoreLoop {
     /// Raw scan mode: emit rows from memtable + partitions.
     pub(in crate::data::executor) fn execute_ts_raw_scan(
         &self,
-        task: &ExecutionTask,
-        collection: &str,
-        time_range: (i64, i64),
-        limit: usize,
-        filter_predicates: &[crate::bridge::scan_filter::ScanFilter],
-        has_filters: bool,
+        params: RawScanParams<'_>,
     ) -> Response {
+        let RawScanParams {
+            task,
+            collection,
+            time_range,
+            limit,
+            filter_predicates,
+            has_filters,
+            computed_columns: computed_columns_bytes,
+        } = params;
         let mut results: Vec<rmpv::Value> = Vec::new();
 
         // 1. Read from memtable.
@@ -100,6 +115,22 @@ impl CoreLoop {
                 }
             }
         }
+
+        // Apply computed columns (e.g. time_bucket) if present.
+        let results = if !computed_columns_bytes.is_empty() {
+            let computed_cols: Vec<crate::bridge::expr_eval::ComputedColumn> =
+                zerompk::from_msgpack(computed_columns_bytes).unwrap_or_default();
+            if computed_cols.is_empty() {
+                results
+            } else {
+                results
+                    .into_iter()
+                    .map(|row| apply_computed_columns_rmpv(row, &computed_cols))
+                    .collect()
+            }
+        } else {
+            results
+        };
 
         let array = rmpv::Value::Array(results);
         let mut buf = Vec::new();
@@ -369,6 +400,70 @@ fn extract_timestamp(row: &rmpv::Value) -> i64 {
         }
     }
     0
+}
+
+/// Apply computed column expressions to an rmpv row.
+///
+/// Converts the row to `nodedb_types::Value` for expression evaluation,
+/// then produces a new row containing only the computed columns.
+/// When computed columns are present, the output contains ONLY
+/// computed columns (matching Document engine behavior for projection).
+fn apply_computed_columns_rmpv(
+    row: rmpv::Value,
+    computed_cols: &[crate::bridge::expr_eval::ComputedColumn],
+) -> rmpv::Value {
+    let doc = rmpv_to_nodedb_value(&row);
+    let mut fields: Vec<(rmpv::Value, rmpv::Value)> = Vec::with_capacity(computed_cols.len());
+    for cc in computed_cols {
+        let result = cc.expr.eval(&doc);
+        fields.push((
+            rmpv::Value::String(cc.alias.as_str().into()),
+            nodedb_value_to_rmpv(&result),
+        ));
+    }
+    rmpv::Value::Map(fields)
+}
+
+/// Convert rmpv row to nodedb_types::Value for expression evaluation.
+fn rmpv_to_nodedb_value(row: &rmpv::Value) -> nodedb_types::Value {
+    match row {
+        rmpv::Value::Map(fields) => {
+            let mut map = std::collections::HashMap::new();
+            for (k, v) in fields {
+                let key = match k {
+                    rmpv::Value::String(s) => s.as_str().unwrap_or("").to_string(),
+                    _ => continue,
+                };
+                let val = match v {
+                    rmpv::Value::Integer(n) => {
+                        nodedb_types::Value::Integer(n.as_i64().unwrap_or(0))
+                    }
+                    rmpv::Value::F64(f) => nodedb_types::Value::Float(*f),
+                    rmpv::Value::String(s) => {
+                        nodedb_types::Value::String(s.as_str().unwrap_or("").to_string())
+                    }
+                    rmpv::Value::Nil => nodedb_types::Value::Null,
+                    rmpv::Value::Boolean(b) => nodedb_types::Value::Bool(*b),
+                    _ => nodedb_types::Value::Null,
+                };
+                map.insert(key, val);
+            }
+            nodedb_types::Value::Object(map)
+        }
+        _ => nodedb_types::Value::Null,
+    }
+}
+
+/// Convert nodedb_types::Value back to rmpv::Value for response encoding.
+fn nodedb_value_to_rmpv(v: &nodedb_types::Value) -> rmpv::Value {
+    match v {
+        nodedb_types::Value::Integer(n) => rmpv::Value::Integer((*n).into()),
+        nodedb_types::Value::Float(f) => rmpv::Value::F64(*f),
+        nodedb_types::Value::String(s) => rmpv::Value::String(s.as_str().into()),
+        nodedb_types::Value::Bool(b) => rmpv::Value::Boolean(*b),
+        nodedb_types::Value::Null => rmpv::Value::Nil,
+        _ => rmpv::Value::Nil,
+    }
 }
 
 /// Convert rmpv::Value row to serde_json::Value (fallback for complex filter eval).

@@ -170,6 +170,7 @@ async fn execute_aggregate_scan(
             alert.condition.column.clone(),
         )],
         gap_fill: String::new(),
+        computed_columns: Vec::new(),
         rls_filters: Vec::new(),
     });
 

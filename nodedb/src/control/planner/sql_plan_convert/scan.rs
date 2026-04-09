@@ -55,6 +55,7 @@ pub(super) fn convert_scan(p: ScanParams<'_>) -> crate::Result<Vec<PhysicalTask>
                 group_by: Vec::new(),
                 aggregates: Vec::new(),
                 gap_fill: String::new(),
+                computed_columns: computed_bytes,
                 rls_filters: Vec::new(),
             })
         }
@@ -236,6 +237,7 @@ pub(super) fn convert_timeseries_scan(
             group_by: group_by.to_vec(),
             aggregates: agg_pairs,
             gap_fill: gap_fill.to_string(),
+            computed_columns: Vec::new(),
             rls_filters: Vec::new(),
         }),
         post_set_op: PostSetOp::None,

@@ -159,7 +159,68 @@ pub(super) fn try_eval(name: &str, args: &[Value]) -> Option<Value> {
                 Err(_) => Value::Null,
             }
         }),
+        "time_bucket" => eval_time_bucket(args),
         _ => return None,
     };
     Some(v)
+}
+
+/// `time_bucket(interval, timestamp)` — truncate a millisecond timestamp
+/// to the start of the given interval bucket.
+///
+/// Accepts two argument orders (both common in SQL):
+/// - `time_bucket('1 hour', timestamp_col)` — interval first
+/// - `time_bucket(timestamp_col, '1 hour')` — timestamp first
+///
+/// The interval is a string like `'1h'`, `'5m'`, `'1 hour'`, `'30 seconds'`.
+/// The timestamp is an integer (epoch milliseconds).
+fn eval_time_bucket(args: &[Value]) -> Value {
+    if args.len() < 2 {
+        return Value::Null;
+    }
+
+    // Detect which arg is the interval string and which is the timestamp.
+    let (interval_ms, timestamp_ms) = match (&args[0], &args[1]) {
+        // time_bucket('1 hour', timestamp)
+        (Value::String(s), ts_val) => {
+            let interval = parse_interval_to_ms(s);
+            let ts = value_to_timestamp_ms(ts_val);
+            (interval, ts)
+        }
+        // time_bucket(timestamp, '1 hour')
+        (ts_val, Value::String(s)) => {
+            let interval = parse_interval_to_ms(s);
+            let ts = value_to_timestamp_ms(ts_val);
+            (interval, ts)
+        }
+        // time_bucket(3600, timestamp) — interval as integer seconds
+        (Value::Integer(interval_secs), ts_val) => {
+            let ts = value_to_timestamp_ms(ts_val);
+            (Some((*interval_secs) * 1000), ts)
+        }
+        _ => return Value::Null,
+    };
+
+    match (interval_ms, timestamp_ms) {
+        (Some(i), Some(ts)) if i > 0 => Value::Integer((ts / i) * i),
+        _ => Value::Null,
+    }
+}
+
+fn value_to_timestamp_ms(v: &Value) -> Option<i64> {
+    match v {
+        Value::Integer(n) => Some(*n),
+        Value::Float(f) => Some(*f as i64),
+        _ => None,
+    }
+}
+
+/// Parse an interval string like "1h", "5m", "1 hour", "30 seconds" to ms.
+///
+/// Delegates to the canonical `nodedb_types::kv_parsing::parse_interval_to_ms`.
+fn parse_interval_to_ms(s: &str) -> Option<i64> {
+    nodedb_types::kv_parsing::parse_interval_to_ms(s)
+        .ok()
+        .map(|ms| ms as i64)
+        .filter(|&ms| ms > 0)
 }

@@ -223,6 +223,7 @@ fn build_scan_task(
             group_by: group_by.to_vec(),
             aggregates: aggregates.to_vec(),
             gap_fill: gap_fill.to_string(),
+            computed_columns: Vec::new(),
             rls_filters: Vec::new(),
         }),
         post_set_op: PostSetOp::None,

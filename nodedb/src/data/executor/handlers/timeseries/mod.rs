@@ -24,6 +24,8 @@ pub(in crate::data::executor) struct TimeseriesScanParams<'a> {
     pub aggregates: &'a [(String, String)],
     /// Gap-fill strategy. Empty = no gap-fill.
     pub gap_fill: &'a str,
+    /// Serialized computed columns for scalar projection expressions.
+    pub computed_columns: &'a [u8],
 }
 
 impl CoreLoop {
@@ -47,6 +49,7 @@ impl CoreLoop {
             group_by,
             aggregates,
             gap_fill,
+            computed_columns,
         } = params;
 
         // Lazy-load partition registry from disk if not yet loaded.
@@ -112,14 +115,15 @@ impl CoreLoop {
                 &needed_columns,
             )
         } else {
-            self.execute_ts_raw_scan(
+            self.execute_ts_raw_scan(raw_scan::RawScanParams {
                 task,
                 collection,
                 time_range,
                 limit,
-                &filter_predicates,
+                filter_predicates: &filter_predicates,
                 has_filters,
-            )
+                computed_columns,
+            })
         }
     }
 
