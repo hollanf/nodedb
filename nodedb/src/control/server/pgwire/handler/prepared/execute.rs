@@ -142,7 +142,9 @@ mod tests {
         let params = vec![Some(Bytes::from_static(b"3.14"))];
         let types = vec![Some(Type::FLOAT8)];
         let result = convert_portal_params(&params, &types).unwrap();
-        assert!(matches!(result[0], nodedb_sql::ParamValue::Float64(f) if (f - 3.14).abs() < f64::EPSILON));
+        assert!(
+            matches!(result[0], nodedb_sql::ParamValue::Float64(f) if (f - 3.14).abs() < f64::EPSILON)
+        );
     }
 
     #[test]

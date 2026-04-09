@@ -57,6 +57,86 @@ async fn before_trigger_unconditional_reject() {
     server.exec("DROP TRIGGER block_all").await.unwrap();
 }
 
+/// BEFORE trigger rejection ensures the row is NOT persisted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn before_trigger_reject_does_not_persist_row() {
+    let server = TestServer::start().await;
+
+    server
+        .exec("CREATE COLLECTION guarded TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, val INT)")
+        .await
+        .unwrap();
+
+    server
+        .exec(
+            "CREATE TRIGGER guard BEFORE INSERT ON guarded FOR EACH ROW \
+             BEGIN \
+               RAISE EXCEPTION 'rejected'; \
+             END",
+        )
+        .await
+        .unwrap();
+
+    // Insert should fail.
+    server
+        .expect_error(
+            "INSERT INTO guarded (id, val) VALUES ('g1', 100)",
+            "rejected",
+        )
+        .await;
+
+    // Row should NOT exist.
+    let rows = server
+        .query_text("SELECT id FROM guarded WHERE id = 'g1'")
+        .await
+        .unwrap();
+    assert!(rows.is_empty(), "rejected row should not be persisted");
+
+    server.exec("DROP TRIGGER guard").await.unwrap();
+}
+
+/// AFTER ASYNC trigger failure does NOT affect the parent write.
+/// The write should succeed; trigger error is handled by retry/DLQ.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn after_async_trigger_failure_does_not_block_write() {
+    let server = TestServer::start().await;
+
+    server
+        .exec("CREATE COLLECTION async_src TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, val INT)")
+        .await
+        .unwrap();
+
+    // Create an ASYNC AFTER trigger that targets a nonexistent collection (will fail).
+    server
+        .exec(
+            "CREATE TRIGGER fail_async AFTER INSERT ON async_src FOR EACH ROW \
+             BEGIN \
+                 INSERT INTO nonexistent_collection (id) VALUES (NEW.id); \
+             END",
+        )
+        .await
+        .unwrap();
+
+    // Insert should succeed despite the trigger targeting a bad collection.
+    server
+        .exec("INSERT INTO async_src (id, val) VALUES ('a1', 42)")
+        .await
+        .unwrap();
+
+    // Verify the row was persisted.
+    let rows = server
+        .query_text("SELECT id FROM async_src WHERE id = 'a1'")
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        1,
+        "write should succeed despite async trigger failure"
+    );
+
+    server.exec("DROP TRIGGER fail_async").await.unwrap();
+}
+
 /// ALTER TRIGGER ENABLE/DISABLE works.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn alter_trigger_enable_disable() {

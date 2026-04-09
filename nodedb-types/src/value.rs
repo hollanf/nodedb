@@ -703,4 +703,96 @@ mod tests {
         });
         assert!(!nested.is_null());
     }
+
+    // ── Coercion matrix tests ────────────────────────────────────────
+
+    #[test]
+    fn eq_coerced_same_type() {
+        assert!(Value::Null.eq_coerced(&Value::Null));
+        assert!(Value::Bool(true).eq_coerced(&Value::Bool(true)));
+        assert!(!Value::Bool(true).eq_coerced(&Value::Bool(false)));
+        assert!(Value::Integer(42).eq_coerced(&Value::Integer(42)));
+        assert!(Value::Float(3.14).eq_coerced(&Value::Float(3.14)));
+        assert!(Value::String("hello".into()).eq_coerced(&Value::String("hello".into())));
+    }
+
+    #[test]
+    fn eq_coerced_int_float() {
+        assert!(Value::Integer(5).eq_coerced(&Value::Float(5.0)));
+        assert!(Value::Float(5.0).eq_coerced(&Value::Integer(5)));
+        assert!(!Value::Integer(5).eq_coerced(&Value::Float(5.1)));
+    }
+
+    #[test]
+    fn eq_coerced_string_number() {
+        // String "5" equals Integer 5.
+        assert!(Value::String("5".into()).eq_coerced(&Value::Integer(5)));
+        assert!(Value::Integer(5).eq_coerced(&Value::String("5".into())));
+        // String "3.14" equals Float 3.14.
+        assert!(Value::String("3.14".into()).eq_coerced(&Value::Float(3.14)));
+        assert!(Value::Float(3.14).eq_coerced(&Value::String("3.14".into())));
+        // Non-numeric string does not equal number.
+        assert!(!Value::String("abc".into()).eq_coerced(&Value::Integer(5)));
+        assert!(!Value::Integer(5).eq_coerced(&Value::String("abc".into())));
+    }
+
+    #[test]
+    fn eq_coerced_cross_type_false() {
+        // Bool vs Integer: no coercion.
+        assert!(!Value::Bool(true).eq_coerced(&Value::Integer(1)));
+        // Null vs anything: only Null == Null.
+        assert!(!Value::Null.eq_coerced(&Value::Integer(0)));
+        assert!(!Value::Null.eq_coerced(&Value::String("".into())));
+    }
+
+    #[test]
+    fn cmp_coerced_numeric() {
+        use std::cmp::Ordering;
+        assert_eq!(
+            Value::Integer(5).cmp_coerced(&Value::Integer(10)),
+            Ordering::Less
+        );
+        assert_eq!(
+            Value::Integer(10).cmp_coerced(&Value::Float(5.0)),
+            Ordering::Greater
+        );
+        assert_eq!(
+            Value::String("90".into()).cmp_coerced(&Value::Integer(80)),
+            Ordering::Greater
+        );
+        assert_eq!(
+            Value::Float(3.14).cmp_coerced(&Value::String("3.14".into())),
+            Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn cmp_coerced_string_fallback() {
+        use std::cmp::Ordering;
+        assert_eq!(
+            Value::String("abc".into()).cmp_coerced(&Value::String("def".into())),
+            Ordering::Less
+        );
+        assert_eq!(
+            Value::String("z".into()).cmp_coerced(&Value::String("a".into())),
+            Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn eq_coerced_symmetry() {
+        // Verify a == b iff b == a for all cross-type pairs.
+        let cases = [
+            (Value::Integer(42), Value::String("42".into())),
+            (Value::Float(3.14), Value::String("3.14".into())),
+            (Value::Integer(5), Value::Float(5.0)),
+        ];
+        for (a, b) in &cases {
+            assert_eq!(
+                a.eq_coerced(b),
+                b.eq_coerced(a),
+                "symmetry violated for {a:?} vs {b:?}"
+            );
+        }
+    }
 }
