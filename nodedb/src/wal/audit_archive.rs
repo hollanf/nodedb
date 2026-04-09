@@ -8,6 +8,7 @@ use std::path::Path;
 
 use object_store::ObjectStoreExt;
 use object_store::aws::AmazonS3Builder;
+use sonic_rs;
 use tracing::info;
 
 /// Configuration for audit WAL archival.
@@ -116,7 +117,7 @@ pub async fn archive_audit_segments(
         });
         let marker_key = format!("{}archive-marker-{now_ms}.json", config.prefix);
         let marker_location = object_store::path::Path::from(marker_key);
-        let marker_bytes = serde_json::to_vec(&marker).map_err(|e| crate::Error::Internal {
+        let marker_bytes = sonic_rs::to_vec(&marker).map_err(|e| crate::Error::Internal {
             detail: format!("failed to serialize audit archive marker: {e}"),
         })?;
 

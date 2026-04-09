@@ -7,6 +7,7 @@
 //! Uses the `object_store` crate which supports any S3-compatible
 //! endpoint via the `endpoint` URL parameter.
 
+use sonic_rs;
 use std::path::Path;
 
 use object_store::aws::AmazonS3Builder;
@@ -145,7 +146,7 @@ pub async fn archive_partition(
     // Upload a marker file indicating successful archival.
     let marker_key = format!("{key_prefix}_archived");
     let marker_location = object_store::path::Path::from(marker_key.clone());
-    let marker_data = serde_json::to_vec(&serde_json::json!({
+    let marker_data = sonic_rs::to_vec(&serde_json::json!({
         "collection": collection,
         "partition": partition_dir_name,
         "min_ts": meta.min_ts,

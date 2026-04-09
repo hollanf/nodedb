@@ -155,18 +155,17 @@ impl CoreLoop {
             if let Ok(groups) = self.sparse.scan_index_groups(tid, collection, field)
                 && !groups.is_empty()
             {
-                let mut results: Vec<serde_json::Value> = groups
-                    .into_iter()
-                    .take(limit)
-                    .map(|(value, count)| {
-                        let mut row = serde_json::Map::new();
-                        row.insert(field.clone(), serde_json::Value::String(value));
-                        row.insert("count_all".into(), serde_json::json!(count));
-                        serde_json::Value::Object(row)
-                    })
-                    .collect();
-                results.truncate(limit);
-                return match super::super::response_codec::encode_json_vec(&results) {
+                // Build result rows as raw msgpack — no serde_json::Value.
+                let mut payload_buf = Vec::with_capacity(groups.len() * 64);
+                let row_count = groups.len().min(limit);
+                msgpack_scan::write_array_header(&mut payload_buf, row_count);
+                for (value, count) in groups.into_iter().take(limit) {
+                    msgpack_scan::write_map_header(&mut payload_buf, 2);
+                    msgpack_scan::write_kv_str(&mut payload_buf, field, &value);
+                    msgpack_scan::write_kv_i64(&mut payload_buf, "count_all", count as i64);
+                }
+                let results_payload = payload_buf;
+                return match Ok::<Vec<u8>, crate::Error>(results_payload) {
                     Ok(payload) => self.response_with_payload(task, payload),
                     Err(e) => self.response_error(
                         task,

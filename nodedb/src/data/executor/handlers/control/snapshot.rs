@@ -109,18 +109,15 @@ impl CoreLoop {
                         &[(field.to_string(), true)],
                     );
                     docs.truncate(limit);
+                    // Raw msgpack passthrough — no decode/re-encode.
                     let rows: Vec<_> = docs
                         .iter()
                         .map(|(id, val)| {
-                            let data = super::super::super::doc_format::decode_document(val)
-                                .unwrap_or(serde_json::Value::Null);
-                            super::super::super::response_codec::DocumentRow {
-                                id: id.clone(),
-                                data,
-                            }
+                            let mp = super::super::super::doc_format::json_to_msgpack(val);
+                            (id.clone(), mp)
                         })
                         .collect();
-                    match super::super::super::response_codec::encode(&rows) {
+                    match super::super::super::response_codec::encode_raw_document_rows(&rows) {
                         Ok(payload) => return self.response_with_payload(task, payload),
                         Err(e) => {
                             return self.response_error(

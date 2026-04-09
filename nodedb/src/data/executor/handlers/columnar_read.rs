@@ -203,46 +203,51 @@ fn eval_filter(
     }
 }
 
-/// Convert a timeseries columnar memtable cell to a JSON value.
+/// Write a timeseries columnar memtable cell value directly as msgpack bytes.
 ///
-/// Used by timeseries raw_scan and aggregate handlers that still use the
-/// internal `ColumnarMemtable` (timeseries-specific, not yet migrated).
+/// Encodes the column value at the given row index directly into `buf`
+/// without intermediate decoding. Used by timeseries raw_scan and aggregate
+/// handlers that still use the internal `ColumnarMemtable`.
 pub(in crate::data::executor) fn emit_column_value(
+    buf: &mut Vec<u8>,
     mt: &crate::engine::timeseries::columnar_memtable::ColumnarMemtable,
     col_idx: usize,
     col_type: &crate::engine::timeseries::columnar_memtable::ColumnType,
     col_data: &crate::engine::timeseries::columnar_memtable::ColumnData,
     row_idx: usize,
-) -> serde_json::Value {
+) {
     use crate::engine::timeseries::columnar_memtable::{
         ColumnData as TsColumnData, ColumnType as TsColumnType,
     };
     match col_type {
         TsColumnType::Timestamp => {
-            serde_json::Value::Number(serde_json::Number::from(col_data.as_timestamps()[row_idx]))
+            nodedb_query::msgpack_scan::write_i64(buf, col_data.as_timestamps()[row_idx]);
         }
         TsColumnType::Float64 => {
             let v = col_data.as_f64()[row_idx];
-            serde_json::Number::from_f64(v)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null)
+            if v.is_finite() {
+                nodedb_query::msgpack_scan::write_f64(buf, v);
+            } else {
+                nodedb_query::msgpack_scan::write_null(buf);
+            }
         }
         TsColumnType::Symbol => {
             if let TsColumnData::Symbol(ids) = col_data {
                 let sym_id = ids[row_idx];
-                mt.symbol_dict(col_idx)
-                    .and_then(|dict| dict.get(sym_id))
-                    .map(|s| serde_json::Value::String(s.to_string()))
-                    .unwrap_or(serde_json::Value::Null)
+                if let Some(s) = mt.symbol_dict(col_idx).and_then(|dict| dict.get(sym_id)) {
+                    nodedb_query::msgpack_scan::write_str(buf, s);
+                } else {
+                    nodedb_query::msgpack_scan::write_null(buf);
+                }
             } else {
-                serde_json::Value::Null
+                nodedb_query::msgpack_scan::write_null(buf);
             }
         }
         TsColumnType::Int64 => {
             if let TsColumnData::Int64(vals) = col_data {
-                serde_json::Value::Number(serde_json::Number::from(vals[row_idx]))
+                nodedb_query::msgpack_scan::write_i64(buf, vals[row_idx]);
             } else {
-                serde_json::Value::Null
+                nodedb_query::msgpack_scan::write_null(buf);
             }
         }
     }

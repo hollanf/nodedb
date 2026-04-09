@@ -4,7 +4,6 @@
 //! repeatedly executes the recursive query until no new rows are
 //! produced (fixed point) or max_iterations is reached.
 
-use sonic_rs;
 use std::collections::HashSet;
 
 use crate::bridge::envelope::{ErrorCode, Response};
@@ -80,24 +79,22 @@ impl CoreLoop {
             }
         };
 
-        // Step 1: Seed working table with base query results.
-        let mut results: Vec<serde_json::Value> = Vec::new();
+        // Step 1: Seed working table with base query results (raw msgpack).
+        let mut results: Vec<Vec<u8>> = Vec::new();
         let mut seen_keys: HashSet<String> = HashSet::new();
 
         for (_doc_id, value) in &all_docs {
             if !base_preds.iter().all(|f| f.matches_binary(value)) {
                 continue;
             }
-            let Some(doc) = super::super::doc_format::decode_document(value) else {
-                continue;
-            };
+            let mp = super::super::doc_format::json_to_msgpack(value);
             let key = if distinct {
-                sonic_rs::to_string(&doc).unwrap_or_default()
+                nodedb_types::msgpack_to_json_string(&mp).unwrap_or_default()
             } else {
                 String::new()
             };
             if !distinct || seen_keys.insert(key) {
-                results.push(doc);
+                results.push(mp);
             }
         }
 
@@ -125,16 +122,14 @@ impl CoreLoop {
                 if !recursive_preds.iter().all(|f| f.matches_binary(value)) {
                     continue;
                 }
-                let Some(doc) = super::super::doc_format::decode_document(value) else {
-                    continue;
-                };
+                let mp = super::super::doc_format::json_to_msgpack(value);
                 let key = if distinct {
-                    sonic_rs::to_string(&doc).unwrap_or_default()
+                    nodedb_types::msgpack_to_json_string(&mp).unwrap_or_default()
                 } else {
                     doc_id.clone()
                 };
                 if !distinct || seen_keys.insert(key) {
-                    new_rows.push(doc);
+                    new_rows.push(mp);
                 }
             }
 
@@ -155,7 +150,13 @@ impl CoreLoop {
         // Truncate to limit.
         results.truncate(limit);
 
-        match super::super::response_codec::encode_json_vec(&results) {
+        // Build raw msgpack array from collected msgpack rows.
+        let mut payload = Vec::with_capacity(results.iter().map(|r| r.len()).sum::<usize>() + 8);
+        nodedb_query::msgpack_scan::write_array_header(&mut payload, results.len());
+        for row in &results {
+            payload.extend_from_slice(row);
+        }
+        match Ok::<Vec<u8>, crate::Error>(payload) {
             Ok(payload) => self.response_with_payload(task, payload),
             Err(e) => self.response_error(
                 task,

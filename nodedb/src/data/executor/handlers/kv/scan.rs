@@ -45,48 +45,42 @@ impl CoreLoop {
             Vec::new()
         };
 
-        let mut results = Vec::with_capacity(entries.len());
+        // Build results as raw msgpack — no serde_json::Value intermediary.
+        let mut result_entries: Vec<Vec<u8>> = Vec::with_capacity(entries.len());
         for (k, v) in &entries {
-            let key_str = String::from_utf8_lossy(k).to_string();
-            let json: serde_json::Value =
-                nodedb_types::json_from_msgpack(v).unwrap_or(serde_json::Value::Null);
-            let obj = if let serde_json::Value::Object(mut map) = json {
-                map.entry("key".to_string())
-                    .or_insert(serde_json::Value::String(key_str));
-                serde_json::Value::Object(map)
-            } else {
-                serde_json::json!({"key": key_str, "value": json})
-            };
+            let key_str = String::from_utf8_lossy(k);
+            // Inject "key" field into msgpack map without decode/re-encode.
+            let entry_mp = nodedb_query::msgpack_scan::inject_str_field(v, "key", &key_str);
 
-            // Apply filter predicates post-scan.
-            if !filter_predicates.is_empty() {
-                let mp = super::super::super::doc_format::encode_to_msgpack(&obj);
-                if !filter_predicates.iter().all(|f| f.matches_binary(&mp)) {
-                    continue;
-                }
+            // Apply filter predicates post-scan (already works on raw msgpack).
+            if !filter_predicates.is_empty()
+                && !filter_predicates
+                    .iter()
+                    .all(|f| f.matches_binary(&entry_mp))
+            {
+                continue;
             }
 
-            results.push(obj);
+            result_entries.push(entry_mp);
         }
-        // Wrap results with cursor for pagination support.
-        let response_obj = if next_cursor.is_empty() {
-            serde_json::json!({ "entries": results })
-        } else {
+
+        // Build response as raw msgpack map: {"entries": [...], "next_cursor"?: "..."}
+        let field_count = if next_cursor.is_empty() { 1 } else { 2 };
+        let mut payload =
+            Vec::with_capacity(result_entries.iter().map(|e| e.len()).sum::<usize>() + 64);
+        nodedb_query::msgpack_scan::write_map_header(&mut payload, field_count);
+        // "entries" array
+        nodedb_query::msgpack_scan::write_str(&mut payload, "entries");
+        nodedb_query::msgpack_scan::write_array_header(&mut payload, result_entries.len());
+        for entry in &result_entries {
+            payload.extend_from_slice(entry);
+        }
+        // Optional "next_cursor"
+        if !next_cursor.is_empty() {
             use base64::Engine;
             let cursor_b64 = base64::engine::general_purpose::STANDARD.encode(&next_cursor);
-            serde_json::json!({ "entries": results, "next_cursor": cursor_b64 })
-        };
-        let payload = match super::super::super::response_codec::encode_json(&response_obj) {
-            Ok(p) => p,
-            Err(e) => {
-                return self.response_error(
-                    task,
-                    crate::bridge::envelope::ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                );
-            }
-        };
+            nodedb_query::msgpack_scan::write_kv_str(&mut payload, "next_cursor", &cursor_b64);
+        }
         if let Some(ref m) = self.metrics {
             m.record_kv_scan();
         }

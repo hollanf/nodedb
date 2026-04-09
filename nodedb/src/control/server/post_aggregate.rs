@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 
+use sonic_rs;
+
 use crate::bridge::envelope::{Payload, Response};
 
 /// Apply GROUP BY + aggregate functions on a join response payload.
@@ -22,7 +24,7 @@ pub fn apply_post_aggregation(
     })?;
 
     let rows: Vec<serde_json::Value> =
-        serde_json::from_str(json_text).map_err(|e| crate::Error::PlanError {
+        sonic_rs::from_str(json_text).map_err(|e| crate::Error::PlanError {
             detail: format!("post-aggregation: JSON parse error: {e}"),
         })?;
 
@@ -64,7 +66,7 @@ pub fn apply_post_aggregation(
         result.push(serde_json::Value::Object(obj));
     }
 
-    let output = serde_json::to_vec(&result).map_err(|e| crate::Error::PlanError {
+    let output = sonic_rs::to_vec(&result).map_err(|e| crate::Error::PlanError {
         detail: format!("post-aggregation: serialize error: {e}"),
     })?;
 

@@ -11,6 +11,7 @@
 //! SPSC bridge. The Data Plane continues to produce MessagePack payloads
 //! (which are 2-3x faster to serialize than Arrow IPC).
 
+use sonic_rs;
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, Float64Array, Int64Array, StringArray};
@@ -24,7 +25,7 @@ use arrow::record_batch::RecordBatch;
 ///
 /// Returns `None` if the input is empty or not a JSON array.
 pub fn json_rows_to_record_batch(json_str: &str) -> Option<RecordBatch> {
-    let rows: Vec<serde_json::Value> = serde_json::from_str(json_str).ok()?;
+    let rows: Vec<serde_json::Value> = sonic_rs::from_str(json_str).ok()?;
     if rows.is_empty() {
         return None;
     }

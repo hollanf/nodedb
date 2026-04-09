@@ -122,20 +122,31 @@ impl CoreLoop {
             return groups;
         }
 
-        // Fallback: scan matching documents, extract field, count in HashMap.
+        // Fallback: scan matching documents, extract field from msgpack, count.
         let mut counts: HashMap<String, usize> = HashMap::new();
         for doc_id in matching_ids {
-            if let Ok(Some(bytes)) = self.sparse.get(tid, collection, doc_id)
-                && let Some(doc) = super::super::doc_format::decode_document(&bytes)
-            {
-                let value_str = match doc.get(field) {
-                    Some(serde_json::Value::String(s)) => s.clone(),
-                    Some(serde_json::Value::Number(n)) => n.to_string(),
-                    Some(serde_json::Value::Bool(b)) => b.to_string(),
-                    Some(serde_json::Value::Null) | None => continue,
-                    Some(other) => other.to_string(),
-                };
-                *counts.entry(value_str).or_default() += 1;
+            if let Ok(Some(bytes)) = self.sparse.get(tid, collection, doc_id) {
+                let mp = super::super::doc_format::json_to_msgpack(&bytes);
+                if let Some((start, end)) = nodedb_query::msgpack_scan::extract_field(&mp, 0, field)
+                {
+                    let value_str = if let Some(s) =
+                        nodedb_query::msgpack_scan::read_str(&mp, start)
+                    {
+                        s.to_string()
+                    } else if let Some(i) = nodedb_query::msgpack_scan::read_i64(&mp, start) {
+                        i.to_string()
+                    } else if let Some(f) = nodedb_query::msgpack_scan::read_f64(&mp, start) {
+                        f.to_string()
+                    } else if let Some(b) = nodedb_query::msgpack_scan::read_bool(&mp, start) {
+                        b.to_string()
+                    } else if nodedb_query::msgpack_scan::read_null(&mp, start) {
+                        continue;
+                    } else {
+                        // Complex value — stringify via transcoder.
+                        nodedb_types::msgpack_to_json_string(&mp[start..end]).unwrap_or_default()
+                    };
+                    *counts.entry(value_str).or_default() += 1;
+                }
             }
         }
 

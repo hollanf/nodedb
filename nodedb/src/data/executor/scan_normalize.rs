@@ -10,7 +10,6 @@
 //! - Columnar → memtable/engine rows → JSON → msgpack
 
 use crate::data::executor::core_loop::CoreLoop;
-use crate::data::executor::msgpack_utils::write_str;
 use nodedb_query::msgpack_scan;
 
 impl CoreLoop {
@@ -57,7 +56,7 @@ impl CoreLoop {
         for (key, value) in entries {
             let key_str = String::from_utf8_lossy(&key).to_string();
             // Inject "key" field into the msgpack map at binary level.
-            let mp = inject_key_into_msgpack(&value, &key_str);
+            let mp = msgpack_scan::inject_str_field(&value, "key", &key_str);
             results.push((key_str, mp));
         }
         results
@@ -77,21 +76,31 @@ impl CoreLoop {
 
             let mut results = Vec::with_capacity(row_count);
             for idx in 0..row_count {
-                let mut row = serde_json::Map::new();
+                // Build msgpack map directly — no serde_json intermediary.
+                let mut mp = Vec::with_capacity(col_meta.len() * 32);
+                msgpack_scan::write_map_header(&mut mp, col_meta.len());
+                let mut id = String::new();
                 for (col_idx, col_name, col_type) in &col_meta {
+                    msgpack_scan::write_str(&mut mp, col_name);
                     let col_data = mt.column(*col_idx);
-                    let val = super::handlers::columnar_read::emit_column_value(
-                        mt, *col_idx, col_type, col_data, idx,
+                    // Check for "id" column to extract the id string.
+                    if col_name == "id" {
+                        if let crate::engine::timeseries::columnar_memtable::ColumnData::Symbol(
+                            ids,
+                        ) = col_data
+                        {
+                            let sym_id = ids[idx];
+                            if let Some(s) =
+                                mt.symbol_dict(*col_idx).and_then(|dict| dict.get(sym_id))
+                            {
+                                id = s.to_string();
+                            }
+                        }
+                    }
+                    super::handlers::columnar_read::emit_column_value(
+                        &mut mp, mt, *col_idx, col_type, col_data, idx,
                     );
-                    row.insert(col_name.to_string(), val);
                 }
-                let id = row
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let mp = nodedb_types::json_to_msgpack(&serde_json::Value::Object(row))
-                    .unwrap_or_default();
                 results.push((id, mp));
             }
             return results;
@@ -148,69 +157,24 @@ impl CoreLoop {
         });
 
         if let Some(ref schema) = strict_schema {
+            // Strict: Binary Tuple → msgpack → inject "id".
             let mut normalized = Vec::with_capacity(docs.len());
             for (id, raw) in docs {
-                let json =
-                    super::strict_format::binary_tuple_to_json(&raw, schema).unwrap_or_else(|| {
-                        super::doc_format::decode_document(&raw).unwrap_or(serde_json::Value::Null)
-                    });
-                let json = if let serde_json::Value::Object(mut map) = json {
-                    map.entry("id")
-                        .or_insert(serde_json::Value::String(id.clone()));
-                    serde_json::Value::Object(map)
-                } else {
-                    json
-                };
-                let mp = super::doc_format::encode_to_msgpack(&json);
+                let mp = super::strict_format::binary_tuple_to_msgpack(&raw, schema)
+                    .unwrap_or_else(|| super::doc_format::json_to_msgpack(&raw));
+                let mp = msgpack_scan::inject_str_field(&mp, "id", &id);
                 normalized.push((id, mp));
             }
             Ok(normalized)
         } else {
-            // Schemaless: normalize to standard msgpack and inject `id` field.
+            // Schemaless: ensure standard msgpack, inject `id` field.
             let mut normalized = Vec::with_capacity(docs.len());
             for (id, raw) in docs {
-                let json =
-                    super::doc_format::decode_document(&raw).unwrap_or(serde_json::Value::Null);
-                let json = if let serde_json::Value::Object(mut map) = json {
-                    map.entry("id")
-                        .or_insert(serde_json::Value::String(id.clone()));
-                    serde_json::Value::Object(map)
-                } else {
-                    json
-                };
-                let mp = super::doc_format::encode_to_msgpack(&json);
+                let mp = super::doc_format::json_to_msgpack(&raw);
+                let mp = msgpack_scan::inject_str_field(&mp, "id", &id);
                 normalized.push((id, mp));
             }
             Ok(normalized)
         }
-    }
-}
-
-/// Inject a "key" field into a standard msgpack map without JSON roundtrip.
-///
-/// If `value` is a valid msgpack map, returns a new map with "key" prepended.
-/// If `value` is not a map (e.g. raw string/int), wraps as `{"key": k, "value": v}`.
-fn inject_key_into_msgpack(value: &[u8], key: &str) -> Vec<u8> {
-    use crate::data::executor::handlers::join::write_map_header;
-
-    if let Some((count, body_start)) = msgpack_scan::map_header(value, 0) {
-        // Valid map — prepend "key" entry, copy existing entries.
-        let mut buf = Vec::with_capacity(value.len() + key.len() + 16);
-        write_map_header(&mut buf, count + 1);
-        // Write "key" field.
-        write_str(&mut buf, "key");
-        write_str(&mut buf, key);
-        // Copy existing map body (all key-value pairs after the header).
-        buf.extend_from_slice(&value[body_start..]);
-        buf
-    } else {
-        // Not a map — wrap as {"key": k, "value": raw_bytes}.
-        let mut buf = Vec::with_capacity(value.len() + key.len() + 16);
-        write_map_header(&mut buf, 2);
-        write_str(&mut buf, "key");
-        write_str(&mut buf, key);
-        write_str(&mut buf, "value");
-        buf.extend_from_slice(value);
-        buf
     }
 }

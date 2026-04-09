@@ -35,19 +35,24 @@ pub fn rls_check_document(rls_filters: &[u8], doc: &serde_json::Value) -> bool {
 
 /// Evaluate RLS filters against raw MessagePack document bytes.
 ///
-/// Decodes the document, then evaluates filters. Returns `true` if passes.
-/// Returns `false` if decode fails or any filter rejects.
+/// Evaluates filters directly on msgpack bytes — no decode to serde_json::Value.
+/// Returns `true` if passes. Returns `false` if any filter rejects.
 pub fn rls_check_msgpack_bytes(rls_filters: &[u8], doc_bytes: &[u8]) -> bool {
     if rls_filters.is_empty() {
         return true;
     }
 
-    let doc = match super::super::doc_format::decode_document(doc_bytes) {
-        Some(d) => d,
-        None => return false, // Can't decode → deny
+    let filters: Vec<ScanFilter> = match zerompk::from_msgpack(rls_filters) {
+        Ok(f) => f,
+        Err(_) => {
+            tracing::warn!("RLS filter deserialization failed — denying access");
+            return false;
+        }
     };
 
-    rls_check_document(rls_filters, &doc)
+    // Ensure bytes are standard msgpack for matches_binary.
+    let mp = super::super::doc_format::json_to_msgpack(doc_bytes);
+    filters.iter().all(|f| f.matches_binary(&mp))
 }
 
 #[cfg(test)]

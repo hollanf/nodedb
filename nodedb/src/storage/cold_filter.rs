@@ -311,7 +311,20 @@ pub fn batches_to_document_rows(batches: &[RecordBatch]) -> Vec<(String, Vec<u8>
                 .map(|c| c.value(row_idx).to_string())
                 .unwrap_or_default();
 
-            let mut map = serde_json::Map::new();
+            // Build raw msgpack map from Arrow columns — no serde_json intermediary.
+            // First pass: count non-null, non-id fields.
+            let mut field_count = 0usize;
+            for (col_idx, field) in batch.schema().fields().iter().enumerate() {
+                if field.name() == "_id" {
+                    continue;
+                }
+                let col = batch.column(col_idx);
+                if !col.is_null(row_idx) {
+                    field_count += 1;
+                }
+            }
+            let mut value = Vec::with_capacity(field_count * 32);
+            nodedb_query::msgpack_scan::write_map_header(&mut value, field_count);
             for (col_idx, field) in batch.schema().fields().iter().enumerate() {
                 if field.name() == "_id" {
                     continue;
@@ -323,32 +336,34 @@ pub fn batches_to_document_rows(batches: &[RecordBatch]) -> Vec<(String, Vec<u8>
                 match field.data_type() {
                     DataType::Utf8 => {
                         if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
-                            map.insert(
-                                field.name().clone(),
-                                serde_json::Value::String(arr.value(row_idx).to_string()),
+                            nodedb_query::msgpack_scan::write_kv_str(
+                                &mut value,
+                                field.name(),
+                                arr.value(row_idx),
                             );
                         }
                     }
                     DataType::Int64 => {
                         if let Some(arr) = col.as_any().downcast_ref::<Int64Array>() {
-                            map.insert(
-                                field.name().clone(),
-                                serde_json::Value::Number(arr.value(row_idx).into()),
+                            nodedb_query::msgpack_scan::write_kv_i64(
+                                &mut value,
+                                field.name(),
+                                arr.value(row_idx),
                             );
                         }
                     }
                     DataType::Float64 => {
-                        if let Some(arr) = col.as_any().downcast_ref::<Float64Array>()
-                            && let Some(n) = serde_json::Number::from_f64(arr.value(row_idx))
-                        {
-                            map.insert(field.name().clone(), serde_json::Value::Number(n));
+                        if let Some(arr) = col.as_any().downcast_ref::<Float64Array>() {
+                            nodedb_query::msgpack_scan::write_kv_f64(
+                                &mut value,
+                                field.name(),
+                                arr.value(row_idx),
+                            );
                         }
                     }
                     _ => {}
                 }
             }
-
-            let value = serde_json::to_vec(&map).unwrap_or_default();
             rows.push((doc_id, value));
         }
     }
@@ -445,9 +460,12 @@ mod tests {
         assert_eq!(rows[0].0, "d1");
         assert_eq!(rows[1].0, "d2");
 
-        // Verify the value is valid JSON with the expected fields.
-        let doc: serde_json::Value = serde_json::from_slice(&rows[0].1).unwrap();
-        assert_eq!(doc["name"], "alice");
-        assert_eq!(doc["age"], 25);
+        // Verify the value is valid msgpack with the expected fields.
+        let doc = nodedb_types::value_from_msgpack(&rows[0].1).unwrap();
+        assert_eq!(
+            doc.get("name"),
+            Some(&nodedb_types::Value::String("alice".into()))
+        );
+        assert_eq!(doc.get("age"), Some(&nodedb_types::Value::Integer(25)));
     }
 }

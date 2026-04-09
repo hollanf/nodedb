@@ -8,6 +8,7 @@
 //! Records are serialized as MessagePack for compact wire representation.
 
 use serde::{Deserialize, Serialize};
+use sonic_rs;
 use zerompk::{FromMessagePack, ToMessagePack};
 
 /// A WAL record for a columnar collection operation.
@@ -247,7 +248,7 @@ pub fn decode_row_from_wal(
                 cursor += 4;
                 let json_bytes = &data[cursor..cursor + len];
                 cursor += len;
-                serde_json::from_slice(json_bytes).unwrap_or(Value::Null)
+                sonic_rs::from_slice(json_bytes).unwrap_or(Value::Null)
             }
             _ => {
                 return Err(crate::error::ColumnarError::Serialization(format!(

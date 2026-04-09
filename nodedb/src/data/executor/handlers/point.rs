@@ -1,7 +1,6 @@
 //! Point operation handlers: PointGet, PointPut, PointDelete, PointUpdate.
 
 use redb::WriteTransaction;
-use sonic_rs;
 use tracing::{debug, warn};
 
 use crate::bridge::envelope::{ErrorCode, Response};
@@ -56,18 +55,15 @@ impl CoreLoop {
             }
         };
 
-        // RLS post-fetch: evaluate filters. For strict collections, decode
-        // Binary Tuple to JSON for RLS evaluation, then return JSON.
-        // For schemaless, check directly against MessagePack bytes.
+        // RLS post-fetch: evaluate filters against msgpack bytes.
         if !rls_filters.is_empty() {
             if strict_schema.is_some() {
-                // Strict: decode to JSON, check RLS against JSON.
+                // Strict: decode Binary Tuple to msgpack for RLS evaluation.
                 if let Some(ref schema) = strict_schema
-                    && let Some(json) =
-                        super::super::strict_format::binary_tuple_to_json(&data, schema)
+                    && let Some(mp) =
+                        super::super::strict_format::binary_tuple_to_msgpack(&data, schema)
                 {
-                    let json_bytes = sonic_rs::to_vec(&json).unwrap_or_default();
-                    if !super::rls_eval::rls_check_msgpack_bytes(rls_filters, &json_bytes) {
+                    if !super::rls_eval::rls_check_msgpack_bytes(rls_filters, &mp) {
                         return self.response_error(task, ErrorCode::NotFound);
                     }
                 }
@@ -76,13 +72,11 @@ impl CoreLoop {
             }
         }
 
-        // For strict collections, return JSON instead of raw Binary Tuple
-        // (clients expect JSON, not Binary Tuple).
+        // For strict collections, return msgpack (decoded from Binary Tuple).
         if let Some(ref schema) = strict_schema
-            && let Some(json) = super::super::strict_format::binary_tuple_to_json(&data, schema)
+            && let Some(mp) = super::super::strict_format::binary_tuple_to_msgpack(&data, schema)
         {
-            let json_bytes = sonic_rs::to_vec(&json).unwrap_or_default();
-            return self.response_with_payload(task, json_bytes);
+            return self.response_with_payload(task, mp);
         }
 
         self.response_with_payload(task, data)
@@ -256,113 +250,131 @@ impl CoreLoop {
 
         match self.sparse.get(tid, collection, document_id) {
             Ok(Some(current_bytes)) => {
-                // Decode current value — format depends on storage mode.
-                let mut doc = if is_strict {
-                    if let Some(config) = self.doc_configs.get(&config_key)
-                        && let crate::bridge::physical_plan::StorageMode::Strict { ref schema } =
-                            config.storage_mode
-                    {
-                        match super::super::strict_format::binary_tuple_to_json(
-                            &current_bytes,
-                            schema,
-                        ) {
+                // Check if generated columns need recomputation.
+                let has_generated = self.doc_configs.get(&config_key).is_some_and(|c| {
+                    !c.enforcement.generated_columns.is_empty()
+                        && super::generated::needs_recomputation(
+                            updates,
+                            &c.enforcement.generated_columns,
+                        )
+                });
+
+                // Fast path: non-strict, no generated columns — merge at binary level.
+                let updated_bytes = if !is_strict && !has_generated {
+                    let base_mp = super::super::doc_format::json_to_msgpack(&current_bytes);
+                    let update_pairs: Vec<(&str, &[u8])> = updates
+                        .iter()
+                        .map(|(field, val_bytes)| (field.as_str(), val_bytes.as_slice()))
+                        .collect();
+                    nodedb_query::msgpack_scan::merge_fields(&base_mp, &update_pairs)
+                } else {
+                    // Strict or generated columns: decode → mutate → re-encode.
+                    let mut doc = if is_strict {
+                        if let Some(config) = self.doc_configs.get(&config_key)
+                            && let crate::bridge::physical_plan::StorageMode::Strict { ref schema } =
+                                config.storage_mode
+                        {
+                            match super::super::strict_format::binary_tuple_to_json(
+                                &current_bytes,
+                                schema,
+                            ) {
+                                Some(v) => v,
+                                None => {
+                                    return self.response_error(
+                                        task,
+                                        ErrorCode::Internal {
+                                            detail: "failed to decode Binary Tuple for update"
+                                                .into(),
+                                        },
+                                    );
+                                }
+                            }
+                        } else {
+                            return self.response_error(
+                                task,
+                                ErrorCode::Internal {
+                                    detail: "strict config missing during update".into(),
+                                },
+                            );
+                        }
+                    } else {
+                        match super::super::doc_format::decode_document(&current_bytes) {
                             Some(v) => v,
                             None => {
                                 return self.response_error(
                                     task,
                                     ErrorCode::Internal {
-                                        detail: "failed to decode Binary Tuple for update".into(),
+                                        detail: "failed to parse document for update".into(),
                                     },
                                 );
                             }
                         }
-                    } else {
-                        return self.response_error(
-                            task,
-                            ErrorCode::Internal {
-                                detail: "strict config missing during update".into(),
-                            },
-                        );
-                    }
-                } else {
-                    match super::super::doc_format::decode_document(&current_bytes) {
-                        Some(v) => v,
-                        None => {
-                            return self.response_error(
-                                task,
-                                ErrorCode::Internal {
-                                    detail: "failed to parse document for update".into(),
-                                },
-                            );
+                    };
+
+                    // Apply field-level updates.
+                    if let Some(obj) = doc.as_object_mut() {
+                        for (field, value_bytes) in updates {
+                            let val: serde_json::Value =
+                                match nodedb_types::json_from_msgpack(value_bytes) {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        return self.response_error(
+                                            task,
+                                            ErrorCode::Internal {
+                                                detail: format!(
+                                                    "update field '{field}': msgpack decode: {e}"
+                                                ),
+                                            },
+                                        );
+                                    }
+                                };
+                            obj.insert(field.clone(), val);
                         }
                     }
-                };
 
-                // Apply field-level updates.
-                // value_bytes are standard msgpack (from planner's write_msgpack_value).
-                if let Some(obj) = doc.as_object_mut() {
-                    for (field, value_bytes) in updates {
-                        let val: serde_json::Value =
-                            match nodedb_types::json_from_msgpack(value_bytes) {
-                                Ok(v) => v,
+                    // Recompute generated columns.
+                    if has_generated {
+                        if let Some(config) = self.doc_configs.get(&config_key)
+                            && let Err(e) = super::generated::evaluate_generated_columns(
+                                &mut doc,
+                                &config.enforcement.generated_columns,
+                            )
+                        {
+                            return self.response_error(task, e);
+                        }
+                    }
+
+                    // Re-encode.
+                    if is_strict {
+                        if let Some(config) = self.doc_configs.get(&config_key)
+                            && let crate::bridge::physical_plan::StorageMode::Strict { ref schema } =
+                                config.storage_mode
+                        {
+                            let ndb_val: nodedb_types::Value = doc.clone().into();
+                            match super::super::strict_format::value_to_binary_tuple(
+                                &ndb_val, schema,
+                            ) {
+                                Ok(bytes) => bytes,
                                 Err(e) => {
                                     return self.response_error(
                                         task,
                                         ErrorCode::Internal {
-                                            detail: format!(
-                                                "update field '{field}': msgpack decode: {e}"
-                                            ),
+                                            detail: format!("strict re-encode: {e}"),
                                         },
                                     );
                                 }
-                            };
-                        obj.insert(field.clone(), val);
-                    }
-                }
-
-                // Recompute generated columns if any dependency changed.
-                if let Some(config) = self.doc_configs.get(&config_key)
-                    && !config.enforcement.generated_columns.is_empty()
-                    && super::generated::needs_recomputation(
-                        updates,
-                        &config.enforcement.generated_columns,
-                    )
-                    && let Err(e) = super::generated::evaluate_generated_columns(
-                        &mut doc,
-                        &config.enforcement.generated_columns,
-                    )
-                {
-                    return self.response_error(task, e);
-                }
-
-                // Re-encode — format depends on storage mode.
-                let updated_bytes = if is_strict {
-                    if let Some(config) = self.doc_configs.get(&config_key)
-                        && let crate::bridge::physical_plan::StorageMode::Strict { ref schema } =
-                            config.storage_mode
-                    {
-                        let ndb_val: nodedb_types::Value = doc.clone().into();
-                        match super::super::strict_format::value_to_binary_tuple(&ndb_val, schema) {
-                            Ok(bytes) => bytes,
-                            Err(e) => {
-                                return self.response_error(
-                                    task,
-                                    ErrorCode::Internal {
-                                        detail: format!("strict re-encode: {e}"),
-                                    },
-                                );
                             }
+                        } else {
+                            return self.response_error(
+                                task,
+                                ErrorCode::Internal {
+                                    detail: "strict config missing during re-encode".into(),
+                                },
+                            );
                         }
                     } else {
-                        return self.response_error(
-                            task,
-                            ErrorCode::Internal {
-                                detail: "strict config missing during re-encode".into(),
-                            },
-                        );
+                        super::super::doc_format::encode_to_msgpack(&doc)
                     }
-                } else {
-                    super::super::doc_format::encode_to_msgpack(&doc)
                 };
 
                 match self
@@ -384,22 +396,21 @@ impl CoreLoop {
                         );
 
                         if returning {
-                            // Return post-update document as JSON array (consistent with bulk).
-                            if let Some(obj) = doc.as_object_mut() {
-                                obj.insert(
-                                    "id".to_string(),
-                                    serde_json::Value::String(document_id.to_string()),
-                                );
-                            }
-                            let payload = sonic_rs::to_vec(&serde_json::Value::Array(vec![doc]))
-                                .unwrap_or_default();
+                            // Return post-update document as msgpack array.
+                            let with_id = nodedb_query::msgpack_scan::inject_str_field(
+                                &updated_bytes,
+                                "id",
+                                document_id,
+                            );
+                            let mut payload = Vec::with_capacity(with_id.len() + 4);
+                            nodedb_query::msgpack_scan::write_array_header(&mut payload, 1);
+                            payload.extend_from_slice(&with_id);
                             self.response_with_payload(task, payload)
                         } else {
-                            let payload = serde_json::json!({ "affected": 1u64 });
-                            self.response_with_payload(
-                                task,
-                                sonic_rs::to_vec(&payload).unwrap_or_default(),
-                            )
+                            let mut payload = Vec::with_capacity(16);
+                            nodedb_query::msgpack_scan::write_map_header(&mut payload, 1);
+                            nodedb_query::msgpack_scan::write_kv_i64(&mut payload, "affected", 1);
+                            self.response_with_payload(task, payload)
                         }
                     }
                     Err(e) => self.response_error(

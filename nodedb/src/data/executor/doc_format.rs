@@ -100,8 +100,7 @@ pub(super) fn json_to_msgpack(bytes: &[u8]) -> Vec<u8> {
     // Only accept if the result is an Object — zerompk can spuriously "succeed"
     // on JSON bytes by interpreting the first byte (e.g. '{' = 0x7B) as a fixint.
     if let Ok(val @ nodedb_types::Value::Object(_)) = nodedb_types::value_from_msgpack(bytes) {
-        let json: serde_json::Value = val.into();
-        if let Ok(mp) = nodedb_types::json_to_msgpack(&json) {
+        if let Ok(mp) = nodedb_types::value_to_msgpack(&val) {
             return mp;
         }
     }

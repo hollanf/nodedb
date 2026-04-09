@@ -448,9 +448,9 @@ pub(super) fn encode_count(key: &str, count: usize) -> crate::Result<Vec<u8>> {
 
 /// Decode a MessagePack or JSON payload to a JSON string for pgwire/HTTP output.
 ///
-/// Auto-detects format: if first byte indicates MessagePack, deserializes
-/// and re-encodes as JSON text. If already JSON (starts with `[` or `{`),
-/// returns as-is.
+/// Auto-detects format: if first byte indicates MessagePack, transcodes directly
+/// to JSON text via streaming transcoder (no intermediate `serde_json::Value`).
+/// If already JSON (starts with `[` or `{`), returns as-is.
 pub fn decode_payload_to_json(payload: &[u8]) -> String {
     if payload.is_empty() {
         return String::new();
@@ -473,20 +473,9 @@ pub fn decode_payload_to_json(payload: &[u8]) -> String {
         return String::from_utf8_lossy(payload).into_owned();
     }
 
-    // Try zerompk Value format first (canonical internal format, used by
-    // FieldGet, row_to_msgpack, and other direct-encode paths).
-    if let Ok(value) = nodedb_types::value_from_msgpack(payload) {
-        let json: serde_json::Value = value.into();
-        return sonic_rs::to_string(&json)
-            .unwrap_or_else(|_| String::from_utf8_lossy(payload).into_owned());
-    }
-
-    // Fall back to generic msgpack format (arrays, maps, etc.).
-    match nodedb_types::json_from_msgpack(payload) {
-        Ok(value) => sonic_rs::to_string(&value)
-            .unwrap_or_else(|_| String::from_utf8_lossy(payload).into_owned()),
-        Err(_) => String::from_utf8_lossy(payload).into_owned(),
-    }
+    // Streaming msgpack → JSON transcoder: zero intermediate types.
+    nodedb_types::msgpack_to_json_string(payload)
+        .unwrap_or_else(|_| String::from_utf8_lossy(payload).into_owned())
 }
 
 /// Intermediate types for response serialization.

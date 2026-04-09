@@ -74,6 +74,15 @@ pub(super) fn binary_tuple_to_value(tuple_bytes: &[u8], schema: &StrictSchema) -
     Some(Value::Object(map))
 }
 
+/// Decode a Binary Tuple to standard msgpack bytes.
+pub(super) fn binary_tuple_to_msgpack(
+    tuple_bytes: &[u8],
+    schema: &StrictSchema,
+) -> Option<Vec<u8>> {
+    let val = binary_tuple_to_value(tuple_bytes, schema)?;
+    nodedb_types::value_to_msgpack(&val).ok()
+}
+
 /// Decode a Binary Tuple to a JSON object using the schema (for pgwire output).
 pub(super) fn binary_tuple_to_json(
     tuple_bytes: &[u8],

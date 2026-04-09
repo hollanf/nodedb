@@ -49,6 +49,79 @@ fn apply_projection(
     }
 }
 
+/// Apply projection and computed columns on raw msgpack bytes.
+///
+/// For projection-only (no computed columns), uses zero-decode binary field extraction.
+/// For computed columns, decodes fields on-demand from msgpack.
+fn apply_projection_msgpack(
+    data: &[u8],
+    computed_cols: &[crate::bridge::expr_eval::ComputedColumn],
+    projection: &[String],
+) -> Vec<u8> {
+    if computed_cols.is_empty() && projection.is_empty() {
+        return data.to_vec();
+    }
+
+    let field_count = if projection.is_empty() {
+        computed_cols.len()
+    } else {
+        projection.len() + computed_cols.len()
+    };
+
+    let mut buf = Vec::with_capacity(data.len());
+    nodedb_query::msgpack_scan::write_map_header(&mut buf, field_count);
+
+    // Project requested fields from raw msgpack.
+    if !projection.is_empty() {
+        for col in projection {
+            nodedb_query::msgpack_scan::write_str(&mut buf, col);
+            if let Some((start, end)) = nodedb_query::msgpack_scan::extract_field(data, 0, col) {
+                buf.extend_from_slice(&data[start..end]);
+            } else {
+                nodedb_query::msgpack_scan::write_null(&mut buf);
+            }
+        }
+    }
+
+    // Computed columns: eval expression against msgpack doc.
+    if !computed_cols.is_empty() {
+        // Lazy decode to Value only when we have computed columns.
+        let doc_val = nodedb_types::value_from_msgpack(data).unwrap_or(nodedb_types::Value::Null);
+        for cc in computed_cols {
+            // Skip if projection already included this alias.
+            let already_present = projection.iter().any(|p| p == &cc.alias);
+            if already_present {
+                continue;
+            }
+            nodedb_query::msgpack_scan::write_str(&mut buf, &cc.alias);
+            let result = cc.expr.eval(&doc_val);
+            if let Ok(mp) = nodedb_types::value_to_msgpack(&result) {
+                buf.extend_from_slice(&mp);
+            } else {
+                nodedb_query::msgpack_scan::write_null(&mut buf);
+            }
+        }
+    }
+
+    buf
+}
+
+/// Decode a scanned document to raw msgpack bytes.
+fn decode_scanned_document_msgpack(
+    value: &[u8],
+    strict_schema: Option<&nodedb_types::columnar::StrictSchema>,
+) -> Vec<u8> {
+    if let Some(schema) = strict_schema {
+        if let Some(mp) = super::super::super::strict_format::binary_tuple_to_msgpack(value, schema)
+        {
+            return mp;
+        }
+    }
+    // Already msgpack (or legacy JSON → convert).
+    super::super::super::doc_format::json_to_msgpack(value)
+}
+
+/// Decode a scanned document to serde_json::Value (for window functions / legacy paths).
 fn decode_scanned_document(
     value: &[u8],
     strict_schema: Option<&nodedb_types::columnar::StrictSchema>,
@@ -252,14 +325,12 @@ impl CoreLoop {
                 _ => sparse_result,
             }
         } else if let Some(ref schema) = strict_schema {
-            // Strict: Binary Tuple → Value → MessagePack → matches_binary.
+            // Strict: Binary Tuple → msgpack → matches_binary (no serde_json).
             self.sparse
                 .scan_documents_filtered(tid, collection, fetch_limit, &|value: &[u8]| {
-                    match super::super::super::strict_format::binary_tuple_to_json(value, schema) {
-                        Some(doc) => {
-                            let msgpack = super::super::super::doc_format::encode_to_msgpack(&doc);
-                            filter_predicates.iter().all(|f| f.matches_binary(&msgpack))
-                        }
+                    match super::super::super::strict_format::binary_tuple_to_msgpack(value, schema)
+                    {
+                        Some(mp) => filter_predicates.iter().all(|f| f.matches_binary(&mp)),
                         None => false,
                     }
                 })
@@ -335,15 +406,13 @@ impl CoreLoop {
                         .skip(offset)
                         .take(limit)
                         .map(|(doc_id, val)| {
-                            let data = decode_scanned_document(&val, Some(schema));
-                            let projected = apply_projection(data, &computed_cols, projection);
-                            super::super::super::response_codec::DocumentRow {
-                                id: doc_id,
-                                data: projected,
-                            }
+                            let mp = decode_scanned_document_msgpack(&val, Some(schema));
+                            let projected =
+                                apply_projection_msgpack(&mp, &computed_cols, projection);
+                            (doc_id, projected)
                         })
                         .collect();
-                    return self.send_document_rows_transformed(task, &result, stream_chunk_size);
+                    return self.send_document_rows_raw(task, &result, stream_chunk_size);
                 }
 
                 // Window functions require decoded values; keep them decoded
@@ -407,17 +476,14 @@ impl CoreLoop {
                             .skip(offset)
                             .take(limit)
                             .map(|(doc_id, value)| {
-                                let data = super::super::super::doc_format::decode_document(&value)
-                                    .unwrap_or(serde_json::Value::Null);
-                                let projected = apply_projection(data, &computed_cols, projection);
-                                super::super::super::response_codec::DocumentRow {
-                                    id: doc_id,
-                                    data: projected,
-                                }
+                                let mp = super::super::super::doc_format::json_to_msgpack(&value);
+                                let projected =
+                                    apply_projection_msgpack(&mp, &computed_cols, projection);
+                                (doc_id, projected)
                             })
                             .collect();
 
-                        self.send_document_rows_transformed(task, &result, stream_chunk_size)
+                        self.send_document_rows_raw(task, &result, stream_chunk_size)
                     } else {
                         // Raw passthrough: skip decode+re-encode entirely.
                         let rows: Vec<_> = deduped.into_iter().skip(offset).take(limit).collect();

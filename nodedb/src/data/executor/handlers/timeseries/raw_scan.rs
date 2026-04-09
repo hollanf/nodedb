@@ -301,16 +301,16 @@ fn emit_memtable_row(
     columns: &[(usize, &String, &ColumnType, &ColumnData)],
     idx: usize,
 ) -> rmpv::Value {
-    let mut fields: Vec<(rmpv::Value, rmpv::Value)> = Vec::with_capacity(columns.len());
+    // Build raw msgpack bytes, then decode to rmpv::Value.
+    let mut buf = Vec::with_capacity(columns.len() * 32);
+    nodedb_query::msgpack_scan::write_map_header(&mut buf, columns.len());
     for (col_idx, col_name, col_type, col_data) in columns {
-        let val =
-            super::super::columnar_read::emit_column_value(mt, *col_idx, col_type, col_data, idx);
-        fields.push((
-            rmpv::Value::String(col_name.as_str().into()),
-            json_to_rmpv(&val),
-        ));
+        nodedb_query::msgpack_scan::write_str(&mut buf, col_name);
+        super::super::columnar_read::emit_column_value(
+            &mut buf, mt, *col_idx, col_type, col_data, idx,
+        );
     }
-    rmpv::Value::Map(fields)
+    rmpv::decode::read_value(&mut buf.as_slice()).unwrap_or(rmpv::Value::Nil)
 }
 
 /// Emit a single row from a disk partition as rmpv::Value::Map.
@@ -403,31 +403,5 @@ fn rmpv_to_json_value(row: &rmpv::Value) -> serde_json::Value {
             serde_json::Value::Object(map)
         }
         _ => serde_json::Value::Null,
-    }
-}
-
-/// Convert serde_json::Value to rmpv::Value.
-fn json_to_rmpv(val: &serde_json::Value) -> rmpv::Value {
-    match val {
-        serde_json::Value::Null => rmpv::Value::Nil,
-        serde_json::Value::Bool(b) => rmpv::Value::Boolean(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                rmpv::Value::Integer(i.into())
-            } else if let Some(f) = n.as_f64() {
-                rmpv::Value::F64(f)
-            } else {
-                rmpv::Value::Nil
-            }
-        }
-        serde_json::Value::String(s) => rmpv::Value::String(s.as_str().into()),
-        serde_json::Value::Array(arr) => rmpv::Value::Array(arr.iter().map(json_to_rmpv).collect()),
-        serde_json::Value::Object(map) => {
-            let fields = map
-                .iter()
-                .map(|(k, v)| (rmpv::Value::String(k.as_str().into()), json_to_rmpv(v)))
-                .collect();
-            rmpv::Value::Map(fields)
-        }
     }
 }
