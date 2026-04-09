@@ -227,6 +227,7 @@ impl CoreLoop {
         projection: &[crate::bridge::physical_plan::JoinProjection],
         post_filter_bytes: &[u8],
         inline_left: Option<&crate::bridge::envelope::PhysicalPlan>,
+        inline_right: Option<&crate::bridge::envelope::PhysicalPlan>,
     ) -> Response {
         debug!(
             core = self.core_id,
@@ -265,15 +266,25 @@ impl CoreLoop {
                 }
             }
         };
-        let right_docs = match self.scan_collection(tid, right_collection, scan_limit) {
-            Ok(d) => d,
-            Err(e) => {
-                return self.response_error(
-                    task,
-                    ErrorCode::Internal {
-                        detail: e.to_string(),
-                    },
-                );
+        let right_docs = if let Some(sub_plan) = inline_right {
+            let sub_response = self.execute_plan(task, sub_plan);
+            match super::super::super::response_codec::decode_response_to_docs(&sub_response) {
+                Some(docs) => docs,
+                None => {
+                    return sub_response;
+                }
+            }
+        } else {
+            match self.scan_collection(tid, right_collection, scan_limit) {
+                Ok(d) => d,
+                Err(e) => {
+                    return self.response_error(
+                        task,
+                        ErrorCode::Internal {
+                            detail: e.to_string(),
+                        },
+                    );
+                }
             }
         };
 

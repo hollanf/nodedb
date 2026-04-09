@@ -154,8 +154,41 @@ fn plan_select(
     if has_aggregation(select, functions) {
         let mut plan =
             super::aggregate::plan_aggregate(select, table, &filters, &scope, functions)?;
-        // Wrap with subquery joins if any.
-        for sq in subquery_joins {
+
+        // Semi/anti subquery joins belong below the aggregate so they filter
+        // the input rows before grouping. Scalar subqueries remain above the
+        // aggregate because their column-vs-column comparison is evaluated
+        // after the cross join materializes the scalar result row.
+        if let SqlPlan::Aggregate { input, .. } = &mut plan {
+            let mut base_input = std::mem::replace(
+                input,
+                Box::new(SqlPlan::ConstantResult {
+                    columns: Vec::new(),
+                    values: Vec::new(),
+                }),
+            );
+            for sq in subquery_joins
+                .iter()
+                .filter(|sq| sq.join_type != JoinType::Cross)
+            {
+                base_input = Box::new(SqlPlan::Join {
+                    left: base_input,
+                    right: Box::new(sq.inner_plan.clone()),
+                    on: vec![(sq.outer_column.clone(), sq.inner_column.clone())],
+                    join_type: sq.join_type,
+                    condition: None,
+                    limit: 10000,
+                    projection: Vec::new(),
+                    filters: Vec::new(),
+                });
+            }
+            *input = base_input;
+        }
+
+        for sq in subquery_joins
+            .into_iter()
+            .filter(|sq| sq.join_type == JoinType::Cross)
+        {
             plan = SqlPlan::Join {
                 left: Box::new(plan),
                 right: Box::new(sq.inner_plan),
@@ -177,12 +210,18 @@ fn plan_select(
     let window_functions = super::window::extract_window_functions(&select.projection, functions)?;
 
     // 9. Build base scan plan.
+    let scan_projection = if subquery_joins.is_empty() {
+        projection.clone()
+    } else {
+        Vec::new()
+    };
+
     let mut plan = SqlPlan::Scan {
         collection: table.name.clone(),
         alias: table.alias.clone(),
         engine: table.info.engine,
         filters,
-        projection,
+        projection: scan_projection,
         sort_keys: Vec::new(),
         limit: None,
         offset: 0,
@@ -229,6 +268,14 @@ fn plan_select(
             projection: Vec::new(),
             filters: join_filters,
         };
+    }
+
+    if let SqlPlan::Join {
+        projection: ref mut join_projection,
+        ..
+    } = plan
+    {
+        *join_projection = projection;
     }
 
     Ok(plan)
@@ -934,5 +981,113 @@ impl SqlCatalog for CteCatalog<'_> {
             });
         }
         self.inner.get_collection(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::functions::registry::FunctionRegistry;
+    use crate::parser::statement::parse_sql;
+    use sqlparser::ast::Statement;
+
+    struct TestCatalog;
+
+    impl SqlCatalog for TestCatalog {
+        fn get_collection(&self, name: &str) -> Option<CollectionInfo> {
+            match name {
+                "products" => Some(CollectionInfo {
+                    name: "products".into(),
+                    engine: EngineType::DocumentSchemaless,
+                    columns: Vec::new(),
+                    primary_key: Some("id".into()),
+                    has_auto_tier: false,
+                }),
+                "users" => Some(CollectionInfo {
+                    name: "users".into(),
+                    engine: EngineType::DocumentSchemaless,
+                    columns: Vec::new(),
+                    primary_key: Some("id".into()),
+                    has_auto_tier: false,
+                }),
+                "orders" => Some(CollectionInfo {
+                    name: "orders".into(),
+                    engine: EngineType::DocumentSchemaless,
+                    columns: Vec::new(),
+                    primary_key: Some("id".into()),
+                    has_auto_tier: false,
+                }),
+                _ => None,
+            }
+        }
+    }
+
+    fn plan_select_sql(sql: &str) -> SqlPlan {
+        let statements = parse_sql(sql).unwrap();
+        let Statement::Query(query) = &statements[0] else {
+            panic!("expected query statement");
+        };
+        plan_query(query, &TestCatalog, &FunctionRegistry::new()).unwrap()
+    }
+
+    #[test]
+    fn aggregate_subquery_join_filters_input_before_aggregation() {
+        let plan = plan_select_sql(
+            "SELECT AVG(price) FROM products WHERE category IN (SELECT DISTINCT category FROM products WHERE qty > 100)",
+        );
+
+        let SqlPlan::Aggregate { input, .. } = plan else {
+            panic!("expected aggregate plan");
+        };
+
+        let SqlPlan::Join {
+            left,
+            join_type,
+            on,
+            ..
+        } = *input
+        else {
+            panic!("expected semi-join below aggregate");
+        };
+
+        assert_eq!(join_type, JoinType::Semi);
+        assert_eq!(on, vec![("category".into(), "category".into())]);
+        assert!(matches!(*left, SqlPlan::Scan { .. }));
+    }
+
+    #[test]
+    fn scalar_subquery_defers_projection_until_after_join_filter() {
+        let plan = plan_select_sql(
+            "SELECT user_id FROM orders WHERE amount > (SELECT AVG(amount) FROM orders)",
+        );
+
+        let SqlPlan::Join {
+            left,
+            projection,
+            filters,
+            ..
+        } = plan
+        else {
+            panic!("expected join plan");
+        };
+
+        let SqlPlan::Scan {
+            projection: scan_projection,
+            ..
+        } = *left
+        else {
+            panic!("expected scan on join left");
+        };
+
+        assert!(scan_projection.is_empty(), "scan projected too early");
+        assert_eq!(projection.len(), 1);
+        match &projection[0] {
+            Projection::Column(name) => assert_eq!(name, "user_id"),
+            other => panic!("expected user_id projection, got {other:?}"),
+        }
+        assert!(
+            !filters.is_empty(),
+            "scalar comparison should stay post-join"
+        );
     }
 }

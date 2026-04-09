@@ -47,6 +47,7 @@ impl CoreLoop {
                 projection,
                 post_filters,
                 inline_left,
+                inline_right,
                 ..
             }) => self.execute_hash_join(
                 task,
@@ -61,6 +62,7 @@ impl CoreLoop {
                 projection,
                 post_filters,
                 inline_left.as_deref(),
+                inline_right.as_deref(),
             ),
 
             PhysicalPlan::Query(QueryOp::InlineHashJoin {
@@ -223,6 +225,7 @@ impl CoreLoop {
                     *limit,
                     &[],
                     &[],
+                    None,
                     None,
                 )
             }

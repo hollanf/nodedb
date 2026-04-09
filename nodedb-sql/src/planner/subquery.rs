@@ -35,6 +35,10 @@ pub struct SubqueryJoin {
     pub join_type: JoinType,
 }
 
+fn canonical_aggregate_key(function: &str, field: &str) -> String {
+    format!("{function}({field})")
+}
+
 /// Extract `IN (SELECT ...)` and `NOT IN (SELECT ...)` patterns from a WHERE clause.
 ///
 /// Returns the extracted subquery joins and the remaining WHERE expression
@@ -345,7 +349,8 @@ fn try_plan_scalar_subquery(
 /// Extract the projected column name from a scalar subquery.
 ///
 /// Handles aliased aggregates like `SELECT AVG(amount) AS avg_amount`.
-/// For unaliased aggregates, synthesizes a name.
+/// For unaliased aggregates, returns the canonical aggregate key emitted by
+/// the aggregate executor (e.g. `avg(amount)`, `count(*)`).
 fn extract_scalar_column(query: &ast::Query) -> Option<String> {
     let select = match &*query.body {
         SetExpr::Select(s) => s,
@@ -358,9 +363,8 @@ fn extract_scalar_column(query: &ast::Query) -> Option<String> {
         ast::SelectItem::ExprWithAlias { alias, .. } => Some(normalize_ident(alias)),
         ast::SelectItem::UnnamedExpr(expr) => match expr {
             Expr::Identifier(ident) => Some(normalize_ident(ident)),
+            Expr::CompoundIdentifier(parts) if parts.len() == 2 => Some(normalize_ident(&parts[1])),
             Expr::Function(func) => {
-                // Synthesize name matching aggregate handler convention:
-                // AVG(amount) → "avg_amount", COUNT(*) → "count_all"
                 let func_name = func
                     .name
                     .0
@@ -380,19 +384,38 @@ fn extract_scalar_column(query: &ast::Query) -> Option<String> {
                             ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
                                 Expr::Identifier(ident),
                             )) => Some(normalize_ident(ident)),
+                            ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
+                                Expr::CompoundIdentifier(parts),
+                            )) if parts.len() == 2 => Some(normalize_ident(&parts[1])),
                             ast::FunctionArg::Unnamed(
                                 ast::FunctionArgExpr::Wildcard
                                 | ast::FunctionArgExpr::QualifiedWildcard(_),
                             ) => Some("all".to_string()),
                             _ => None,
                         })
-                        .unwrap_or_else(|| "all".to_string()),
-                    _ => "all".to_string(),
+                        .unwrap_or_else(|| "*".to_string()),
+                    _ => "*".to_string(),
                 };
-                Some(format!("{func_name}_{arg}"))
+                Some(canonical_aggregate_key(&func_name, &arg))
             }
             _ => None,
         },
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_scalar_column;
+    use crate::parser::statement::parse_sql;
+    use sqlparser::ast::Statement;
+
+    #[test]
+    fn unaliased_scalar_aggregate_uses_canonical_aggregate_key() {
+        let statements = parse_sql("SELECT AVG(amount) FROM orders").unwrap();
+        let Statement::Query(query) = &statements[0] else {
+            panic!("expected query");
+        };
+        assert_eq!(extract_scalar_column(query), Some("avg(amount)".into()));
     }
 }
