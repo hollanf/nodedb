@@ -10,6 +10,7 @@ pub mod raw_scan;
 use crate::bridge::envelope::{Payload, Response, Status};
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
+use nodedb_query::agg_key::canonical_agg_key;
 
 /// Parameters for a timeseries scan operation.
 pub(in crate::data::executor) struct TimeseriesScanParams<'a> {
@@ -139,8 +140,9 @@ impl CoreLoop {
                 total += entry.meta.row_count;
             }
         }
+        let count_key = canonical_agg_key("count", "*");
         let row = rmpv::Value::Map(vec![(
-            rmpv::Value::String("count_all".into()),
+            rmpv::Value::String(count_key.into()),
             rmpv::Value::Integer((total as i64).into()),
         )]);
         let array = rmpv::Value::Array(vec![row]);

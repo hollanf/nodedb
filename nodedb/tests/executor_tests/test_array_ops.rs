@@ -193,6 +193,7 @@ fn array_agg_aggregate() {
             aggregates: vec![nodedb::bridge::physical_plan::AggregateSpec {
                 function: "array_agg".into(),
                 alias: "array_agg_color".into(),
+                user_alias: None,
                 field: "color".into(),
                 expr: None,
             }],

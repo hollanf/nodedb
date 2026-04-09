@@ -1,3 +1,4 @@
+pub mod agg_key;
 pub mod cast;
 pub mod chunk_text;
 pub mod expr;

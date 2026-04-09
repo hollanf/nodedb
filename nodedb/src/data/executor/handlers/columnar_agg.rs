@@ -16,6 +16,7 @@
 use std::collections::HashMap;
 
 use crate::engine::timeseries::columnar_memtable::{ColumnData, ColumnType, ColumnarMemtable};
+use nodedb_query::agg_key::canonical_agg_key;
 
 use super::columnar_filter;
 
@@ -454,7 +455,7 @@ pub(super) fn try_columnar_aggregate(
 
         // Emit aggregate values.
         for (agg_idx, (op, field)) in aggregates.iter().enumerate() {
-            let agg_key = format!("{op}_{field}").replace('*', "all");
+            let agg_key = canonical_agg_key(op, field);
             let accum = &accums[agg_idx];
             let val = match op.as_str() {
                 "count" => serde_json::json!(accum.count),
@@ -563,7 +564,7 @@ mod tests {
 
         assert_eq!(result.rows.len(), 2); // A and AAAA
         for row in &result.rows {
-            let count = row.get("count_all").and_then(|v| v.as_u64()).unwrap();
+            let count = row.get("count(*)").and_then(|v| v.as_u64()).unwrap();
             assert_eq!(count, 50); // 100 rows / 2 types
         }
     }
@@ -606,7 +607,7 @@ mod tests {
         // Only rows with value > 5000 (i >= 51, value >= 5100)
         assert!(!result.rows.is_empty());
         for row in &result.rows {
-            let avg = row.get("avg_value").and_then(|v| v.as_f64()).unwrap();
+            let avg = row.get("avg(value)").and_then(|v| v.as_f64()).unwrap();
             assert!(avg > 5000.0);
         }
     }
@@ -626,7 +627,7 @@ mod tests {
 
         assert_eq!(result.rows.len(), 1);
         let count = result.rows[0]
-            .get("count_all")
+            .get("count(*)")
             .and_then(|v| v.as_u64())
             .unwrap();
         assert_eq!(count, 100);

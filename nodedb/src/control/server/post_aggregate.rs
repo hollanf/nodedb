@@ -2,87 +2,201 @@
 //!
 //! When a query has `GROUP BY` over a `JOIN` result, the Data Plane cores
 //! return raw join rows. This module aggregates them in the Control Plane.
+//! All processing stays in msgpack — no JSON intermediary.
 
 use std::collections::HashMap;
 
-use sonic_rs;
-
 use crate::bridge::envelope::{Payload, Response};
+use nodedb_query::agg_key::canonical_agg_key;
 
 /// Apply GROUP BY + aggregate functions on a join response payload.
 ///
-/// The input response payload is a JSON array of objects (merged from all cores).
-/// Returns a new response with aggregated results.
+/// The input response payload is a msgpack array of maps (merged from all cores).
+/// Returns a new response with aggregated results (also msgpack).
 pub fn apply_post_aggregation(
     resp: Response,
     group_by: &[String],
     aggregates: &[(String, String)],
 ) -> crate::Result<Response> {
     let payload_bytes = resp.payload.as_bytes();
-    let json_text = std::str::from_utf8(payload_bytes).map_err(|e| crate::Error::PlanError {
-        detail: format!("post-aggregation: invalid UTF-8: {e}"),
-    })?;
 
-    let rows: Vec<serde_json::Value> =
-        sonic_rs::from_str(json_text).map_err(|e| crate::Error::PlanError {
-            detail: format!("post-aggregation: JSON parse error: {e}"),
-        })?;
+    // Parse the msgpack array of row-maps.
+    let rows = parse_msgpack_rows(payload_bytes)?;
 
     // Group rows by the GROUP BY columns.
-    // Join results use "collection.field" keys, but GROUP BY may use bare field names.
-    let mut groups: HashMap<Vec<String>, Vec<&serde_json::Value>> = HashMap::new();
+    let mut groups: HashMap<Vec<String>, Vec<&[u8]>> = HashMap::new();
     for row in &rows {
         let key: Vec<String> = group_by
             .iter()
-            .map(|col| {
-                resolve_field(row, col)
-                    .map(|v| match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    })
-                    .unwrap_or_default()
-            })
+            .map(|col| extract_field_str(row, col).unwrap_or_default())
             .collect();
         groups.entry(key).or_default().push(row);
     }
 
-    // Compute aggregates per group.
-    let mut result = Vec::with_capacity(groups.len());
+    // Build result as msgpack array.
+    use nodedb_query::msgpack_scan::writer;
+    let mut buf = Vec::with_capacity(payload_bytes.len());
+    writer::write_array_header(&mut buf, groups.len());
+
     for (key, group_rows) in &groups {
-        let mut obj = serde_json::Map::new();
+        let field_count = group_by.len() + aggregates.len();
+        writer::write_map_header(&mut buf, field_count);
 
-        // Add GROUP BY columns.
+        // Write GROUP BY columns.
         for (i, col) in group_by.iter().enumerate() {
-            obj.insert(col.clone(), serde_json::Value::String(key[i].clone()));
+            writer::write_kv_str(&mut buf, col, &key[i]);
         }
 
-        // Compute each aggregate.
+        // Compute and write each aggregate.
         for (op, field) in aggregates {
-            let agg_key = format!("{op}({field})");
+            let agg_key = canonical_agg_key(op, field);
             let value = compute_aggregate(op, field, group_rows);
-            obj.insert(agg_key, value);
+            match value {
+                AggValue::Int(n) => writer::write_kv_i64(&mut buf, &agg_key, n),
+                AggValue::Float(f) => writer::write_kv_f64(&mut buf, &agg_key, f),
+                AggValue::Null => writer::write_kv_null(&mut buf, &agg_key),
+            }
         }
-
-        result.push(serde_json::Value::Object(obj));
     }
 
-    let output = sonic_rs::to_vec(&result).map_err(|e| crate::Error::PlanError {
-        detail: format!("post-aggregation: serialize error: {e}"),
-    })?;
-
     Ok(Response {
-        payload: Payload::from_vec(output),
+        payload: Payload::from_vec(buf),
         ..resp
     })
 }
 
-/// Compute a single aggregate over a group of rows.
-fn compute_aggregate(op: &str, field: &str, rows: &[&serde_json::Value]) -> serde_json::Value {
+enum AggValue {
+    Int(i64),
+    Float(f64),
+    Null,
+}
+
+/// Parse a msgpack array payload into individual row slices.
+fn parse_msgpack_rows(bytes: &[u8]) -> crate::Result<Vec<&[u8]>> {
+    use nodedb_query::msgpack_scan::reader;
+
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let (count, mut pos) =
+        reader::array_header(bytes, 0).ok_or_else(|| crate::Error::PlanError {
+            detail: "post-aggregation: invalid msgpack array header".into(),
+        })?;
+
+    let mut rows = Vec::with_capacity(count);
+    for _ in 0..count {
+        let start = pos;
+        pos = reader::skip_value(bytes, pos).ok_or_else(|| crate::Error::PlanError {
+            detail: "post-aggregation: truncated msgpack row".into(),
+        })?;
+        rows.push(&bytes[start..pos]);
+    }
+    Ok(rows)
+}
+
+/// Extract a field value as string from a msgpack map row.
+/// Handles "collection.field" suffix matching.
+fn extract_field_str(row: &[u8], field: &str) -> Option<String> {
+    use nodedb_query::msgpack_scan::reader;
+
+    // Try exact match first.
+    if let Some((start, end)) = nodedb_query::msgpack_scan::extract_field(row, 0, field) {
+        return Some(read_value_as_string(row, start, end));
+    }
+
+    // Suffix match: iterate map keys looking for "*.{field}".
+    let suffix = format!(".{field}");
+    let (count, mut pos) = reader::map_header(row, 0)?;
+    for _ in 0..count {
+        let key = reader::read_str(row, pos)?;
+        let key_end = reader::skip_value(row, pos)?;
+        let val_end = reader::skip_value(row, key_end)?;
+        if key.ends_with(&suffix) {
+            return Some(read_value_as_string(row, key_end, val_end));
+        }
+        pos = val_end;
+    }
+    None
+}
+
+/// Extract a numeric field value from a msgpack map row.
+fn extract_number(row: &[u8], field: &str) -> Option<f64> {
+    use nodedb_query::msgpack_scan::reader;
+
+    let try_field = |name: &str| -> Option<f64> {
+        let (start, _end) = nodedb_query::msgpack_scan::extract_field(row, 0, name)?;
+        if let Some(i) = reader::read_i64(row, start) {
+            return Some(i as f64);
+        }
+        if let Some(f) = reader::read_f64(row, start) {
+            return Some(f);
+        }
+        // Try parsing string as number.
+        reader::read_str(row, start).and_then(|s| s.parse().ok())
+    };
+
+    if field == "*" {
+        return Some(1.0);
+    }
+
+    // Exact match.
+    if let Some(v) = try_field(field) {
+        return Some(v);
+    }
+
+    // Suffix match.
+    let suffix = format!(".{field}");
+    let (count, mut pos) = nodedb_query::msgpack_scan::reader::map_header(row, 0)?;
+    for _ in 0..count {
+        let key = nodedb_query::msgpack_scan::reader::read_str(row, pos)?;
+        let key_end = nodedb_query::msgpack_scan::reader::skip_value(row, pos)?;
+        let val_end = nodedb_query::msgpack_scan::reader::skip_value(row, key_end)?;
+        if key.ends_with(&suffix) {
+            if let Some(i) = nodedb_query::msgpack_scan::reader::read_i64(row, key_end) {
+                return Some(i as f64);
+            }
+            if let Some(f) = nodedb_query::msgpack_scan::reader::read_f64(row, key_end) {
+                return Some(f);
+            }
+            if let Some(s) = nodedb_query::msgpack_scan::reader::read_str(row, key_end) {
+                return s.parse().ok();
+            }
+        }
+        pos = val_end;
+    }
+    None
+}
+
+/// Read a msgpack value at [start..end) as a display string.
+fn read_value_as_string(bytes: &[u8], start: usize, end: usize) -> String {
+    use nodedb_query::msgpack_scan::reader;
+    if let Some(s) = reader::read_str(bytes, start) {
+        return s.to_string();
+    }
+    if let Some(i) = reader::read_i64(bytes, start) {
+        return i.to_string();
+    }
+    if let Some(f) = reader::read_f64(bytes, start) {
+        return f.to_string();
+    }
+    if let Some(b) = reader::read_bool(bytes, start) {
+        return b.to_string();
+    }
+    if reader::read_null(bytes, start) {
+        return String::new();
+    }
+    // Complex value — transcode slice to JSON string.
+    nodedb_types::msgpack_to_json_string(&bytes[start..end]).unwrap_or_default()
+}
+
+/// Compute a single aggregate over a group of msgpack rows.
+fn compute_aggregate(op: &str, field: &str, rows: &[&[u8]]) -> AggValue {
     match op {
-        "count" => serde_json::Value::Number(serde_json::Number::from(rows.len() as u64)),
+        "count" => AggValue::Int(rows.len() as i64),
         "sum" => {
             let sum: f64 = rows.iter().filter_map(|r| extract_number(r, field)).sum();
-            serde_json::json!(sum)
+            AggValue::Float(sum)
         }
         "avg" => {
             let values: Vec<f64> = rows
@@ -90,56 +204,23 @@ fn compute_aggregate(op: &str, field: &str, rows: &[&serde_json::Value]) -> serd
                 .filter_map(|r| extract_number(r, field))
                 .collect();
             if values.is_empty() {
-                serde_json::Value::Null
+                AggValue::Null
             } else {
-                serde_json::json!(values.iter().sum::<f64>() / values.len() as f64)
+                AggValue::Float(values.iter().sum::<f64>() / values.len() as f64)
             }
         }
         "min" => rows
             .iter()
             .filter_map(|r| extract_number(r, field))
             .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|v| serde_json::json!(v))
-            .unwrap_or(serde_json::Value::Null),
+            .map(AggValue::Float)
+            .unwrap_or(AggValue::Null),
         "max" => rows
             .iter()
             .filter_map(|r| extract_number(r, field))
             .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|v| serde_json::json!(v))
-            .unwrap_or(serde_json::Value::Null),
-        _ => serde_json::Value::Null,
+            .map(AggValue::Float)
+            .unwrap_or(AggValue::Null),
+        _ => AggValue::Null,
     }
-}
-
-/// Extract a numeric value from a JSON object field.
-fn extract_number(row: &serde_json::Value, field: &str) -> Option<f64> {
-    if field == "*" {
-        return Some(1.0);
-    }
-    resolve_field(row, field).and_then(|v| match v {
-        serde_json::Value::Number(n) => n.as_f64(),
-        serde_json::Value::String(s) => s.parse().ok(),
-        _ => None,
-    })
-}
-
-/// Resolve a field name in a JSON row, handling "collection.field" prefixed keys.
-///
-/// Join results use keys like "users.name" but SQL refers to fields as just "name"
-/// or with alias "u.name". This tries exact match first, then suffix match.
-fn resolve_field<'a>(row: &'a serde_json::Value, field: &str) -> Option<&'a serde_json::Value> {
-    // Exact match first.
-    if let Some(v) = row.get(field) {
-        return Some(v);
-    }
-    // Suffix match: look for any key ending with ".{field}".
-    let suffix = format!(".{field}");
-    if let serde_json::Value::Object(map) = row {
-        for (k, v) in map {
-            if k.ends_with(&suffix) {
-                return Some(v);
-            }
-        }
-    }
-    None
 }

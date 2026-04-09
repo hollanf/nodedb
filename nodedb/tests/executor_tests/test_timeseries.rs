@@ -163,7 +163,7 @@ fn count_star_sees_flushed_partitions() {
         0,
     );
     assert_eq!(results.len(), 1, "expected single aggregate row");
-    let count = results[0]["count_all"].as_u64().unwrap_or(0);
+    let count = results[0]["count(*)"].as_u64().unwrap_or(0);
     assert_eq!(
         count, total_accepted,
         "COUNT(*) must see every accepted row — found {count}, expected {total_accepted}. \
@@ -192,7 +192,7 @@ fn group_by_sees_both_memtable_and_partitions() {
     );
     let total: u64 = results
         .iter()
-        .map(|r| r["count_all"].as_u64().unwrap_or(0))
+        .map(|r| r["count(*)"].as_u64().unwrap_or(0))
         .sum();
     assert_eq!(total, 50_000, "GROUP BY total should match ingested rows");
     assert_eq!(results.len(), 4, "should have 4 qtypes: A, AAAA, MX, CNAME");
@@ -224,7 +224,7 @@ fn time_bucket_aggregation_does_not_panic() {
     );
     let total: u64 = results
         .iter()
-        .map(|r| r["count_all"].as_u64().unwrap_or(0))
+        .map(|r| r["count(*)"].as_u64().unwrap_or(0))
         .sum();
     assert_eq!(total, 1_000, "bucket counts should sum to ingested rows");
 }
@@ -273,7 +273,7 @@ fn where_predicate_filters_count() {
         vec![("count".into(), "*".into())],
         0,
     );
-    let total = all[0]["count_all"].as_u64().unwrap();
+    let total = all[0]["count(*)"].as_u64().unwrap();
     assert_eq!(total, 1_000);
 
     // Filtered: qtype = 'A' → 25% of rows (4 qtypes, round-robin).
@@ -290,7 +290,7 @@ fn where_predicate_filters_count() {
             clauses: vec![],
         }],
     );
-    let filtered_count = filtered[0]["count_all"].as_u64().unwrap();
+    let filtered_count = filtered[0]["count(*)"].as_u64().unwrap();
     assert_eq!(filtered_count, 250, "WHERE qtype='A' should return 25%");
 }
 
@@ -498,7 +498,7 @@ fn catchup_replays_gaps_in_lsn_coverage() {
         0,
     );
     assert_eq!(
-        results[0]["count_all"], 3,
+        results[0]["count(*)"], 3,
         "should see 3 rows from live ingest"
     );
 
@@ -535,7 +535,7 @@ fn catchup_replays_gaps_in_lsn_coverage() {
         0,
     );
     assert_eq!(
-        results[0]["count_all"], 5,
+        results[0]["count(*)"], 5,
         "all 5 rows must be visible after catch-up fills the gaps"
     );
 }
@@ -577,7 +577,7 @@ fn multi_batch_ingest_survives_memtable_flush() {
         vec![("count".into(), "*".into())],
         0,
     );
-    let count = results[0]["count_all"].as_u64().unwrap();
+    let count = results[0]["count(*)"].as_u64().unwrap();
     assert_eq!(
         count, total as u64,
         "all {total} rows must be visible across memtable + partitions"
@@ -608,7 +608,7 @@ fn idle_flush_triggers_after_inactivity() {
         vec![("count".into(), "*".into())],
         0,
     );
-    assert_eq!(results[0]["count_all"], 5);
+    assert_eq!(results[0]["count(*)"], 5);
 
     // Simulate idle time: set last_ts_ingest to 10 seconds ago.
     ctx.core.set_last_ts_ingest(Some(
@@ -626,7 +626,7 @@ fn idle_flush_triggers_after_inactivity() {
         vec![("count".into(), "*".into())],
         0,
     );
-    assert_eq!(results[0]["count_all"], 5);
+    assert_eq!(results[0]["count(*)"], 5);
 
     // Verify memtable was flushed by ingesting more and checking partition count.
     // After idle flush, the partition registry should have at least one entry.
@@ -646,7 +646,7 @@ fn idle_flush_triggers_after_inactivity() {
         0,
     );
     assert_eq!(
-        results[0]["count_all"], 8,
+        results[0]["count(*)"], 8,
         "should see all 8 rows (5 from partition + 3 from memtable)"
     );
 }

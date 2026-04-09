@@ -1,5 +1,7 @@
 //! MessagePack encoding for grouped timeseries aggregate results.
 
+use nodedb_query::agg_key::canonical_agg_key;
+
 /// Serialize GroupedAggResult directly to MessagePack bytes.
 ///
 /// Avoids building `Vec<serde_json::Value>` (2M allocations for 2M groups).
@@ -22,7 +24,7 @@ pub(in crate::data::executor) fn encode_grouped_results(
     // Pre-compute aggregate key names once (not per group).
     let agg_keys: Vec<String> = aggregates
         .iter()
-        .map(|(op, field)| format!("{op}_{field}").replace('*', "all"))
+        .map(|(op, field)| canonical_agg_key(op, field))
         .collect();
 
     // Fields per row: group_by columns + aggregates + optional bucket.

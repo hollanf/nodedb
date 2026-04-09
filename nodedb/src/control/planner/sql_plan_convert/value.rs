@@ -483,7 +483,8 @@ mod tests {
         let spec = agg_expr_to_spec(&agg);
 
         assert_eq!(spec.function, "sum");
-        assert_eq!(spec.alias, "tools_count");
+        assert_eq!(spec.alias, "sum(*)");
+        assert_eq!(spec.user_alias.as_deref(), Some("tools_count"));
         assert_eq!(spec.field, "*");
         assert!(matches!(
             spec.expr,

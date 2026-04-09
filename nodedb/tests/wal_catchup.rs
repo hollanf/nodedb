@@ -111,7 +111,7 @@ impl TestStack {
             .await;
         resp.as_array()
             .and_then(|a| a.first())
-            .and_then(|r| r["count_all"].as_u64())
+            .and_then(|r| r["count(*)"].as_u64())
             .unwrap_or(0)
     }
 
@@ -509,7 +509,7 @@ fn startup_replay_recovers_all_wal_data() {
     let result: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap_or_default();
     let count = result
         .first()
-        .and_then(|r| r["count_all"].as_u64())
+        .and_then(|r| r["count(*)"].as_u64())
         .unwrap_or(0);
 
     assert_eq!(

@@ -8,6 +8,7 @@ use crate::bridge::physical_plan::AggregateSpec;
 use crate::bridge::scan_filter::ScanFilter;
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
+use nodedb_query::agg_key::canonical_agg_key;
 use nodedb_query::msgpack_scan;
 
 /// Build a cache key for an aggregate query.
@@ -103,6 +104,32 @@ fn legacy_aggregate_pairs(aggregates: &[AggregateSpec]) -> Option<Vec<(String, S
         .collect()
 }
 
+fn apply_user_aliases_to_rows(rows: &mut [serde_json::Value], aggregates: &[AggregateSpec]) {
+    let renames: Vec<(&str, &str)> = aggregates
+        .iter()
+        .filter_map(|agg| {
+            agg.user_alias
+                .as_deref()
+                .filter(|alias| *alias != agg.alias)
+                .map(|alias| (agg.alias.as_str(), alias))
+        })
+        .collect();
+
+    if renames.is_empty() {
+        return;
+    }
+
+    for row in rows {
+        if let Some(obj) = row.as_object_mut() {
+            for (from, to) in &renames {
+                if let Some(value) = obj.remove(*from) {
+                    obj.insert((*to).to_string(), value);
+                }
+            }
+        }
+    }
+}
+
 impl CoreLoop {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::data::executor) fn execute_aggregate(
@@ -158,11 +185,15 @@ impl CoreLoop {
                 // Build result rows as raw msgpack — no serde_json::Value.
                 let mut payload_buf = Vec::with_capacity(groups.len() * 64);
                 let row_count = groups.len().min(limit);
+                let count_key = aggregates[0]
+                    .user_alias
+                    .clone()
+                    .unwrap_or_else(|| canonical_agg_key("count", "*"));
                 msgpack_scan::write_array_header(&mut payload_buf, row_count);
                 for (value, count) in groups.into_iter().take(limit) {
                     msgpack_scan::write_map_header(&mut payload_buf, 2);
                     msgpack_scan::write_kv_str(&mut payload_buf, field, &value);
-                    msgpack_scan::write_kv_i64(&mut payload_buf, "count_all", count as i64);
+                    msgpack_scan::write_kv_i64(&mut payload_buf, &count_key, count as i64);
                 }
                 let results_payload = payload_buf;
                 return match Ok::<Vec<u8>, crate::Error>(results_payload) {
@@ -235,6 +266,7 @@ impl CoreLoop {
                     }
                 }
 
+                apply_user_aliases_to_rows(&mut agg_result.rows, aggregates);
                 agg_result.rows.truncate(limit);
 
                 return match super::super::response_codec::encode_json_vec(&agg_result.rows) {
@@ -368,7 +400,12 @@ impl CoreLoop {
                                 let json_val: serde_json::Value = val.into();
                                 sub_row.insert(agg.alias.clone(), json_val);
                             }
-                            sub_results.push(serde_json::Value::Object(sub_row));
+                            let mut sub_value = serde_json::Value::Object(sub_row);
+                            apply_user_aliases_to_rows(
+                                std::slice::from_mut(&mut sub_value),
+                                sub_aggregates,
+                            );
+                            sub_results.push(sub_value);
                         }
                         row.insert(
                             "sub_groups".to_string(),
@@ -392,6 +429,7 @@ impl CoreLoop {
                     }
                 }
 
+                apply_user_aliases_to_rows(&mut results, aggregates);
                 results.truncate(limit);
 
                 match super::super::response_codec::encode_json_vec(&results) {

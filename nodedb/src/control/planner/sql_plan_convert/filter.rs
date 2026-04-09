@@ -136,7 +136,7 @@ fn sql_expr_to_scan_filters(expr: &SqlExpr) -> Vec<nodedb_query::scan_filter::Sc
             let field = match left.as_ref() {
                 SqlExpr::Column { name, .. } => name.clone(),
                 SqlExpr::Function { name, args, .. } => {
-                    // HAVING: COUNT(*) > 2 → field = "count_all"
+                    // HAVING: COUNT(*) > 2 → field = "count(*)"
                     let arg = args
                         .first()
                         .map(|a| match a {
@@ -145,7 +145,7 @@ fn sql_expr_to_scan_filters(expr: &SqlExpr) -> Vec<nodedb_query::scan_filter::Sc
                             _ => "*".to_string(),
                         })
                         .unwrap_or_else(|| "*".to_string());
-                    format!("{name}_{arg}").replace('*', "all")
+                    nodedb_query::agg_key::canonical_agg_key(name, &arg)
                 }
                 _ => return vec![match_all()],
             };

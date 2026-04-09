@@ -173,9 +173,18 @@ pub(super) fn agg_expr_to_spec(a: &AggregateExpr) -> AggregateSpec {
         })
         .unwrap_or_else(|| ("*".into(), None));
 
+    let function = aggregate_function_name(a);
+    let canonical = nodedb_query::agg_key::canonical_agg_key(&function, &field);
+    let user_alias = if a.alias.eq_ignore_ascii_case(&canonical) {
+        None
+    } else {
+        Some(a.alias.clone())
+    };
+
     AggregateSpec {
-        function: aggregate_function_name(a),
-        alias: a.alias.clone(),
+        function,
+        alias: canonical,
+        user_alias,
         field,
         expr,
     }

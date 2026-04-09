@@ -4,7 +4,10 @@
 #[derive(Debug, Clone)]
 pub struct AggregateSpec {
     pub function: String,
+    /// Internal aggregate key used by HAVING and downstream references.
     pub alias: String,
+    /// Optional user-facing SQL alias for final output naming.
+    pub user_alias: Option<String>,
     /// Field name for simple field-based aggregates. `"*"` is used for COUNT(*).
     pub field: String,
     /// Optional expression to evaluate per-document before aggregating.
