@@ -390,6 +390,16 @@ fn decode_variable_value(col_type: &ColumnType, raw: &[u8]) -> Value {
                 Value::String(std::str::from_utf8(raw).unwrap_or_default().to_string())
             }
         }
+        ColumnType::Json => {
+            // Deserialize MessagePack bytes back to Value.
+            match nodedb_types::value_from_msgpack(raw) {
+                Ok(val) => val,
+                Err(e) => {
+                    tracing::warn!(len = raw.len(), error = %e, "corrupted JSON msgpack in tuple");
+                    Value::Null
+                }
+            }
+        }
         _ => Value::Null,
     }
 }

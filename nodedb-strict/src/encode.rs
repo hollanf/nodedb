@@ -247,6 +247,12 @@ fn encode_variable(var_data: &mut Vec<u8>, col_type: &ColumnType, value: &Value)
         (ColumnType::Geometry, Value::String(s)) => {
             var_data.extend_from_slice(s.as_bytes());
         }
+        (ColumnType::Json, value) => {
+            // Serialize any Value as MessagePack.
+            if let Ok(bytes) = nodedb_types::value_to_msgpack(value) {
+                var_data.extend_from_slice(&bytes);
+            }
+        }
         _ => {}
     }
 }
@@ -381,6 +387,48 @@ mod tests {
         let tuple = encoder.encode(&[Value::DateTime(dt)]).unwrap();
         let micros = i64::from_le_bytes(tuple[3..11].try_into().unwrap());
         assert_eq!(micros, 1_700_000_000_000_000);
+    }
+
+    #[test]
+    fn encode_decode_json_column() {
+        let schema = StrictSchema::new(vec![
+            ColumnDef::required("id", ColumnType::Int64).with_primary_key(),
+            ColumnDef::nullable("metadata", ColumnType::Json),
+        ])
+        .unwrap();
+        let encoder = TupleEncoder::new(&schema);
+
+        let metadata = Value::Object(std::collections::HashMap::from([
+            ("source".to_string(), Value::String("web".to_string())),
+            ("priority".to_string(), Value::Integer(3)),
+        ]));
+        let values = vec![Value::Integer(1), metadata.clone()];
+        let tuple = encoder.encode(&values).unwrap();
+
+        // Tuple must be longer than just the header + fixed section.
+        // Header: 2 (version) + 1 (bitmap) = 3. Fixed: 8 (Int64). Offset table: 8 (2 entries × u32).
+        // Variable data must be non-empty (MessagePack of the object).
+        let min_size = 3 + 8 + 8;
+        assert!(tuple.len() > min_size, "tuple should contain variable data");
+
+        // Decode and verify the value roundtrips correctly.
+        let decoder = crate::decode::TupleDecoder::new(&schema);
+        let decoded = decoder.extract_all(&tuple).unwrap();
+        assert_eq!(decoded[0], Value::Integer(1));
+        assert_eq!(decoded[1], metadata);
+    }
+
+    #[test]
+    fn encode_json_null() {
+        let schema = StrictSchema::new(vec![
+            ColumnDef::required("id", ColumnType::Int64).with_primary_key(),
+            ColumnDef::nullable("data", ColumnType::Json),
+        ])
+        .unwrap();
+        let encoder = TupleEncoder::new(&schema);
+        let tuple = encoder.encode(&[Value::Integer(1), Value::Null]).unwrap();
+        // Null bitmap byte (index 2): bit 1 (column 1) should be set → 0b00000010 = 2.
+        assert_eq!(tuple[2] & 0b10, 0b10);
     }
 
     #[test]
