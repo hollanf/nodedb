@@ -53,10 +53,38 @@ impl CoreLoop {
         // Collect source IDs for orphan detection.
         let source_ids: HashSet<&str> = source_docs.iter().map(|(id, _)| id.as_str()).collect();
 
+        // Check if target view has strict schema — validate/re-encode if so.
+        let target_config_key = format!("{tid}:{view_name}");
+        let target_strict_schema = self.doc_configs.get(&target_config_key).and_then(|c| {
+            if let crate::bridge::physical_plan::StorageMode::Strict { ref schema } = c.storage_mode
+            {
+                Some(schema.clone())
+            } else {
+                None
+            }
+        });
+
         // 2. Write each source document to the target collection.
         let mut written = 0u64;
         for (doc_id, doc_bytes) in &source_docs {
-            if let Err(e) = self.sparse.put(tid, view_name, doc_id, doc_bytes) {
+            // For strict targets, re-encode through Binary Tuple validation.
+            let stored = if let Some(ref schema) = target_strict_schema {
+                match super::super::strict_format::bytes_to_binary_tuple(doc_bytes, schema) {
+                    Ok(tuple) => tuple,
+                    Err(e) => {
+                        tracing::warn!(
+                            view = view_name,
+                            doc_id,
+                            error = %e,
+                            "skipping document that fails strict schema validation"
+                        );
+                        continue;
+                    }
+                }
+            } else {
+                doc_bytes.clone()
+            };
+            if let Err(e) = self.sparse.put(tid, view_name, doc_id, &stored) {
                 return self.response_error(
                     task,
                     ErrorCode::Internal {

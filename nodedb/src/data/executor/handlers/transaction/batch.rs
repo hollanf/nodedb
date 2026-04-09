@@ -126,30 +126,30 @@ impl CoreLoop {
                     document_id,
                     old_value,
                 } => Some(DeferredWrite {
-                        collection,
-                        op: if old_value.is_some() {
-                            crate::event::WriteOp::Update
-                        } else {
-                            crate::event::WriteOp::Insert
-                        },
-                        row_id: document_id,
-                        new_value: None,
-                        old_value,
-                    }),
-                    UndoEntry::DeleteDocument {
-                        collection,
-                        document_id,
-                        old_value,
-                    } => Some(DeferredWrite {
-                        collection,
-                        op: crate::event::WriteOp::Delete,
-                        row_id: document_id,
-                        new_value: None,
-                        old_value: Some(old_value),
-                    }),
-                    _ => None, // Vector and edge undo entries don't trigger deferred triggers.
-                })
-                .collect();
+                    collection,
+                    op: if old_value.is_some() {
+                        crate::event::WriteOp::Update
+                    } else {
+                        crate::event::WriteOp::Insert
+                    },
+                    row_id: document_id,
+                    new_value: None,
+                    old_value,
+                }),
+                UndoEntry::DeleteDocument {
+                    collection,
+                    document_id,
+                    old_value,
+                } => Some(DeferredWrite {
+                    collection,
+                    op: crate::event::WriteOp::Delete,
+                    row_id: document_id,
+                    new_value: None,
+                    old_value: Some(old_value),
+                }),
+                _ => None, // Vector and edge undo entries don't trigger deferred triggers.
+            })
+            .collect();
 
         if !deferred_writes.is_empty() {
             self.emit_deferred_events(

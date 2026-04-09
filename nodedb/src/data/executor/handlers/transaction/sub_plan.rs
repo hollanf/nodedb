@@ -275,6 +275,23 @@ impl CoreLoop {
             }
         }
 
+        // Encode value for storage — strict collections go through Binary Tuple encoding
+        // (with unknown-field rejection + type coercion), schemaless through canonicalize.
+        let encode_for_storage = |bytes: &[u8]| -> Result<Vec<u8>, ErrorCode> {
+            if let Some(config) = self.doc_configs.get(&config_key)
+                && let crate::bridge::physical_plan::StorageMode::Strict { ref schema } =
+                    config.storage_mode
+            {
+                super::super::super::strict_format::bytes_to_binary_tuple(bytes, schema).map_err(
+                    |e| ErrorCode::Internal {
+                        detail: format!("strict encode: {e}"),
+                    },
+                )
+            } else {
+                Ok(super::super::super::doc_format::canonicalize_document_for_storage(bytes))
+            }
+        };
+
         // Hash chain: on INSERT, compute chain hash and inject _chain_hash field.
         let stored = if old_value.is_none() {
             let config_key_hc = format!("{tid}:{collection}");
@@ -282,18 +299,18 @@ impl CoreLoop {
                 .doc_configs
                 .get(&config_key_hc)
                 .is_some_and(|c| c.enforcement.hash_chain);
-            super::super::super::enforcement::hash_chain::apply_chain_on_insert(
+            match super::super::super::enforcement::hash_chain::apply_chain_on_insert(
                 &mut self.chain_hashes,
                 collection,
                 document_id,
                 value,
                 hash_chain_enabled,
-            )
-            .unwrap_or_else(|| {
-                super::super::super::doc_format::canonicalize_document_for_storage(value)
-            })
+            ) {
+                Some(chained) => chained,
+                None => encode_for_storage(value)?,
+            }
         } else {
-            super::super::super::doc_format::canonicalize_document_for_storage(value)
+            encode_for_storage(value)?
         };
         match self.sparse.put(tid, collection, document_id, &stored) {
             Ok(()) => {
