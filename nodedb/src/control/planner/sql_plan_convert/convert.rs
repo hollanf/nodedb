@@ -42,6 +42,7 @@ pub(super) fn convert_one(
 
         SqlPlan::Scan {
             collection,
+            alias: _,
             engine,
             filters,
             projection,
@@ -65,6 +66,7 @@ pub(super) fn convert_one(
 
         SqlPlan::PointGet {
             collection,
+            alias: _,
             engine,
             key_column: _,
             key_value,

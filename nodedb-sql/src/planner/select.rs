@@ -179,6 +179,7 @@ fn plan_select(
     // 9. Build base scan plan.
     let mut plan = SqlPlan::Scan {
         collection: table.name.clone(),
+        alias: table.alias.clone(),
         engine: table.info.engine,
         filters,
         projection,
@@ -453,6 +454,7 @@ fn apply_order_by(
     match plan {
         SqlPlan::Scan {
             collection,
+            alias,
             engine,
             filters,
             projection,
@@ -463,6 +465,7 @@ fn apply_order_by(
             ..
         } => Ok(SqlPlan::Scan {
             collection: collection.clone(),
+            alias: alias.clone(),
             engine: *engine,
             filters: filters.clone(),
             projection: projection.clone(),
@@ -682,8 +685,8 @@ pub fn convert_projection(items: &[ast::SelectItem]) -> Result<Vec<Projection>> 
             ast::SelectItem::UnnamedExpr(expr) => {
                 let sql_expr = convert_expr(expr)?;
                 match &sql_expr {
-                    SqlExpr::Column { name, .. } => {
-                        result.push(Projection::Column(name.clone()));
+                    SqlExpr::Column { table, name } => {
+                        result.push(Projection::Column(qualified_name(table.as_deref(), name)));
                     }
                     SqlExpr::Wildcard => {
                         result.push(Projection::Star);
@@ -718,6 +721,11 @@ pub fn convert_projection(items: &[ast::SelectItem]) -> Result<Vec<Projection>> 
         }
     }
     Ok(result)
+}
+
+/// Build a qualified column reference (`table.name` or just `name`).
+pub fn qualified_name(table: Option<&str>, name: &str) -> String {
+    table.map_or_else(|| name.to_string(), |table| format!("{table}.{name}"))
 }
 
 /// Convert a WHERE expression into a list of Filter.

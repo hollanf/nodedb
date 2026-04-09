@@ -38,6 +38,7 @@ pub fn plan_aggregate(
 
     let base_scan = SqlPlan::Scan {
         collection: table.name.clone(),
+        alias: table.alias.clone(),
         engine: table.info.engine,
         filters: filters.to_vec(),
         projection: Vec::new(),

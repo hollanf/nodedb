@@ -7,6 +7,7 @@ pub fn optimize(plan: SqlPlan) -> SqlPlan {
     match plan {
         SqlPlan::Scan {
             ref collection,
+            ref alias,
             ref engine,
             ref filters,
             ..
@@ -14,6 +15,7 @@ pub fn optimize(plan: SqlPlan) -> SqlPlan {
             if let Some((key_col, key_val)) = extract_pk_equality(&filters[0]) {
                 return SqlPlan::PointGet {
                     collection: collection.clone(),
+                    alias: alias.clone(),
                     engine: *engine,
                     key_column: key_col,
                     key_value: key_val,

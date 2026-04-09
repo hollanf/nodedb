@@ -108,6 +108,7 @@ pub(super) fn inline_cte(plan: &SqlPlan, cte_name: &str, cte_plan: &SqlPlan) -> 
                 // Merge outer constraints onto the CTE plan if it's also a Scan.
                 if let SqlPlan::Scan {
                     collection: inner_col,
+                    alias: inner_alias,
                     engine: inner_eng,
                     filters: inner_f,
                     projection: inner_p,
@@ -122,6 +123,7 @@ pub(super) fn inline_cte(plan: &SqlPlan, cte_name: &str, cte_plan: &SqlPlan) -> 
                     merged_filters.extend(filters.iter().cloned());
                     SqlPlan::Scan {
                         collection: inner_col.clone(),
+                        alias: inner_alias.clone(),
                         engine: *inner_eng,
                         filters: merged_filters,
                         // Outer projection overrides inner; empty means "inherit from CTE".

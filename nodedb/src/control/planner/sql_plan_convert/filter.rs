@@ -1,5 +1,6 @@
 //! Filter serialization: SqlPlan filters → ScanFilter msgpack bytes.
 
+use nodedb_sql::planner::qualified_name;
 use nodedb_sql::types::{Filter, FilterExpr, SqlExpr, SqlValue};
 
 use super::value::sql_value_to_nodedb_value;
@@ -134,13 +135,15 @@ fn sql_expr_to_scan_filters(expr: &SqlExpr) -> Vec<nodedb_query::scan_filter::Sc
         }
         SqlExpr::BinaryOp { left, op, right } => {
             let field = match left.as_ref() {
-                SqlExpr::Column { name, .. } => name.clone(),
+                SqlExpr::Column { table, name } => qualified_name(table.as_deref(), name),
                 SqlExpr::Function { name, args, .. } => {
                     // HAVING: COUNT(*) > 2 → field = "count(*)"
                     let arg = args
                         .first()
                         .map(|a| match a {
-                            SqlExpr::Column { name, .. } => name.clone(),
+                            SqlExpr::Column { table, name } => {
+                                qualified_name(table.as_deref(), name)
+                            }
                             SqlExpr::Literal(nodedb_sql::types::SqlValue::String(s)) => s.clone(),
                             _ => "*".to_string(),
                         })
@@ -151,7 +154,7 @@ fn sql_expr_to_scan_filters(expr: &SqlExpr) -> Vec<nodedb_query::scan_filter::Sc
             };
             let value = match right.as_ref() {
                 SqlExpr::Literal(v) => sql_value_to_nodedb_value(v),
-                SqlExpr::Column { name, .. } => {
+                SqlExpr::Column { table, name } => {
                     // Column-vs-column comparison (e.g. scalar subquery result).
                     let col_op = match op {
                         nodedb_sql::types::BinaryOp::Gt => FilterOp::GtColumn,
@@ -165,7 +168,7 @@ fn sql_expr_to_scan_filters(expr: &SqlExpr) -> Vec<nodedb_query::scan_filter::Sc
                     return vec![ScanFilter {
                         field,
                         op: col_op,
-                        value: nodedb_types::Value::String(name.clone()),
+                        value: nodedb_types::Value::String(qualified_name(table.as_deref(), name)),
                         clauses: Vec::new(),
                     }];
                 }
@@ -189,7 +192,7 @@ fn sql_expr_to_scan_filters(expr: &SqlExpr) -> Vec<nodedb_query::scan_filter::Sc
         }
         SqlExpr::IsNull { expr, negated } => {
             let field = match expr.as_ref() {
-                SqlExpr::Column { name, .. } => name.clone(),
+                SqlExpr::Column { table, name } => qualified_name(table.as_deref(), name),
                 _ => return vec![match_all()],
             };
             let op = if *negated {
@@ -210,7 +213,7 @@ fn sql_expr_to_scan_filters(expr: &SqlExpr) -> Vec<nodedb_query::scan_filter::Sc
             negated,
         } => {
             let field = match expr.as_ref() {
-                SqlExpr::Column { name, .. } => name.clone(),
+                SqlExpr::Column { table, name } => qualified_name(table.as_deref(), name),
                 _ => return vec![match_all()],
             };
             let values: Vec<nodedb_types::Value> = list
@@ -237,7 +240,7 @@ fn sql_expr_to_scan_filters(expr: &SqlExpr) -> Vec<nodedb_query::scan_filter::Sc
             negated,
         } => {
             let field = match expr.as_ref() {
-                SqlExpr::Column { name, .. } => name.clone(),
+                SqlExpr::Column { table, name } => qualified_name(table.as_deref(), name),
                 _ => return vec![match_all()],
             };
             let pat = match pattern.as_ref() {
@@ -262,7 +265,7 @@ fn sql_expr_to_scan_filters(expr: &SqlExpr) -> Vec<nodedb_query::scan_filter::Sc
             negated,
         } => {
             let field = match expr.as_ref() {
-                SqlExpr::Column { name, .. } => name.clone(),
+                SqlExpr::Column { table, name } => qualified_name(table.as_deref(), name),
                 _ => return vec![match_all()],
             };
             let low_val = match low.as_ref() {

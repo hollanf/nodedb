@@ -32,6 +32,7 @@ pub fn plan_join_from_select(
     // Build left scan.
     let left_plan = SqlPlan::Scan {
         collection: left_table.name.clone(),
+        alias: left_table.alias.clone(),
         engine: left_table.info.engine,
         filters: Vec::new(),
         projection: Vec::new(),
@@ -45,7 +46,7 @@ pub fn plan_join_from_select(
     let mut current_plan = left_plan;
 
     for join_item in &from.joins {
-        let (right_name, _right_alias) = crate::parser::normalize::table_name_from_factor(
+        let (right_name, right_alias) = crate::parser::normalize::table_name_from_factor(
             &join_item.relation,
         )
         .ok_or_else(|| SqlError::Unsupported {
@@ -61,6 +62,7 @@ pub fn plan_join_from_select(
 
         let right_plan = SqlPlan::Scan {
             collection: right_table.name.clone(),
+            alias: right_alias,
             engine: right_table.info.engine,
             filters: Vec::new(),
             projection: Vec::new(),

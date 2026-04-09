@@ -17,6 +17,7 @@ pub enum SqlPlan {
     // ── Reads ──
     Scan {
         collection: String,
+        alias: Option<String>,
         engine: EngineType,
         filters: Vec<Filter>,
         projection: Vec<Projection>,
@@ -28,6 +29,7 @@ pub enum SqlPlan {
     },
     PointGet {
         collection: String,
+        alias: Option<String>,
         engine: EngineType,
         key_column: String,
         key_value: SqlValue,
