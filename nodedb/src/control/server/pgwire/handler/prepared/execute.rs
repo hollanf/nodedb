@@ -21,7 +21,8 @@ impl NodeDbPgHandler {
     /// Execute a prepared statement from a portal.
     ///
     /// Called by the `ExtendedQueryHandler::do_query` implementation.
-    /// Substitutes bound parameters into the SQL, then delegates to `execute_sql`.
+    /// Binds parameters at the AST level (not SQL text substitution), then
+    /// plans and dispatches through the standard pipeline.
     pub(crate) async fn execute_prepared<C>(
         &self,
         client: &mut C,
@@ -36,45 +37,28 @@ impl NodeDbPgHandler {
         let addr = client.socket_addr();
         let identity = self.resolve_identity(client)?;
         let stmt = &portal.statement.statement;
+        let tenant_id = identity.tenant_id;
 
-        // Build the final SQL by substituting parameter values.
-        let final_sql = substitute_params(&stmt.sql, &portal.parameters, &stmt.param_types)?;
+        // Convert pgwire binary parameters to typed ParamValues for AST binding.
+        let params = convert_portal_params(&portal.parameters, &stmt.param_types)?;
 
-        // Bind-time specialization: detect partition-prunable patterns in the
-        // substituted SQL. These hints are logged as trace spans and can be used
-        // by the planner for optimization (e.g., timeseries partition pruning).
-        if final_sql.contains(" > ") || final_sql.contains(" >= ") || final_sql.contains(" < ") {
-            tracing::trace!(
-                sql = %final_sql,
-                "bind-time specialization: range predicate detected — partition pruning candidate"
-            );
-        }
-
-        // Execute through the standard path (DDL dispatch, transaction handling,
-        // permission checks, quota, plan, dispatch).
-        let mut results = self.execute_sql(&identity, &addr, &final_sql).await?;
+        // Execute through the planned SQL path with AST-level parameter binding.
+        let mut results = self
+            .execute_planned_sql_with_params(&identity, &stmt.sql, tenant_id, &addr, &params)
+            .await?;
         Ok(results.pop().unwrap_or(Response::EmptyQuery))
     }
 }
 
-/// Substitute `$1`, `$2`, ... placeholders in SQL with literal values from the portal.
-///
-/// This produces a concrete SQL string that can be planned and executed through
-/// the standard pipeline. Parameter values are properly escaped/quoted to prevent
-/// SQL injection.
-fn substitute_params(
-    sql: &str,
+/// Convert pgwire portal parameters to typed `ParamValue` for AST-level binding.
+fn convert_portal_params(
     params: &[Option<Bytes>],
     param_types: &[Option<Type>],
-) -> PgWireResult<String> {
-    if params.is_empty() {
-        return Ok(sql.to_owned());
-    }
-
-    let mut replacements = vec![String::new(); params.len()];
+) -> PgWireResult<Vec<nodedb_sql::ParamValue>> {
+    let mut result = Vec::with_capacity(params.len());
     for (i, param) in params.iter().enumerate() {
-        replacements[i] = match param {
-            None => "NULL".to_string(),
+        let pv = match param {
+            None => nodedb_sql::ParamValue::Null,
             Some(bytes) => {
                 let text = std::str::from_utf8(bytes).map_err(|_| {
                     PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -89,178 +73,85 @@ fn substitute_params(
                     .and_then(|t| t.as_ref())
                     .unwrap_or(&Type::UNKNOWN);
 
-                format_param_value(text, pg_type)
+                pgwire_text_to_param(text, pg_type)
             }
         };
+        result.push(pv);
     }
-
-    Ok(rewrite_sql_placeholders(sql, &replacements))
+    Ok(result)
 }
 
-/// Format a parameter value as a SQL literal, properly escaped.
-///
-/// Numeric types are passed through unquoted. String/text/date types
-/// are single-quoted with internal quotes escaped.
-fn format_param_value(text: &str, pg_type: &Type) -> String {
-    // Numeric types: pass through as literal (no quoting needed).
-    if matches!(
-        *pg_type,
-        Type::INT2
-            | Type::INT4
-            | Type::INT8
-            | Type::FLOAT4
-            | Type::FLOAT8
-            | Type::NUMERIC
-            | Type::BOOL
-    ) {
-        // Validate that the value looks numeric/boolean to prevent injection.
-        if is_safe_numeric_literal(text) {
-            return text.to_string();
-        }
-    }
-
-    // Boolean special handling.
-    if *pg_type == Type::BOOL {
-        let lower = text.to_lowercase();
-        if lower == "t" || lower == "true" || lower == "1" {
-            return "TRUE".to_string();
-        }
-        if lower == "f" || lower == "false" || lower == "0" {
-            return "FALSE".to_string();
-        }
-    }
-
-    // Everything else: quote as a string literal with proper escaping.
-    // PostgreSQL standard_conforming_strings = on: use '' for literal quotes.
-    let escaped = text.replace('\'', "''");
-    format!("'{escaped}'")
-}
-
-/// Check if a string is a safe numeric literal (integer, float, NaN, Infinity).
-fn is_safe_numeric_literal(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-    // Allow NaN, Infinity, -Infinity.
-    let lower = s.to_lowercase();
-    if lower == "nan" || lower == "infinity" || lower == "-infinity" {
-        return true;
-    }
-    // Allow optional leading sign, digits, optional decimal point, optional exponent.
-    let mut chars = s.chars().peekable();
-    if chars.peek() == Some(&'-') || chars.peek() == Some(&'+') {
-        chars.next();
-    }
-    let mut has_digit = false;
-    let mut has_dot = false;
-    while let Some(&c) = chars.peek() {
-        if c.is_ascii_digit() {
-            has_digit = true;
-            chars.next();
-        } else if c == '.' && !has_dot {
-            has_dot = true;
-            chars.next();
-        } else if (c == 'e' || c == 'E') && has_digit {
-            chars.next();
-            // Optional sign after exponent.
-            if chars.peek() == Some(&'-') || chars.peek() == Some(&'+') {
-                chars.next();
+/// Convert a pgwire text parameter + type to a typed `ParamValue`.
+fn pgwire_text_to_param(text: &str, pg_type: &Type) -> nodedb_sql::ParamValue {
+    match *pg_type {
+        Type::BOOL => {
+            let lower = text.to_lowercase();
+            if lower == "t" || lower == "true" || lower == "1" {
+                return nodedb_sql::ParamValue::Bool(true);
             }
-            // Must have digits after exponent.
-            let mut exp_digits = false;
-            while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
-                exp_digits = true;
-                chars.next();
+            if lower == "f" || lower == "false" || lower == "0" {
+                return nodedb_sql::ParamValue::Bool(false);
             }
-            return exp_digits && chars.peek().is_none();
-        } else {
-            return false;
+            nodedb_sql::ParamValue::Text(text.to_string())
         }
+        Type::INT2 | Type::INT4 | Type::INT8 => {
+            if let Ok(n) = text.parse::<i64>() {
+                return nodedb_sql::ParamValue::Int64(n);
+            }
+            nodedb_sql::ParamValue::Text(text.to_string())
+        }
+        Type::FLOAT4 | Type::FLOAT8 | Type::NUMERIC => {
+            if let Ok(f) = text.parse::<f64>() {
+                return nodedb_sql::ParamValue::Float64(f);
+            }
+            nodedb_sql::ParamValue::Text(text.to_string())
+        }
+        _ => nodedb_sql::ParamValue::Text(text.to_string()),
     }
-    has_digit && chars.peek().is_none()
 }
-
-use super::sql_placeholder::rewrite_sql_placeholders;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn substitute_no_params() {
-        let result = substitute_params("SELECT 1", &[], &[]).unwrap();
-        assert_eq!(result, "SELECT 1");
-    }
-
-    #[test]
-    fn substitute_single_param() {
-        let params = vec![Some(Bytes::from_static(b"42"))];
-        let types = vec![Some(Type::INT8)];
-        let result =
-            substitute_params("SELECT * FROM users WHERE id = $1", &params, &types).unwrap();
-        assert_eq!(result, "SELECT * FROM users WHERE id = 42");
-    }
-
-    #[test]
-    fn substitute_null_param() {
+    fn convert_null_param() {
         let params = vec![None];
         let types = vec![Some(Type::INT8)];
-        let result =
-            substitute_params("SELECT * FROM users WHERE id = $1", &params, &types).unwrap();
-        assert_eq!(result, "SELECT * FROM users WHERE id = NULL");
+        let result = convert_portal_params(&params, &types).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(matches!(result[0], nodedb_sql::ParamValue::Null));
     }
 
     #[test]
-    fn substitute_string_param_escaping() {
-        let params = vec![Some(Bytes::from_static(b"O'Brien"))];
-        let types = vec![Some(Type::TEXT)];
-        let result =
-            substitute_params("SELECT * FROM users WHERE name = $1", &params, &types).unwrap();
-        assert_eq!(result, "SELECT * FROM users WHERE name = 'O''Brien'");
-    }
-
-    #[test]
-    fn substitute_multiple_params_correct_order() {
+    fn convert_typed_params() {
         let params = vec![
-            Some(Bytes::from_static(b"hello")),
             Some(Bytes::from_static(b"42")),
+            Some(Bytes::from_static(b"hello")),
+            Some(Bytes::from_static(b"true")),
         ];
-        let types = vec![Some(Type::TEXT), Some(Type::INT4)];
-        let result =
-            substitute_params("INSERT INTO t (name, age) VALUES ($1, $2)", &params, &types)
-                .unwrap();
-        assert_eq!(result, "INSERT INTO t (name, age) VALUES ('hello', 42)");
+        let types = vec![Some(Type::INT8), Some(Type::TEXT), Some(Type::BOOL)];
+        let result = convert_portal_params(&params, &types).unwrap();
+        assert!(matches!(result[0], nodedb_sql::ParamValue::Int64(42)));
+        assert!(matches!(&result[1], nodedb_sql::ParamValue::Text(s) if s == "hello"));
+        assert!(matches!(result[2], nodedb_sql::ParamValue::Bool(true)));
     }
 
     #[test]
-    fn safe_numeric_literals() {
-        assert!(is_safe_numeric_literal("42"));
-        assert!(is_safe_numeric_literal("-3.14"));
-        assert!(is_safe_numeric_literal("1.5e10"));
-        assert!(is_safe_numeric_literal("NaN"));
-        assert!(is_safe_numeric_literal("Infinity"));
-        assert!(!is_safe_numeric_literal(""));
-        assert!(!is_safe_numeric_literal("42; DROP TABLE users"));
-        assert!(!is_safe_numeric_literal("abc"));
+    fn convert_float_param() {
+        let params = vec![Some(Bytes::from_static(b"3.14"))];
+        let types = vec![Some(Type::FLOAT8)];
+        let result = convert_portal_params(&params, &types).unwrap();
+        assert!(matches!(result[0], nodedb_sql::ParamValue::Float64(f) if (f - 3.14).abs() < f64::EPSILON));
     }
 
     #[test]
-    fn format_boolean_params() {
-        assert_eq!(format_param_value("t", &Type::BOOL), "TRUE");
-        assert_eq!(format_param_value("f", &Type::BOOL), "FALSE");
-        assert_eq!(format_param_value("true", &Type::BOOL), "TRUE");
-        assert_eq!(format_param_value("false", &Type::BOOL), "FALSE");
-    }
-
-    #[test]
-    fn substitute_ignores_placeholders_inside_literals_and_comments() {
-        let params = vec![Some(Bytes::from_static(b"42"))];
-        let types = vec![Some(Type::INT8)];
-        let sql = "SELECT '$1' AS literal, col FROM t WHERE id = $1 -- $1\n/* $1 */";
-        let result = substitute_params(sql, &params, &types).unwrap();
-        assert_eq!(
-            result,
-            "SELECT '$1' AS literal, col FROM t WHERE id = 42 -- $1\n/* $1 */"
-        );
+    fn convert_bool_variants() {
+        for (input, expected) in [("t", true), ("f", false), ("1", true), ("0", false)] {
+            let params = vec![Some(Bytes::from(input))];
+            let types = vec![Some(Type::BOOL)];
+            let result = convert_portal_params(&params, &types).unwrap();
+            assert!(matches!(result[0], nodedb_sql::ParamValue::Bool(v) if v == expected));
+        }
     }
 }

@@ -25,6 +25,34 @@ impl NodeDbPgHandler {
         tenant_id: TenantId,
         addr: &std::net::SocketAddr,
     ) -> PgWireResult<Vec<Response>> {
+        self.execute_planned_sql_inner(identity, sql, tenant_id, addr, &[])
+            .await
+    }
+
+    /// Execute planned SQL with bound parameters (prepared statement path).
+    ///
+    /// Parameters are bound at the AST level before planning — no SQL text
+    /// substitution. Empty params slice falls back to standard planning.
+    pub(super) async fn execute_planned_sql_with_params(
+        &self,
+        identity: &AuthenticatedIdentity,
+        sql: &str,
+        tenant_id: TenantId,
+        addr: &std::net::SocketAddr,
+        params: &[nodedb_sql::ParamValue],
+    ) -> PgWireResult<Vec<Response>> {
+        self.execute_planned_sql_inner(identity, sql, tenant_id, addr, params)
+            .await
+    }
+
+    async fn execute_planned_sql_inner(
+        &self,
+        identity: &AuthenticatedIdentity,
+        sql: &str,
+        tenant_id: TenantId,
+        addr: &std::net::SocketAddr,
+        params: &[nodedb_sql::ParamValue],
+    ) -> PgWireResult<Vec<Response>> {
         // Resolve opaque session handle if SET LOCAL nodedb.auth_session is set.
         let mut auth_ctx = if let Some(handle) =
             self.sessions.get_parameter(addr, "nodedb.auth_session")
@@ -54,7 +82,29 @@ impl NodeDbPgHandler {
         let schema_ver = self.state.schema_version.current();
         let cached_tasks = self.sessions.get_cached_plan(addr, &clean_sql, schema_ver);
 
-        let tasks = if let Some(tasks) = cached_tasks {
+        // Skip plan cache for parameterized queries (params change per execution).
+        let tasks = if !params.is_empty() {
+            let perm_cache = self.state.permission_cache.read().await;
+            let sec = crate::control::planner::context::PlanSecurityContext {
+                identity,
+                auth: &auth_ctx,
+                rls_store: &self.state.rls,
+                permissions: &self.state.permissions,
+                roles: &self.state.roles,
+                permission_cache: Some(&*perm_cache),
+            };
+            self.query_ctx
+                .plan_sql_with_params_and_rls(&clean_sql, params, tenant_id, &sec)
+                .await
+                .map_err(|e| {
+                    let (severity, code, message) = error_to_sqlstate(&e);
+                    PgWireError::UserError(Box::new(ErrorInfo::new(
+                        severity.to_owned(),
+                        code.to_owned(),
+                        message,
+                    )))
+                })?
+        } else if let Some(tasks) = cached_tasks {
             tasks
         } else {
             let perm_cache = self.state.permission_cache.read().await;

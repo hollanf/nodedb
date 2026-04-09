@@ -153,6 +153,45 @@ impl QueryContext {
 
         Ok(tasks)
     }
+
+    /// Plan SQL with bound parameters and RLS injection.
+    ///
+    /// Used by prepared statement execution to bind parameters at the AST level
+    /// (not via SQL text substitution), then plan and inject RLS as normal.
+    pub async fn plan_sql_with_params_and_rls(
+        &self,
+        sql: &str,
+        params: &[nodedb_sql::ParamValue],
+        tenant_id: crate::types::TenantId,
+        sec: &PlanSecurityContext<'_>,
+    ) -> crate::Result<Vec<super::physical::PhysicalTask>> {
+        let catalog: &dyn nodedb_sql::SqlCatalog = match &self.sql_catalog {
+            Some(c) => c,
+            None => {
+                return Err(crate::Error::PlanError {
+                    detail: "no catalog available for SQL planning".into(),
+                });
+            }
+        };
+        let plans = nodedb_sql::plan_sql_with_params(sql, params, catalog).map_err(|e| {
+            crate::Error::PlanError {
+                detail: format!("{e}"),
+            }
+        })?;
+        let ctx = super::sql_plan_convert::ConvertContext {
+            retention_registry: self.retention_registry.clone(),
+        };
+        let mut tasks = super::sql_plan_convert::convert(&plans, tenant_id, &ctx)?;
+
+        // Inject RLS predicates.
+        super::rls_injection::inject_rls(&mut tasks, sec.rls_store, sec.auth)?;
+
+        if let Some(cache) = sec.permission_cache {
+            super::rls_injection::inject_permission_tree(&mut tasks, cache, sec.auth)?;
+        }
+
+        Ok(tasks)
+    }
 }
 
 impl Default for QueryContext {

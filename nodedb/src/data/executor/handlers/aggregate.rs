@@ -261,8 +261,7 @@ impl CoreLoop {
                     };
                     if !having_predicates.is_empty() {
                         agg_result.rows.retain(|row| {
-                            let mp =
-                                nodedb_types::json_to_msgpack_or_empty(row);
+                            let mp = nodedb_types::json_to_msgpack_or_empty(row);
                             having_predicates.iter().all(|f| f.matches_binary(&mp))
                         });
                     }
@@ -428,8 +427,7 @@ impl CoreLoop {
                     };
                     if !having_predicates.is_empty() {
                         results.retain(|row| {
-                            let mp =
-                                nodedb_types::json_to_msgpack_or_empty(row);
+                            let mp = nodedb_types::json_to_msgpack_or_empty(row);
                             having_predicates.iter().all(|f| f.matches_binary(&mp))
                         });
                     }
