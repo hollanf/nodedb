@@ -712,7 +712,7 @@ mod tests {
         assert!(Value::Bool(true).eq_coerced(&Value::Bool(true)));
         assert!(!Value::Bool(true).eq_coerced(&Value::Bool(false)));
         assert!(Value::Integer(42).eq_coerced(&Value::Integer(42)));
-        assert!(Value::Float(3.14).eq_coerced(&Value::Float(3.14)));
+        assert!(Value::Float(2.78).eq_coerced(&Value::Float(2.78)));
         assert!(Value::String("hello".into()).eq_coerced(&Value::String("hello".into())));
     }
 
@@ -728,9 +728,9 @@ mod tests {
         // String "5" equals Integer 5.
         assert!(Value::String("5".into()).eq_coerced(&Value::Integer(5)));
         assert!(Value::Integer(5).eq_coerced(&Value::String("5".into())));
-        // String "3.14" equals Float 3.14.
-        assert!(Value::String("3.14".into()).eq_coerced(&Value::Float(3.14)));
-        assert!(Value::Float(3.14).eq_coerced(&Value::String("3.14".into())));
+        // String "2.78" equals Float 3.14.
+        assert!(Value::String("2.78".into()).eq_coerced(&Value::Float(2.78)));
+        assert!(Value::Float(2.78).eq_coerced(&Value::String("2.78".into())));
         // Non-numeric string does not equal number.
         assert!(!Value::String("abc".into()).eq_coerced(&Value::Integer(5)));
         assert!(!Value::Integer(5).eq_coerced(&Value::String("abc".into())));
@@ -761,7 +761,7 @@ mod tests {
             Ordering::Greater
         );
         assert_eq!(
-            Value::Float(3.14).cmp_coerced(&Value::String("3.14".into())),
+            Value::Float(2.78).cmp_coerced(&Value::String("2.78".into())),
             Ordering::Equal
         );
     }
@@ -784,7 +784,7 @@ mod tests {
         // Verify a == b iff b == a for all cross-type pairs.
         let cases = [
             (Value::Integer(42), Value::String("42".into())),
-            (Value::Float(3.14), Value::String("3.14".into())),
+            (Value::Float(2.78), Value::String("2.78".into())),
             (Value::Integer(5), Value::Float(5.0)),
         ];
         for (a, b) in &cases {

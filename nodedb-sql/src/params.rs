@@ -78,21 +78,21 @@ fn bind_statement(stmt: &mut Statement, params: &[ParamValue]) {
 
 fn bind_query(query: &mut Query, params: &[ParamValue]) {
     bind_set_expr(&mut query.body, params);
-    if let Some(ref mut order_by) = query.order_by {
-        if let ast::OrderByKind::Expressions(ref mut exprs) = order_by.kind {
-            for item in exprs {
-                bind_expr(&mut item.expr, params);
-            }
+    if let Some(ref mut order_by) = query.order_by
+        && let ast::OrderByKind::Expressions(ref mut exprs) = order_by.kind
+    {
+        for item in exprs {
+            bind_expr(&mut item.expr, params);
         }
     }
-    if let Some(limit_clause) = &mut query.limit_clause {
-        if let ast::LimitClause::LimitOffset { limit, offset, .. } = limit_clause {
-            if let Some(limit_expr) = limit {
-                bind_expr(limit_expr, params);
-            }
-            if let Some(offset_val) = offset {
-                bind_expr(&mut offset_val.value, params);
-            }
+    if let Some(limit_clause) = &mut query.limit_clause
+        && let ast::LimitClause::LimitOffset { limit, offset, .. } = limit_clause
+    {
+        if let Some(limit_expr) = limit {
+            bind_expr(limit_expr, params);
+        }
+        if let Some(offset_val) = offset {
+            bind_expr(&mut offset_val.value, params);
         }
     }
 }
@@ -148,10 +148,10 @@ fn bind_select_item(item: &mut SelectItem, params: &[ParamValue]) {
 fn bind_expr(expr: &mut Expr, params: &[ParamValue]) {
     match expr {
         Expr::Value(ast::ValueWithSpan { value, .. }) => {
-            if let Value::Placeholder(p) = value {
-                if let Some(v) = placeholder_to_value(p, params) {
-                    *value = v;
-                }
+            if let Value::Placeholder(p) = value
+                && let Some(v) = placeholder_to_value(p, params)
+            {
+                *value = v;
             }
         }
         Expr::BinaryOp { left, right, .. } => {

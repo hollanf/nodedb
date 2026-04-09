@@ -253,10 +253,10 @@ fn delta_to_msgpack_bytes(delta_bytes: &[u8]) -> Vec<u8> {
         }
     }
     // Try raw JSON → re-encode to msgpack.
-    if let Ok(json) = sonic_rs::from_slice::<serde_json::Value>(delta_bytes) {
-        if let Ok(mp) = nodedb_types::json_msgpack::json_to_msgpack(&json) {
-            return mp;
-        }
+    if let Ok(json) = sonic_rs::from_slice::<serde_json::Value>(delta_bytes)
+        && let Ok(mp) = nodedb_types::json_msgpack::json_to_msgpack(&json)
+    {
+        return mp;
     }
     // Opaque CRDT delta — return empty msgpack map (all field predicates pass vacuously).
     vec![0x80] // fixmap with 0 entries

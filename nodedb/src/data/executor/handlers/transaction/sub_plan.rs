@@ -216,6 +216,7 @@ impl CoreLoop {
     }
 
     /// Execute a PointPut within a transaction.
+    #[allow(clippy::too_many_arguments)]
     fn tx_point_put(
         &mut self,
         dummy_task: &ExecutionTask,
