@@ -32,6 +32,9 @@ pub enum ColumnType {
     /// Fixed-dimension float32 vector.
     Vector(u32),
     Uuid,
+    /// Arbitrary nested data stored as inline MessagePack.
+    /// Variable-length. Accepts any Value type.
+    Json,
 }
 
 impl ColumnType {
@@ -43,7 +46,7 @@ impl ColumnType {
             Self::Decimal => Some(16),
             Self::Uuid => Some(16),
             Self::Vector(dim) => Some(*dim as usize * 4),
-            Self::String | Self::Bytes | Self::Geometry => None,
+            Self::String | Self::Bytes | Self::Geometry | Self::Json => None,
         }
     }
 
@@ -76,6 +79,7 @@ impl ColumnType {
                 | (Self::Geometry, Value::Geometry(_) | Value::String(_))
                 | (Self::Vector(_), Value::Array(_) | Value::Bytes(_))
                 | (Self::Uuid, Value::Uuid(_) | Value::String(_))
+                | (Self::Json, _)
                 | (_, Value::Null)
         )
     }
@@ -94,6 +98,7 @@ impl fmt::Display for ColumnType {
             Self::Geometry => f.write_str("GEOMETRY"),
             Self::Vector(dim) => write!(f, "VECTOR({dim})"),
             Self::Uuid => f.write_str("UUID"),
+            Self::Json => f.write_str("JSON"),
         }
     }
 }
@@ -134,6 +139,7 @@ impl FromStr for ColumnType {
             "DECIMAL" | "NUMERIC" => Ok(Self::Decimal),
             "GEOMETRY" => Ok(Self::Geometry),
             "UUID" => Ok(Self::Uuid),
+            "JSON" | "JSONB" => Ok(Self::Json),
             "DATETIME" => Err(ColumnTypeParseError::UseTimestamp),
             other => Err(ColumnTypeParseError::Unknown(other.to_string())),
         }
