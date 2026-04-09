@@ -16,6 +16,22 @@ impl NodeDbPgHandler {
     /// In cluster mode, write operations are proposed to Raft first and only
     /// executed on the Data Plane after quorum commit. Reads bypass Raft.
     pub(super) async fn dispatch_task(&self, task: PhysicalTask) -> crate::Result<Response> {
+        if matches!(
+            task.plan,
+            crate::bridge::envelope::PhysicalPlan::Document(
+                crate::bridge::physical_plan::DocumentOp::InsertSelect { .. }
+            )
+        ) {
+            return crate::control::server::dispatch_utils::broadcast_count_to_all_cores(
+                &self.state,
+                task.tenant_id,
+                task.plan,
+                0,
+                "inserted",
+            )
+            .await;
+        }
+
         // Broadcast scans to all cores — data is distributed across cores.
         if task.plan.is_broadcast_scan() {
             return crate::control::server::dispatch_utils::broadcast_to_all_cores(

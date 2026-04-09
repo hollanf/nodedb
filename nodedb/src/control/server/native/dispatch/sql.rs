@@ -209,6 +209,22 @@ async fn execute_planned(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeRe
 /// Dispatch a single PhysicalTask (WAL + Data Plane, or Raft).
 /// Scan operations are broadcast to all cores; point operations use single-core dispatch.
 async fn dispatch_task(ctx: &DispatchCtx<'_>, task: PhysicalTask) -> crate::Result<Response> {
+    if matches!(
+        task.plan,
+        crate::bridge::envelope::PhysicalPlan::Document(
+            crate::bridge::physical_plan::DocumentOp::InsertSelect { .. }
+        )
+    ) {
+        return dispatch_utils::broadcast_count_to_all_cores(
+            ctx.state,
+            task.tenant_id,
+            task.plan,
+            0,
+            "inserted",
+        )
+        .await;
+    }
+
     // Broadcast scans to all cores so we find data regardless of which core stored it.
     if task.plan.is_broadcast_scan() {
         return dispatch_utils::broadcast_to_all_cores(ctx.state, task.tenant_id, task.plan, 0)
