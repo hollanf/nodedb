@@ -71,10 +71,10 @@ pub(super) fn binary_tuple_to_value(tuple_bytes: &[u8], schema: &StrictSchema) -
     // Binary tuples start with a u16 LE schema version — values 0x80+ in the first
     // byte would mean schema version >= 128 which we don't use. This catches the
     // common case where data is already stored as msgpack.
-    if let Some(&first) = tuple_bytes.first() {
-        if (0x80..=0x8F).contains(&first) || first == 0xDE || first == 0xDF {
-            return None;
-        }
+    if let Some(&first) = tuple_bytes.first()
+        && ((0x80..=0x8F).contains(&first) || first == 0xDE || first == 0xDF)
+    {
+        return None;
     }
 
     let decoder = nodedb_strict::TupleDecoder::new(schema);
@@ -216,6 +216,20 @@ fn coerce_value(val: &Value, col_type: &ColumnType, col_name: &str) -> Result<Va
             )),
         },
         ColumnType::Geometry => Ok(Value::String(format!("{val:?}"))),
+        ColumnType::Json => {
+            // JSON column: val is raw MessagePack bytes — deserialize to Value.
+            if let Value::Bytes(b) = val {
+                Ok(match nodedb_types::value_from_msgpack(b) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(len = b.len(), error = %e, "corrupted JSON msgpack in strict column");
+                        Value::Null
+                    }
+                })
+            } else {
+                Ok(val.clone())
+            }
+        }
     }
 }
 

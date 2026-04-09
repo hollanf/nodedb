@@ -89,14 +89,31 @@ pub(super) async fn dispatch(
         return Some(super::super::bulk::copy_from(state, identity, parts).await);
     }
 
-    // INSERT INTO — handled by SQL planner (convert_insert → DocumentOp::PointPut).
-    // No intercept needed; the planner routes by EngineType.
+    // INSERT INTO x { } — object literal syntax; intercept before DataFusion.
+    if upper.starts_with("INSERT INTO ") {
+        let after_into = &sql["INSERT INTO ".len()..].trim_start();
+        let coll_end = after_into
+            .find(|c: char| c.is_whitespace())
+            .unwrap_or(after_into.len());
+        if after_into[coll_end..].trim_start().starts_with('{')
+            && let Some(result) =
+                super::super::collection::insert_document(state, identity, sql).await
+        {
+            return Some(result);
+        }
+    }
 
     // UPSERT INTO — same as INSERT but merges into existing document if it exists.
+    // Handles both (cols) VALUES (vals) and { } object literal forms.
     if upper.starts_with("UPSERT INTO ")
-        && upper.contains("VALUES")
-        && let Some(result) =
-            super::super::collection_insert::upsert_document(state, identity, sql).await
+        && (upper.contains("VALUES") || {
+            let after_into = &sql["UPSERT INTO ".len()..].trim_start();
+            let coll_end = after_into
+                .find(|c: char| c.is_whitespace())
+                .unwrap_or(after_into.len());
+            after_into[coll_end..].trim_start().starts_with('{')
+        })
+        && let Some(result) = super::super::collection::upsert_document(state, identity, sql).await
     {
         return Some(result);
     }
