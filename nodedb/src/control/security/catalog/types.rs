@@ -243,6 +243,9 @@ pub struct StoredCollection {
     /// Transition check predicates: OLD/NEW expression evaluated on UPDATE.
     #[serde(default)]
     pub transition_checks: Vec<TransitionCheckDef>,
+    /// Type guard field constraints for schemaless collections.
+    #[serde(default)]
+    pub type_guards: Vec<nodedb_types::TypeGuardFieldDef>,
     /// Materialized sum definitions.
     #[serde(default)]
     pub materialized_sums: Vec<MaterializedSumDef>,
@@ -281,6 +284,7 @@ impl StoredCollection {
             legal_holds: Vec::new(),
             state_constraints: Vec::new(),
             transition_checks: Vec::new(),
+            type_guards: Vec::new(),
             materialized_sums: Vec::new(),
             lvc_enabled: false,
             permission_tree_def: None,

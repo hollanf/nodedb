@@ -223,6 +223,7 @@ impl NodeDbPgHandler {
             && !upper.starts_with("SHOW GRANTS")
             && upper != "SHOW CONNECTIONS"
             && !upper.starts_with("SHOW INDEXES")
+            && !upper.starts_with("SHOW TYPEGUARD")
         {
             return self.handle_show(addr, sql_trimmed);
         }

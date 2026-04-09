@@ -7,6 +7,9 @@ pub mod describe;
 pub mod drop;
 pub mod helpers;
 pub mod index;
+pub mod insert;
+pub(super) mod insert_parse;
+pub mod upsert;
 pub mod vector_metadata;
 
 // Re-export all public functions so existing callers via `super::collection::*` continue to work.
@@ -15,6 +18,8 @@ pub use create::{create_collection, dispatch_register_if_needed};
 pub use describe::{describe_collection, show_collections};
 pub use drop::drop_collection;
 pub use index::{create_index, drop_index, show_indexes};
+pub use insert::insert_document;
+pub use upsert::upsert_document;
 pub use vector_metadata::{
     handle_set_vector_metadata, handle_show_vector_models, handle_vector_metadata_query,
 };

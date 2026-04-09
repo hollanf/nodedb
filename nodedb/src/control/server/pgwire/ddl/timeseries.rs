@@ -78,6 +78,7 @@ pub fn create_timeseries(
         legal_holds: Vec::new(),
         state_constraints: Vec::new(),
         transition_checks: Vec::new(),
+        type_guards: Vec::new(),
         materialized_sums: Vec::new(),
         lvc_enabled: false,
         permission_tree_def: None,

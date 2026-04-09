@@ -12,6 +12,33 @@ pub(super) async fn dispatch(
     upper: &str,
     parts: &[&str],
 ) -> Option<PgWireResult<Vec<Response>>> {
+    // TYPEGUARD DDL.
+    if upper.starts_with("CREATE TYPEGUARD ") || upper.starts_with("CREATE OR REPLACE TYPEGUARD ") {
+        return Some(super::super::typeguard::create_typeguard(
+            state, identity, sql,
+        ));
+    }
+    if upper.starts_with("ALTER TYPEGUARD ") {
+        return Some(super::super::typeguard::alter_typeguard(
+            state, identity, sql,
+        ));
+    }
+    if upper.starts_with("DROP TYPEGUARD ") {
+        return Some(super::super::typeguard::drop_typeguard(
+            state, identity, sql,
+        ));
+    }
+    if upper.starts_with("SHOW TYPEGUARD ON ") {
+        return Some(super::super::typeguard::show_typeguard(
+            state, identity, sql,
+        ));
+    }
+    if upper == "SHOW TYPEGUARDS" || upper.starts_with("SHOW TYPEGUARDS") {
+        return Some(super::super::typeguard::show_typeguards(
+            state, identity, sql,
+        ));
+    }
+
     // CHUNK_TEXT table-valued function: SELECT * FROM CHUNK_TEXT(...).
     if (upper.starts_with("SELECT ") && upper.contains("CHUNK_TEXT("))
         || upper.starts_with("SELECT CHUNK_TEXT(")
