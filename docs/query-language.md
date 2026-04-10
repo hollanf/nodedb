@@ -160,7 +160,9 @@ INSERT INTO users (id, name, email) VALUES ('u1', 'Alice', 'alice@example.com');
 -- Multiple rows
 INSERT INTO users (id, name) VALUES ('u1', 'Alice'), ('u2', 'Bob');
 
--- Schemaless (JSON-like syntax)
+-- Schemaless document insert (standard form)
+INSERT INTO users (id, name, email, age) VALUES ('u1', 'Alice', 'alice@example.com', 30);
+-- Or: JSON-like syntax also accepted
 INSERT INTO users { name: 'Alice', email: 'alice@example.com', age: 30 };
 
 -- INSERT ... SELECT
@@ -170,7 +172,9 @@ INSERT INTO archive SELECT * FROM orders WHERE created_at < '2025-01-01';
 ### UPSERT
 
 ```sql
--- Insert or merge if document ID exists
+-- Insert or merge if document ID exists (standard form)
+UPSERT INTO users (id, name, role) VALUES ('u1', 'Alice', 'admin');
+-- Or: JSON-like syntax also accepted
 UPSERT INTO users { id: 'u1', name: 'Alice', role: 'admin' };
 ```
 
@@ -207,19 +211,19 @@ CREATE COLLECTION users;
 
 -- Strict schema (Binary Tuple encoding, O(1) field extraction)
 CREATE COLLECTION orders TYPE DOCUMENT STRICT (
-    id UUID DEFAULT gen_uuid_v7(),
-    customer_id UUID,
-    total DECIMAL,
-    status STRING,
-    created_at DATETIME DEFAULT now()
+    id TEXT PRIMARY KEY,
+    customer_id TEXT,
+    total FLOAT,
+    status TEXT,
+    created_at TIMESTAMP
 );
 
 -- Key-Value collection
 CREATE COLLECTION sessions TYPE KEY_VALUE (key TEXT PRIMARY KEY);
 -- extra columns are optional typed value fields
 
--- Graph collection
-CREATE COLLECTION knows TYPE graph;
+-- Graph edges are overlays on document collections, not a separate collection type.
+-- Use GRAPH INSERT EDGE to add edges between documents in any collection.
 
 -- Timeseries collection (convenience alias)
 CREATE TIMESERIES metrics;
@@ -295,25 +299,25 @@ CONVERT COLLECTION metrics TO STORAGE='columnar' WITH (profile = 'timeseries');
 ```sql
 -- ASYNC (default): fires after commit via the Event Plane, zero write-latency impact
 CREATE TRIGGER notify_shipped AFTER INSERT ON orders FOR EACH ROW
-BEGIN
-    INSERT INTO notifications { user_id: NEW.customer_id, message: 'Order placed' };
-END;
+$$ BEGIN
+    INSERT INTO notifications (user_id, message) VALUES (NEW.customer_id, 'Order placed');
+END; $$;
 
 -- SYNC: fires in the same transaction on the Data Plane (ACID, adds trigger latency)
 CREATE TRIGGER enforce_balance AFTER UPDATE ON accounts FOR EACH ROW
 WITH (EXECUTION = SYNC)
-BEGIN
+$$ BEGIN
     IF NEW.balance < 0 THEN
         RAISE EXCEPTION 'Balance cannot go negative';
     END IF;
-END;
+END; $$;
 
 -- DEFERRED: fires at COMMIT time, batched (ACID)
 CREATE TRIGGER validate_totals AFTER INSERT ON line_items FOR EACH ROW
 WITH (EXECUTION = DEFERRED)
-BEGIN
+$$ BEGIN
     -- validation logic
-END;
+END; $$;
 
 DROP TRIGGER notify_shipped ON orders;
 SHOW TRIGGERS;
@@ -488,7 +492,7 @@ CREATE VECTOR INDEX idx_articles_embedding ON articles METRIC cosine DIM 384 M 3
 DROP VECTOR INDEX idx_name;
 
 -- Full-text index
-CREATE FULLTEXT INDEX ON articles(body);
+CREATE FULLTEXT INDEX idx_body ON articles(body);
 DROP FULLTEXT INDEX idx_name;
 
 -- Spatial index
@@ -544,7 +548,7 @@ DROP CONTINUOUS AGGREGATE cpu_hourly;
 SEARCH articles USING VECTOR(embedding, ARRAY[0.1, 0.3, -0.2, ...], 10);
 
 -- Filtered vector search (adaptive pre-filtering)
-SELECT title, vector_distance() AS score
+SELECT title, vector_distance(embedding, ARRAY[0.1, 0.3, -0.2]) AS score
 FROM articles
 WHERE category = 'machine-learning'
   AND id IN (
@@ -579,7 +583,7 @@ LIMIT 10;
 
 ```sql
 -- Add edges
-INSERT INTO knows { from: 'users:alice', to: 'users:bob', since: 2020 };
+GRAPH INSERT EDGE FROM 'alice' TO 'bob' TYPE 'knows' PROPERTIES '{"since": 2020}';
 
 -- Traversal
 GRAPH TRAVERSE FROM 'users:alice' DEPTH 3 LABEL 'follows' DIRECTION out;
@@ -596,7 +600,7 @@ WHERE u.id = 'alice'
 RETURN other.id, other.name;
 
 -- Run algorithms
-GRAPH ALGO pagerank ON knows OPTIONS (iterations: 20);
+GRAPH ALGO PAGERANK ON knows DAMPING 0.85 ITERATIONS 20 TOLERANCE 1e-7;
 GRAPH ALGO wcc ON knows;
 ```
 
@@ -605,8 +609,10 @@ Available algorithms: `pagerank`, `wcc`, `label_propagation`, `lcc`, `sssp`, `be
 ### Key-Value
 
 ```sql
--- Create with TTL
-INSERT INTO sessions { key: 'sess_abc', user_id: 'alice', ttl: 3600 };
+-- Create with TTL (standard form)
+INSERT INTO sessions (key, user_id) VALUES ('sess_abc', 'alice');
+-- Or: JSON-like syntax also accepted
+INSERT INTO sessions { key: 'sess_abc', user_id: 'alice' };
 
 -- Point lookup (O(1) hash)
 SELECT * FROM sessions WHERE key = 'sess_abc';

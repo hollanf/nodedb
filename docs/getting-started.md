@@ -198,9 +198,13 @@ Use SQL for complex queries and rapid prototyping. Use native methods for high-t
 -- Create a schemaless collection
 CREATE COLLECTION users;
 
--- Insert some data
+-- Insert some data (standard SQL)
+INSERT INTO users (id, name, email, age) VALUES ('u1', 'Alice', 'alice@example.com', 30);
+INSERT INTO users (id, name, email, role) VALUES ('u2', 'Bob', 'bob@example.com', 'admin');
+
+-- Object literal syntax also works
 INSERT INTO users { name: 'Alice', email: 'alice@example.com', age: 30 };
-INSERT INTO users { name: 'Bob', email: 'bob@example.com', role: 'admin' };
+NSERT INTO users { name: 'Bob', email: 'bob@example.com', role: 'admin' };
 
 -- Query
 SELECT * FROM users WHERE name = 'Alice';
@@ -212,15 +216,15 @@ SELECT name, email FROM users WHERE age > 25;
 ```sql
 -- Create a strict collection with a defined schema
 CREATE COLLECTION orders TYPE DOCUMENT STRICT (
-    id UUID DEFAULT gen_uuid_v7(),
-    customer_id UUID,
-    total DECIMAL,
-    status STRING,
-    created_at DATETIME DEFAULT now()
+    id TEXT PRIMARY KEY,
+    customer_id TEXT,
+    total FLOAT,
+    status TEXT,
+    created_at TIMESTAMP
 );
 
-INSERT INTO orders (customer_id, total, status)
-VALUES ('550e8400-e29b-41d4-a716-446655440000', 99.99, 'pending');
+INSERT INTO orders (id, customer_id, total, status)
+VALUES ('o1', 'u1', 99.99, 'pending');
 
 SELECT * FROM orders WHERE status = 'pending' ORDER BY created_at DESC;
 ```
@@ -232,8 +236,10 @@ SELECT * FROM orders WHERE status = 'pending' ORDER BY created_at DESC;
 CREATE COLLECTION articles;
 CREATE VECTOR INDEX idx_articles_embedding ON articles METRIC cosine DIM 384;
 
--- Insert documents with embeddings
-INSERT INTO articles { title: 'Intro to AI', embedding: [0.1, 0.2, ...] };
+-- Insert documents with embeddings (standard SQL)
+INSERT INTO articles (id, title, embedding) VALUES ('a1', 'Intro to AI', ARRAY[0.1, 0.2, 0.3]);
+-- Or:
+INSERT INTO articles { id: 'a1', title: 'Intro to AI', embedding: [0.1, 0.2, 0.3] };
 
 -- Search by similarity
 SEARCH articles USING VECTOR(embedding, ARRAY[0.1, 0.3, ...], 10);
@@ -242,18 +248,21 @@ SEARCH articles USING VECTOR(embedding, ARRAY[0.1, 0.3, ...], 10);
 ### Graph
 
 ```sql
--- Create a graph collection
-CREATE COLLECTION knows TYPE graph;
+-- Graph is an overlay on document collections, not a separate collection type
+CREATE COLLECTION social;
+
+-- Insert nodes
+INSERT INTO social (id, name) VALUES ('alice', 'Alice');
+INSERT INTO social (id, name) VALUES ('bob', 'Bob');
 
 -- Add edges
-INSERT INTO knows { from: 'users:alice', to: 'users:bob', since: 2020 };
-INSERT INTO knows { from: 'users:bob', to: 'users:carol', since: 2021 };
+GRAPH INSERT EDGE FROM 'alice' TO 'bob' TYPE 'knows' PROPERTIES '{"since": 2020}';
 
 -- Traverse
-SELECT * FROM knows WHERE from = 'users:alice' DEPTH 1..3;
+GRAPH TRAVERSE FROM 'alice' DEPTH 2;
 
 -- Run an algorithm
-SELECT * FROM graph::pagerank('knows', { iterations: 20 });
+GRAPH ALGO PAGERANK ON social DAMPING 0.85 ITERATIONS 20 TOLERANCE 1e-7;
 ```
 
 ### Key-Value
@@ -262,8 +271,10 @@ SELECT * FROM graph::pagerank('knows', { iterations: 20 });
 -- Create a KV collection
 CREATE COLLECTION sessions TYPE KEY_VALUE (key TEXT PRIMARY KEY);
 
--- Set with TTL
-INSERT INTO sessions { key: 'sess_abc', user_id: 'alice', ttl: 3600 };
+-- Set a key-value pair (standard SQL)
+INSERT INTO sessions (key, value) VALUES ('sess_abc', 'token-abc');
+-- Or:
+INSERT INTO sessions { key: 'sess_abc', value: 'token-abc' };
 
 -- Get by key
 SELECT * FROM sessions WHERE key = 'sess_abc';
@@ -319,19 +330,22 @@ ORDER BY dist;
 
 ```sql
 -- Fire asynchronously after each insert (default, zero write-latency impact)
-CREATE TRIGGER notify_on_order AFTER INSERT ON orders FOR EACH ROW
+CREATE TRIGGER notify_on_order AFTER INSERT ON orders FOR EACH ROW $$
 BEGIN
-    INSERT INTO notifications { user_id: NEW.customer_id, message: 'Order received' };
+    INSERT INTO notifications (id, user_id, message)
+    VALUES (NEW.id || '_notif', NEW.customer_id, 'Order received');
 END;
+$$;
 
 -- Fire synchronously in the same transaction (ACID, adds trigger latency to writes)
 CREATE TRIGGER enforce_balance AFTER UPDATE ON accounts FOR EACH ROW
-WITH (EXECUTION = SYNC)
+WITH (EXECUTION = SYNC) $$
 BEGIN
     IF NEW.balance < 0 THEN
         RAISE EXCEPTION 'Balance cannot go negative';
     END IF;
 END;
+$$;
 ```
 
 ### User-Defined Functions
