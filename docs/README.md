@@ -36,6 +36,11 @@ Welcome to the NodeDB docs. These guides explain what each engine does, when to 
 ## Platform & Operations
 
 - [NodeDB-Lite](lite.md) — Embedded database for phones, browsers, desktops
-- [Security](security.md) — Authentication, RBAC, RLS, encryption, backup access control
+- [Security](security/README.md) — Overview, encryption, quick reference
+  - [Authentication](security/auth.md) — Users, passwords, API keys, JWKS, mTLS
+  - [Roles & Permissions](security/rbac.md) — RBAC, GRANT, REVOKE
+  - [Row-Level Security](security/rls.md) — Per-row filtering with `$auth.*` context
+  - [Audit & Change Tracking](security/audit.md) — Hash-chained audit log, SIEM export, `updated_at` patterns
+  - [Multi-Tenancy](security/tenants.md) — Isolation, quotas, backup, GDPR purge
 - [Real-Time](real-time.md) — LIVE SELECT, CDC change streams, consumer groups, webhook delivery, durable topics, cron scheduler
 - [CLI (`ndb`)](cli.md) — Terminal client usage and configuration

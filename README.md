@@ -1,119 +1,158 @@
 # NodeDB
 
-**A local-first, real-time, edge-to-cloud hybrid database for multi-modal workloads.**
+**Seven database engines in a single Rust binary. One SQL dialect. Zero network hops between engines.**
 
-NodeDB provides Vector, Graph, Document (schemaless + strict), Columnar (with Timeseries and Spatial profiles), Key-Value, and Full-Text Search engines in a single Rust binary. All engines share the same storage, memory, and query planner — cross-engine queries execute in one process with zero network hops.
+NodeDB replaces the combination of PostgreSQL + pgvector + Redis + Neo4j + ClickHouse + Elasticsearch with a single process. Vector search, graph traversal, document storage, columnar analytics, timeseries, key-value, and full-text search share the same storage, memory, and query planner.
+
+## Why NodeDB
+
+- **One binary, not seven services.** No inter-service networking, no schema drift between systems, no data synchronization pipelines. A graph query that feeds a vector search that filters by full-text relevance executes in one process.
+- **PostgreSQL wire protocol.** Connect with `psql` or any PostgreSQL client library. Standard SQL with engine-specific extensions where SQL can't express the operation.
+- **Edge to cloud.** The same engines run embedded on phones and browsers (NodeDB-Lite, 4.5 MB WASM) with CRDT-based offline-first sync to the server.
+- **Serious about performance.** Thread-per-Core data plane with io_uring, SIMD-accelerated distance functions, zero-copy MessagePack transport, per-column compression (ALP, FastLanes, FSST, Gorilla). See benchmarks below.
+
+## Performance
+
+**Timeseries ingest + query benchmark** — 10M rows, high-cardinality DNS telemetry (50K+ unique domain names). Single node, NVMe storage.
+
+### Ingest
+
+| Engine      | Rate         | Time         | Memory     | Disk         |
+| ----------- | ------------ | ------------ | ---------- | ------------ |
+| **NodeDB**  | **93,450/s** | 107s         | **120 MB** | 2,217 MB     |
+| TimescaleDB | 56,615/s     | 177s         | 963 MB     | 2,802 MB     |
+| ClickHouse  | 53,905/s     | 186s         | 1,035 MB   | **1,647 MB** |
+| InfluxDB    | 22,715/s     | 88s (2M cap) | 1,656 MB   | 982 MB       |
+
+### Queries (ms, best of 3)
+
+| Query                      | NodeDB  | ClickHouse | TimescaleDB | InfluxDB (2M) |
+| -------------------------- | ------- | ---------- | ----------- | ------------- |
+| `COUNT(*)`                 | **<1**  | 1          | 423         | 13,110        |
+| `WHERE qtype=A COUNT`      | 47      | **6**      | 347         | 5,297         |
+| `WHERE rcode=SERVFAIL`     | 41      | **6**      | 334         | 1,048         |
+| `GROUP BY qtype`           | 56      | **15**     | 597         | 12,426        |
+| `GROUP BY rcode`           | 52      | **16**     | 604         | 13,183        |
+| `GROUP BY cached+AVG`      | 120     | **33**     | 677         | 13,652        |
+| `GROUP BY client_ip (10K)` | **141** | 157        | 660         | 14,301        |
+| `GROUP BY qname (50K+)`    | 2,665   | **288**    | 3,644       | 16,720        |
+| `time_bucket 1h`           | 101     | **30**     | 603         | --            |
+| `time_bucket 5m+qtype`     | 138     | **99**     | 711         | --            |
+
+NodeDB is not a specialized timeseries database, yet it ingests 1.65x faster than TimescaleDB and 1.73x faster than ClickHouse with 8x less memory. Query latency is competitive with ClickHouse on low-cardinality aggregations and within 3-5x on high-cardinality GROUP BY. This is the tradeoff of a general-purpose engine: you get one system instead of five, with performance that stays in the same ballpark as specialized tools.
 
 ## Engines
 
-| Engine                                       | What it does                                                                                      |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| [Vector](docs/vectors.md)                    | HNSW index with SQ8/PQ/IVF-PQ quantization and adaptive bitmap filtering                          |
-| [Graph](docs/graph.md)                       | CSR adjacency index, 13 algorithms, Cypher-subset MATCH, GraphRAG fusion                          |
-| [Document](docs/documents.md)                | Schemaless (MessagePack + CRDT sync) or Strict (Binary Tuples, O(1) field access)                 |
-| [Columnar](docs/columnar.md)                 | Per-column compression (ALP, FastLanes, FSST), predicate pushdown, HTAP bridge                    |
-| [Timeseries](docs/timeseries.md)             | Columnar profile with ILP ingest, continuous aggregation, PromQL, 12 SQL functions                |
-| [Spatial](docs/spatial.md)                   | R\*-tree, geohash, H3, OGC predicates, hybrid spatial-vector search                               |
-| [Key-Value](docs/kv.md)                      | Hash-indexed O(1) lookups, TTL, secondary indexes, SQL-queryable                                  |
-| [Full-Text Search](docs/full-text-search.md) | BMW-optimized BM25, 16 stemmers, 27-language stop words, CJK bigrams, fuzzy, hybrid vector fusion |
+| Engine                                       | What it replaces             | Key capability                                                                                                          |
+| -------------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| [Vector](docs/vectors.md)                    | pgvector, Pinecone, Weaviate | HNSW with SQ8/PQ quantization, adaptive bitmap pre-filtering                                                            |
+| [Graph](docs/graph.md)                       | Neo4j, Amazon Neptune        | CSR adjacency, 13 algorithms, Cypher-subset MATCH, GraphRAG                                                             |
+| [Document](docs/documents.md)                | MongoDB, CouchDB             | Schemaless (MessagePack + CRDT) or Strict (Binary Tuples, O(1) field access). Typeguards for gradual schema enforcement |
+| [Columnar](docs/columnar.md)                 | ClickHouse, DuckDB           | Per-column codecs (ALP, FastLanes, FSST), predicate pushdown, HTAP bridge                                               |
+| [Timeseries](docs/timeseries.md)             | TimescaleDB, InfluxDB        | ILP ingest, continuous aggregation, PromQL, approximate aggregation                                                     |
+| [Spatial](docs/spatial.md)                   | PostGIS                      | R\*-tree, geohash, H3, OGC predicates, hybrid spatial-vector                                                            |
+| [Key-Value](docs/kv.md)                      | Redis, DynamoDB              | O(1) lookups, TTL, sorted indexes, rate limiting, SQL-queryable                                                         |
+| [Full-Text Search](docs/full-text-search.md) | Elasticsearch                | BMW BM25, 27-language support, CJK bigrams, fuzzy, hybrid vector fusion                                                 |
 
-## Architecture
-
-NodeDB uses a three-plane hybrid execution model:
-
-- **Control Plane** (Tokio + DataFusion) — SQL parsing, query planning, connection handling. `Send + Sync`.
-- **Data Plane** (Thread-per-Core + io_uring) — Physical execution, storage I/O, SIMD math. `!Send`.
-- **Event Plane** (Tokio, bounded event bus) — AFTER trigger dispatch, CDC change streams, cron scheduler, durable pub/sub, webhook delivery. Consumes events from the Data Plane and dispatches side effects back through the Control Plane.
-
-The planes communicate only through bounded lock-free SPSC ring buffers. See [Architecture](docs/architecture.md) for the full design.
-
-## Deployment Modes
-
-- **Origin (server)** — Full distributed database. Multi-Raft consensus, Thread-per-Core data plane with io_uring, PostgreSQL-compatible SQL over pgwire. Horizontal scaling with automatic shard balancing.
-- **Origin (local)** — Same binary, single-node. No cluster overhead. Like running Postgres locally.
-- **[NodeDB-Lite](docs/lite.md) (embedded)** — In-process library for phones, browsers (WASM), and desktops. All engines run locally with sub-millisecond reads. Offline-first with CRDT sync to Origin.
-
-Application code is the same across all three modes — the `NodeDb` trait exposes identical methods whether backed by an in-process Lite engine or a remote Origin server.
-
-## Quick Start
+## Install
 
 ```bash
-docker compose up -d
+# Docker
+docker run -d \
+  -p 6432:6432 -p 6433:6433 -p 6480:6480 \
+  -v nodedb-data:/var/lib/nodedb \
+  farhansyah/nodedb:latest
+
+# Cargo
+cargo install nodedb
 ```
 
-Requires Linux kernel ≥ 5.1. NodeDB starts on the default ports with data persisted to a named volume.
-
-Connect with psql:
+Requires Linux kernel >= 5.1 (io_uring). Connect:
 
 ```bash
-psql -h localhost -p 6432
-```
-
-Or verify via HTTP:
-
-```bash
-curl http://localhost:6480/health
+ndb                              # native CLI (connects to localhost:6433)
+psql -h localhost -p 6432        # or any PostgreSQL client
 ```
 
 ```sql
--- Create a document collection and insert data
 CREATE COLLECTION users;
-INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com');
-SELECT * FROM users;
 
--- Create a vector index and search
-CREATE COLLECTION articles;
-CREATE VECTOR INDEX articles_vec ON articles METRIC cosine DIM 384;
-SEARCH articles USING VECTOR(embedding, ARRAY[...], 10);
+-- Standard SQL
+INSERT INTO users (name, email, age) VALUES ('Alice', 'alice@example.com', 30);
+
+-- Object literal syntax (same result)
+INSERT INTO users { name: 'Bob', email: 'bob@example.com', age: 25 };
+
+-- Batch insert
+INSERT INTO users [
+    { name: 'Charlie', email: 'charlie@example.com', age: 35 },
+    { name: 'Dana', email: 'dana@example.com', age: 28 }
+];
+
+SELECT * FROM users WHERE age > 25;
 ```
 
-See [Getting Started](docs/getting-started.md) for a fuller walkthrough including build-from-source and configuration.
+See [Getting Started](docs/getting-started.md) for build-from-source and configuration.
 
-## Capabilities
+## Deployment Modes
 
-**Programmability**
+| Mode                | Use case                                                                     |
+| ------------------- | ---------------------------------------------------------------------------- |
+| **Origin (server)** | Full distributed database. Multi-Raft, io_uring, pgwire. Horizontal scaling. |
+| **Origin (local)**  | Same binary, single-node. No cluster overhead.                               |
+| **NodeDB-Lite**     | Embedded library for phones, browsers, desktops. CRDT sync to Origin.        |
 
-- **Stored Procedures** — `CREATE [OR REPLACE] PROCEDURE` with `BEGIN...END` bodies. Full procedural SQL: `IF/ELSIF/ELSE`, `FOR`, `WHILE`, `LOOP`, `DECLARE`, `RETURN`. Execution budgets via `WITH (MAX_ITERATIONS, TIMEOUT)`. `SECURITY DEFINER` execution model.
-- **User-Defined Functions** — `CREATE [OR REPLACE] FUNCTION` with SQL expression bodies or procedural `BEGIN...END` bodies. Volatility levels (`IMMUTABLE`, `STABLE`, `VOLATILE`). Expression UDFs inline directly into DataFusion query plans. `GRANT EXECUTE ON FUNCTION`.
-- **Triggers** — `CREATE TRIGGER` with `ASYNC` (default, Event Plane), `SYNC` (ACID, same transaction), and `DEFERRED` (at `COMMIT` time) execution modes.
+## NodeDB-Lite
 
-**Real-Time** (powered by the [Event Plane](docs/real-time.md))
+All seven engines as an embedded library. Linux, macOS, Windows, Android, iOS, and browser (WASM, ~4.5 MB).
 
-- **CDC Change Streams** — `CREATE CHANGE STREAM` with consumer group offset tracking, per-partition offsets, log compaction, and retention. External delivery via webhook (retry + idempotency headers) or Kafka bridge (transactional exactly-once, feature-gated). ~1-5ms write-to-consumer latency.
-- **Streaming Materialized Views** — `CREATE MATERIALIZED VIEW ... STREAMING AS SELECT ... FROM <stream>`. Continuously-updating aggregation with O(1) incremental maintenance per event. Replaces ksqlDB.
-- **Durable Topics** — `CREATE TOPIC` with `PUBLISH TO` for persistent pub/sub. Consumer groups with offset tracking. Messages survive disconnect.
-- **Cron Scheduler** — `CREATE SCHEDULE ... CRON '...' AS BEGIN...END` for recurring SQL jobs. Per-collection affinity, leader-aware in distributed mode.
-- **LISTEN/NOTIFY** — PostgreSQL-compatible, extended to cluster-wide delivery.
+- **Lite only** -- local-first apps that don't need a server. Vector search, graph, FTS, documents, all in-process with sub-ms reads.
+- **Lite + Origin** -- offline-first with CRDT sync. Writes happen locally, deltas merge to Origin when online. Multiple devices converge regardless of order.
+- **Same API** -- the `NodeDb` trait is identical across Lite and Origin. Switch between embedded and server without changing application code.
 
-## Operations
+See [NodeDB-Lite docs](docs/lite.md) for platform details and sync configuration.
 
-- **Backup/Restore** — `BACKUP TENANT <id> TO '<path>'` and `RESTORE TENANT <id> FROM '<path>'`. Encrypted (AES-256-GCM), serialized as MessagePack. `DRY RUN` mode for pre-restore validation.
-- **Storage conversion** — `CONVERT COLLECTION <name> TO document|strict|kv` for live in-place storage mode migration.
+## Key Features
+
+**Write-time validation** -- Typeguards enforce types, required fields, CHECK constraints, and DEFAULT/VALUE expressions on schemaless collections. Graduate to strict schema with `CONVERT COLLECTION x TO strict`.
+
+**Real-time** -- CDC change streams with consumer groups (~1-5ms latency). Streaming materialized views. Durable topics. Cron scheduler. LISTEN/NOTIFY. All powered by the Event Plane.
+
+**Programmability** -- Stored procedures with `IF/FOR/WHILE/LOOP`. User-defined functions. Triggers (async, sync, deferred). `SECURITY DEFINER`.
+
+**Security** -- RBAC with GRANT/REVOKE. Row-level security with `$auth.*` context across all engines. Hash-chained audit log. Multi-tenancy with per-tenant encryption. JWKS, mTLS, API keys.
+
+**Six wire protocols** -- pgwire (PostgreSQL), HTTP/REST, WebSocket, RESP (Redis), ILP (InfluxDB line protocol), native MessagePack.
+
+## Tools
+
+- **[`ndb`](docs/cli.md)** -- Native CLI with TUI, syntax highlighting, and tab completion. Alternative to `psql`.
+- **NodeDB Admin** -- Web-based GUI for managing collections, browsing data, and monitoring. _(coming soon)_
 
 ## Documentation
 
-- [Getting Started](docs/getting-started.md) — Build, run, connect, first queries
-- [Architecture](docs/architecture.md) — How the three-plane execution model works
-- [Engine Guides](docs/README.md) — Deep dives into each engine
-- [Security](docs/security.md) — Auth, RBAC, RLS, encryption
-- [Real-Time](docs/real-time.md) — LIVE SELECT, CDC, pub/sub
-- [NodeDB-Lite](docs/lite.md) — Embedded edge database
-- [CLI (`ndb`)](docs/cli.md) — Terminal client
+- [Getting Started](docs/getting-started.md) -- Build, run, connect
+- [Architecture](docs/architecture.md) -- Three-plane execution model
+- [Engine Guides](docs/README.md) -- Deep dives into each engine
+- [Security](docs/security/README.md) -- Auth, RBAC, RLS, audit, multi-tenancy
+- [Real-Time](docs/real-time.md) -- CDC, pub/sub, LIVE SELECT
+- [NodeDB-Lite](docs/lite.md) -- Embedded edge database
+- [AI Patterns](docs/ai/README.md) -- RAG, GraphRAG, agent memory, feature store
 
-API reference will be published at [nodedb-docs](https://github.com/NodeDB-Lab/nodedb-docs) (coming soon). In the meantime, `cargo doc --open` generates full Rust API documentation.
+## Building from Source
 
-## Building
+For development or contributing:
 
 ```bash
-cargo build --release           # Build all crates
-cargo test --all-features       # Run all tests
-cargo fmt --all --check         # Check formatting
-cargo clippy --all-targets -- -D warnings  # Lint
+git clone https://github.com/NodeDB-Lab/nodedb.git
+cd nodedb
+cargo build --release
+cargo test --all-features
 ```
 
 ## Status
 
-NodeDB is pre-release. All engines are implemented and tested, but the system has not yet been deployed in production.
+Pre-release. All engines implemented and tested. Not yet deployed in production.
 
 ## License
 
