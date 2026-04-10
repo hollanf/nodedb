@@ -130,10 +130,87 @@ pub fn compute_aggregate_binary(
             Value::String(values.join(","))
         }
 
+        "approx_count_distinct" => {
+            let mut hll = nodedb_types::approx::HyperLogLog::new();
+            for doc in docs {
+                if let Some(bytes) = extract_value_bytes(doc, field, expr)
+                    && !value_bytes_are_null(&bytes)
+                {
+                    // Hash the raw bytes for HLL.
+                    let hash = hash_bytes(&bytes);
+                    hll.add(hash);
+                }
+            }
+            Value::Integer(hll.estimate().round() as i64)
+        }
+
+        "approx_percentile" => {
+            // Format: field is "quantile:actual_field" (e.g. "0.95:latency").
+            let (pct, actual_field) = if let Some(idx) = field.find(':') {
+                match field[..idx].parse::<f64>() {
+                    Ok(p) => (p, &field[idx + 1..]),
+                    Err(_) => return Value::Null, // invalid quantile
+                }
+            } else {
+                (0.5, field)
+            };
+            let mut digest = nodedb_types::approx::TDigest::new();
+            for doc in docs {
+                if let Some(v) = extract_f64_val(doc, actual_field, expr) {
+                    digest.add(v);
+                }
+            }
+            let result = digest.quantile(pct);
+            if result.is_nan() {
+                Value::Null
+            } else {
+                Value::Float(result)
+            }
+        }
+
+        "approx_topk" => {
+            // Format: field is "k:actual_field" (e.g. "10:region").
+            let (k, actual_field) = if let Some(idx) = field.find(':') {
+                match field[..idx].parse::<usize>() {
+                    Ok(k) => (k, &field[idx + 1..]),
+                    Err(_) => return Value::Null, // invalid k
+                }
+            } else {
+                (10, field)
+            };
+            let mut ss = nodedb_types::approx::SpaceSaving::new(k);
+            for doc in docs {
+                if let Some(bytes) = extract_value_bytes(doc, actual_field, expr)
+                    && !value_bytes_are_null(&bytes)
+                {
+                    ss.add(hash_bytes(&bytes));
+                }
+            }
+            // Return as array of [hash, count, error] tuples.
+            let top = ss.top_k();
+            let arr: Vec<Value> = top
+                .into_iter()
+                .map(|(item, count, error)| {
+                    Value::Object(
+                        [
+                            ("item".to_string(), Value::Integer(item as i64)),
+                            ("count".to_string(), Value::Integer(count as i64)),
+                            ("error".to_string(), Value::Integer(error as i64)),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    )
+                })
+                .collect();
+            Value::Array(arr)
+        }
+
         "percentile_cont" => {
             let (pct, actual_field) = if let Some(idx) = field.find(':') {
-                let p: f64 = field[..idx].parse().unwrap_or(0.5);
-                (p, &field[idx + 1..])
+                match field[..idx].parse::<f64>() {
+                    Ok(p) => (p, &field[idx + 1..]),
+                    Err(_) => return Value::Null, // invalid quantile
+                }
             } else {
                 (0.5, field)
             };
@@ -331,6 +408,16 @@ fn value_bytes_are_null(bytes: &[u8]) -> bool {
     bytes == [0xc0]
 }
 
+/// FNV-1a hash for raw bytes (used by approx aggregates to feed HLL/SpaceSaving).
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,5 +611,59 @@ mod tests {
             compute_aggregate_binary("sum", "*", Some(&expr), &docs),
             Value::Float(2.0)
         );
+    }
+
+    #[test]
+    fn approx_count_distinct_basic() {
+        let docs: Vec<Vec<u8>> = vec![
+            encode(&json!({"region": "us"})),
+            encode(&json!({"region": "eu"})),
+            encode(&json!({"region": "us"})),
+            encode(&json!({"region": "ap"})),
+        ];
+        let refs: Vec<&[u8]> = docs.iter().map(|d| d.as_slice()).collect();
+        let result = compute_aggregate_binary("approx_count_distinct", "region", None, &refs);
+        // HLL may not be exactly 3 but should be close.
+        if let Value::Integer(n) = result {
+            assert!((2..=4).contains(&n), "expected ~3 distinct, got {n}");
+        } else {
+            panic!("expected Integer, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn approx_percentile_basic() {
+        let docs: Vec<Vec<u8>> = (1..=100).map(|i| encode(&json!({"val": i}))).collect();
+        let refs: Vec<&[u8]> = docs.iter().map(|d| d.as_slice()).collect();
+        let result = compute_aggregate_binary("approx_percentile", "0.5:val", None, &refs);
+        if let Value::Float(f) = result {
+            assert!(
+                (f - 50.0).abs() < 10.0,
+                "p50 of 1..100 should be ~50, got {f}"
+            );
+        } else {
+            panic!("expected Float, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn approx_topk_basic() {
+        let mut docs: Vec<Vec<u8>> = Vec::new();
+        for _ in 0..10 {
+            docs.push(encode(&json!({"cat": "a"})));
+        }
+        for _ in 0..5 {
+            docs.push(encode(&json!({"cat": "b"})));
+        }
+        for _ in 0..1 {
+            docs.push(encode(&json!({"cat": "c"})));
+        }
+        let refs: Vec<&[u8]> = docs.iter().map(|d| d.as_slice()).collect();
+        let result = compute_aggregate_binary("approx_topk", "3:cat", None, &refs);
+        if let Value::Array(arr) = result {
+            assert!(!arr.is_empty(), "should have top-k results");
+        } else {
+            panic!("expected Array, got {result:?}");
+        }
     }
 }
