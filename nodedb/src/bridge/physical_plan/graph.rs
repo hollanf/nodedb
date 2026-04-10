@@ -90,4 +90,16 @@ pub enum GraphOp {
         /// Serialized `MatchQuery` (MessagePack).
         query: Vec<u8>,
     },
+
+    /// Set node labels (bitset-based, up to 64 distinct labels).
+    SetNodeLabels {
+        node_id: String,
+        labels: Vec<String>,
+    },
+
+    /// Remove node labels.
+    RemoveNodeLabels {
+        node_id: String,
+        labels: Vec<String>,
+    },
 }

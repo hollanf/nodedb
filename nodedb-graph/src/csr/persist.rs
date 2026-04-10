@@ -213,6 +213,9 @@ impl CsrIndex {
             buffer_in_weights,
             deleted_edges: snap.deleted.into_iter().collect(),
             has_weights: snap.has_weights,
+            node_label_bits: vec![0; node_count],
+            node_label_to_id: HashMap::new(),
+            node_label_names: Vec::new(),
             access_counts,
             query_epoch: 0,
         })
@@ -289,6 +292,9 @@ impl CsrIndex {
             buffer_in_weights,
             deleted_edges: snap.deleted.into_iter().collect(),
             has_weights: snap.has_weights,
+            node_label_bits: vec![0; node_count],
+            node_label_to_id: HashMap::new(),
+            node_label_names: Vec::new(),
             access_counts,
             query_epoch: 0,
         }

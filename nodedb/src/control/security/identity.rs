@@ -243,9 +243,12 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
             | DocumentOp::Truncate { .. },
         ) => Permission::Write,
 
-        PhysicalPlan::Graph(GraphOp::EdgePut { .. } | GraphOp::EdgeDelete { .. }) => {
-            Permission::Write
-        }
+        PhysicalPlan::Graph(
+            GraphOp::EdgePut { .. }
+            | GraphOp::EdgeDelete { .. }
+            | GraphOp::SetNodeLabels { .. }
+            | GraphOp::RemoveNodeLabels { .. },
+        ) => Permission::Write,
 
         PhysicalPlan::Meta(MetaOp::WalAppend { .. }) => Permission::Write,
 

@@ -93,6 +93,16 @@ pub(super) async fn dispatch(
     if upper.starts_with("GRAPH DELETE EDGE ") {
         return Some(super::super::graph_ops::delete_edge(state, identity, parts, sql).await);
     }
+    if upper.starts_with("GRAPH LABEL ") {
+        return Some(
+            super::super::graph_ops::set_node_labels(state, identity, parts, sql, false).await,
+        );
+    }
+    if upper.starts_with("GRAPH UNLABEL ") {
+        return Some(
+            super::super::graph_ops::set_node_labels(state, identity, parts, sql, true).await,
+        );
+    }
     if upper.starts_with("GRAPH TRAVERSE ") {
         return Some(super::super::graph_ops::traverse(state, identity, parts, sql).await);
     }

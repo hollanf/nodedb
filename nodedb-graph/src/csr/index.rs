@@ -76,6 +76,16 @@ pub struct CsrIndex {
     /// are `None` and weight buffers are empty — zero overhead for unweighted graphs.
     pub(crate) has_weights: bool,
 
+    // ── Node labels (bitset) ──
+    //
+    // Each node has a `u64` bitset where bit `i` corresponds to label ID `i`.
+    // Supports up to 64 distinct node labels. Labels are interned in
+    // `node_label_to_id` / `node_label_names` (separate from edge labels).
+    // Used by MATCH pattern `(a:Person)` — filters nodes by label membership.
+    pub(crate) node_label_bits: Vec<u64>,
+    pub(crate) node_label_to_id: HashMap<String, u8>,
+    pub(crate) node_label_names: Vec<String>,
+
     // ── Hot/cold access tracking ──
     /// Per-node access counter: incremented on each neighbor/BFS/path query.
     /// Uses `Cell<u32>` so access can be tracked through `&self` references
@@ -112,6 +122,9 @@ impl CsrIndex {
             buffer_in_weights: Vec::new(),
             deleted_edges: HashSet::new(),
             has_weights: false,
+            node_label_bits: Vec::new(),
+            node_label_to_id: HashMap::new(),
+            node_label_names: Vec::new(),
             access_counts: Vec::new(),
             query_epoch: 0,
         }
@@ -134,6 +147,7 @@ impl CsrIndex {
                 self.buffer_in.push(Vec::new());
                 self.buffer_out_weights.push(Vec::new());
                 self.buffer_in_weights.push(Vec::new());
+                self.node_label_bits.push(0);
                 self.access_counts.push(std::cell::Cell::new(0));
                 id
             }
@@ -151,6 +165,76 @@ impl CsrIndex {
                 id
             }
         }
+    }
+
+    // ── Node label methods ──
+
+    /// Get or create a node label ID (max 64 labels).
+    fn ensure_node_label(&mut self, label: &str) -> Option<u8> {
+        if let Some(&id) = self.node_label_to_id.get(label) {
+            return Some(id);
+        }
+        let id = self.node_label_names.len();
+        if id >= 64 {
+            return None; // bitset limit
+        }
+        let id = id as u8;
+        self.node_label_to_id.insert(label.to_string(), id);
+        self.node_label_names.push(label.to_string());
+        Some(id)
+    }
+
+    /// Add a label to a node. Returns false if the 64-label limit is hit.
+    pub fn add_node_label(&mut self, node: &str, label: &str) -> bool {
+        let node_id = self.ensure_node(node);
+        let Some(label_id) = self.ensure_node_label(label) else {
+            return false;
+        };
+        self.node_label_bits[node_id as usize] |= 1u64 << label_id;
+        true
+    }
+
+    /// Remove a label from a node.
+    pub fn remove_node_label(&mut self, node: &str, label: &str) {
+        let Some(&node_id) = self.node_to_id.get(node) else {
+            return;
+        };
+        let Some(&label_id) = self.node_label_to_id.get(label) else {
+            return;
+        };
+        self.node_label_bits[node_id as usize] &= !(1u64 << label_id);
+    }
+
+    /// Check if a node has a specific label.
+    pub fn node_has_label(&self, node_id: u32, label: &str) -> bool {
+        let Some(&label_id) = self.node_label_to_id.get(label) else {
+            return false;
+        };
+        let bits = self
+            .node_label_bits
+            .get(node_id as usize)
+            .copied()
+            .unwrap_or(0);
+        bits & (1u64 << label_id) != 0
+    }
+
+    /// Get all label names for a node.
+    pub fn node_labels(&self, node_id: u32) -> Vec<&str> {
+        let bits = self
+            .node_label_bits
+            .get(node_id as usize)
+            .copied()
+            .unwrap_or(0);
+        if bits == 0 {
+            return Vec::new();
+        }
+        let mut labels = Vec::new();
+        for (i, name) in self.node_label_names.iter().enumerate() {
+            if bits & (1u64 << i) != 0 {
+                labels.push(name.as_str());
+            }
+        }
+        labels
     }
 
     /// Incrementally add an unweighted edge (goes into mutable buffer).
@@ -693,5 +777,40 @@ mod tests {
         let id2 = csr.add_node("x");
         assert_eq!(id1, id2);
         assert_eq!(csr.node_count(), 1);
+    }
+
+    #[test]
+    fn node_labels_bitset() {
+        let mut csr = CsrIndex::new();
+        csr.add_edge("alice", "KNOWS", "bob");
+        csr.add_edge("acme", "EMPLOYS", "alice");
+
+        // Set labels.
+        assert!(csr.add_node_label("alice", "Person"));
+        assert!(csr.add_node_label("bob", "Person"));
+        assert!(csr.add_node_label("acme", "Company"));
+
+        let alice_id = csr.node_id("alice").unwrap();
+        let bob_id = csr.node_id("bob").unwrap();
+        let acme_id = csr.node_id("acme").unwrap();
+
+        assert!(csr.node_has_label(alice_id, "Person"));
+        assert!(!csr.node_has_label(alice_id, "Company"));
+        assert!(csr.node_has_label(acme_id, "Company"));
+        assert!(!csr.node_has_label(acme_id, "Person"));
+
+        // Multiple labels on same node.
+        assert!(csr.add_node_label("alice", "Employee"));
+        assert!(csr.node_has_label(alice_id, "Person"));
+        assert!(csr.node_has_label(alice_id, "Employee"));
+        assert_eq!(csr.node_labels(alice_id), vec!["Person", "Employee"]);
+
+        // Remove label.
+        csr.remove_node_label("alice", "Employee");
+        assert!(!csr.node_has_label(alice_id, "Employee"));
+        assert!(csr.node_has_label(alice_id, "Person"));
+
+        // Non-existent label check returns false.
+        assert!(!csr.node_has_label(bob_id, "NonExistent"));
     }
 }

@@ -33,7 +33,7 @@ pub async fn insert_edge(
         .ok_or_else(|| sqlstate_error("42601", "missing TO '<node_id>'"))?;
     let label = extract_quoted_after(&upper, sql, "TYPE")
         .ok_or_else(|| sqlstate_error("42601", "missing TYPE '<edge_label>'"))?;
-    let properties = extract_quoted_after(&upper, sql, "PROPERTIES").unwrap_or_default();
+    let properties = extract_properties(&upper, sql)?;
 
     let tenant_id = identity.tenant_id;
     let vshard_id = VShardId::from_key(src.as_bytes());
@@ -50,6 +50,58 @@ pub async fn insert_edge(
 
     match dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard_id, plan, 0).await {
         Ok(_) => Ok(vec![Response::Execution(Tag::new("INSERT EDGE"))]),
+        Err(e) => Err(sqlstate_error("XX000", &e.to_string())),
+    }
+}
+
+/// GRAPH LABEL '<node_id>' AS '<label>' [, '<label2>']
+/// GRAPH UNLABEL '<node_id>' AS '<label>'
+pub async fn set_node_labels(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    _parts: &[&str],
+    sql: &str,
+    remove: bool,
+) -> PgWireResult<Vec<Response>> {
+    let upper = sql.to_uppercase();
+    let keyword = if remove { "UNLABEL" } else { "LABEL" };
+
+    // Extract node ID after LABEL/UNLABEL.
+    let node_id = extract_quoted_after(&upper, sql, keyword)
+        .ok_or_else(|| sqlstate_error("42601", &format!("missing {keyword} '<node_id>'")))?;
+
+    // Extract labels after AS — comma-separated quoted strings.
+    let as_pos = upper
+        .find(" AS ")
+        .ok_or_else(|| sqlstate_error("42601", "missing AS '<label>'"))?;
+    let after_as = sql[as_pos + 4..].trim_start().trim_end_matches(';').trim();
+    let labels: Vec<String> = after_as
+        .split(',')
+        .map(|s| s.trim().trim_matches('\'').to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if labels.is_empty() {
+        return Err(sqlstate_error("42601", "no labels specified after AS"));
+    }
+
+    let tenant_id = identity.tenant_id;
+    let vshard_id = VShardId::from_key(node_id.as_bytes());
+
+    let plan = if remove {
+        PhysicalPlan::Graph(GraphOp::RemoveNodeLabels { node_id, labels })
+    } else {
+        PhysicalPlan::Graph(GraphOp::SetNodeLabels { node_id, labels })
+    };
+
+    dispatch_utils::wal_append_if_write(&state.wal, tenant_id, vshard_id, &plan)
+        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+
+    match dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard_id, plan, 0).await {
+        Ok(_) => {
+            let tag = if remove { "UNLABEL" } else { "LABEL" };
+            Ok(vec![Response::Execution(Tag::new(tag))])
+        }
         Err(e) => Err(sqlstate_error("XX000", &e.to_string())),
     }
 }
@@ -366,6 +418,35 @@ fn payload_to_query_response(
         schema,
         stream::iter(vec![Ok(row)]),
     ))])
+}
+
+/// Extract PROPERTIES value — supports both `{ key: val }` object literal and `'{"key":"val"}'` string.
+fn extract_properties(upper: &str, original: &str) -> PgWireResult<String> {
+    let Some(kw_pos) = upper.find("PROPERTIES") else {
+        return Ok(String::new());
+    };
+    let after = original[kw_pos + "PROPERTIES".len()..].trim_start();
+
+    if after.starts_with('{') {
+        // Object literal form: PROPERTIES { since: 2020, weight: 0.9 }
+        // Find the matching closing brace (handle nesting).
+        let obj_str = after.trim_end_matches(';').trim_end();
+        match nodedb_sql::parser::object_literal::parse_object_literal(obj_str) {
+            Some(Ok(fields)) => {
+                let json = sonic_rs::to_string(&nodedb_types::Value::Object(fields))
+                    .unwrap_or_else(|_| "{}".to_string());
+                Ok(json)
+            }
+            Some(Err(msg)) => Err(sqlstate_error(
+                "42601",
+                &format!("PROPERTIES object literal error: {msg}"),
+            )),
+            None => Ok(String::new()),
+        }
+    } else {
+        // Quoted string form: PROPERTIES '{"since": 2020}'
+        Ok(extract_quoted_after(upper, original, "PROPERTIES").unwrap_or_default())
+    }
 }
 
 /// Extract a single-quoted value after a keyword.

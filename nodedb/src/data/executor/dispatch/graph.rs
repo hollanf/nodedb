@@ -85,6 +85,22 @@ impl CoreLoop {
             }
 
             GraphOp::Match { query } => self.execute_graph_match(task, query),
+
+            GraphOp::SetNodeLabels { node_id, labels } => {
+                let scoped = super::super::scoping::scoped_node(tid, node_id);
+                for label in labels {
+                    self.csr.add_node_label(&scoped, label);
+                }
+                self.response_ok(task)
+            }
+
+            GraphOp::RemoveNodeLabels { node_id, labels } => {
+                let scoped = super::super::scoping::scoped_node(tid, node_id);
+                for label in labels {
+                    self.csr.remove_node_label(&scoped, label);
+                }
+                self.response_ok(task)
+            }
         }
     }
 }

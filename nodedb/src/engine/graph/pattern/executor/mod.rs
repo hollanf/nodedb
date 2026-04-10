@@ -204,11 +204,23 @@ fn resolve_binding(binding: &NodeBinding, csr: &CsrIndex, row: &BindingRow) -> V
         && let Some(value) = row.get(name)
     {
         if let Some(id) = csr.node_id(value) {
+            // Check label constraint if specified.
+            if let Some(ref label) = binding.label
+                && !csr.node_has_label(id, label)
+            {
+                return Vec::new();
+            }
             return vec![id];
         }
         return Vec::new();
     }
-    (0..csr.node_count() as u32).collect()
+    // No binding yet — enumerate all nodes, filtering by label if required.
+    let all = 0..csr.node_count() as u32;
+    if let Some(ref label) = binding.label {
+        all.filter(|&id| csr.node_has_label(id, label)).collect()
+    } else {
+        all.collect()
+    }
 }
 
 fn binding_compatible(
@@ -217,6 +229,12 @@ fn binding_compatible(
     row: &BindingRow,
     node_id: u32,
 ) -> bool {
+    // Check label constraint.
+    if let Some(ref label) = binding.label
+        && !csr.node_has_label(node_id, label)
+    {
+        return false;
+    }
     if let Some(ref name) = binding.name
         && let Some(existing) = row.get(name)
     {
@@ -362,6 +380,51 @@ mod tests {
         let (csr, store, _dir) = make_social_graph();
         let query =
             super::super::compiler::parse("MATCH (a)-[:NONEXISTENT]->(b) RETURN a, b").unwrap();
+        let rows = execute(&query, &csr, &store).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn execute_with_node_labels() {
+        let (mut csr, store, _dir) = make_social_graph();
+
+        // Set labels.
+        csr.add_node_label("alice", "Person");
+        csr.add_node_label("bob", "Person");
+        csr.add_node_label("carol", "Person");
+        csr.add_node_label("dave", "Bot");
+
+        // Without label filter — all KNOWS edges.
+        let query = super::super::compiler::parse("MATCH (a)-[:KNOWS]->(b) RETURN a, b").unwrap();
+        let rows = execute(&query, &csr, &store).unwrap();
+        assert_eq!(rows.len(), 3);
+
+        // With label filter — only Person src.
+        let query =
+            super::super::compiler::parse("MATCH (a:Person)-[:KNOWS]->(b) RETURN a, b").unwrap();
+        let rows = execute(&query, &csr, &store).unwrap();
+        // alice->bob, bob->carol, carol->dave — all 3 srcs are Person.
+        assert_eq!(rows.len(), 3);
+
+        // With label filter — only Bot dst.
+        let query =
+            super::super::compiler::parse("MATCH (a)-[:KNOWS]->(b:Bot) RETURN a, b").unwrap();
+        let rows = execute(&query, &csr, &store).unwrap();
+        // Only carol->dave where dave is Bot.
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["a"], "carol");
+        assert_eq!(rows[0]["b"], "dave");
+
+        // Both labels — Person->Bot.
+        let query = super::super::compiler::parse("MATCH (a:Person)-[:KNOWS]->(b:Bot) RETURN a, b")
+            .unwrap();
+        let rows = execute(&query, &csr, &store).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["a"], "carol");
+
+        // Non-matching labels — should return 0.
+        let query = super::super::compiler::parse("MATCH (a:Bot)-[:KNOWS]->(b:Person) RETURN a, b")
+            .unwrap();
         let rows = execute(&query, &csr, &store).unwrap();
         assert!(rows.is_empty());
     }
