@@ -89,7 +89,8 @@ pub(super) fn convert_one(
         SqlPlan::KvInsert {
             collection,
             entries,
-        } => super::dml::convert_kv_insert(collection, entries, tenant_id),
+            ttl_secs,
+        } => super::dml::convert_kv_insert(collection, entries, *ttl_secs, tenant_id),
 
         SqlPlan::Update {
             collection,

@@ -59,16 +59,26 @@ pub fn plan_insert(ins: &ast::Insert, catalog: &dyn SqlCatalog) -> Result<Vec<Sq
     // KV engine: key and value are fundamentally separate — handle directly.
     if info.engine == EngineType::KeyValue {
         let key_idx = columns.iter().position(|c| c == "key");
+        let ttl_idx = columns.iter().position(|c| c == "ttl");
         let mut entries = Vec::with_capacity(rows_ast.len());
+        let mut ttl_secs: u64 = 0;
         for row_exprs in rows_ast {
             let key_val = match key_idx {
                 Some(idx) => expr_to_sql_value(&row_exprs[idx])?,
                 None => SqlValue::String(String::new()),
             };
+            // Extract TTL if present (in seconds).
+            if let Some(idx) = ttl_idx {
+                match expr_to_sql_value(&row_exprs[idx]) {
+                    Ok(SqlValue::Int(n)) => ttl_secs = n.max(0) as u64,
+                    Ok(SqlValue::Float(f)) => ttl_secs = f.max(0.0) as u64,
+                    _ => {}
+                }
+            }
             let value_cols: Vec<(String, SqlValue)> = columns
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| Some(*i) != key_idx)
+                .filter(|(i, _)| Some(*i) != key_idx && Some(*i) != ttl_idx)
                 .map(|(i, col)| {
                     let val = expr_to_sql_value(&row_exprs[i])?;
                     Ok((col.clone(), val))
@@ -79,6 +89,7 @@ pub fn plan_insert(ins: &ast::Insert, catalog: &dyn SqlCatalog) -> Result<Vec<Sq
         return Ok(vec![SqlPlan::KvInsert {
             collection: table_name,
             entries,
+            ttl_secs,
         }]);
     }
 
@@ -134,16 +145,25 @@ pub fn plan_upsert(ins: &ast::Insert, catalog: &dyn SqlCatalog) -> Result<Vec<Sq
     // KV: upsert is just a PUT (natural overwrite).
     if info.engine == EngineType::KeyValue {
         let key_idx = columns.iter().position(|c| c == "key");
+        let ttl_idx = columns.iter().position(|c| c == "ttl");
         let mut entries = Vec::with_capacity(rows_ast.len());
+        let mut ttl_secs: u64 = 0;
         for row_exprs in rows_ast {
             let key_val = match key_idx {
                 Some(idx) => expr_to_sql_value(&row_exprs[idx])?,
                 None => SqlValue::String(String::new()),
             };
+            if let Some(idx) = ttl_idx {
+                match expr_to_sql_value(&row_exprs[idx]) {
+                    Ok(SqlValue::Int(n)) => ttl_secs = n.max(0) as u64,
+                    Ok(SqlValue::Float(f)) => ttl_secs = f.max(0.0) as u64,
+                    _ => {}
+                }
+            }
             let value_cols: Vec<(String, SqlValue)> = columns
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| Some(*i) != key_idx)
+                .filter(|(i, _)| Some(*i) != key_idx && Some(*i) != ttl_idx)
                 .map(|(i, col)| {
                     let val = expr_to_sql_value(&row_exprs[i])?;
                     Ok((col.clone(), val))
@@ -154,6 +174,7 @@ pub fn plan_upsert(ins: &ast::Insert, catalog: &dyn SqlCatalog) -> Result<Vec<Sq
         return Ok(vec![SqlPlan::KvInsert {
             collection: table_name,
             entries,
+            ttl_secs,
         }]);
     }
 

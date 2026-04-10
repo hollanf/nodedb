@@ -56,6 +56,8 @@ pub enum SqlPlan {
     KvInsert {
         collection: String,
         entries: Vec<(SqlValue, Vec<(String, SqlValue)>)>,
+        /// TTL in seconds (0 = no expiry). Extracted from `ttl` column if present.
+        ttl_secs: u64,
     },
     /// UPSERT: insert or merge if document exists.
     Upsert {

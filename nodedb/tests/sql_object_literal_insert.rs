@@ -398,3 +398,54 @@ async fn match_node_label_filtering() {
         .unwrap();
     assert_eq!(none.len(), 0, "Bot src should match nothing: {none:?}");
 }
+
+// ── KV TTL on INSERT ──
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn kv_insert_with_ttl() {
+    let server = TestServer::start().await;
+
+    server
+        .exec("CREATE COLLECTION ttl_cache TYPE KEY_VALUE (key TEXT PRIMARY KEY)")
+        .await
+        .unwrap();
+
+    // Insert with TTL column (1 second).
+    server
+        .exec("INSERT INTO ttl_cache (key, value, ttl) VALUES ('ephemeral', 'temp', 1)")
+        .await
+        .unwrap();
+
+    // Insert without TTL (permanent).
+    server
+        .exec("INSERT INTO ttl_cache (key, value) VALUES ('permanent', 'keep')")
+        .await
+        .unwrap();
+
+    // Both should exist immediately.
+    let r1 = server
+        .query_text("SELECT * FROM ttl_cache WHERE key = 'ephemeral'")
+        .await
+        .unwrap();
+    let r2 = server
+        .query_text("SELECT * FROM ttl_cache WHERE key = 'permanent'")
+        .await
+        .unwrap();
+    assert_eq!(r1.len(), 1, "ephemeral key should exist immediately");
+    assert_eq!(r2.len(), 1, "permanent key should exist");
+
+    // Wait for TTL to expire.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Ephemeral key should be gone, permanent should remain.
+    let r1 = server
+        .query_text("SELECT * FROM ttl_cache WHERE key = 'ephemeral'")
+        .await
+        .unwrap();
+    let r2 = server
+        .query_text("SELECT * FROM ttl_cache WHERE key = 'permanent'")
+        .await
+        .unwrap();
+    assert_eq!(r1.len(), 0, "ephemeral key should have expired");
+    assert_eq!(r2.len(), 1, "permanent key should still exist");
+}

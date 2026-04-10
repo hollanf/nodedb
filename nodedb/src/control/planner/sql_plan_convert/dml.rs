@@ -136,9 +136,11 @@ pub(super) fn convert_upsert(
 pub(super) fn convert_kv_insert(
     collection: &str,
     entries: &[(SqlValue, Vec<(String, SqlValue)>)],
+    ttl_secs: u64,
     tenant_id: TenantId,
 ) -> crate::Result<Vec<PhysicalTask>> {
     let vshard = VShardId::from_collection(collection);
+    let ttl_ms = ttl_secs * 1000;
     let mut tasks = Vec::with_capacity(entries.len());
     for (key_val, value_cols) in entries {
         let key = sql_value_to_bytes(key_val);
@@ -163,7 +165,7 @@ pub(super) fn convert_kv_insert(
                 collection: collection.into(),
                 key,
                 value,
-                ttl_ms: 0,
+                ttl_ms,
             }),
             post_set_op: PostSetOp::None,
         });
