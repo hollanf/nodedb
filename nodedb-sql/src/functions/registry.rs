@@ -125,7 +125,8 @@ fn builtin_functions() -> Vec<FunctionMeta> {
         s("sparse_score", Scalar, 3, 3, None),
         // ── Text search ──
         s("bm25_score", Scalar, 2, 2, TextSearch),
-        s("text_match", Scalar, 2, 2, TextMatch),
+        s("search_score", Scalar, 2, 2, TextSearch),
+        s("text_match", Scalar, 2, 3, TextMatch),
         // ── Hybrid search ──
         s("rrf_score", Scalar, 2, 4, HybridSearch),
         // ── Spatial ──
