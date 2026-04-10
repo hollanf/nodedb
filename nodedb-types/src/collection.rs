@@ -103,12 +103,22 @@ impl CollectionType {
         matches!(self, Self::Document(_))
     }
 
-    pub fn is_columnar(&self) -> bool {
+    /// Returns `true` for any columnar-family type (Plain, Timeseries, Spatial).
+    /// Use `is_plain_columnar()` to check for plain columnar only.
+    pub fn is_columnar_family(&self) -> bool {
         matches!(self, Self::Columnar(_))
+    }
+
+    pub fn is_plain_columnar(&self) -> bool {
+        matches!(self, Self::Columnar(ColumnarProfile::Plain))
     }
 
     pub fn is_timeseries(&self) -> bool {
         matches!(self, Self::Columnar(ColumnarProfile::Timeseries { .. }))
+    }
+
+    pub fn is_spatial(&self) -> bool {
+        matches!(self, Self::Columnar(ColumnarProfile::Spatial { .. }))
     }
 
     pub fn is_strict(&self) -> bool {
@@ -206,7 +216,7 @@ mod tests {
         let ct = CollectionType::default();
         assert!(ct.is_document());
         assert!(ct.is_schemaless());
-        assert!(!ct.is_columnar());
+        assert!(!ct.is_columnar_family());
         assert!(!ct.is_timeseries());
         assert!(!ct.is_kv());
     }
@@ -214,9 +224,10 @@ mod tests {
     #[test]
     fn factory_methods() {
         assert!(CollectionType::document().is_schemaless());
-        assert!(CollectionType::columnar().is_columnar());
+        assert!(CollectionType::columnar().is_columnar_family());
         assert!(CollectionType::timeseries("time", "1h").is_timeseries());
-        assert!(CollectionType::spatial("geom").is_columnar());
+        assert!(CollectionType::spatial("geom").is_columnar_family());
+        assert!(CollectionType::spatial("geom").is_spatial());
 
         let schema = StrictSchema::new(vec![
             ColumnDef::required("key", ColumnType::String).with_primary_key(),
@@ -226,7 +237,7 @@ mod tests {
         let kv = CollectionType::kv(schema);
         assert!(kv.is_kv());
         assert!(!kv.is_document());
-        assert!(!kv.is_columnar());
+        assert!(!kv.is_columnar_family());
     }
 
     #[test]
@@ -338,7 +349,12 @@ mod tests {
     #[test]
     fn from_str() {
         assert!("document".parse::<CollectionType>().unwrap().is_document());
-        assert!("columnar".parse::<CollectionType>().unwrap().is_columnar());
+        assert!(
+            "columnar"
+                .parse::<CollectionType>()
+                .unwrap()
+                .is_columnar_family()
+        );
         assert!(
             "timeseries"
                 .parse::<CollectionType>()
