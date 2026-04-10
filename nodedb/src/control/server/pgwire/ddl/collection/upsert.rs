@@ -75,17 +75,16 @@ pub async fn upsert_document(
         }
 
         // General CHECK constraints (Control Plane enforcement, may have subqueries).
-        if !coll_def.check_constraints.is_empty() {
-            if let Err(e) = super::check_constraint::enforce_check_constraints(
+        if !coll_def.check_constraints.is_empty()
+            && let Err(e) = super::check_constraint::enforce_check_constraints(
                 state,
                 tenant_id,
                 &coll_def.check_constraints,
                 &fields,
             )
             .await
-            {
-                return Some(Err(e));
-            }
+        {
+            return Some(Err(e));
         }
     }
 

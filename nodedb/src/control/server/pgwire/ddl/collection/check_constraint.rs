@@ -305,7 +305,7 @@ fn substitute_new_refs(sql: &str, fields: &HashMap<String, nodedb_types::Value>)
     // Find all NEW.xxx patterns and replace with literal values.
     // We iterate from longest field names first to avoid partial matches.
     let mut field_names: Vec<&String> = fields.keys().collect();
-    field_names.sort_by(|a, b| b.len().cmp(&a.len()));
+    field_names.sort_by_key(|b| std::cmp::Reverse(b.len()));
 
     for field_name in field_names {
         let pattern_upper = format!("NEW.{}", field_name.to_uppercase());
@@ -494,8 +494,8 @@ mod tests {
             "42"
         );
         assert_eq!(
-            value_to_sql_literal(&nodedb_types::Value::Float(3.14)),
-            "3.14"
+            value_to_sql_literal(&nodedb_types::Value::Float(3.5)),
+            "3.5"
         );
     }
 }

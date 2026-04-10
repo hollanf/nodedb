@@ -66,21 +66,19 @@ impl NodeDbPgHandler {
         }
 
         // For UPDATE: merge SET values with current document for cross-field CHECK.
-        if !is_insert {
-            if let Some(doc_id) = extract_where_id(sql) {
-                let old = crate::control::trigger::dml_hook::fetch_old_row(
-                    &self.state,
-                    tenant_id,
-                    &coll_name,
-                    &doc_id,
-                )
-                .await;
-                let mut merged = old;
-                for (k, v) in &fields {
-                    merged.insert(k.clone(), v.clone());
-                }
-                fields = merged;
+        if !is_insert && let Some(doc_id) = extract_where_id(sql) {
+            let old = crate::control::trigger::dml_hook::fetch_old_row(
+                &self.state,
+                tenant_id,
+                &coll_name,
+                &doc_id,
+            )
+            .await;
+            let mut merged = old;
+            for (k, v) in &fields {
+                merged.insert(k.clone(), v.clone());
             }
+            fields = merged;
         }
 
         super::super::super::ddl::collection::check_constraint::enforce_check_constraints(
@@ -222,13 +220,13 @@ fn extract_where_id(sql: &str) -> Option<String> {
         }
         let val_str = after_id[1..].trim_start();
 
-        if val_str.starts_with('\'') {
-            let end = val_str[1..].find('\'')?;
-            return Some(val_str[1..1 + end].to_string());
+        if let Some(inner) = val_str.strip_prefix('\'') {
+            let end = inner.find('\'')?;
+            return Some(inner[..end].to_string());
         }
-        if val_str.starts_with('"') {
-            let end = val_str[1..].find('"')?;
-            return Some(val_str[1..1 + end].to_string());
+        if let Some(inner) = val_str.strip_prefix('"') {
+            let end = inner.find('"')?;
+            return Some(inner[..end].to_string());
         }
         let end = val_str
             .find(|c: char| c.is_whitespace() || c == ';')

@@ -56,20 +56,20 @@ pub fn preprocess(sql: &str) -> Option<PreprocessedSql> {
     let mut any_rewrite = false;
 
     // Rewrite pgvector `<->` operator to `vector_distance()` function call.
-    if sql_buf.contains("<->") {
-        if let Some(rewritten) = rewrite_arrow_distance(&sql_buf) {
-            sql_buf = rewritten;
-            any_rewrite = true;
-        }
+    if sql_buf.contains("<->")
+        && let Some(rewritten) = rewrite_arrow_distance(&sql_buf)
+    {
+        sql_buf = rewritten;
+        any_rewrite = true;
     }
 
     // Rewrite `{ key: val }` inside function args to JSON string literals.
     // e.g., text_match(body, 'q', { fuzzy: true }) → text_match(body, 'q', '{"fuzzy":true}')
-    if sql_buf.contains("{ ") || sql_buf.contains("{f") || sql_buf.contains("{d") {
-        if let Some(rewritten) = rewrite_object_literal_args(&sql_buf) {
-            sql_buf = rewritten;
-            any_rewrite = true;
-        }
+    if (sql_buf.contains("{ ") || sql_buf.contains("{f") || sql_buf.contains("{d"))
+        && let Some(rewritten) = rewrite_object_literal_args(&sql_buf)
+    {
+        sql_buf = rewritten;
+        any_rewrite = true;
     }
 
     if any_rewrite {
