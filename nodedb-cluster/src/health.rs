@@ -200,13 +200,37 @@ impl HealthMonitor {
 
     /// Persist updated topology and broadcast to all active peers.
     async fn persist_and_broadcast(&self) {
-        // Persist.
         let topo = self.topology.read().unwrap_or_else(|p| p.into_inner());
         if let Err(e) = self.catalog.save_topology(&topo) {
             warn!(error = %e, "failed to persist topology update");
         }
+        drop(topo);
+        broadcast_topology(self.node_id, &self.topology, &self.transport);
+    }
 
-        // Build TopologyUpdate message.
+    /// Collect all non-self, non-decommissioned peers with their addresses.
+    fn collect_peers(&self) -> Vec<(u64, SocketAddr)> {
+        let topo = self.topology.read().unwrap_or_else(|p| p.into_inner());
+        topo.all_nodes()
+            .filter(|n| n.node_id != self.node_id && n.state != NodeState::Decommissioned)
+            .filter_map(|n| n.socket_addr().map(|addr| (n.node_id, addr)))
+            .collect()
+    }
+}
+
+/// Broadcast the current topology to every active peer (fire-and-forget).
+///
+/// Shared by [`HealthMonitor`] and the cluster-join path
+/// (`raft_loop::join`). Does not block — spawns one detached task per
+/// peer and returns immediately. Uses a short-lived read guard to
+/// snapshot the topology and the peer list under one lock acquisition.
+pub fn broadcast_topology(
+    self_node_id: u64,
+    topology: &RwLock<ClusterTopology>,
+    transport: &Arc<NexarTransport>,
+) {
+    let (update, active_peers) = {
+        let topo = topology.read().unwrap_or_else(|p| p.into_inner());
         let update = RaftRpc::TopologyUpdate(TopologyUpdate {
             version: topo.version(),
             nodes: topo
@@ -219,35 +243,23 @@ impl HealthMonitor {
                 })
                 .collect(),
         });
-
-        // Collect active peers to broadcast to.
-        let active_peers: Vec<u64> = topo
+        let peers: Vec<u64> = topo
             .active_nodes()
             .iter()
             .map(|n| n.node_id)
-            .filter(|&id| id != self.node_id)
+            .filter(|&id| id != self_node_id)
             .collect();
-        drop(topo);
+        (update, peers)
+    };
 
-        // Broadcast (fire-and-forget).
-        for peer_id in active_peers {
-            let transport = self.transport.clone();
-            let msg = update.clone();
-            tokio::spawn(async move {
-                if let Err(e) = transport.send_rpc(peer_id, msg).await {
-                    debug!(peer_id, error = %e, "topology broadcast failed");
-                }
-            });
-        }
-    }
-
-    /// Collect all non-self, non-decommissioned peers with their addresses.
-    fn collect_peers(&self) -> Vec<(u64, SocketAddr)> {
-        let topo = self.topology.read().unwrap_or_else(|p| p.into_inner());
-        topo.all_nodes()
-            .filter(|n| n.node_id != self.node_id && n.state != NodeState::Decommissioned)
-            .filter_map(|n| n.socket_addr().map(|addr| (n.node_id, addr)))
-            .collect()
+    for peer_id in active_peers {
+        let transport = transport.clone();
+        let msg = update.clone();
+        tokio::spawn(async move {
+            if let Err(e) = transport.send_rpc(peer_id, msg).await {
+                debug!(peer_id, error = %e, "topology broadcast failed");
+            }
+        });
     }
 }
 

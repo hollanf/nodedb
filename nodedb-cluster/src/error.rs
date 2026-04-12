@@ -36,4 +36,10 @@ pub enum ClusterError {
 
     #[error("circuit open for node {node_id}: peer has {failures} consecutive failures")]
     CircuitOpen { node_id: u64, failures: u32 },
+
+    #[error("raft group {group_id} disappeared while waiting for conf change commit")]
+    JoinGroupDisappeared { group_id: u64 },
+
+    #[error("conf change commit timeout on group {group_id} (waited for index {log_index})")]
+    JoinCommitTimeout { group_id: u64, log_index: u64 },
 }

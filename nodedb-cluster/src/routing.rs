@@ -33,6 +33,7 @@ pub struct RoutingTable {
 #[derive(
     Debug,
     Clone,
+    Default,
     serde::Serialize,
     serde::Deserialize,
     zerompk::ToMessagePack,
@@ -43,6 +44,14 @@ pub struct GroupInfo {
     pub leader: u64,
     /// All voting members (including leader).
     pub members: Vec<u64>,
+    /// Non-voting learner peers catching up to this group.
+    ///
+    /// Learners receive log replication but do not vote in elections and
+    /// are not counted toward the commit quorum. A learner transitions
+    /// into `members` via a second `PromoteLearner` conf-change once the
+    /// leader observes it has caught up.
+    #[serde(default)]
+    pub learners: Vec<u64>,
 }
 
 impl RoutingTable {
@@ -65,7 +74,14 @@ impl RoutingTable {
             let start = (group_id as usize * rf) % nodes.len();
             let members: Vec<u64> = (0..rf).map(|i| nodes[(start + i) % nodes.len()]).collect();
             let leader = members[0];
-            group_members.insert(group_id, GroupInfo { leader, members });
+            group_members.insert(
+                group_id,
+                GroupInfo {
+                    leader,
+                    members,
+                    learners: Vec::new(),
+                },
+            );
         }
 
         Self {
@@ -132,11 +148,44 @@ impl RoutingTable {
         self.group_members.keys().copied().collect()
     }
 
-    /// Update the members of a Raft group (for membership changes).
+    /// Update the voting members of a Raft group (for membership changes).
     pub fn set_group_members(&mut self, group_id: u64, members: Vec<u64>) {
         if let Some(info) = self.group_members.get_mut(&group_id) {
             info.members = members;
         }
+    }
+
+    /// Update the learner list for a Raft group.
+    pub fn set_group_learners(&mut self, group_id: u64, learners: Vec<u64>) {
+        if let Some(info) = self.group_members.get_mut(&group_id) {
+            info.learners = learners;
+        }
+    }
+
+    /// Add a learner to a group if not already present. No-op if the peer
+    /// is already a voter or a learner.
+    pub fn add_group_learner(&mut self, group_id: u64, peer: u64) {
+        if let Some(info) = self.group_members.get_mut(&group_id)
+            && !info.members.contains(&peer)
+            && !info.learners.contains(&peer)
+        {
+            info.learners.push(peer);
+        }
+    }
+
+    /// Promote a learner to a voter within a group. Returns `true` if the
+    /// learner was found and promoted.
+    pub fn promote_group_learner(&mut self, group_id: u64, peer: u64) -> bool {
+        if let Some(info) = self.group_members.get_mut(&group_id)
+            && let Some(pos) = info.learners.iter().position(|&id| id == peer)
+        {
+            info.learners.remove(pos);
+            if !info.members.contains(&peer) {
+                info.members.push(peer);
+            }
+            return true;
+        }
+        false
     }
 
     /// Access the vshard-to-group mapping (for persistence / wire transfer).

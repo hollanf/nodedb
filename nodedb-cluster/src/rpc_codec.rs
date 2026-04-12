@@ -141,11 +141,17 @@ pub struct JoinNodeInfo {
 }
 
 /// Raft group membership in the join response wire format.
+///
+/// `members` are voting members; `learners` are non-voting catch-up peers
+/// (see `nodedb-raft` learner semantics). A joining node that finds its
+/// own id in `learners` creates the local Raft group in the `Learner`
+/// role and waits for a subsequent `PromoteLearner` conf-change.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct JoinGroupInfo {
     pub group_id: u64,
     pub leader: u64,
     pub members: Vec<u64>,
+    pub learners: Vec<u64>,
 }
 
 // ── RPC enum ────────────────────────────────────────────────────────
@@ -818,6 +824,7 @@ mod tests {
                 group_id: 0,
                 leader: 1,
                 members: vec![1, 2],
+                learners: vec![],
             }],
         };
 
