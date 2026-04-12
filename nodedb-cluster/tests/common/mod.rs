@@ -35,7 +35,7 @@ use std::time::Duration;
 
 use nodedb_cluster::{
     ClusterCatalog, ClusterConfig, ClusterLifecycleState, ClusterLifecycleTracker, ClusterTopology,
-    NexarTransport, RaftLoop, start_cluster,
+    NexarTransport, NoopForwarder, RaftLoop, start_cluster,
 };
 use nodedb_raft::message::LogEntry;
 use tempfile::TempDir;
@@ -52,6 +52,11 @@ impl nodedb_cluster::CommitApplier for NoopApplier {
 }
 
 /// Everything one cluster node needs to run in-process for a test.
+///
+/// The catalog is held exclusively through `raft_loop.catalog`
+/// (via `with_catalog`) so that dropping `raft_loop` releases the
+/// redb file lock — there is no separate `_catalog` field to
+/// extend the lifetime beyond the raft loop.
 pub struct TestNode {
     /// Owns the temp dir when we created it ourselves. `None` when
     /// the test owns the directory via its own `TempDir` handle
@@ -60,12 +65,19 @@ pub struct TestNode {
     /// Always-valid path to the data directory, whether we own the
     /// underlying `TempDir` or the test does.
     pub data_dir_path: PathBuf,
-    /// Held so the redb file stays open for the node's lifetime.
-    _catalog: Arc<ClusterCatalog>,
     pub transport: Arc<NexarTransport>,
     pub topology: Arc<RwLock<ClusterTopology>>,
     pub lifecycle: ClusterLifecycleTracker,
     pub node_id: u64,
+    /// Held so tests can call `begin_shutdown` directly on the
+    /// raft loop rather than relying on the external watch
+    /// channel to propagate. This is the production-shaped path
+    /// for graceful shutdown — every detached `tokio::spawn` task
+    /// inside `raft_loop::tick::do_tick` subscribes to the same
+    /// cooperative-shutdown watch and exits on signal, which is
+    /// what lets per-group redb log files release their locks in
+    /// time for a subsequent in-process restart.
+    raft_loop: Arc<RaftLoop<NoopApplier, NoopForwarder>>,
     shutdown_tx: watch::Sender<bool>,
     serve_handle: tokio::task::JoinHandle<()>,
     run_handle: tokio::task::JoinHandle<()>,
@@ -161,20 +173,30 @@ impl TestNode {
         lifecycle.to_ready(state.topology.node_count());
 
         let topology = Arc::new(RwLock::new(state.topology));
+        // Use `with_forwarder` so the type is concrete
+        // (`RaftLoop<NoopApplier, NoopForwarder>`), matching the
+        // `raft_loop` field on `TestNode`. Without the explicit
+        // forwarder the default generic parameter makes the type
+        // inference fall through the elided generic, which works
+        // at the use site but can't be stored in a non-generic
+        // struct field.
         let raft_loop = Arc::new(
-            RaftLoop::new(
+            RaftLoop::with_forwarder(
                 state.multi_raft,
                 transport.clone(),
                 topology.clone(),
                 NoopApplier,
+                Arc::new(NoopForwarder),
             )
-            // Attach the catalog so the server-side `join_flow` can
-            // read `cluster_id` from it and echo it back on every
-            // `JoinResponse`. Without this, joined nodes persist
-            // `cluster_id = 0` which still makes `is_bootstrapped`
-            // return true but loses the real cluster identity. The
-            // catalog is also what the flow's §2.4 persist step
-            // writes to after a successful `AddLearner` commit.
+            // Attach the catalog so the server-side `join_flow`
+            // can read the real `cluster_id` from it and echo it
+            // back on every `JoinResponse`. Without this, joined
+            // nodes would fall through to the test-only
+            // `self.node_id` fallback in `join_flow`, which is
+            // fine for unit tests but produces confusing behavior
+            // in end-to-end tests like `cluster_join_idempotent`.
+            // The catalog is also what the flow persists to after
+            // a successful `AddLearner` commit.
             .with_catalog(catalog.clone()),
         );
 
@@ -192,18 +214,25 @@ impl TestNode {
                 .await;
         });
 
+        let raft_loop_for_run = raft_loop.clone();
         let run_handle = tokio::spawn(async move {
-            raft_loop.run(shutdown_rx_run).await;
+            raft_loop_for_run.run(shutdown_rx_run).await;
         });
+
+        // Drop our own handle on the catalog — `raft_loop.catalog`
+        // (set via `with_catalog` above) is now the sole owner
+        // inside the TestNode lifetime. When `raft_loop` drops,
+        // the catalog's redb file releases its lock.
+        drop(catalog);
 
         Ok(Self {
             _data_dir: owned_data_dir,
             data_dir_path,
-            _catalog: catalog,
             transport,
             topology,
             lifecycle,
             node_id,
+            raft_loop,
             shutdown_tx,
             serve_handle,
             run_handle,
@@ -243,16 +272,34 @@ impl TestNode {
     }
 
     pub async fn shutdown(self) {
+        // Flip cooperative shutdown FIRST — every detached task
+        // spawned inside `raft_loop::tick::do_tick` subscribes to
+        // this watch and exits on the next poll, dropping its
+        // `Arc<Mutex<MultiRaft>>` clone. This is what releases
+        // the per-group redb log file locks so a subsequent
+        // in-process restart can reopen them.
+        self.raft_loop.begin_shutdown();
+        // Then signal the external shutdown receivers that run()
+        // and serve() are waiting on.
         let _ = self.shutdown_tx.send(true);
-        // Abort the tasks in addition to signalling shutdown so they
-        // drop their captures (the `Arc<RaftLoop>` carrying the
-        // `MultiRaft` + per-group redb file handles) immediately
-        // instead of waiting for `transport.serve` / `raft_loop.run`
-        // to notice the shutdown signal on their next poll.
+        // And abort the task handles so they unblock immediately
+        // rather than finishing their current poll cycle.
         self.serve_handle.abort();
         self.run_handle.abort();
         let _ = self.serve_handle.await;
         let _ = self.run_handle.await;
+        // `JoinHandle::abort() + .await` only guarantees the task
+        // has finished — tokio may defer dropping the task's
+        // Future (and therefore its captured `Arc<RaftLoop>`
+        // clones) to the runtime's next cleanup cycle. Yield
+        // repeatedly so that cycle runs before this function
+        // returns and `self.raft_loop` drops its last strong
+        // reference. Without this the catalog's redb file can
+        // stay locked for longer than a subsequent in-process
+        // restart is willing to wait.
+        for _ in 0..32 {
+            tokio::task::yield_now().await;
+        }
     }
 }
 

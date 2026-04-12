@@ -49,43 +49,28 @@ async fn node_restart_is_idempotent() {
     assert_eq!(topo_before_1, vec![1, 2, 3]);
     assert_eq!(topo_before_3, vec![1, 2, 3]);
 
-    // Gracefully shut node 2 down.
+    // Gracefully shut node 2 down. `TestNode::shutdown` flips the
+    // cooperative shutdown watch via `RaftLoop::begin_shutdown`
+    // first, so every detached `tokio::spawn` task inside
+    // `raft_loop::tick::do_tick` exits at its next `tokio::select!`
+    // poll and drops its `Arc<Mutex<MultiRaft>>` clone. That
+    // releases the per-group redb log file locks in the same
+    // data directory, so the respawn below can reopen them
+    // in-process without the old "Database already open" race.
     node2.shutdown().await;
 
-    // In-process restart limitation: `tick::do_tick` spawns detached
-    // `tokio::spawn` tasks that hold `Arc<Mutex<MultiRaft>>` clones
-    // for the lifetime of one `AppendEntries` round trip. Abort on
-    // the run/serve handles does not propagate to those detached
-    // tasks, so both the per-group redb raft logs **and** the
-    // catalog `cluster.redb` stay locked by the in-process redb
-    // handles for some window after `shutdown`. A real process
-    // restart (systemd / ops) doesn't have this problem: the new
-    // process has fresh fds.
-    //
-    // To simulate a process restart in-process, copy the data dir
-    // contents byte-for-byte into a fresh location before the
-    // respawn. The copy preserves the on-disk catalog state exactly
-    // — `cluster.redb` with its topology + routing + cluster_id
-    // stamps is copied over — so the respawn's `start_cluster` sees
-    // `catalog.is_bootstrapped() == true` and takes the `restart()`
-    // branch. The new files have fresh inodes, so redb opens them
-    // without colliding with the old locks.
-    let node2_restart_dir = tempfile::tempdir().expect("create restart dir");
-    copy_dir_all(node2_data_dir.path(), node2_restart_dir.path())
-        .expect("clone node 2 data dir for restart");
+    // Short pause so tokio has actually run the cancelled tasks'
+    // drops. `abort()` schedules cancellation on the runtime;
+    // the actual future-drop happens on the runtime's next cycle.
+    // 50 ms is more than enough on any reasonable runtime.
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Short pause so any still-running detached tasks for the
-    // original node 2 have a moment to wind down. Not strictly
-    // required for correctness (the new paths are independent) but
-    // gives cleaner test output if one of those tasks logs a
-    // transport error.
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    // Respawn node 2 from the cloned data directory. Because the
-    // cloned catalog is already bootstrapped, `start_cluster` MUST
-    // take the `restart()` path regardless of seed list — pass empty
-    // seeds so this is unambiguous.
-    let node2_restarted = TestNode::spawn_with_data_dir(2, node2_restart_dir.path(), vec![])
+    // Respawn node 2 from the SAME data directory — the
+    // production-shaped in-process restart. Because the catalog
+    // is already bootstrapped, `start_cluster` MUST take the
+    // `restart()` path regardless of seed list; pass empty seeds
+    // so this is unambiguous.
+    let node2_restarted = TestNode::spawn_with_data_dir(2, node2_data_dir.path(), vec![])
         .await
         .expect("node 2 restart from catalog");
 
@@ -128,25 +113,5 @@ async fn node_restart_is_idempotent() {
     node2_restarted.shutdown().await;
     node3.shutdown().await;
     node1.shutdown().await;
-    drop(node2_restart_dir);
     drop(node2_data_dir);
-}
-
-/// Recursive byte-for-byte directory copy. Used to clone the
-/// original node 2 data directory into a fresh location before the
-/// restart so redb doesn't fight with its own still-alive in-process
-/// locks on the original files.
-fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        let dst_path = dst.join(entry.file_name());
-        if ty.is_dir() {
-            copy_dir_all(&entry.path(), &dst_path)?;
-        } else {
-            std::fs::copy(entry.path(), dst_path)?;
-        }
-    }
-    Ok(())
 }
