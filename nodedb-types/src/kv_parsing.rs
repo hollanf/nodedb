@@ -66,7 +66,7 @@ pub fn parse_interval_to_ms(s: &str) -> Result<u64, IntervalParseError> {
     // Long-form: "15 minutes", "1 hour", "2 days 12 hours", "30 seconds"
     // Supports compound: "2 hours 30 minutes" by parsing pairs of (number, unit).
     let parts: Vec<&str> = unquoted.split_whitespace().collect();
-    if parts.len() >= 2 && parts.len() % 2 == 0 {
+    if parts.len() >= 2 && parts.len().is_multiple_of(2) {
         let mut total_ms: u64 = 0;
         for chunk in parts.chunks(2) {
             let amount: u64 = chunk[0]
