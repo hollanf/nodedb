@@ -22,7 +22,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.0.0-beta.1"
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.94"
 license = "BUSL-1.1"
@@ -33,23 +33,23 @@ documentation = "https://docs.rs/nodedb"
 
 [workspace.dependencies]
 # Foundation crates (internal)
-nodedb-types = { path = "nodedb-types", version = "0.0.0-beta.1" }
-nodedb-client = { path = "nodedb-client", version = "0.0.0-beta.1" }
-nodedb-bridge = { path = "nodedb-bridge", version = "0.0.0-beta.1" }
-nodedb-wal = { path = "nodedb-wal", version = "0.0.0-beta.1" }
-nodedb-mem = { path = "nodedb-mem", version = "0.0.0-beta.1" }
-nodedb-crdt = { path = "nodedb-crdt", version = "0.0.0-beta.1" }
-nodedb-raft = { path = "nodedb-raft", version = "0.0.0-beta.1" }
-nodedb-cluster = { path = "nodedb-cluster", version = "0.0.0-beta.1" }
-nodedb-query = { path = "nodedb-query", version = "0.0.0-beta.1" }
-nodedb-codec = { path = "nodedb-codec", version = "0.0.0-beta.1" }
-nodedb-spatial = { path = "nodedb-spatial", version = "0.0.0-beta.1" }
-nodedb-graph = { path = "nodedb-graph", version = "0.0.0-beta.1" }
-nodedb-vector = { path = "nodedb-vector", version = "0.0.0-beta.1" }
-nodedb-fts = { path = "nodedb-fts", version = "0.0.0-beta.1" }
-nodedb-strict = { path = "nodedb-strict", version = "0.0.0-beta.1" }
-nodedb-columnar = { path = "nodedb-columnar", version = "0.0.0-beta.1" }
-nodedb-sql = { path = "nodedb-sql", version = "0.0.0-beta.1" }
+nodedb-types = { path = "nodedb-types", version = "0" }
+nodedb-client = { path = "nodedb-client", version = "0" }
+nodedb-bridge = { path = "nodedb-bridge", version = "0" }
+nodedb-wal = { path = "nodedb-wal", version = "0" }
+nodedb-mem = { path = "nodedb-mem", version = "0" }
+nodedb-crdt = { path = "nodedb-crdt", version = "0" }
+nodedb-raft = { path = "nodedb-raft", version = "0" }
+nodedb-cluster = { path = "nodedb-cluster", version = "0" }
+nodedb-query = { path = "nodedb-query", version = "0" }
+nodedb-codec = { path = "nodedb-codec", version = "0" }
+nodedb-spatial = { path = "nodedb-spatial", version = "0" }
+nodedb-graph = { path = "nodedb-graph", version = "0" }
+nodedb-vector = { path = "nodedb-vector", version = "0" }
+nodedb-fts = { path = "nodedb-fts", version = "0" }
+nodedb-strict = { path = "nodedb-strict", version = "0" }
+nodedb-columnar = { path = "nodedb-columnar", version = "0" }
+nodedb-sql = { path = "nodedb-sql", version = "0" }
 
 # Async runtimes
 tokio = { version = "1", features = ["full"] }
