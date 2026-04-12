@@ -1,6 +1,7 @@
 pub mod bootstrap;
 pub mod catalog;
 pub mod circuit_breaker;
+pub mod cluster_info;
 pub mod conf_change;
 pub mod cross_shard_txn;
 pub mod distributed_document;
@@ -15,6 +16,7 @@ pub mod ghost;
 pub mod ghost_sweeper;
 pub mod health;
 pub mod lifecycle;
+pub mod lifecycle_state;
 pub mod metadata_group;
 pub mod migration;
 pub mod migration_executor;
@@ -23,6 +25,7 @@ pub mod quic_transport;
 pub mod raft_loop;
 pub mod raft_storage;
 pub mod rdma_transport;
+pub mod readiness;
 pub mod rebalance;
 pub mod rebalance_scheduler;
 pub mod routing;
@@ -35,11 +38,15 @@ pub mod wire;
 
 pub use bootstrap::{ClusterConfig, ClusterState, start_cluster};
 pub use catalog::ClusterCatalog;
+pub use cluster_info::{
+    ClusterInfoSnapshot, ClusterObserver, GroupSnapshot, GroupStatusProvider, PeerSnapshot,
+};
 pub use conf_change::{ConfChange, ConfChangeType};
 pub use error::{ClusterError, Result};
 pub use forward::{NoopForwarder, RequestForwarder};
 pub use ghost::{GhostStub, GhostTable};
 pub use health::{HealthConfig, HealthMonitor};
+pub use lifecycle_state::{ClusterLifecycleState, ClusterLifecycleTracker};
 pub use migration::{MigrationPhase, MigrationState};
 pub use migration_executor::{
     MigrationExecutor, MigrationRequest, MigrationResult, MigrationSnapshot, MigrationTracker,

@@ -39,6 +39,11 @@ quinn = { workspace = true }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 rustls-pemfile = { workspace = true }
 
+# systemd sd_notify readiness integration — Linux only.
+# Wrapped by `crate::readiness` so non-Linux builds no-op cleanly.
+[target.'cfg(target_os = "linux")'.dependencies]
+sd-notify = "0.4"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }

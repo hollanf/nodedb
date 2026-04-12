@@ -26,6 +26,7 @@ use tracing::{debug, info, warn};
 
 use crate::catalog::ClusterCatalog;
 use crate::error::{ClusterError, Result};
+use crate::lifecycle_state::ClusterLifecycleTracker;
 use crate::multi_raft::MultiRaft;
 use crate::routing::{GroupInfo, RoutingTable};
 use crate::rpc_codec::{JoinRequest, JoinResponse, RaftRpc};
@@ -101,6 +102,7 @@ pub(super) async fn join(
     config: &ClusterConfig,
     catalog: &ClusterCatalog,
     transport: &NexarTransport,
+    lifecycle: &ClusterLifecycleTracker,
 ) -> Result<ClusterState> {
     info!(
         node_id = config.node_id,
@@ -109,9 +111,11 @@ pub(super) async fn join(
     );
 
     if config.seed_nodes.is_empty() {
-        return Err(ClusterError::Transport {
+        let err = ClusterError::Transport {
             detail: "no seed nodes configured".into(),
-        });
+        };
+        lifecycle.to_failed(err.to_string());
+        return Err(err);
     }
 
     let req_template = JoinRequest {
@@ -122,6 +126,8 @@ pub(super) async fn join(
     let mut last_err: Option<ClusterError> = None;
 
     for attempt in 0..MAX_JOIN_ATTEMPTS {
+        lifecycle.to_joining(attempt);
+
         let delay = next_backoff(attempt);
         if !delay.is_zero() {
             debug!(
@@ -147,9 +153,11 @@ pub(super) async fn join(
         }
     }
 
-    Err(last_err.unwrap_or_else(|| ClusterError::Transport {
+    let err = last_err.unwrap_or_else(|| ClusterError::Transport {
         detail: format!("join exhausted {MAX_JOIN_ATTEMPTS} attempts with no concrete error"),
-    }))
+    });
+    lifecycle.to_failed(err.to_string());
+    Err(err)
 }
 
 /// One pass over the seed list plus up to `MAX_REDIRECTS_PER_ATTEMPT`
@@ -464,7 +472,14 @@ mod tests {
             force_bootstrap: false,
         };
 
-        let state2 = join(&config2, &catalog2, &t2).await.unwrap();
+        let lifecycle = ClusterLifecycleTracker::new();
+        let state2 = join(&config2, &catalog2, &t2, &lifecycle).await.unwrap();
+        // Lifecycle should have walked Joining{0} → [settled before
+        // `to_ready` which is the caller's responsibility].
+        assert!(matches!(
+            lifecycle.current(),
+            crate::lifecycle_state::ClusterLifecycleState::Joining { .. }
+        ));
 
         assert_eq!(state2.topology.node_count(), 2);
         assert_eq!(state2.routing.num_groups(), 2);

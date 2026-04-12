@@ -10,7 +10,8 @@ use std::sync::RwLock;
 use std::time::Duration;
 
 use nodedb_cluster::{
-    ClusterCatalog, ClusterConfig, ClusterTopology, NexarTransport, RaftLoop, start_cluster,
+    ClusterCatalog, ClusterConfig, ClusterLifecycleState, ClusterLifecycleTracker, ClusterTopology,
+    NexarTransport, RaftLoop, start_cluster,
 };
 use nodedb_raft::message::LogEntry;
 use tempfile::TempDir;
@@ -33,6 +34,7 @@ struct TestNode {
     catalog: Arc<ClusterCatalog>,
     transport: Arc<NexarTransport>,
     topology: Arc<RwLock<ClusterTopology>>,
+    lifecycle: ClusterLifecycleTracker,
     node_id: u64,
     shutdown_tx: watch::Sender<bool>,
     serve_handle: tokio::task::JoinHandle<()>,
@@ -77,7 +79,13 @@ impl TestNode {
             force_bootstrap: false,
         };
 
-        let state = start_cluster(&config, &catalog, &transport).await?;
+        let lifecycle = ClusterLifecycleTracker::new();
+        let state = start_cluster(&config, &catalog, &transport, &lifecycle).await?;
+        // Match the main binary: the caller is responsible for the
+        // final `Ready` transition once the node is wired up and
+        // accepting RPCs. `topology.node_count()` is the node's view
+        // of membership at the moment of transition.
+        lifecycle.to_ready(state.topology.node_count());
 
         let topology = Arc::new(RwLock::new(state.topology));
         let raft_loop = Arc::new(RaftLoop::new(
@@ -111,6 +119,7 @@ impl TestNode {
             catalog,
             transport,
             topology,
+            lifecycle,
             node_id,
             shutdown_tx,
             serve_handle,
@@ -127,6 +136,10 @@ impl TestNode {
             .read()
             .unwrap_or_else(|p| p.into_inner())
             .node_count()
+    }
+
+    fn lifecycle_state(&self) -> ClusterLifecycleState {
+        self.lifecycle.current()
     }
 
     async fn shutdown(self) {
@@ -187,6 +200,20 @@ async fn three_node_join_over_quic() {
     assert_eq!(node1.node_id, 1);
     assert_eq!(node2.node_id, 2);
     assert_eq!(node3.node_id, 3);
+
+    // Each node's lifecycle tracker must have reached `Ready`. The
+    // node count on the transition is taken at the moment the node
+    // finished `start_cluster` — which for node 1 is 1 (bootstrap),
+    // for node 2 is 2 (first join), for node 3 is 3 (second join).
+    // We don't pin the number, just the phase.
+    for n in nodes {
+        assert!(
+            matches!(n.lifecycle_state(), ClusterLifecycleState::Ready { .. }),
+            "node {} should be Ready, got {:?}",
+            n.node_id,
+            n.lifecycle_state()
+        );
+    }
 
     // Clean shutdown so the transports release their sockets before the next
     // test in the same binary picks up.
