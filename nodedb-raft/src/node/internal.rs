@@ -14,6 +14,12 @@ use super::core::RaftNode;
 
 impl<S: LogStorage> RaftNode<S> {
     pub(super) fn start_election(&mut self) {
+        // Learners never stand for election — defensive check in case
+        // `tick()` is bypassed (e.g., tests forcing a deadline).
+        if self.role == NodeRole::Learner {
+            return;
+        }
+
         self.hard_state.current_term += 1;
         self.role = NodeRole::Candidate;
         self.hard_state.voted_for = self.config.node_id;
@@ -30,7 +36,9 @@ impl<S: LogStorage> RaftNode<S> {
             "starting election"
         );
 
-        // Single-node: win immediately.
+        // Single-voter cluster: win immediately. (Learners in the group do
+        // not count — single voter + N learners still elects the single
+        // voter as leader.)
         if self.config.peers.is_empty() {
             self.become_leader();
             return;
@@ -50,9 +58,16 @@ impl<S: LogStorage> RaftNode<S> {
         }
     }
 
+    /// Step down to follower (or keep learner role if we were a learner).
+    ///
+    /// Learners that receive an `AppendEntries` with a higher term update
+    /// their term but do not transition to `Follower` — they stay
+    /// `Learner` so the tick loop continues to skip election timeouts.
     pub(super) fn become_follower(&mut self, term: u64) {
         let was_leader = self.role == NodeRole::Leader;
-        self.role = NodeRole::Follower;
+        if self.role != NodeRole::Learner {
+            self.role = NodeRole::Follower;
+        }
         self.hard_state.current_term = term;
         self.hard_state.voted_for = 0;
         self.leader_state = None;
@@ -73,12 +88,23 @@ impl<S: LogStorage> RaftNode<S> {
     pub(super) fn become_leader(&mut self) {
         self.role = NodeRole::Leader;
         self.leader_id = self.config.node_id;
-        self.leader_state = Some(LeaderState::new(&self.config.peers, self.log.last_index()));
+
+        // Leader tracks both voter peers and learner peers for replication.
+        // Only voters count toward the commit quorum (see
+        // `try_advance_commit_index`), but learners still need to receive
+        // entries so they can eventually catch up.
+        let mut ls = LeaderState::new(&self.config.peers, self.log.last_index());
+        for &learner in &self.config.learners {
+            ls.add_peer(learner, self.log.last_index());
+        }
+        self.leader_state = Some(ls);
 
         info!(
             node = self.config.node_id,
             group = self.config.group_id,
             term = self.hard_state.current_term,
+            voters = self.config.peers.len(),
+            learners = self.config.learners.len(),
             "became leader"
         );
 
@@ -90,7 +116,7 @@ impl<S: LogStorage> RaftNode<S> {
         };
         let _ = self.log.append(noop);
 
-        // Single-node: commit the no-op immediately.
+        // Single-voter cluster: commit the no-op immediately.
         if self.config.cluster_size() == 1 {
             self.volatile.commit_index = self.log.last_index();
             self.collect_committed_entries();
@@ -99,9 +125,16 @@ impl<S: LogStorage> RaftNode<S> {
         self.replicate_to_all();
     }
 
+    /// Send `AppendEntries` to every tracked peer (voters + learners).
     pub(super) fn replicate_to_all(&mut self) {
-        let peers: Vec<u64> = self.config.peers.clone();
-        for peer in peers {
+        let all: Vec<u64> = self
+            .config
+            .peers
+            .iter()
+            .chain(self.config.learners.iter())
+            .copied()
+            .collect();
+        for peer in all {
             self.send_append_entries(peer);
         }
     }
@@ -165,7 +198,11 @@ impl<S: LogStorage> RaftNode<S> {
         ));
     }
 
-    /// Try to advance commit_index based on match_index quorum.
+    /// Try to advance `commit_index` based on the voter quorum only.
+    ///
+    /// Learners' `match_index` is tracked (so we know when they are caught
+    /// up for promotion) but intentionally excluded from this calculation
+    /// so adding a learner never weakens the commit quorum.
     pub(super) fn try_advance_commit_index(&mut self) {
         let leader = match &self.leader_state {
             Some(ls) => ls,
@@ -183,7 +220,7 @@ impl<S: LogStorage> RaftNode<S> {
                 continue;
             }
 
-            let mut count = 1u64;
+            let mut count = 1u64; // self counts.
             for &peer in &self.config.peers {
                 if leader.match_index_for(peer) >= n {
                     count += 1;

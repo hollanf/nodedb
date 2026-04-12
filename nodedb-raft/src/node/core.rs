@@ -1,6 +1,11 @@
-use std::time::{Duration, Instant};
+//! `RaftNode` struct, constructors, simple accessors, `tick`, and `propose`.
+//!
+//! Membership mutation (add/remove voter, add/remove/promote learner) lives
+//! in [`super::membership`]. State transitions (election, `become_leader`,
+//! replication) live in [`super::internal`]. RPC handlers live in
+//! [`super::rpc`].
 
-use tracing::info;
+use std::time::Instant;
 
 use crate::error::{RaftError, Result};
 use crate::log::RaftLog;
@@ -8,34 +13,7 @@ use crate::message::{AppendEntriesRequest, LogEntry};
 use crate::state::{HardState, LeaderState, NodeRole, VolatileState};
 use crate::storage::LogStorage;
 
-/// Configuration for a Raft node.
-#[derive(Debug, Clone)]
-pub struct RaftConfig {
-    /// This node's ID (must be unique within the Raft group).
-    pub node_id: u64,
-    /// Raft group ID (for Multi-Raft routing).
-    pub group_id: u64,
-    /// IDs of all peers in this group (excluding self).
-    pub peers: Vec<u64>,
-    /// Minimum election timeout.
-    pub election_timeout_min: Duration,
-    /// Maximum election timeout.
-    pub election_timeout_max: Duration,
-    /// Heartbeat interval (must be << election_timeout_min).
-    pub heartbeat_interval: Duration,
-}
-
-impl RaftConfig {
-    /// Total number of voters (self + peers).
-    pub fn cluster_size(&self) -> usize {
-        self.peers.len() + 1
-    }
-
-    /// Quorum size: floor(n/2) + 1.
-    pub fn quorum(&self) -> usize {
-        self.cluster_size() / 2 + 1
-    }
-}
+use super::config::RaftConfig;
 
 /// Output actions produced by a tick or RPC handler.
 ///
@@ -92,11 +70,20 @@ pub struct RaftNode<S: LogStorage> {
 
 impl<S: LogStorage> RaftNode<S> {
     /// Create a new Raft node. Call `restore()` before ticking.
+    ///
+    /// If `config.starts_as_learner` is `true`, the node boots in the
+    /// `Learner` role and will never run an election timeout or become a
+    /// leader until it is promoted via `promote_self_to_voter`.
     pub fn new(config: RaftConfig, storage: S) -> Self {
         let now = Instant::now();
+        let role = if config.starts_as_learner {
+            NodeRole::Learner
+        } else {
+            NodeRole::Follower
+        };
         Self {
             log: RaftLog::new(storage),
-            role: NodeRole::Follower,
+            role,
             hard_state: HardState::new(),
             volatile: VolatileState::new(),
             leader_state: None,
@@ -162,7 +149,7 @@ impl<S: LogStorage> RaftNode<S> {
     }
 
     /// Query a peer's match_index from the leader's replication state.
-    /// Returns None if this node is not the leader or the peer is unknown.
+    /// Returns `None` if this node is not the leader or the peer is unknown.
     pub fn match_index_for(&self, peer: u64) -> Option<u64> {
         self.leader_state
             .as_ref()
@@ -177,70 +164,25 @@ impl<S: LogStorage> RaftNode<S> {
         self.log.snapshot_term()
     }
 
-    /// Current peer list (excluding self).
+    /// Current voter peer list (excluding self).
     pub fn peers(&self) -> &[u64] {
         &self.config.peers
     }
 
-    /// Dynamically update the peer list (for membership changes).
-    ///
-    /// This reconfigures quorum calculation and, if leader, updates
-    /// per-peer replication tracking (new peers start catching up from
-    /// the end of the log; removed peers stop receiving RPCs).
-    pub fn set_peers(&mut self, new_peers: Vec<u64>) {
-        let last_index = self.log.last_index();
-
-        if let Some(ref mut leader) = self.leader_state {
-            for &peer in &new_peers {
-                if !self.config.peers.contains(&peer) {
-                    leader.add_peer(peer, last_index);
-                    info!(
-                        node = self.config.node_id,
-                        group = self.config.group_id,
-                        peer,
-                        "added peer to leader tracking"
-                    );
-                }
-            }
-            for &peer in &self.config.peers {
-                if !new_peers.contains(&peer) {
-                    leader.remove_peer(peer);
-                    info!(
-                        node = self.config.node_id,
-                        group = self.config.group_id,
-                        peer,
-                        "removed peer from leader tracking"
-                    );
-                }
-            }
-        }
-
-        self.config.peers = new_peers;
+    /// Current voter peer list — alias for `peers()`, clearer at call sites
+    /// that need to distinguish voters from learners.
+    pub fn voters(&self) -> &[u64] {
+        &self.config.peers
     }
 
-    /// Add a single peer to this Raft group.
-    pub fn add_peer(&mut self, peer: u64) {
-        if peer == self.config.node_id || self.config.peers.contains(&peer) {
-            return;
-        }
-        let mut new_peers = self.config.peers.clone();
-        new_peers.push(peer);
-        self.set_peers(new_peers);
+    /// Current learner peer list (excluding self).
+    pub fn learners(&self) -> &[u64] {
+        &self.config.learners
     }
 
-    /// Remove a single peer from this Raft group.
-    pub fn remove_peer(&mut self, peer: u64) {
-        if !self.config.peers.contains(&peer) {
-            return;
-        }
-        let new_peers: Vec<u64> = self
-            .config
-            .peers
-            .iter()
-            .copied()
-            .filter(|&id| id != peer)
-            .collect();
-        self.set_peers(new_peers);
+    /// Whether `peer` is currently tracked as a learner in this group.
+    pub fn is_learner_peer(&self, peer: u64) -> bool {
+        self.config.learners.contains(&peer)
     }
 
     /// Drive time-based events: election timeout, heartbeat.
@@ -260,7 +202,8 @@ impl<S: LogStorage> RaftNode<S> {
                 }
             }
             NodeRole::Learner => {
-                // Learners don't participate in elections.
+                // Learners never run election timeouts. They catch up
+                // passively via AppendEntries from the leader.
             }
         }
     }
@@ -287,7 +230,7 @@ impl<S: LogStorage> RaftNode<S> {
         self.log.append(entry)?;
         self.replicate_to_all();
 
-        // Single-node cluster: commit immediately.
+        // Single-voter cluster: commit immediately. Learners do not count.
         if self.config.cluster_size() == 1 {
             self.volatile.commit_index = index;
             self.collect_committed_entries();
@@ -301,12 +244,15 @@ impl<S: LogStorage> RaftNode<S> {
 mod tests {
     use super::*;
     use crate::storage::MemStorage;
+    use std::time::Duration;
 
     fn test_config(node_id: u64, peers: Vec<u64>) -> RaftConfig {
         RaftConfig {
             node_id,
             group_id: 1,
             peers,
+            learners: vec![],
+            starts_as_learner: false,
             election_timeout_min: Duration::from_millis(150),
             election_timeout_max: Duration::from_millis(300),
             heartbeat_interval: Duration::from_millis(50),
@@ -355,22 +301,6 @@ mod tests {
     }
 
     #[test]
-    fn quorum_calculation() {
-        let config3 = test_config(1, vec![2, 3]);
-        assert_eq!(config3.quorum(), 2);
-
-        let config5 = RaftConfig {
-            node_id: 1,
-            group_id: 1,
-            peers: vec![2, 3, 4, 5],
-            election_timeout_min: Duration::from_millis(150),
-            election_timeout_max: Duration::from_millis(300),
-            heartbeat_interval: Duration::from_millis(50),
-        };
-        assert_eq!(config5.quorum(), 3);
-    }
-
-    #[test]
     fn snapshot_needed_after_compaction() {
         let config = test_config(1, vec![2, 3]);
         let mut node = RaftNode::new(config, MemStorage::new());
@@ -400,5 +330,26 @@ mod tests {
             !ready.snapshots_needed.is_empty(),
             "expected snapshots_needed to be non-empty"
         );
+    }
+
+    #[test]
+    fn starts_as_learner_role() {
+        let mut cfg = test_config(2, vec![1]);
+        cfg.starts_as_learner = true;
+        let node = RaftNode::new(cfg, MemStorage::new());
+        assert_eq!(node.role(), NodeRole::Learner);
+    }
+
+    #[test]
+    fn learner_tick_does_not_start_election() {
+        let mut cfg = test_config(2, vec![1]);
+        cfg.starts_as_learner = true;
+        let mut node = RaftNode::new(cfg, MemStorage::new());
+        // Force "election deadline" in the past: a follower would immediately
+        // start an election, but a learner must ignore it.
+        node.election_deadline = Instant::now() - Duration::from_millis(1);
+        node.tick();
+        assert_eq!(node.role(), NodeRole::Learner);
+        assert_eq!(node.current_term(), 0);
     }
 }

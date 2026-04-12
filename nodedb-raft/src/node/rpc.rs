@@ -23,6 +23,7 @@ impl<S: LogStorage> RaftNode<S> {
         }
 
         if req.term > self.hard_state.current_term || self.role == NodeRole::Candidate {
+            // `become_follower` preserves Learner role — see internal.rs.
             self.become_follower(req.term);
         }
 
@@ -65,7 +66,18 @@ impl<S: LogStorage> RaftNode<S> {
     }
 
     /// Handle incoming RequestVote RPC.
+    ///
+    /// Learners never grant votes: by definition they are not members of
+    /// the voting set for this term, and granting a vote could let an
+    /// incorrect quorum form.
     pub fn handle_request_vote(&mut self, req: &RequestVoteRequest) -> RequestVoteResponse {
+        if self.role == NodeRole::Learner {
+            return RequestVoteResponse {
+                term: self.hard_state.current_term,
+                vote_granted: false,
+            };
+        }
+
         if req.term > self.hard_state.current_term {
             self.become_follower(req.term);
         }
@@ -110,6 +122,11 @@ impl<S: LogStorage> RaftNode<S> {
     }
 
     /// Handle AppendEntries response from a peer (leader only).
+    ///
+    /// For both voter and learner peers we update `match_index`/`next_index`
+    /// so we can tell when a learner has caught up. Only voter responses
+    /// trigger a commit-advancement check — learners never contribute to
+    /// the commit quorum.
     pub fn handle_append_entries_response(&mut self, peer: u64, resp: &AppendEntriesResponse) {
         if resp.term > self.hard_state.current_term {
             self.become_follower(resp.term);
@@ -119,6 +136,8 @@ impl<S: LogStorage> RaftNode<S> {
         if self.role != NodeRole::Leader {
             return;
         }
+
+        let peer_is_voter = self.config.peers.contains(&peer);
 
         let leader = match self.leader_state.as_mut() {
             Some(ls) => ls,
@@ -131,7 +150,9 @@ impl<S: LogStorage> RaftNode<S> {
                 leader.set_match_index(peer, new_match);
                 leader.set_next_index(peer, new_match + 1);
             }
-            self.try_advance_commit_index();
+            if peer_is_voter {
+                self.try_advance_commit_index();
+            }
         } else {
             let new_next = resp.last_log_index + 1;
             let current_next = leader.next_index_for(peer);
@@ -167,8 +188,9 @@ impl<S: LogStorage> RaftNode<S> {
 
     /// Handle incoming InstallSnapshot RPC (Raft paper Figure 13).
     ///
-    /// Called on followers that are too far behind for log-based catch-up.
-    /// The leader sends its snapshot; the follower replaces its log and state.
+    /// Called on followers (and learners) that are too far behind for
+    /// log-based catch-up. The leader sends its snapshot; the receiver
+    /// replaces its log and state.
     pub fn handle_install_snapshot(
         &mut self,
         req: &InstallSnapshotRequest,
@@ -217,10 +239,10 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crate::message::{AppendEntriesRequest, LogEntry, RequestVoteRequest, RequestVoteResponse};
+    use crate::node::config::RaftConfig;
     use crate::state::NodeRole;
     use crate::storage::MemStorage;
 
-    use super::super::core::RaftConfig;
     use super::*;
 
     fn test_config(node_id: u64, peers: Vec<u64>) -> RaftConfig {
@@ -228,6 +250,8 @@ mod tests {
             node_id,
             group_id: 1,
             peers,
+            learners: vec![],
+            starts_as_learner: false,
             election_timeout_min: Duration::from_millis(150),
             election_timeout_max: Duration::from_millis(300),
             heartbeat_interval: Duration::from_millis(50),
@@ -312,6 +336,105 @@ mod tests {
         };
         let resp2 = node.handle_request_vote(&req2);
         assert!(!resp2.vote_granted);
+    }
+
+    #[test]
+    fn learner_rejects_vote_request() {
+        let mut config = test_config(2, vec![1]);
+        config.starts_as_learner = true;
+        let mut node = RaftNode::new(config, MemStorage::new());
+        assert_eq!(node.role(), NodeRole::Learner);
+
+        let req = RequestVoteRequest {
+            term: 5,
+            candidate_id: 1,
+            last_log_index: 10,
+            last_log_term: 4,
+            group_id: 1,
+        };
+        let resp = node.handle_request_vote(&req);
+        assert!(
+            !resp.vote_granted,
+            "learner must never grant a vote, got {resp:?}"
+        );
+    }
+
+    #[test]
+    fn learner_accepts_append_entries_and_stays_learner() {
+        let mut config = test_config(2, vec![1]);
+        config.starts_as_learner = true;
+        let mut node = RaftNode::new(config, MemStorage::new());
+
+        let req = AppendEntriesRequest {
+            term: 1,
+            leader_id: 1,
+            prev_log_index: 0,
+            prev_log_term: 0,
+            entries: vec![LogEntry {
+                term: 1,
+                index: 1,
+                data: b"x".to_vec(),
+            }],
+            leader_commit: 1,
+            group_id: 1,
+        };
+
+        let resp = node.handle_append_entries(&req);
+        assert!(resp.success);
+        assert_eq!(node.commit_index(), 1);
+        // Crucially, the learner did not turn into a Follower.
+        assert_eq!(node.role(), NodeRole::Learner);
+        assert_eq!(node.leader_id(), 1);
+    }
+
+    /// Learner AE responses update match_index but must NOT trigger a
+    /// commit advancement that relies on the learner counting toward
+    /// quorum.
+    #[test]
+    fn learner_ae_response_does_not_drive_commit() {
+        // 3 voters + 1 learner cluster: quorum = 2. Without any voter ACK,
+        // a learner "ack" must not advance commit_index.
+        let mut config = test_config(1, vec![2, 3]);
+        config.learners = vec![4];
+        let mut node = RaftNode::new(config, MemStorage::new());
+
+        // Force leader.
+        node.election_deadline_override(Instant::now() - Duration::from_millis(1));
+        node.tick();
+        // Grant self-vote via two voter responses.
+        let yes = RequestVoteResponse {
+            term: 1,
+            vote_granted: true,
+        };
+        node.handle_request_vote_response(2, &yes);
+        assert_eq!(node.role(), NodeRole::Leader);
+        let _ = node.take_ready();
+
+        // Propose an entry at index 2 (no-op is index 1).
+        let idx = node.propose(b"cmd".to_vec()).unwrap();
+        assert_eq!(idx, 2);
+        let _ = node.take_ready();
+
+        // Baseline: commit_index should still be <2 (no voter ACKs yet for index 2).
+        let baseline_commit = node.commit_index();
+        assert!(baseline_commit < 2);
+
+        // Learner (peer 4) ACKs index 2. This must NOT advance commit.
+        let ae_ok = AppendEntriesResponse {
+            term: 1,
+            success: true,
+            last_log_index: 2,
+        };
+        node.handle_append_entries_response(4, &ae_ok);
+        assert_eq!(
+            node.commit_index(),
+            baseline_commit,
+            "learner ACK must not contribute to commit quorum"
+        );
+
+        // Now a voter (peer 2) ACKs index 2. Quorum = 2 (self + peer 2) — commit advances.
+        node.handle_append_entries_response(2, &ae_ok);
+        assert_eq!(node.commit_index(), 2);
     }
 
     #[test]
