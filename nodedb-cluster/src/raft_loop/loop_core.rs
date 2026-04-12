@@ -1,11 +1,8 @@
-//! Raft event loop — drives MultiRaft ticks and dispatches messages over the transport.
+//! Core `RaftLoop` struct, construction, and the periodic tick pipeline.
 //!
-//! This module glues [`MultiRaft`] to [`NexarTransport`]:
-//! - Periodic ticks drive elections and heartbeats
-//! - `Ready` output is dispatched over QUIC (messages, vote requests)
-//! - Incoming RPCs are routed to the correct Raft group
-//! - Committed entries are applied via a [`CommitApplier`] callback
-//! - RPC responses are fed back asynchronously (non-blocking tick loop)
+//! The RPC handler (`impl RaftRpcHandler for RaftLoop`) lives in
+//! [`super::handle_rpc`] — it's a separate file so the tick/dispatch pipeline
+//! and the inbound-RPC fan-out don't share a single oversized file.
 
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, RwLock};
@@ -17,13 +14,11 @@ use nodedb_raft::message::LogEntry;
 use nodedb_raft::transport::RaftTransport;
 
 use crate::conf_change::ConfChange;
-use crate::error::{ClusterError, Result};
+use crate::error::Result;
 use crate::forward::RequestForwarder;
-use crate::health;
 use crate::multi_raft::MultiRaft;
-use crate::rpc_codec::RaftRpc;
 use crate::topology::ClusterTopology;
-use crate::transport::{NexarTransport, RaftRpcHandler};
+use crate::transport::NexarTransport;
 
 /// Default tick interval (10ms — fast enough for sub-second elections).
 ///
@@ -56,19 +51,20 @@ pub type VShardEnvelopeHandler = Arc<
 /// Raft event loop coordinator.
 ///
 /// Owns the MultiRaft state (behind `Arc<Mutex>`) and drives it via periodic
-/// ticks. Implements [`RaftRpcHandler`] so it can be passed directly to
+/// ticks. Implements [`crate::transport::RaftRpcHandler`] (in
+/// [`super::handle_rpc`]) so it can be passed directly to
 /// [`NexarTransport::serve`] for incoming RPC dispatch.
 pub struct RaftLoop<A: CommitApplier, F: RequestForwarder = crate::forward::NoopForwarder> {
-    node_id: u64,
-    multi_raft: Arc<Mutex<MultiRaft>>,
-    transport: Arc<NexarTransport>,
-    topology: Arc<RwLock<ClusterTopology>>,
-    applier: A,
-    forwarder: Arc<F>,
-    tick_interval: Duration,
+    pub(super) node_id: u64,
+    pub(super) multi_raft: Arc<Mutex<MultiRaft>>,
+    pub(super) transport: Arc<NexarTransport>,
+    pub(super) topology: Arc<RwLock<ClusterTopology>>,
+    pub(super) applier: A,
+    pub(super) forwarder: Arc<F>,
+    pub(super) tick_interval: Duration,
     /// Optional handler for incoming VShardEnvelope messages.
     /// Set when the Event Plane or other subsystems need cross-node messaging.
-    vshard_handler: Option<VShardEnvelopeHandler>,
+    pub(super) vshard_handler: Option<VShardEnvelopeHandler>,
 }
 
 impl<A: CommitApplier> RaftLoop<A> {
@@ -125,6 +121,11 @@ impl<A: CommitApplier, F: RequestForwarder> RaftLoop<A, F> {
         self
     }
 
+    /// This node's id (exposed for handlers and tests).
+    pub fn node_id(&self) -> u64 {
+        self.node_id
+    }
+
     /// Run the event loop until shutdown.
     ///
     /// This drives Raft elections, heartbeats, and message dispatch.
@@ -149,7 +150,7 @@ impl<A: CommitApplier, F: RequestForwarder> RaftLoop<A, F> {
     }
 
     /// Execute a single tick: drive Raft, dispatch outbound messages, apply commits.
-    fn do_tick(&self) {
+    pub(super) fn do_tick(&self) {
         // Phase 1: tick under lock, extract Ready.
         let ready = {
             let mut mr = self.multi_raft.lock().unwrap_or_else(|p| p.into_inner());
@@ -273,7 +274,7 @@ impl<A: CommitApplier, F: RequestForwarder> RaftLoop<A, F> {
                             last_included_index: snap_index,
                             last_included_term: snap_term,
                             offset: 0,
-                            data: vec![], // Metadata-only snapshot (state transfer is §5).
+                            data: vec![], // Metadata-only snapshot.
                             done: true,
                             group_id,
                         };
@@ -332,64 +333,6 @@ impl<A: CommitApplier, F: RequestForwarder> RaftLoop<A, F> {
     }
 }
 
-// ── Incoming RPC handler ────────────────────────────────────────────
-
-impl<A: CommitApplier, F: RequestForwarder> RaftRpcHandler for RaftLoop<A, F> {
-    async fn handle_rpc(&self, rpc: RaftRpc) -> Result<RaftRpc> {
-        match rpc {
-            // Raft consensus RPCs — lock MultiRaft (sync, never across await).
-            RaftRpc::AppendEntriesRequest(req) => {
-                let mut mr = self.multi_raft.lock().unwrap_or_else(|p| p.into_inner());
-                let resp = mr.handle_append_entries(&req)?;
-                Ok(RaftRpc::AppendEntriesResponse(resp))
-            }
-            RaftRpc::RequestVoteRequest(req) => {
-                let mut mr = self.multi_raft.lock().unwrap_or_else(|p| p.into_inner());
-                let resp = mr.handle_request_vote(&req)?;
-                Ok(RaftRpc::RequestVoteResponse(resp))
-            }
-            RaftRpc::InstallSnapshotRequest(req) => {
-                let mut mr = self.multi_raft.lock().unwrap_or_else(|p| p.into_inner());
-                let resp = mr.handle_install_snapshot(&req)?;
-                Ok(RaftRpc::InstallSnapshotResponse(resp))
-            }
-            // Health check.
-            RaftRpc::Ping(req) => {
-                let topo_version = {
-                    let topo = self.topology.read().unwrap_or_else(|p| p.into_inner());
-                    topo.version()
-                };
-                Ok(health::handle_ping(self.node_id, topo_version, &req))
-            }
-            // Topology broadcast.
-            RaftRpc::TopologyUpdate(update) => {
-                let (_updated, ack) =
-                    health::handle_topology_update(self.node_id, &self.topology, &update);
-                Ok(ack)
-            }
-            // Query forwarding — execute locally via the RequestForwarder.
-            RaftRpc::ForwardRequest(req) => {
-                let resp = self.forwarder.execute_forwarded(req).await;
-                Ok(RaftRpc::ForwardResponse(resp))
-            }
-            // VShardEnvelope — dispatch to registered handler (Event Plane, etc.).
-            RaftRpc::VShardEnvelope(bytes) => {
-                if let Some(ref handler) = self.vshard_handler {
-                    let response_bytes = handler(bytes).await?;
-                    Ok(RaftRpc::VShardEnvelope(response_bytes))
-                } else {
-                    Err(ClusterError::Transport {
-                        detail: "VShardEnvelope handler not configured".into(),
-                    })
-                }
-            }
-            other => Err(ClusterError::Transport {
-                detail: format!("unexpected request type in RPC handler: {other:?}"),
-            }),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,18 +342,18 @@ mod tests {
     use std::time::Instant;
 
     /// Test applier that counts applied entries.
-    struct CountingApplier {
+    pub(super) struct CountingApplier {
         applied: AtomicU64,
     }
 
     impl CountingApplier {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             Self {
                 applied: AtomicU64::new(0),
             }
         }
 
-        fn count(&self) -> u64 {
+        pub(super) fn count(&self) -> u64 {
             self.applied.load(Ordering::Relaxed)
         }
     }
@@ -506,8 +449,6 @@ mod tests {
         }
 
         // Nodes 2 and 3: normal timeouts (won't start election).
-        // Use the tuning config defaults so these values stay in sync with
-        // ClusterTransportTuning::election_timeout_{min,max}_secs.
         let transport_tuning = ClusterTransportTuning::default();
         let election_timeout_min = Duration::from_secs(transport_tuning.election_timeout_min_secs);
         let election_timeout_max = Duration::from_secs(transport_tuning.election_timeout_max_secs);
@@ -580,7 +521,6 @@ mod tests {
         // Wait for replication.
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // All nodes should have applied the command (replicated via Raft).
         assert!(
             rl1.applier.count() >= 2,
             "node 1: expected >= 2 applied, got {}",
@@ -601,75 +541,5 @@ mod tests {
         );
 
         shutdown_tx.send(true).unwrap();
-    }
-
-    #[tokio::test]
-    async fn rpc_handler_routes_append_entries() {
-        let dir = tempfile::tempdir().unwrap();
-        let transport = make_transport(1);
-        let rt = RoutingTable::uniform(1, &[1], 1);
-        let mut mr = MultiRaft::new(1, rt, dir.path().to_path_buf());
-        mr.add_group(0, vec![]).unwrap();
-
-        // Make it a leader first.
-        for node in mr.groups_mut().values_mut() {
-            node.election_deadline_override(Instant::now() - Duration::from_millis(1));
-        }
-
-        let topo = Arc::new(RwLock::new(ClusterTopology::new()));
-        let raft_loop = RaftLoop::new(mr, transport, topo, CountingApplier::new());
-
-        // Tick to trigger election.
-        raft_loop.do_tick();
-        tokio::time::sleep(Duration::from_millis(20)).await;
-
-        // Send an AppendEntries RPC via the handler.
-        let req = RaftRpc::AppendEntriesRequest(nodedb_raft::AppendEntriesRequest {
-            term: 99, // Higher term — will cause step-down.
-            leader_id: 2,
-            prev_log_index: 0,
-            prev_log_term: 0,
-            entries: vec![],
-            leader_commit: 0,
-            group_id: 0,
-        });
-
-        let resp = raft_loop.handle_rpc(req).await.unwrap();
-        match resp {
-            RaftRpc::AppendEntriesResponse(r) => {
-                assert!(r.success);
-                assert_eq!(r.term, 99);
-            }
-            other => panic!("expected AppendEntriesResponse, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn rpc_handler_routes_request_vote() {
-        let dir = tempfile::tempdir().unwrap();
-        let transport = make_transport(1);
-        let rt = RoutingTable::uniform(1, &[1, 2, 3], 3);
-        let mut mr = MultiRaft::new(1, rt, dir.path().to_path_buf());
-        mr.add_group(0, vec![2, 3]).unwrap();
-
-        let topo = Arc::new(RwLock::new(ClusterTopology::new()));
-        let raft_loop = RaftLoop::new(mr, transport, topo, CountingApplier::new());
-
-        let req = RaftRpc::RequestVoteRequest(nodedb_raft::RequestVoteRequest {
-            term: 1,
-            candidate_id: 2,
-            last_log_index: 0,
-            last_log_term: 0,
-            group_id: 0,
-        });
-
-        let resp = raft_loop.handle_rpc(req).await.unwrap();
-        match resp {
-            RaftRpc::RequestVoteResponse(r) => {
-                assert!(r.vote_granted);
-                assert_eq!(r.term, 1);
-            }
-            other => panic!("expected RequestVoteResponse, got {other:?}"),
-        }
     }
 }
