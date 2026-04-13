@@ -704,6 +704,150 @@ async fn rls_policy_create_visible_on_every_node() {
     cluster.shutdown().await;
 }
 
+/// Batch 1l: `GRANT <perm> ON <collection> TO <grantee>` replicates
+/// to every node's `PermissionStore` in-memory grants set.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn grant_permission_visible_on_every_node() {
+    let cluster = TestCluster::spawn_three().await.expect("3-node cluster");
+
+    cluster
+        .exec_ddl_on_any_leader("CREATE COLLECTION documents (id BIGINT PRIMARY KEY, body TEXT)")
+        .await
+        .expect("create collection");
+
+    cluster
+        .exec_ddl_on_any_leader("CREATE USER analyst WITH PASSWORD 'secret123'")
+        .await
+        .expect("create user");
+
+    cluster
+        .exec_ddl_on_any_leader("GRANT read ON documents TO analyst")
+        .await
+        .expect("grant read");
+
+    let target = "collection:1:documents";
+    wait_for(
+        "all 3 nodes see the grant",
+        Duration::from_secs(5),
+        Duration::from_millis(50),
+        || {
+            cluster
+                .nodes
+                .iter()
+                .all(|n| n.has_grant(target, "analyst", "read"))
+        },
+    )
+    .await;
+
+    cluster
+        .exec_ddl_on_any_leader("REVOKE read ON documents FROM analyst")
+        .await
+        .expect("revoke read");
+
+    wait_for(
+        "all 3 nodes no longer see the grant",
+        Duration::from_secs(5),
+        Duration::from_millis(50),
+        || {
+            cluster
+                .nodes
+                .iter()
+                .all(|n| !n.has_grant(target, "analyst", "read"))
+        },
+    )
+    .await;
+
+    cluster.shutdown().await;
+}
+
+/// Batch 1l: `GRANT ROLE x TO user` replicates the updated `StoredUser`
+/// (via `CatalogEntry::PutUser`) to every node's credentials cache.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn grant_role_visible_on_every_node() {
+    let cluster = TestCluster::spawn_three().await.expect("3-node cluster");
+
+    cluster
+        .exec_ddl_on_any_leader("CREATE USER ops_user WITH PASSWORD 'ops_pass1'")
+        .await
+        .expect("create user");
+
+    cluster
+        .exec_ddl_on_any_leader("GRANT ROLE monitor TO ops_user")
+        .await
+        .expect("grant role");
+
+    wait_for(
+        "all 3 nodes see ops_user has monitor role",
+        Duration::from_secs(5),
+        Duration::from_millis(50),
+        || {
+            cluster
+                .nodes
+                .iter()
+                .all(|n| n.user_has_role("ops_user", "monitor"))
+        },
+    )
+    .await;
+
+    cluster
+        .exec_ddl_on_any_leader("REVOKE ROLE monitor FROM ops_user")
+        .await
+        .expect("revoke role");
+
+    wait_for(
+        "all 3 nodes see ops_user no longer has monitor role",
+        Duration::from_secs(5),
+        Duration::from_millis(50),
+        || {
+            cluster
+                .nodes
+                .iter()
+                .all(|n| !n.user_has_role("ops_user", "monitor"))
+        },
+    )
+    .await;
+
+    cluster.shutdown().await;
+}
+
+/// Batch 1l: `ALTER COLLECTION owner OWNER TO new_owner` replicates
+/// the updated `StoredCollection` (and therefore the owner record)
+/// to every node's `PermissionStore` in-memory owner map.
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn ownership_transfer_visible_on_every_node() {
+    let cluster = TestCluster::spawn_three().await.expect("3-node cluster");
+
+    cluster
+        .exec_ddl_on_any_leader("CREATE COLLECTION assets (id BIGINT PRIMARY KEY, label TEXT)")
+        .await
+        .expect("create collection");
+
+    cluster
+        .exec_ddl_on_any_leader("CREATE USER new_owner_user WITH PASSWORD 'pass4567'")
+        .await
+        .expect("create new owner user");
+
+    cluster
+        .exec_ddl_on_any_leader("ALTER COLLECTION assets OWNER TO new_owner_user")
+        .await
+        .expect("transfer ownership");
+
+    wait_for(
+        "all 3 nodes see new_owner_user as owner of assets",
+        Duration::from_secs(5),
+        Duration::from_millis(50),
+        || {
+            cluster
+                .nodes
+                .iter()
+                .all(|n| n.owner_of("collection", 1, "assets").as_deref() == Some("new_owner_user"))
+        },
+    )
+    .await;
+
+    cluster.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
 async fn materialized_view_create_visible_on_every_node() {
     let cluster = TestCluster::spawn_three().await.expect("3-node cluster");

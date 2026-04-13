@@ -340,6 +340,29 @@ impl TestClusterNode {
         self.shared.credentials.get_user(username).is_some()
     }
 
+    /// Check whether a permission grant exists in this node's
+    /// in-memory `PermissionStore`. `permission` is the lowercase
+    /// canonical name (`read|write|create|drop|alter|admin|monitor|execute`).
+    pub fn has_grant(&self, target: &str, grantee: &str, permission: &str) -> bool {
+        let Some(perm) = nodedb::control::security::permission::parse_permission(permission) else {
+            return false;
+        };
+        self.shared
+            .permissions
+            .grants_on(target)
+            .iter()
+            .any(|g| g.grantee == grantee && g.permission == perm)
+    }
+
+    /// Read the recorded owner of an object on this node.
+    pub fn owner_of(&self, object_type: &str, tenant_id: u32, object_name: &str) -> Option<String> {
+        self.shared.permissions.get_owner(
+            object_type,
+            nodedb_types::TenantId::new(tenant_id),
+            object_name,
+        )
+    }
+
     /// Check whether a tenant identity exists in this node's local
     /// `SystemCatalog` redb (written by the `PutTenant` applier).
     pub fn has_tenant(&self, tenant_id: u32) -> bool {
