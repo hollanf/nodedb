@@ -1,21 +1,12 @@
 //! Implements `nodedb_sql::SqlCatalog` for Origin using CredentialStore.
 //!
-//! Two-tier resolution:
-//!
-//! 1. **Replicated metadata cache** (written by the
-//!    `MetadataCommitApplier` from committed raft entries). When a
-//!    node proposes a DDL, every other node sees the result here.
-//! 2. **Local `SystemCatalog` redb** (legacy single-node path). Still
-//!    populated by the current pgwire DDL handlers until batch 1c
-//!    finishes the migration.
-//!
-//! The planner asks `get_collection` during every query. The cache
-//! hits the path for cross-node DDL visibility; the redb fallback
-//! keeps the single-node flow and all enforcement metadata
-//! (append_only / balanced / retention / ...) working unchanged
-//! during the migration.
+//! After the batch 1e unification, the planner reads directly from
+//! the local `SystemCatalog` redb. Cross-node DDL visibility works
+//! because the `MetadataCommitApplier` on every node writes through
+//! to the local redb via `CatalogEntry::apply_to` — so `SystemCatalog`
+//! is authoritatively replicated and a single read path is sufficient.
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use nodedb_sql::types::{CollectionInfo, ColumnInfo, EngineType, SqlCatalog, SqlDataType};
 
@@ -27,10 +18,6 @@ pub struct OriginCatalog {
     tenant_id: u32,
     retention_policy_registry:
         Option<Arc<crate::engine::timeseries::retention_policy::RetentionPolicyRegistry>>,
-    /// Replicated metadata cache — the first tier of catalog reads.
-    /// Optional so unit tests that construct an `OriginCatalog`
-    /// without a full `SharedState` still compile.
-    metadata_cache: Option<Arc<RwLock<nodedb_cluster::MetadataCache>>>,
 }
 
 impl OriginCatalog {
@@ -45,58 +32,7 @@ impl OriginCatalog {
             credentials,
             tenant_id,
             retention_policy_registry,
-            metadata_cache: None,
         }
-    }
-
-    /// Install a replicated metadata cache handle. Called from
-    /// `QueryContext::for_state` so every per-request catalog sees
-    /// the same cache the `MetadataCommitApplier` writes into.
-    pub fn with_metadata_cache(
-        mut self,
-        cache: Arc<RwLock<nodedb_cluster::MetadataCache>>,
-    ) -> Self {
-        self.metadata_cache = Some(cache);
-        self
-    }
-
-    /// Read from the replicated metadata cache. Returns `None` if
-    /// the cache is not installed or the collection is not present.
-    fn lookup_cached(&self, name: &str) -> Option<CollectionInfo> {
-        let cache = self.metadata_cache.as_ref()?;
-        let id = nodedb_cluster::DescriptorId::new(
-            self.tenant_id,
-            nodedb_cluster::DescriptorKind::Collection,
-            name,
-        );
-        let guard = cache.read().unwrap_or_else(|p| p.into_inner());
-        let desc = guard.collection(&id)?;
-        if !desc.header.state.is_public() {
-            return None;
-        }
-        // Map the replicated descriptor back to the planner's
-        // `CollectionInfo`. The descriptor encodes the collection
-        // type as a canonical string; we parse it into the
-        // corresponding `EngineType`.
-        let engine = engine_type_from_str(&desc.collection_type);
-        let columns: Vec<ColumnInfo> = desc
-            .columns
-            .iter()
-            .map(|c| ColumnInfo {
-                name: c.name.clone(),
-                data_type: parse_type_str(&c.data_type),
-                nullable: c.nullable,
-                is_primary_key: desc.primary_key.as_deref() == Some(c.name.as_str()),
-                default: c.default.clone(),
-            })
-            .collect();
-        Some(CollectionInfo {
-            name: name.to_string(),
-            engine,
-            columns,
-            primary_key: desc.primary_key.clone(),
-            has_auto_tier: self.has_auto_tier(name),
-        })
     }
 
     fn has_auto_tier(&self, collection: &str) -> bool {
@@ -112,19 +48,11 @@ impl OriginCatalog {
 
 impl SqlCatalog for OriginCatalog {
     fn get_collection(&self, name: &str) -> Option<CollectionInfo> {
-        // Tier 1: replicated metadata cache (cross-node DDL
-        // visibility). Hit when a CREATE COLLECTION committed on
-        // another node has been applied locally by the
-        // MetadataCommitApplier.
-        if let Some(info) = self.lookup_cached(name) {
-            return Some(info);
-        }
-
-        // Tier 2: legacy local SystemCatalog redb. Populated today
-        // by the current pgwire DDL handlers; batch 1c flips them to
-        // propose-through-raft and this fallback shrinks to "data
-        // not yet replicated to this node" + "enforcement metadata
-        // the replicated descriptor does not yet carry".
+        // Read through the local `SystemCatalog` redb. On cluster
+        // followers, the `MetadataCommitApplier` has already
+        // written the replicated record here via
+        // `CatalogEntry::apply_to`, so a single read path works for
+        // both single-node and cluster modes.
         let catalog = self.credentials.catalog().as_ref()?;
         let stored = catalog.get_collection(self.tenant_id, name).ok()??;
         if !stored.is_active {
@@ -280,21 +208,5 @@ fn parse_type_str(s: &str) -> SqlDataType {
         "BYTES" | "BYTEA" | "BLOB" => SqlDataType::Bytes,
         "TIMESTAMP" | "TIMESTAMPTZ" => SqlDataType::Timestamp,
         _ => SqlDataType::String,
-    }
-}
-
-/// Map the canonical string form of a collection type (stored in the
-/// replicated [`nodedb_cluster::CollectionDescriptor`]) back to the
-/// planner's [`EngineType`]. Unknown / future variants fall through to
-/// `DocumentSchemaless` — the planner's safest default.
-fn engine_type_from_str(s: &str) -> EngineType {
-    match s {
-        "document_strict" => EngineType::DocumentStrict,
-        "document_schemaless" => EngineType::DocumentSchemaless,
-        "key_value" | "kv" => EngineType::KeyValue,
-        "columnar" | "columnar_plain" => EngineType::Columnar,
-        "timeseries" => EngineType::Timeseries,
-        "spatial" => EngineType::Spatial,
-        _ => EngineType::DocumentSchemaless,
     }
 }

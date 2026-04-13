@@ -51,22 +51,16 @@ impl QueryContext {
 
     /// Create a query context from SharedState.
     ///
-    /// Attaches both the legacy `SystemCatalog` (via `CredentialStore`)
-    /// and the replicated `MetadataCache`, so `OriginCatalog::get_collection`
-    /// can consult the replicated view first before falling back to
-    /// the local redb. This is the standard constructor — all query
-    /// paths should use this.
+    /// After batch 1e, `OriginCatalog` reads directly from the
+    /// local `SystemCatalog` redb — the `MetadataCommitApplier`
+    /// writes through to it on every node, so cross-node DDL
+    /// visibility works without a separate in-memory cache.
     pub fn for_state(state: &crate::control::state::SharedState, tenant_id: u32) -> Self {
-        let sql_catalog = super::catalog_adapter::OriginCatalog::new(
+        Self::with_catalog(
             Arc::clone(&state.credentials),
             tenant_id,
             Some(Arc::clone(&state.retention_policy_registry)),
         )
-        .with_metadata_cache(Arc::clone(&state.metadata_cache));
-        Self {
-            sql_catalog: Some(sql_catalog),
-            retention_registry: Some(Arc::clone(&state.retention_policy_registry)),
-        }
     }
 
     /// Override the default rounding mode for `ROUND()`.

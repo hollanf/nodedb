@@ -215,21 +215,19 @@ pub fn create_collection(
 
     // Persist through the replicated metadata Raft group (group 0).
     //
-    // In cluster mode this proposes a `MetadataEntry::CollectionDdl::
-    // Create` carrying the full `StoredCollection` as `host_payload`;
-    // every node's `MetadataCommitApplier` picks up the committed
-    // entry, updates its replicated `MetadataCache`, and writes the
-    // same `StoredCollection` into its local `SystemCatalog` redb, so
-    // every subsequent reader (planner, dispatch, DESCRIBE,
+    // In cluster mode this proposes a `CatalogEntry::PutCollection`
+    // wrapped in an opaque `MetadataEntry::CatalogDdl { payload }`;
+    // every node's `MetadataCommitApplier` decodes the payload and
+    // writes the `StoredCollection` into its local `SystemCatalog`
+    // redb so every subsequent reader (planner, dispatch, DESCRIBE,
     // pg_catalog) sees the new collection on every node.
     //
-    // `propose_metadata_and_wait` returns `Ok(0)` when no cluster is
+    // `propose_catalog_entry` returns `Ok(0)` when no cluster is
     // configured — the single-node fallback path below does the
     // direct `put_collection` write that the legacy handler used to
     // do unconditionally.
-    let entry = crate::control::metadata_proposer::collection_create_entry(&coll)
-        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
-    let log_index = crate::control::metadata_proposer::propose_metadata_and_wait(state, &entry)
+    let entry = crate::control::catalog_entry::CatalogEntry::PutCollection(Box::new(coll.clone()));
+    let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     if log_index == 0
         && let Some(catalog) = state.credentials.catalog()

@@ -57,11 +57,15 @@ pub fn drop_collection(
     }
 
     // Propose the drop through the metadata raft group. The applier
-    // on every node performs the `get + flip is_active + put` sequence,
-    // so the record is preserved for audit / undrop and the legacy
+    // on every node decodes `CatalogEntry::DeactivateCollection`,
+    // performs the `get + flip is_active + put` sequence, so the
+    // record is preserved for audit / undrop and the legacy
     // `load_collections_for_tenant` filter hides it everywhere.
-    let entry = crate::control::metadata_proposer::collection_drop_entry(tenant_id.as_u32(), name);
-    let log_index = crate::control::metadata_proposer::propose_metadata_and_wait(state, &entry)
+    let entry = crate::control::catalog_entry::CatalogEntry::DeactivateCollection {
+        tenant_id: tenant_id.as_u32(),
+        name: name.to_string(),
+    };
+    let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     if log_index == 0
         && let Some(catalog) = state.credentials.catalog()

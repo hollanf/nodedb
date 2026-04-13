@@ -68,16 +68,11 @@ pub async fn alter_table_add_column(
                     let mut updated = coll;
                     updated.collection_type = nodedb_types::CollectionType::strict(schema.clone());
                     updated.timeseries_config = sonic_rs::to_string(&schema).ok();
-                    // Propose the full replacement through raft — the
-                    // strict-schema alter changes both column list and
-                    // timeseries_config, so we ship the whole record.
-                    let entry = crate::control::metadata_proposer::collection_alter_entry(
-                        &updated,
-                        nodedb_cluster::CollectionAlter::ReplaceHostRecord,
-                    )
-                    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+                    let entry = crate::control::catalog_entry::CatalogEntry::PutCollection(
+                        Box::new(updated.clone()),
+                    );
                     let log_index =
-                        crate::control::metadata_proposer::propose_metadata_and_wait(state, &entry)
+                        crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
                             .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
                     if log_index == 0 {
                         catalog
@@ -225,15 +220,10 @@ pub fn alter_collection_enforcement(
     }
 
     // Enforcement alters (retention, legal_hold, append_only, LVC)
-    // touch fields that aren't represented on the replicated
-    // `CollectionDescriptor`, so the entry carries the whole updated
-    // `StoredCollection` as `host_payload` via `ReplaceHostRecord`.
-    let entry = crate::control::metadata_proposer::collection_alter_entry(
-        &coll,
-        nodedb_cluster::CollectionAlter::ReplaceHostRecord,
-    )
-    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
-    let log_index = crate::control::metadata_proposer::propose_metadata_and_wait(state, &entry)
+    // ship the whole updated `StoredCollection` through the
+    // generic `CatalogEntry::PutCollection` pipe.
+    let entry = crate::control::catalog_entry::CatalogEntry::PutCollection(Box::new(coll.clone()));
+    let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     if log_index == 0 {
         catalog
@@ -361,15 +351,8 @@ pub fn add_materialized_sum(
     }
 
     coll.materialized_sums.push(def);
-    // MATERIALIZED_SUM attaches a definition to the target
-    // collection — again a host-specific field not represented in
-    // the replicated descriptor. Ship the whole record.
-    let entry = crate::control::metadata_proposer::collection_alter_entry(
-        &coll,
-        nodedb_cluster::CollectionAlter::ReplaceHostRecord,
-    )
-    .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
-    let log_index = crate::control::metadata_proposer::propose_metadata_and_wait(state, &entry)
+    let entry = crate::control::catalog_entry::CatalogEntry::PutCollection(Box::new(coll.clone()));
+    let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     if log_index == 0 {
         catalog

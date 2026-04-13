@@ -42,25 +42,39 @@ pub fn create_sequence(
         ))));
     }
 
-    // Persist to catalog.
-    if let Some(catalog) = state.credentials.catalog() {
-        catalog.put_sequence(&def).map_err(|e| {
+    // Propose through the metadata raft group. On every node the
+    // applier decodes `CatalogEntry::PutSequence`, writes the
+    // record to local `SystemCatalog` redb, and syncs the in-memory
+    // `sequence_registry` so `NEXTVAL` / `CURRVAL` on followers see
+    // the replicated definition immediately.
+    let entry = crate::control::catalog_entry::CatalogEntry::PutSequence(Box::new(def.clone()));
+    let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
+        .map_err(|e| {
             PgWireError::UserError(Box::new(ErrorInfo::new(
                 "ERROR".to_owned(),
                 "XX000".to_owned(),
-                format!("failed to persist sequence: {e}"),
+                e.to_string(),
+            )))
+        })?;
+    if log_index == 0 {
+        // Single-node / no-cluster fallback: write directly.
+        if let Some(catalog) = state.credentials.catalog() {
+            catalog.put_sequence(&def).map_err(|e| {
+                PgWireError::UserError(Box::new(ErrorInfo::new(
+                    "ERROR".to_owned(),
+                    "XX000".to_owned(),
+                    format!("failed to persist sequence: {e}"),
+                )))
+            })?;
+        }
+        state.sequence_registry.create(def).map_err(|e| {
+            PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "XX000".to_owned(),
+                e.to_string(),
             )))
         })?;
     }
-
-    // Register in memory.
-    state.sequence_registry.create(def).map_err(|e| {
-        PgWireError::UserError(Box::new(ErrorInfo::new(
-            "ERROR".to_owned(),
-            "XX000".to_owned(),
-            e.to_string(),
-        )))
-    })?;
 
     state.schema_version.bump();
 
@@ -89,13 +103,28 @@ pub fn drop_sequence(
         ))));
     }
 
-    // Remove from catalog.
-    if let Some(catalog) = state.credentials.catalog() {
-        let _ = catalog.delete_sequence(tenant_id, &name);
+    // Propose the delete through the metadata raft group. Every
+    // node's applier removes the record from local redb and from
+    // its in-memory `sequence_registry`.
+    let entry = crate::control::catalog_entry::CatalogEntry::DeleteSequence {
+        tenant_id,
+        name: name.clone(),
+    };
+    let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
+        .map_err(|e| {
+            PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "XX000".to_owned(),
+                e.to_string(),
+            )))
+        })?;
+    if log_index == 0 {
+        // Single-node / no-cluster fallback.
+        if let Some(catalog) = state.credentials.catalog() {
+            let _ = catalog.delete_sequence(tenant_id, &name);
+        }
+        let _ = state.sequence_registry.remove(tenant_id, &name);
     }
-
-    // Remove from memory.
-    let _ = state.sequence_registry.remove(tenant_id, &name);
 
     state.schema_version.bump();
 
