@@ -127,6 +127,34 @@ pub struct SharedState {
     /// This node's ID (0 in single-node mode).
     pub node_id: u64,
 
+    /// Live view of the replicated metadata catalog. Written by the
+    /// `MetadataCommitApplier` as metadata-group entries commit, read
+    /// by `OriginCatalog`, pgwire DDL handlers, and HTTP catalog
+    /// endpoints. Always present — in single-node / no-cluster mode
+    /// the cache stays empty and reads fall through to the legacy
+    /// `SystemCatalog` redb path.
+    pub metadata_cache: Arc<RwLock<nodedb_cluster::MetadataCache>>,
+
+    /// Broadcasts one event per committed metadata entry. Consumers:
+    /// pgwire prepared-statement cache invalidation, HTTP catalog
+    /// cache rebuild, CDC schema-change stream. A lagging subscriber
+    /// is fine — the applier does not block on delivery.
+    pub catalog_change_tx: tokio::sync::broadcast::Sender<
+        crate::control::cluster::metadata_applier::CatalogChangeEvent,
+    >,
+
+    /// Watcher advanced by the `MetadataCommitApplier` after each
+    /// apply batch. Used by `metadata_proposer::propose_metadata_and_wait`
+    /// to synchronously block until a freshly-proposed entry is
+    /// visible on this node.
+    pub metadata_applied_index_watcher:
+        Arc<crate::control::cluster::applied_index_watcher::AppliedIndexWatcher>,
+
+    /// Type-erased handle for proposing to the metadata raft group.
+    /// Installed by `cluster::start_raft` after `SharedState::open`
+    /// has returned. `None` in single-node / no-cluster mode.
+    pub metadata_raft: OnceLock<Arc<dyn crate::control::metadata_proposer::MetadataRaftHandle>>,
+
     /// Propose tracker for distributed writes (None in single-node mode).
     pub propose_tracker: Option<Arc<crate::control::wal_replication::ProposeTracker>>,
 

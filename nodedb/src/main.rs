@@ -233,6 +233,12 @@ async fn main() -> anyhow::Result<()> {
         state.cluster_topology = Some(Arc::clone(&handle.topology));
         state.cluster_routing = Some(Arc::clone(&handle.routing));
         state.cluster_transport = Some(Arc::clone(&handle.transport));
+        // Share the metadata cache + applied-index watcher that
+        // cluster::init_cluster allocated, so the MetadataCommitApplier
+        // (installed in start_raft) writes into the same cache readers
+        // observe via `SharedState::metadata_cache`.
+        state.metadata_cache = Arc::clone(&handle.metadata_cache);
+        state.metadata_applied_index_watcher = Arc::clone(&handle.applied_index_watcher);
     }
 
     // Initialise JWKS registry if JWT providers are configured.

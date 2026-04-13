@@ -10,6 +10,17 @@ use crate::types::TenantId;
 use super::SharedState;
 
 impl SharedState {
+    /// Shared handle to the metadata applied-index watcher.
+    ///
+    /// Used by [`crate::control::metadata_proposer::propose_metadata_and_wait`]
+    /// to block until a freshly-proposed metadata entry has been
+    /// applied locally.
+    pub fn applied_index_watcher(
+        &self,
+    ) -> std::sync::Arc<crate::control::cluster::applied_index_watcher::AppliedIndexWatcher> {
+        self.metadata_applied_index_watcher.clone()
+    }
+
     /// Maximum SPSC ring buffer utilization across all cores (0-100).
     pub fn max_spsc_utilization(&self) -> u8 {
         match self.dispatcher.lock() {

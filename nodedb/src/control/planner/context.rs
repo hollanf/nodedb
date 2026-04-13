@@ -51,13 +51,22 @@ impl QueryContext {
 
     /// Create a query context from SharedState.
     ///
-    /// This is the standard constructor — all query paths should use this.
+    /// Attaches both the legacy `SystemCatalog` (via `CredentialStore`)
+    /// and the replicated `MetadataCache`, so `OriginCatalog::get_collection`
+    /// can consult the replicated view first before falling back to
+    /// the local redb. This is the standard constructor — all query
+    /// paths should use this.
     pub fn for_state(state: &crate::control::state::SharedState, tenant_id: u32) -> Self {
-        Self::with_catalog(
+        let sql_catalog = super::catalog_adapter::OriginCatalog::new(
             Arc::clone(&state.credentials),
             tenant_id,
             Some(Arc::clone(&state.retention_policy_registry)),
         )
+        .with_metadata_cache(Arc::clone(&state.metadata_cache));
+        Self {
+            sql_catalog: Some(sql_catalog),
+            retention_registry: Some(Arc::clone(&state.retention_policy_registry)),
+        }
     }
 
     /// Override the default rounding mode for `ROUND()`.

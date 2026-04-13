@@ -61,6 +61,15 @@ impl SharedState {
             cluster_routing: None,
             cluster_transport: None,
             node_id: 0,
+            metadata_cache: Arc::new(std::sync::RwLock::new(nodedb_cluster::MetadataCache::new())),
+            catalog_change_tx: tokio::sync::broadcast::channel(
+                crate::control::cluster::metadata_applier::CATALOG_CHANNEL_CAPACITY,
+            )
+            .0,
+            metadata_applied_index_watcher: Arc::new(
+                crate::control::cluster::applied_index_watcher::AppliedIndexWatcher::new(),
+            ),
+            metadata_raft: std::sync::OnceLock::new(),
             propose_tracker: None,
             raft_proposer: None,
             raft_status_fn: None,
@@ -323,6 +332,15 @@ impl SharedState {
             cluster_routing: None,
             cluster_transport: None,
             node_id: 0,
+            metadata_cache: Arc::new(std::sync::RwLock::new(nodedb_cluster::MetadataCache::new())),
+            catalog_change_tx: tokio::sync::broadcast::channel(
+                crate::control::cluster::metadata_applier::CATALOG_CHANNEL_CAPACITY,
+            )
+            .0,
+            metadata_applied_index_watcher: Arc::new(
+                crate::control::cluster::applied_index_watcher::AppliedIndexWatcher::new(),
+            ),
+            metadata_raft: std::sync::OnceLock::new(),
             propose_tracker: None,
             raft_proposer: None,
             raft_status_fn: None,
