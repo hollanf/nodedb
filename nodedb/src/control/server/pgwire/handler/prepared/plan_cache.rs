@@ -1,19 +1,27 @@
 //! Per-session plan cache for prepared statements.
 //!
-//! Caches compiled `Vec<PhysicalTask>` per SQL string, keyed by `(sql_hash, schema_version)`.
-//! When the schema version changes (CREATE/DROP/ALTER), cached entries are invalidated.
-//! This avoids re-parsing and re-planning identical SQL on every Execute.
+//! Caches compiled `Vec<PhysicalTask>` per SQL string, keyed by
+//! the SQL text hash. Each cached entry records the
+//! [`DescriptorVersionSet`] the plan was built against; on
+//! lookup the cache validates each `(descriptor_id, version)`
+//! pair against a caller-supplied lookup and evicts the entry
+//! on any mismatch. Unrelated DDLs no longer invalidate
+//! unrelated cached plans.
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use nodedb_cluster::DescriptorId;
+
+use crate::control::planner::descriptor_set::DescriptorVersionSet;
 use crate::control::planner::physical::PhysicalTask;
 
-/// Global schema version counter, bumped on any DDL that changes the schema.
-///
-/// Stored on `SharedState`. Plan caches compare their snapshot against this
-/// to detect invalidation.
+/// Monotonic schema version counter retained for backwards
+/// compatibility with metrics and tracing callers that still
+/// snapshot "the schema version" as an opaque token. The plan
+/// cache no longer keys on this value — see
+/// [`PlanCache`] for the per-descriptor invalidation path.
 pub struct SchemaVersion {
     version: AtomicU64,
 }
@@ -42,20 +50,26 @@ impl Default for SchemaVersion {
     }
 }
 
-/// Cached entry: compiled physical tasks and the schema version at compile time.
+/// Cached entry: compiled physical tasks and the descriptor
+/// version set they were built against.
 struct CachedEntry {
     tasks: Vec<PhysicalTask>,
-    schema_version: u64,
+    versions: DescriptorVersionSet,
 }
 
 /// Per-session LRU plan cache.
 ///
-/// Keyed by SQL hash. Each entry records the schema version at plan time.
-/// On lookup, if the schema version has changed, the entry is evicted.
+/// Keyed by SQL hash. Each entry records the
+/// [`DescriptorVersionSet`] the plan was built against. On
+/// lookup, the caller supplies a `current_version` closure that
+/// maps each recorded descriptor id to its current version (or
+/// `None` if the descriptor has been dropped). If any
+/// `(id, version)` no longer matches, the entry is evicted and
+/// the caller falls through to a fresh plan.
 pub struct PlanCache {
     entries: HashMap<u64, CachedEntry>,
     max_entries: usize,
-    /// Insertion order for LRU eviction (oldest at front). VecDeque for O(1) pop_front.
+    /// Insertion order for LRU eviction (oldest at front).
     order: VecDeque<u64>,
 }
 
@@ -71,44 +85,45 @@ impl PlanCache {
 
     /// Look up cached physical tasks for the given SQL.
     ///
-    /// Returns `None` if not cached or if the schema version has changed
-    /// (stale entries are evicted automatically).
-    pub fn get(&mut self, sql: &str, current_schema_version: u64) -> Option<Vec<PhysicalTask>> {
+    /// On a hit returns both the cached tasks and the
+    /// `DescriptorVersionSet` they were built against — the
+    /// caller feeds the set into
+    /// `SharedState::acquire_plan_lease_scope` so cache hits
+    /// and fresh plans share the same lease-acquisition path.
+    ///
+    /// Returns `None` if not cached or if any recorded
+    /// descriptor version has bumped / been dropped. Stale
+    /// entries are evicted automatically.
+    pub fn get<F>(
+        &mut self,
+        sql: &str,
+        current_version: F,
+    ) -> Option<(Vec<PhysicalTask>, DescriptorVersionSet)>
+    where
+        F: Fn(&DescriptorId) -> Option<u64>,
+    {
         let key = hash_sql(sql);
-
-        let version_matches = self
-            .entries
-            .get(&key)
-            .map(|entry| entry.schema_version == current_schema_version);
-
-        match version_matches {
-            Some(true) => {
-                // Clone the cached tasks (PhysicalTask derives Clone).
-                Some(self.entries.get(&key).expect("just checked").tasks.clone())
-            }
-            Some(false) => {
-                // Schema changed — evict the stale entry.
-                self.entries.remove(&key);
-                self.order.retain(|k| *k != key);
-                None
-            }
-            None => None,
+        let entry = self.entries.get(&key)?;
+        if entry.versions.all_fresh(&current_version) {
+            return Some((entry.tasks.clone(), entry.versions.clone()));
         }
+        // Stale — evict.
+        self.entries.remove(&key);
+        self.order.retain(|k| *k != key);
+        None
     }
 
-    /// Store compiled physical tasks in the cache.
-    pub fn put(&mut self, sql: &str, tasks: Vec<PhysicalTask>, schema_version: u64) {
+    /// Store compiled physical tasks in the cache along with
+    /// the descriptor version set they were built against.
+    pub fn put(&mut self, sql: &str, tasks: Vec<PhysicalTask>, versions: DescriptorVersionSet) {
         let key = hash_sql(sql);
 
         if let std::collections::hash_map::Entry::Occupied(mut e) = self.entries.entry(key) {
-            e.insert(CachedEntry {
-                tasks,
-                schema_version,
-            });
+            e.insert(CachedEntry { tasks, versions });
             return;
         }
 
-        // Evict oldest if at capacity (O(1) via VecDeque::pop_front).
+        // Evict oldest if at capacity.
         while self.entries.len() >= self.max_entries {
             if let Some(oldest_key) = self.order.pop_front() {
                 self.entries.remove(&oldest_key);
@@ -117,13 +132,7 @@ impl PlanCache {
             }
         }
 
-        self.entries.insert(
-            key,
-            CachedEntry {
-                tasks,
-                schema_version,
-            },
-        );
+        self.entries.insert(key, CachedEntry { tasks, versions });
         self.order.push_back(key);
     }
 
@@ -147,6 +156,7 @@ mod tests {
     use crate::bridge::physical_plan::MetaOp;
     use crate::control::planner::physical::PostSetOp;
     use crate::types::{TenantId, VShardId};
+    use nodedb_cluster::DescriptorKind;
 
     fn dummy_tasks() -> Vec<PhysicalTask> {
         vec![PhysicalTask {
@@ -157,38 +167,83 @@ mod tests {
         }]
     }
 
-    #[test]
-    fn cache_hit_same_version() {
-        let mut cache = PlanCache::new(10);
-        cache.put("SELECT 1", dummy_tasks(), 1);
-        assert!(cache.get("SELECT 1", 1).is_some());
+    fn collection_id(name: &str) -> DescriptorId {
+        DescriptorId::new(1, DescriptorKind::Collection, name.to_string())
+    }
+
+    fn versions_for(pairs: &[(&str, u64)]) -> DescriptorVersionSet {
+        let mut set = DescriptorVersionSet::new();
+        for (name, v) in pairs {
+            set.record(collection_id(name), *v);
+        }
+        set
+    }
+
+    fn always_v(expected: u64) -> impl Fn(&DescriptorId) -> Option<u64> {
+        move |_| Some(expected)
+    }
+
+    fn version_map(map: Vec<(&'static str, u64)>) -> impl Fn(&DescriptorId) -> Option<u64> {
+        move |id: &DescriptorId| {
+            map.iter()
+                .find(|(name, _)| *name == id.name)
+                .map(|(_, v)| *v)
+        }
     }
 
     #[test]
-    fn cache_miss_version_change() {
+    fn cache_hit_same_version() {
         let mut cache = PlanCache::new(10);
-        cache.put("SELECT 1", dummy_tasks(), 1);
-        assert!(cache.get("SELECT 1", 2).is_none());
-        assert!(cache.get("SELECT 1", 1).is_none());
+        cache.put("SELECT 1", dummy_tasks(), versions_for(&[("foo", 1)]));
+        assert!(cache.get("SELECT 1", always_v(1)).is_some());
+    }
+
+    #[test]
+    fn cache_miss_version_bump() {
+        let mut cache = PlanCache::new(10);
+        cache.put("SELECT 1", dummy_tasks(), versions_for(&[("foo", 1)]));
+        assert!(cache.get("SELECT 1", always_v(2)).is_none());
+        // Re-lookup returns None — the stale entry was evicted.
+        assert!(cache.get("SELECT 1", always_v(1)).is_none());
+    }
+
+    #[test]
+    fn cache_miss_descriptor_dropped() {
+        let mut cache = PlanCache::new(10);
+        cache.put("SELECT 1", dummy_tasks(), versions_for(&[("foo", 1)]));
+        assert!(cache.get("SELECT 1", |_: &DescriptorId| None).is_none());
+    }
+
+    #[test]
+    fn unrelated_descriptor_bump_does_not_invalidate() {
+        let mut cache = PlanCache::new(10);
+        cache.put(
+            "SELECT FROM foo",
+            dummy_tasks(),
+            versions_for(&[("foo", 1)]),
+        );
+        // bar bumps but we only track foo → cache hit still.
+        let lookup = version_map(vec![("foo", 1), ("bar", 99)]);
+        assert!(cache.get("SELECT FROM foo", lookup).is_some());
     }
 
     #[test]
     fn lru_eviction() {
         let mut cache = PlanCache::new(2);
-        cache.put("SELECT 1", dummy_tasks(), 1);
-        cache.put("SELECT 2", dummy_tasks(), 1);
-        cache.put("SELECT 3", dummy_tasks(), 1);
-        assert!(cache.get("SELECT 1", 1).is_none());
-        assert!(cache.get("SELECT 2", 1).is_some());
-        assert!(cache.get("SELECT 3", 1).is_some());
+        cache.put("SELECT 1", dummy_tasks(), versions_for(&[("a", 1)]));
+        cache.put("SELECT 2", dummy_tasks(), versions_for(&[("b", 1)]));
+        cache.put("SELECT 3", dummy_tasks(), versions_for(&[("c", 1)]));
+        assert!(cache.get("SELECT 1", always_v(1)).is_none());
+        assert!(cache.get("SELECT 2", always_v(1)).is_some());
+        assert!(cache.get("SELECT 3", always_v(1)).is_some());
     }
 
     #[test]
     fn clear_empties_cache() {
         let mut cache = PlanCache::new(10);
-        cache.put("SELECT 1", dummy_tasks(), 1);
+        cache.put("SELECT 1", dummy_tasks(), versions_for(&[("foo", 1)]));
         cache.clear();
-        assert!(cache.get("SELECT 1", 1).is_none());
+        assert!(cache.get("SELECT 1", always_v(1)).is_none());
     }
 
     #[test]
