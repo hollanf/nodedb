@@ -162,26 +162,99 @@ impl LeaseRenewalLoop {
             count = near_expiry.len(),
             "descriptor lease renewal: re-acquiring near-expiry leases"
         );
-        for (id, version) in near_expiry {
-            // Bypass the fast path — we already know the lease is
-            // near expiry and we WANT a fresh grant. Calling
-            // `acquire_descriptor_lease` here would hit the
-            // `expires_at > now` fast path and return the same
-            // stale lease.
-            if let Err(e) = super::propose::force_refresh_lease(
-                &shared,
-                id.clone(),
-                version,
-                self.config.full_duration,
-            ) {
-                warn!(
-                    descriptor = ?id,
-                    version,
-                    error = %e,
-                    "descriptor lease renewal: re-acquire failed"
-                );
+        for (id, held_version) in near_expiry {
+            // Look up the CURRENT persisted version from the
+            // local catalog before re-acquiring. If the
+            // descriptor has been altered since we last took
+            // the lease, we need to advance to the new version
+            // — otherwise the old lease sticks around forever
+            // and blocks drain on any ALTER that wants to bump
+            // past it.
+            //
+            // If the descriptor has been dropped we release the
+            // lease instead of renewing: renewing a lease on a
+            // non-existent descriptor would leak it.
+            let current_version = lookup_current_version(&shared, &id);
+            match current_version {
+                Some(v) => {
+                    // Re-acquire at whichever version is higher:
+                    // the persisted version, or the one we
+                    // already hold (defensive — a concurrent
+                    // PutCollection apply between cache read
+                    // and propose could leave us briefly
+                    // observing an older version).
+                    let version = v.max(held_version);
+                    if let Err(e) = super::propose::force_refresh_lease(
+                        &shared,
+                        id.clone(),
+                        version,
+                        self.config.full_duration,
+                    ) {
+                        warn!(
+                            descriptor = ?id,
+                            version,
+                            error = %e,
+                            "descriptor lease renewal: re-acquire failed"
+                        );
+                    }
+                }
+                None => {
+                    // Descriptor dropped — release our lease so
+                    // drain on the drop path can make progress.
+                    if let Err(e) = super::release::release_leases(&shared, vec![id.clone()]) {
+                        warn!(
+                            descriptor = ?id,
+                            error = %e,
+                            "descriptor lease renewal: release after drop failed"
+                        );
+                    }
+                }
             }
         }
+    }
+}
+
+/// Look up the current persisted version for a descriptor.
+/// Returns `None` if the descriptor has been dropped, the
+/// catalog is unavailable, or the descriptor kind is not one
+/// the planner / renewal path tracks.
+fn lookup_current_version(shared: &SharedState, id: &DescriptorId) -> Option<u64> {
+    use nodedb_cluster::DescriptorKind;
+    let catalog = shared.credentials.catalog();
+    let catalog = catalog.as_ref()?;
+    match id.kind {
+        DescriptorKind::Collection => catalog
+            .get_collection(id.tenant_id, &id.name)
+            .ok()
+            .flatten()
+            .filter(|c| c.is_active)
+            .map(|c| c.descriptor_version.max(1)),
+        DescriptorKind::Function => catalog
+            .get_function(id.tenant_id, &id.name)
+            .ok()
+            .flatten()
+            .map(|f| f.descriptor_version.max(1)),
+        DescriptorKind::Procedure => catalog
+            .get_procedure(id.tenant_id, &id.name)
+            .ok()
+            .flatten()
+            .map(|p| p.descriptor_version.max(1)),
+        DescriptorKind::Trigger => catalog
+            .get_trigger(id.tenant_id, &id.name)
+            .ok()
+            .flatten()
+            .map(|t| t.descriptor_version.max(1)),
+        DescriptorKind::Sequence => catalog
+            .get_sequence(id.tenant_id, &id.name)
+            .ok()
+            .flatten()
+            .map(|s| s.descriptor_version.max(1)),
+        DescriptorKind::MaterializedView => catalog
+            .get_materialized_view(id.tenant_id, &id.name)
+            .ok()
+            .flatten()
+            .map(|v| v.descriptor_version.max(1)),
+        _ => None,
     }
 }
 

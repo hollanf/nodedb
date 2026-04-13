@@ -28,26 +28,18 @@ use crate::error::Error;
 pub mod drain;
 pub mod drain_propose;
 pub mod propose;
+pub mod refcount;
 pub mod release;
 pub mod renewal;
 pub mod shutdown_release;
+mod wall_time;
 
-/// Wall-clock nanoseconds since Unix epoch. Shared helper used by
-/// every code path in this module that needs a "real time now"
-/// reference — the renewal loop, the drain tracker check, and
-/// the drain TTL computation. See `lease::renewal::tick` for the
-/// rationale on why these paths use wall clock directly instead
-/// of `HlcClock::peek`.
-pub(super) fn wall_now_ns() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
-}
+pub(super) use wall_time::wall_now_ns;
 
 pub use drain::{DescriptorDrainTracker, DrainEntry};
 pub use drain_propose::{descriptor_id_and_prior_version, drain_for_ddl};
 pub use propose::{DEFAULT_LEASE_DURATION, acquire_lease, compute_expires_at, force_refresh_lease};
+pub use refcount::{LeaseRefCount, QueryLeaseScope};
 pub use release::release_leases;
 pub use renewal::{LeaseRenewalConfig, LeaseRenewalLoop};
 
