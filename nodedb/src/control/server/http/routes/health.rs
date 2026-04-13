@@ -9,15 +9,26 @@ use super::super::auth::AppState;
 
 /// GET /health — liveness check.
 pub async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    // Node count is authoritative from the live cluster topology when
+    // cluster mode is active — cluster_version_state is only seeded at
+    // startup and does not update when new members join via broadcast,
+    // so using it for the count produces divergent values across nodes.
+    // In single-node mode topology is absent; report 1.
+    let nodes = state
+        .shared
+        .cluster_topology
+        .as_ref()
+        .map(|topo| topo.read().unwrap_or_else(|p| p.into_inner()).node_count())
+        .unwrap_or(1);
+
     let cluster_version = {
-        // Recover from poisoned mutex: health check must not fail due to prior panic.
         let vs = state
             .shared
             .cluster_version_state
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         json!({
-            "nodes": vs.node_count,
+            "nodes": nodes,
             "min_version": vs.min_version,
             "max_version": vs.max_version,
             "mixed_version": vs.is_mixed_version(),

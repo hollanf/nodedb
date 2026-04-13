@@ -220,6 +220,21 @@ async fn main() -> anyhow::Result<()> {
         config.tuning.clone(),
     )?;
 
+    // Wire cluster handles into SharedState so that every code path
+    // which checks `state.cluster_topology` / `state.cluster_transport`
+    // (pgwire routing, scatter-gather, CDC transport, /health, etc.)
+    // actually sees the live cluster. Without this the fields stay
+    // None and cluster-mode features silently degrade to single-node
+    // behaviour. Arc::get_mut is valid here because no clones exist yet.
+    if let Some(ref handle) = cluster_handle
+        && let Some(state) = Arc::get_mut(&mut shared)
+    {
+        state.node_id = handle.node_id;
+        state.cluster_topology = Some(Arc::clone(&handle.topology));
+        state.cluster_routing = Some(Arc::clone(&handle.routing));
+        state.cluster_transport = Some(Arc::clone(&handle.transport));
+    }
+
     // Initialise JWKS registry if JWT providers are configured.
     if let Some(ref jwt_config) = config.auth.jwt
         && !jwt_config.providers.is_empty()

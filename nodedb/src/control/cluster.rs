@@ -154,12 +154,10 @@ pub fn start_raft(
 
     // Create the LocalForwarder for executing forwarded queries on this node's
     // local Data Plane. This is the canonical path for leader-side execution
-    // of queries forwarded by non-leader nodes via QUIC RPC.
-    let query_ctx = crate::control::planner::context::QueryContext::new();
-    let forwarder = Arc::new(crate::control::LocalForwarder::new(
-        shared.clone(),
-        query_ctx,
-    ));
+    // of queries forwarded by non-leader nodes via QUIC RPC. The forwarder
+    // builds a per-request QueryContext from SharedState so each forwarded
+    // query is planned with a catalog scoped to its own tenant.
+    let forwarder = Arc::new(crate::control::LocalForwarder::new(shared.clone()));
 
     // Create the Raft loop with real forwarder (handles ForwardRequest RPCs).
     // Override the tick interval from ClusterTransportTuning (default: 10ms).
