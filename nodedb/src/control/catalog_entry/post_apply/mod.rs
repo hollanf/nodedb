@@ -12,6 +12,7 @@ pub mod api_key;
 pub mod change_stream;
 pub mod collection;
 pub mod function;
+pub mod materialized_view;
 pub mod procedure;
 pub mod role;
 pub mod schedule;
@@ -92,6 +93,12 @@ pub fn spawn_post_apply_side_effects(entry: CatalogEntry, shared: Arc<SharedStat
             }
             CatalogEntry::RevokeApiKey { key_id } => {
                 api_key::revoke(key_id, shared);
+            }
+            CatalogEntry::PutMaterializedView(stored) => {
+                materialized_view::put(*stored, shared);
+            }
+            CatalogEntry::DeleteMaterializedView { tenant_id, name } => {
+                materialized_view::delete(tenant_id, name, shared);
             }
         }
     });

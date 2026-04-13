@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::control::security::catalog::{
-    StoredCollection,
+    StoredCollection, StoredMaterializedView,
     auth_types::{StoredApiKey, StoredRole, StoredUser},
     function_types::StoredFunction,
     procedure_types::StoredProcedure,
@@ -121,6 +121,16 @@ pub enum CatalogEntry {
     /// record and re-writes the redb row. Preserves the record for
     /// audit trails.
     RevokeApiKey { key_id: String },
+
+    // ── Materialized View ──────────────────────────────────────────
+    /// Upsert a materialized view definition. The Data Plane
+    /// refresh loop picks up the new definition on its next tick
+    /// and starts materializing rows from source → target.
+    PutMaterializedView(Box<StoredMaterializedView>),
+    /// Delete a materialized view definition. The target
+    /// collection is NOT deleted — operators drop it separately
+    /// with `DROP COLLECTION` if desired.
+    DeleteMaterializedView { tenant_id: u32, name: String },
 }
 
 impl CatalogEntry {
@@ -149,6 +159,8 @@ impl CatalogEntry {
             Self::DeleteRole { .. } => "delete_role",
             Self::PutApiKey(_) => "put_api_key",
             Self::RevokeApiKey { .. } => "revoke_api_key",
+            Self::PutMaterializedView(_) => "put_materialized_view",
+            Self::DeleteMaterializedView { .. } => "delete_materialized_view",
         }
     }
 }

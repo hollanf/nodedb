@@ -11,6 +11,7 @@ pub mod api_key;
 pub mod change_stream;
 pub mod collection;
 pub mod function;
+pub mod materialized_view;
 pub mod procedure;
 pub mod role;
 pub mod schedule;
@@ -62,5 +63,9 @@ pub fn apply_to(entry: &CatalogEntry, catalog: &SystemCatalog) {
         CatalogEntry::DeleteRole { name } => role::delete(name, catalog),
         CatalogEntry::PutApiKey(stored) => api_key::put(stored, catalog),
         CatalogEntry::RevokeApiKey { key_id } => api_key::revoke(key_id, catalog),
+        CatalogEntry::PutMaterializedView(stored) => materialized_view::put(stored, catalog),
+        CatalogEntry::DeleteMaterializedView { tenant_id, name } => {
+            materialized_view::delete(*tenant_id, name, catalog)
+        }
     }
 }
