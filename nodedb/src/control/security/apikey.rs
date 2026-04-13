@@ -226,6 +226,85 @@ impl ApiKeyStore {
         }
     }
 
+    // ── Cluster replication hooks ──────────────────────────────────
+    //
+    // Power the `CatalogEntry::PutApiKey` / `DeleteApiKey` pipeline.
+    // The pgwire handler on the leader calls `prepare_key` to build
+    // the full `StoredApiKey` + return the secret-bearing token in
+    // one step, proposes the `StoredApiKey` through raft, and every
+    // node's applier calls `install_replicated_key` to upsert the
+    // cache and `catalog.put_api_key` to write the redb.
+    //
+    // The plaintext secret NEVER travels through raft — only the
+    // `secret_hash`. The proposing node's client is the only one
+    // that ever sees the token.
+
+    /// Build a `StoredApiKey` ready for replication + return the
+    /// plaintext token the client will see. Generates the key_id
+    /// and secret, hashes the secret, but does NOT insert into the
+    /// in-memory cache or write to redb — the applier does that
+    /// on every node after the raft commit.
+    pub fn prepare_key(
+        &self,
+        username: &str,
+        user_id: u64,
+        tenant_id: TenantId,
+        expires_secs: u64,
+        scope: Vec<KeyScope>,
+    ) -> (StoredApiKey, String) {
+        let key_id = generate_key_id();
+        let secret = generate_secret();
+        let secret_hash = hash_secret(&secret);
+        let expires_at = if expires_secs > 0 {
+            now_unix_secs() + expires_secs
+        } else {
+            0
+        };
+        let stored = StoredApiKey {
+            key_id: key_id.clone(),
+            secret_hash,
+            username: username.to_string(),
+            user_id,
+            tenant_id: tenant_id.as_u32(),
+            expires_at,
+            is_revoked: false,
+            created_at: now_unix_secs(),
+            scope: scope
+                .iter()
+                .map(|s| format!("{}:{}", s.permission, s.collection))
+                .collect(),
+        };
+        let token = format!("ndb_{key_id}_{secret}");
+        (stored, token)
+    }
+
+    /// Install a replicated `StoredApiKey` into the in-memory cache.
+    /// Called by the production `MetadataCommitApplier` post-apply
+    /// hook after the applier has written the record to local redb.
+    pub fn install_replicated_key(&self, stored: &StoredApiKey) {
+        let record = ApiKeyRecord::from_stored(stored.clone());
+        let mut keys = self.keys.write().unwrap_or_else(|p| p.into_inner());
+        keys.insert(stored.key_id.clone(), record);
+    }
+
+    /// Mark a replicated API key as revoked in the in-memory cache.
+    /// Symmetric partner to `install_replicated_key` for the
+    /// `CatalogEntry::DeleteApiKey` variant. The redb record stays
+    /// in place with `is_revoked = true` so audit trails survive.
+    pub fn install_replicated_revoke(&self, key_id: &str) {
+        let mut keys = self.keys.write().unwrap_or_else(|p| p.into_inner());
+        if let Some(record) = keys.get_mut(key_id) {
+            record.is_revoked = true;
+        }
+    }
+
+    /// Look up a replicated key by id. Used by handler pre-checks
+    /// before proposing a revoke.
+    pub fn get_key(&self, key_id: &str) -> Option<ApiKeyRecord> {
+        let keys = self.keys.read().unwrap_or_else(|p| p.into_inner());
+        keys.get(key_id).cloned()
+    }
+
     /// Revoke an API key by key_id.
     pub fn revoke_key(&self, key_id: &str, catalog: Option<&SystemCatalog>) -> crate::Result<bool> {
         let mut keys = self.keys.write().map_err(|e| crate::Error::Internal {
