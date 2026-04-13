@@ -86,22 +86,44 @@ pub fn alter_role(
     }
     let parent = parts[5];
 
-    // Drop and re-create with new parent (simple approach for immutable-role stores).
-    let catalog = state.credentials.catalog();
+    // Validate parent exists (built-in or custom) and the role itself exists.
     let old_role = state
         .roles
         .get_role(name)
         .ok_or_else(|| sqlstate_error("42704", &format!("role '{name}' not found")))?;
+    let parent_is_builtin = matches!(
+        parent,
+        "superuser" | "tenant_admin" | "readwrite" | "readonly" | "monitor"
+    );
+    if !parent_is_builtin && state.roles.get_role(parent).is_none() {
+        return Err(sqlstate_error(
+            "42704",
+            &format!("parent role '{parent}' does not exist"),
+        ));
+    }
 
-    state
-        .roles
-        .drop_role(name, catalog.as_ref())
-        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let stored = crate::control::security::catalog::StoredRole {
+        name: name.to_string(),
+        tenant_id: old_role.tenant_id.as_u32(),
+        parent: parent.to_string(),
+        created_at: now,
+    };
 
-    state
-        .roles
-        .create_role(name, old_role.tenant_id, Some(parent), catalog.as_ref())
-        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+    let entry = crate::control::catalog_entry::CatalogEntry::PutRole(Box::new(stored.clone()));
+    let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
+        .map_err(|e| sqlstate_error("XX000", &format!("metadata propose: {e}")))?;
+    if log_index == 0
+        && let Some(catalog) = state.credentials.catalog()
+    {
+        catalog
+            .put_role(&stored)
+            .map_err(|e| sqlstate_error("XX000", &format!("catalog write: {e}")))?;
+        state.roles.install_replicated_role(&stored);
+    }
 
     state.audit_record(
         AuditEvent::PrivilegeChange,
