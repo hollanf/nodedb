@@ -29,6 +29,7 @@
 
 pub mod apply;
 pub mod codec;
+pub mod descriptor_stamp;
 pub mod entry;
 pub mod post_apply;
 

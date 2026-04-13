@@ -103,6 +103,13 @@ pub struct StoredProcedure {
     pub routability: ProcedureRoutability,
     pub owner: String,
     pub created_at: u64,
+    /// Monotonic descriptor version, stamped by the metadata applier.
+    /// See `StoredCollection::descriptor_version`.
+    #[serde(default)]
+    pub descriptor_version: u64,
+    /// HLC stamped by the metadata applier at commit time.
+    #[serde(default)]
+    pub modification_hlc: nodedb_types::Hlc,
 }
 
 /// Default max loop iterations — allows moderate data processing (1M rows).

@@ -296,6 +296,12 @@ pub struct SharedState {
     /// Rolling upgrade version tracking (cluster mode only).
     pub cluster_version_state: Mutex<crate::control::rolling_upgrade::ClusterVersionState>,
 
+    /// Hybrid Logical Clock used by the metadata applier to stamp
+    /// `modification_hlc` on every persisted `Stored*` descriptor.
+    /// Single instance per node; the applier calls `update(remote)`
+    /// before every stamp so cross-node causality is preserved.
+    pub hlc_clock: Arc<nodedb_types::HlcClock>,
+
     /// Keep-alive senders for shutdown watch channels.
     pub(super) _shutdown_senders: Vec<tokio::sync::watch::Sender<bool>>,
 

@@ -251,6 +251,12 @@ pub struct StoredTrigger {
     pub batch_mode: TriggerBatchMode,
     pub owner: String,
     pub created_at: u64,
+    /// Monotonic descriptor version, stamped by the metadata applier.
+    #[serde(default)]
+    pub descriptor_version: u64,
+    /// HLC stamped by the metadata applier at commit time.
+    #[serde(default)]
+    pub modification_hlc: nodedb_types::Hlc,
 }
 
 fn default_priority() -> i32 {

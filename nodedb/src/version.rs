@@ -11,7 +11,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Wire format version (incremented when SPSC bridge, WAL, or RPC formats change).
 /// Readers MUST reject messages with wire_version > their own.
 /// Readers SHOULD accept messages with wire_version == their own or one less (N-1).
-pub const WIRE_FORMAT_VERSION: u16 = 2;
+pub const WIRE_FORMAT_VERSION: u16 = 3;
 
 /// Minimum wire format version this build can read.
 /// Messages below this version are rejected.

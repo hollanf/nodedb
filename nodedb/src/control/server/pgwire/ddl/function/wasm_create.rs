@@ -73,6 +73,8 @@ pub fn create_wasm_function(
         wasm_memory: parsed.memory.unwrap_or(config.default_memory_bytes),
         owner: identity.username.clone(),
         created_at: now,
+        descriptor_version: 0,
+        modification_hlc: nodedb_types::Hlc::ZERO,
     };
 
     catalog

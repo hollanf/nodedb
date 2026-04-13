@@ -206,6 +206,8 @@ mod tests {
             format_template: None,
             reset_scope: crate::control::sequence::ResetScope::Never,
             gap_free: false,
+            descriptor_version: 0,
+            modification_hlc: nodedb_types::Hlc::ZERO,
         };
         cat.put_sequence(&seq).unwrap();
 
@@ -233,6 +235,8 @@ mod tests {
             format_template: None,
             reset_scope: crate::control::sequence::ResetScope::Never,
             gap_free: false,
+            descriptor_version: 0,
+            modification_hlc: nodedb_types::Hlc::ZERO,
         };
         cat.put_sequence(&seq).unwrap();
         assert!(cat.delete_sequence(1, "s1").unwrap());
@@ -259,6 +263,8 @@ mod tests {
                 format_template: None,
                 reset_scope: crate::control::sequence::ResetScope::Never,
                 gap_free: false,
+                descriptor_version: 0,
+                modification_hlc: nodedb_types::Hlc::ZERO,
             };
             cat.put_sequence(&seq).unwrap();
         }
@@ -278,6 +284,8 @@ mod tests {
             format_template: None,
             reset_scope: crate::control::sequence::ResetScope::Never,
             gap_free: false,
+            descriptor_version: 0,
+            modification_hlc: nodedb_types::Hlc::ZERO,
         };
         cat.put_sequence(&other).unwrap();
 

@@ -136,6 +136,8 @@ mod tests {
             wasm_memory: 16 * 1024 * 1024,
             owner: "admin".into(),
             created_at: 1000,
+            descriptor_version: 0,
+            modification_hlc: nodedb_types::Hlc::ZERO,
         }
     }
 

@@ -40,6 +40,12 @@ pub struct StoredSequence {
     /// GAP_FREE mode: serialize nextval through a mutex, recycle on rollback.
     #[serde(default)]
     pub gap_free: bool,
+    /// Monotonic descriptor version, stamped by the metadata applier.
+    #[serde(default)]
+    pub descriptor_version: u64,
+    /// HLC stamped by the metadata applier at commit time.
+    #[serde(default)]
+    pub modification_hlc: nodedb_types::Hlc,
 }
 
 impl StoredSequence {
@@ -60,6 +66,8 @@ impl StoredSequence {
             format_template: None,
             reset_scope: crate::control::sequence::ResetScope::Never,
             gap_free: false,
+            descriptor_version: 0,
+            modification_hlc: nodedb_types::Hlc::ZERO,
         }
     }
 

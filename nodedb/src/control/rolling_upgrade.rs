@@ -33,6 +33,19 @@ use crate::version::WIRE_FORMAT_VERSION;
 /// caught up.
 pub const DISTRIBUTED_CATALOG_VERSION: u16 = 2;
 
+/// Wire-format version that introduced monotonic descriptor versioning
+/// (`descriptor_version: u64` + `modification_hlc: Hlc` on every
+/// `Stored*` type stamped by the metadata applier at commit time).
+///
+/// Before this version, `Stored*` records had no version/HLC fields
+/// on the wire. In a mixed-version cluster during rolling upgrade, an
+/// older applier would fail to re-stamp on write-through (it has no
+/// stamp logic), so we keep the stamping path disabled in compat
+/// mode and let resolvers treat `descriptor_version == 0` as
+/// "unknown, always re-fetch". Once every node reports
+/// `WIRE_FORMAT_VERSION >= 3`, the applier transitions to stamping.
+pub const DESCRIPTOR_VERSIONING_VERSION: u16 = 3;
+
 /// Cluster-wide version state.
 #[derive(Debug, Clone)]
 pub struct ClusterVersionState {

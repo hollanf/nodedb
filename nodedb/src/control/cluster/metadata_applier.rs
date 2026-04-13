@@ -95,11 +95,44 @@ impl MetadataCommitApplier {
                 return;
             }
         };
-        debug!(
-            kind = catalog_entry.kind(),
-            "catalog_entry: applying to redb"
-        );
-        catalog_entry::apply::apply_to(&catalog_entry, catalog);
+
+        // Stamp `descriptor_version` + `modification_hlc` for every
+        // `Put*` variant that carries them. Gated on the rolling
+        // upgrade flag — in mixed-version clusters the older nodes
+        // do not have the stamp logic, so we leave the entry's
+        // sentinel `0` / `Hlc::ZERO` in place and let resolvers
+        // treat it as "unknown, always re-fetch". Only the proposing
+        // node's apply path observes the gate; followers run the
+        // same applier and will reach the same conclusion because
+        // every node observes the same `cluster_version_state`
+        // (replicated via the gossip path).
+        let stamped = if let Some(weak) = self.shared.get()
+            && let Some(shared) = weak.upgrade()
+        {
+            let compat = {
+                let vs = shared
+                    .cluster_version_state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                !vs.can_activate_feature(
+                    crate::control::rolling_upgrade::DESCRIPTOR_VERSIONING_VERSION,
+                )
+            };
+            if compat {
+                catalog_entry
+            } else {
+                catalog_entry::descriptor_stamp::stamp(catalog_entry, &shared.hlc_clock, &catalog)
+            }
+        } else {
+            // Unit tests construct the applier without a SharedState.
+            // They don't care about descriptor versioning — leave
+            // the entry unstamped so existing assertions on
+            // `descriptor_version == 0` still hold.
+            catalog_entry
+        };
+
+        debug!(kind = stamped.kind(), "catalog_entry: applying to redb");
+        catalog_entry::apply::apply_to(&stamped, catalog);
         // Async side effects (Data Plane register, sequence registry
         // sync) need `Arc<SharedState>`. `Weak::upgrade` returns
         // `None` during shutdown — drop the spawn silently in that
@@ -107,7 +140,7 @@ impl MetadataCommitApplier {
         if let Some(weak) = self.shared.get()
             && let Some(shared) = weak.upgrade()
         {
-            catalog_entry::post_apply::spawn_post_apply_side_effects(catalog_entry, shared);
+            catalog_entry::post_apply::spawn_post_apply_side_effects(stamped, shared);
         }
     }
 }

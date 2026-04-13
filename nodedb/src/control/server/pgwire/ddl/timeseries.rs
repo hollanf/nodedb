@@ -63,6 +63,9 @@ pub fn create_timeseries(
         name: name.clone(),
         owner: identity.username.clone(),
         created_at: now,
+        // Stamped by the metadata applier at commit time.
+        descriptor_version: 0,
+        modification_hlc: nodedb_types::Hlc::ZERO,
         fields,
         field_defs: Vec::new(),
         event_defs: Vec::new(),

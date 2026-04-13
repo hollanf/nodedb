@@ -63,6 +63,8 @@ pub fn create_procedure(
         routability,
         owner: identity.username.clone(),
         created_at: now,
+        descriptor_version: 0,
+        modification_hlc: nodedb_types::Hlc::ZERO,
     };
 
     // Replicate through the metadata raft group. Every node's

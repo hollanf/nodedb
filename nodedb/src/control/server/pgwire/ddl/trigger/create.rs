@@ -98,6 +98,8 @@ pub fn create_trigger(
         batch_mode,
         owner: identity.username.clone(),
         created_at: now,
+        descriptor_version: 0,
+        modification_hlc: nodedb_types::Hlc::ZERO,
     };
 
     // Propose through the metadata raft group. On every node the

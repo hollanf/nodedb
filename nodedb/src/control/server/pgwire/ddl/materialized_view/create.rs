@@ -54,6 +54,9 @@ pub fn create_materialized_view(
         refresh_mode,
         owner: identity.username.clone(),
         created_at: now,
+        // Stamped by the metadata applier at commit time.
+        descriptor_version: 0,
+        modification_hlc: nodedb_types::Hlc::ZERO,
     };
 
     // Propose through the metadata raft group. Every node's

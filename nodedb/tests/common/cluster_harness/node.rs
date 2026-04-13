@@ -397,6 +397,51 @@ impl TestClusterNode {
             .is_some()
     }
 
+    /// Read the `(descriptor_version, modification_hlc)` stamp of a
+    /// collection on this node's local `SystemCatalog`. The applier
+    /// is the only writer, so this is what every other node should
+    /// agree on after the apply has propagated.
+    pub fn collection_descriptor(
+        &self,
+        tenant_id: u32,
+        name: &str,
+    ) -> Option<(u64, nodedb_types::Hlc)> {
+        self.shared
+            .credentials
+            .catalog()
+            .as_ref()
+            .and_then(|c| c.get_collection(tenant_id, name).ok().flatten())
+            .map(|coll| (coll.descriptor_version, coll.modification_hlc))
+    }
+
+    /// Same as [`collection_descriptor`] for stored functions.
+    pub fn function_descriptor(
+        &self,
+        tenant_id: u32,
+        name: &str,
+    ) -> Option<(u64, nodedb_types::Hlc)> {
+        self.shared
+            .credentials
+            .catalog()
+            .as_ref()
+            .and_then(|c| c.get_function(tenant_id, name).ok().flatten())
+            .map(|f| (f.descriptor_version, f.modification_hlc))
+    }
+
+    /// Same as [`collection_descriptor`] for stored procedures.
+    pub fn procedure_descriptor(
+        &self,
+        tenant_id: u32,
+        name: &str,
+    ) -> Option<(u64, nodedb_types::Hlc)> {
+        self.shared
+            .credentials
+            .catalog()
+            .as_ref()
+            .and_then(|c| c.get_procedure(tenant_id, name).ok().flatten())
+            .map(|p| (p.descriptor_version, p.modification_hlc))
+    }
+
     /// Check whether a custom role exists in this node's in-memory
     /// `roles` cache.
     pub fn has_role(&self, name: &str) -> bool {

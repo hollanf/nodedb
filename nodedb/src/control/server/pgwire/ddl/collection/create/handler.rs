@@ -121,6 +121,9 @@ pub fn create_collection(
         name: name.to_string(),
         owner: identity.username.clone(),
         created_at: now,
+        // Stamped by the metadata applier at commit time.
+        descriptor_version: 0,
+        modification_hlc: nodedb_types::Hlc::ZERO,
         fields,
         field_defs: Vec::new(),
         event_defs: Vec::new(),

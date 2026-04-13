@@ -95,6 +95,8 @@ pub fn create_function(
         wasm_memory: 16 * 1024 * 1024,
         owner: identity.username.clone(),
         created_at: now,
+        descriptor_version: 0,
+        modification_hlc: nodedb_types::Hlc::ZERO,
     };
 
     // Propose through the metadata raft group. Every node's applier

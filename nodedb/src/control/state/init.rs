@@ -184,6 +184,7 @@ impl SharedState {
             cluster_version_state: Mutex::new(
                 crate::control::rolling_upgrade::ClusterVersionState::new(),
             ),
+            hlc_clock: Arc::new(nodedb_types::HlcClock::new()),
             tuning: TuningConfig::default(),
             schema_version: crate::control::server::pgwire::handler::prepared::SchemaVersion::new(),
             sequence_registry: Arc::new(crate::control::sequence::SequenceRegistry::new()),
@@ -415,6 +416,7 @@ impl SharedState {
             cluster_version_state: Mutex::new(
                 crate::control::rolling_upgrade::ClusterVersionState::new(),
             ),
+            hlc_clock: Arc::new(nodedb_types::HlcClock::new()),
             tuning,
             schema_version: crate::control::server::pgwire::handler::prepared::SchemaVersion::new(),
             sequence_registry,
