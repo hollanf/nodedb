@@ -11,6 +11,7 @@ pub mod error;
 pub mod filter;
 pub mod geometry;
 pub mod graph;
+pub mod hlc;
 pub mod hnsw;
 pub mod id;
 pub mod id_gen;
@@ -44,6 +45,7 @@ pub use document::Document;
 pub use error::NodeDbError;
 pub use filter::{EdgeFilter, MetadataFilter};
 pub use graph::Direction;
+pub use hlc::{Hlc, HlcClock};
 pub use hnsw::{HnswCheckpoint, HnswNodeSnapshot, HnswParams};
 pub use id::{CollectionId, DocumentId, EdgeId, NodeId, ShapeId, TenantId};
 pub use json_msgpack::{
