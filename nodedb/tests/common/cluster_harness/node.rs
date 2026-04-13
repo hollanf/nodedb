@@ -346,6 +346,26 @@ impl TestClusterNode {
         self.shared.roles.get_role(name).is_some()
     }
 
+    /// Check whether an API key exists and is active in this node's
+    /// in-memory `api_keys` cache.
+    pub fn has_active_api_key(&self, key_id: &str) -> bool {
+        self.shared
+            .api_keys
+            .get_key(key_id)
+            .map(|k| !k.is_revoked)
+            .unwrap_or(false)
+    }
+
+    /// Check whether a given user's role set contains a specific
+    /// role. Used to assert `ALTER USER ... SET ROLE` replication.
+    pub fn user_has_role(&self, username: &str, role: &str) -> bool {
+        self.shared
+            .credentials
+            .get_user(username)
+            .map(|u| u.roles.iter().any(|r| r.to_string() == role))
+            .unwrap_or(false)
+    }
+
     /// Execute a simple query; returns an error message on SQL error.
     pub async fn exec(&self, sql: &str) -> Result<(), String> {
         match self.client.simple_query(sql).await {

@@ -465,6 +465,125 @@ async fn role_create_visible_on_every_node() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn alter_user_role_replicates() {
+    // 3-node cluster. CREATE USER + ALTER USER SET ROLE.
+    // Every follower's credential cache must reflect the new role
+    // within 5s via a second `PutUser` entry through raft.
+    let cluster = TestCluster::spawn_three().await.expect("3-node cluster");
+
+    cluster
+        .exec_ddl_on_any_leader("CREATE USER bob WITH PASSWORD 'initial-pass' ROLE read_only")
+        .await
+        .expect("create user");
+
+    wait_for(
+        "all 3 nodes see bob with read_only role",
+        Duration::from_secs(5),
+        Duration::from_millis(50),
+        || {
+            cluster
+                .nodes
+                .iter()
+                .all(|n| n.user_has_role("bob", "read_only"))
+        },
+    )
+    .await;
+
+    cluster
+        .exec_ddl_on_any_leader("ALTER USER bob SET ROLE read_write")
+        .await
+        .expect("alter user set role");
+
+    wait_for(
+        "all 3 nodes see bob with read_write role",
+        Duration::from_secs(5),
+        Duration::from_millis(50),
+        || {
+            cluster
+                .nodes
+                .iter()
+                .all(|n| n.user_has_role("bob", "read_write"))
+        },
+    )
+    .await;
+
+    cluster.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
+async fn api_key_create_and_revoke_replicates() {
+    // 3-node cluster. CREATE USER + CREATE API KEY FOR user + REVOKE API KEY.
+    // Every follower's api_keys cache must see the new key, then
+    // see it as revoked after REVOKE — via `PutApiKey` and
+    // `RevokeApiKey` entries through raft.
+    let cluster = TestCluster::spawn_three().await.expect("3-node cluster");
+
+    cluster
+        .exec_ddl_on_any_leader("CREATE USER charlie WITH PASSWORD 'pw-charlie-1'")
+        .await
+        .expect("create user");
+
+    wait_for(
+        "all 3 nodes see charlie",
+        Duration::from_secs(5),
+        Duration::from_millis(50),
+        || cluster.nodes.iter().all(|n| n.has_active_user("charlie")),
+    )
+    .await;
+
+    // CREATE API KEY returns the token to the leader's client,
+    // but we're using the cluster retry helper — the key_id is
+    // embedded in the server-side record, not in the client
+    // response our helper captures. We verify by observing the
+    // cache: before the create, count = 0; after, count >= 1.
+    let all_nodes_have_key = |cluster: &TestCluster| -> bool {
+        cluster.nodes.iter().all(|n| {
+            // Peek at the shared state's api_keys listing.
+            !n.shared.api_keys.list_keys_for_user("charlie").is_empty()
+        })
+    };
+
+    assert!(!all_nodes_have_key(&cluster));
+
+    cluster
+        .exec_ddl_on_any_leader("CREATE API KEY FOR charlie")
+        .await
+        .expect("create api key");
+
+    wait_for(
+        "all 3 nodes see a replicated API key for charlie",
+        Duration::from_secs(5),
+        Duration::from_millis(50),
+        || all_nodes_have_key(&cluster),
+    )
+    .await;
+
+    // Pick the key_id from any node's cache and revoke it.
+    let key_id = cluster.nodes[0]
+        .shared
+        .api_keys
+        .list_keys_for_user("charlie")
+        .first()
+        .map(|k| k.key_id.clone())
+        .expect("key replicated");
+
+    cluster
+        .exec_ddl_on_any_leader(&format!("REVOKE API KEY {key_id}"))
+        .await
+        .expect("revoke api key");
+
+    wait_for(
+        "all 3 nodes see the key as revoked",
+        Duration::from_secs(5),
+        Duration::from_millis(50),
+        || cluster.nodes.iter().all(|n| !n.has_active_api_key(&key_id)),
+    )
+    .await;
+
+    cluster.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 6)]
 async fn function_create_visible_on_every_node() {
     // 3-node cluster. CREATE FUNCTION on the leader; every follower's
     // local `SystemCatalog` redb (written by the applier) must
