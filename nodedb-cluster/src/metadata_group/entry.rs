@@ -31,6 +31,15 @@ pub enum MetadataEntry {
     CollectionDdl {
         tenant_id: u32,
         action: CollectionAction,
+        /// Opaque host-crate payload used by the production
+        /// applier to materialize the descriptor into the host's
+        /// local store (e.g. nodedb's `SystemCatalog` redb). The
+        /// `nodedb-cluster` crate treats this as an opaque blob;
+        /// the in-cluster `CacheApplier` ignores it entirely.
+        /// Empty on `Drop` (the host only needs the
+        /// `DescriptorId`) and on test fixtures that don't round
+        /// trip through the production applier.
+        host_payload: Vec<u8>,
     },
     IndexDdl {
         tenant_id: u32,

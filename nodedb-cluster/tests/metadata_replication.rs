@@ -63,6 +63,7 @@ fn create_entry() -> MetadataEntry {
     MetadataEntry::CollectionDdl {
         tenant_id: TEST_TENANT,
         action: CollectionAction::Create(Box::new(make_descriptor(1))),
+        host_payload: vec![],
     }
 }
 
@@ -78,6 +79,7 @@ fn alter_entry() -> MetadataEntry {
                 default: None,
             }),
         },
+        host_payload: vec![],
     }
 }
 
@@ -85,6 +87,7 @@ fn drop_entry() -> MetadataEntry {
     MetadataEntry::CollectionDdl {
         tenant_id: TEST_TENANT,
         action: CollectionAction::Drop { id: coll_id() },
+        host_payload: vec![],
     }
 }
 

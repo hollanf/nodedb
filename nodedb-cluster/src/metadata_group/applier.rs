@@ -101,6 +101,7 @@ mod tests {
                 with_options: vec![],
                 primary_key: None,
             })),
+            host_payload: vec![],
         }
     }
 
@@ -121,11 +122,13 @@ mod tests {
                     default: None,
                 }),
             },
+            host_payload: vec![],
         })
         .unwrap();
         let drop = encode_entry(&MetadataEntry::CollectionDdl {
             tenant_id: 1,
             action: CollectionAction::Drop { id: coll_id() },
+            host_payload: vec![],
         })
         .unwrap();
 

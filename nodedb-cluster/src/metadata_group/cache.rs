@@ -74,7 +74,11 @@ impl MetadataCache {
         self.applied_index = index;
 
         match entry {
-            MetadataEntry::CollectionDdl { action, .. } => {
+            MetadataEntry::CollectionDdl {
+                action,
+                host_payload: _,
+                ..
+            } => {
                 apply_collection(&mut self.collections, action, &mut self.last_applied_hlc);
             }
             MetadataEntry::IndexDdl { action, .. } => apply_index(&mut self.indexes, action),
