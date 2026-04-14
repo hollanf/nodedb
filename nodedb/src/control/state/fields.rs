@@ -317,8 +317,16 @@ pub struct SharedState {
     /// in-flight queries on a descriptor finish.
     pub lease_refcount: Arc<crate::control::lease::LeaseRefCount>,
 
-    /// Keep-alive senders for shutdown watch channels.
-    pub(super) _shutdown_senders: Vec<tokio::sync::watch::Sender<bool>>,
+    /// Canonical shutdown watch. Every background loop in the
+    /// Control Plane and Event Plane subscribes to this and
+    /// exits on signal. The `main.rs` ctrl-c handler calls
+    /// `signal()` before invoking `loop_registry.shutdown_all`.
+    pub shutdown: Arc<crate::control::shutdown::ShutdownWatch>,
+
+    /// Registry of every background loop's join handle. Used
+    /// by `main.rs` to await all loops with a shared deadline
+    /// on shutdown and report laggards.
+    pub loop_registry: Arc<crate::control::shutdown::LoopRegistry>,
 
     /// Performance tuning configuration.
     pub tuning: TuningConfig,

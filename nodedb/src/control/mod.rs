@@ -25,6 +25,7 @@ pub mod scatter_gather;
 pub mod security;
 pub mod sequence;
 pub mod server;
+pub mod shutdown;
 pub mod state;
 pub mod trace_context;
 pub mod trigger;

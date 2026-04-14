@@ -12,30 +12,43 @@ use crate::control::change_stream::{ChangeEvent, ChangeOperation};
 use crate::control::planner::context::QueryContext;
 use crate::control::state::SharedState;
 
-/// Spawn the event trigger processor as a background tokio task.
-///
-/// Subscribes to the change stream and evaluates EventDefinitions
-/// stored in the catalog for each write event.
+/// Spawn the event trigger processor as a background tokio task
+/// registered with the shutdown loop registry. The processor
+/// exits on shutdown signal or when the change-stream
+/// broadcast channel closes.
 pub fn spawn_event_trigger_processor(shared: Arc<SharedState>) {
     let mut subscription = shared.change_stream.subscribe(None, None);
+    let registry = Arc::clone(&shared.loop_registry);
+    let watch = Arc::clone(&shared.shutdown);
 
-    tokio::spawn(async move {
-        loop {
-            match subscription.recv_filtered().await {
-                Ok(event) => process_event(&shared, &event).await,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    warn!(
-                        lagged = n,
-                        "event trigger processor fell behind; skipped {n} events"
-                    );
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    debug!("change stream closed; event trigger processor stopping");
-                    break;
+    crate::control::shutdown::spawn_loop(
+        &registry,
+        &watch,
+        "event_trigger_processor",
+        move |mut shutdown| async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown.wait_cancelled() => {
+                        debug!("event trigger processor shutting down");
+                        break;
+                    }
+                    msg = subscription.recv_filtered() => match msg {
+                        Ok(event) => process_event(&shared, &event).await,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            warn!(
+                                lagged = n,
+                                "event trigger processor fell behind; skipped {n} events"
+                            );
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            debug!("change stream closed; event trigger processor stopping");
+                            break;
+                        }
+                    },
                 }
             }
-        }
-    });
+        },
+    );
 }
 
 /// Process a single change event against all matching EventDefinitions.

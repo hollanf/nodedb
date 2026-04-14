@@ -10,6 +10,25 @@ use crate::types::TenantId;
 use super::SharedState;
 
 impl SharedState {
+    /// Cluster-wide version view derived on demand from the live
+    /// `cluster_topology` snapshot. Replaces the old
+    /// `cluster_version_state` shadow map — every call walks the
+    /// live topology under a short read guard, so version updates
+    /// from joins / leaves are observed immediately.
+    ///
+    /// Returns `ClusterVersionView::single_node()` when no
+    /// topology handle is installed (single-node mode): callers
+    /// that gate on a cluster-wide minimum treat this as "all
+    /// nodes run the local build", which is the correct behavior
+    /// for a solo node.
+    pub fn cluster_version_view(&self) -> crate::control::rolling_upgrade::ClusterVersionView {
+        let Some(topology) = &self.cluster_topology else {
+            return crate::control::rolling_upgrade::ClusterVersionView::single_node();
+        };
+        let guard = topology.read().unwrap_or_else(|p| p.into_inner());
+        crate::control::rolling_upgrade::compute_from_topology(&guard)
+    }
+
     /// Shared handle to the metadata applied-index watcher.
     ///
     /// Used by [`crate::control::metadata_proposer::propose_catalog_entry`]

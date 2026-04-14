@@ -45,7 +45,8 @@ impl SharedState {
     }
 
     fn new_inner(dispatcher: Dispatcher, wal: Arc<WalManager>) -> Arc<Self> {
-        let mut shutdown_senders: Vec<tokio::sync::watch::Sender<bool>> = Vec::new();
+        let shutdown = Arc::new(crate::control::shutdown::ShutdownWatch::new());
+        let loop_registry = Arc::new(crate::control::shutdown::LoopRegistry::new());
         let test_id = Self::unique_test_id();
         Arc::new(Self {
             dispatcher: Mutex::new(dispatcher),
@@ -144,11 +145,7 @@ impl SharedState {
                 )
             },
             ep_topic_registry: crate::event::topic::EpTopicRegistry::new(),
-            webhook_manager: {
-                let (tx, rx) = tokio::sync::watch::channel(false);
-                shutdown_senders.push(tx);
-                crate::event::webhook::WebhookManager::new(rx)
-            },
+            webhook_manager: crate::event::webhook::WebhookManager::new(shutdown.raw_receiver()),
             mv_registry: Arc::new(crate::event::streaming_mv::MvRegistry::new()),
             consumer_assignments: crate::event::cdc::consumer_group::ConsumerAssignments::new(),
             watermark_tracker: Arc::new(crate::event::watermark_tracker::WatermarkTracker::new()),
@@ -157,11 +154,7 @@ impl SharedState {
             cross_shard_dlq: None,
             cross_shard_metrics: None,
             hwm_store: None,
-            kafka_manager: {
-                let (tx, rx) = tokio::sync::watch::channel(false);
-                shutdown_senders.push(tx);
-                crate::event::kafka::KafkaManager::new(rx)
-            },
+            kafka_manager: crate::event::kafka::KafkaManager::new(shutdown.raw_receiver()),
             crdt_sync_delivery: Arc::new(crate::event::crdt_sync::CrdtSyncDelivery::new()),
             delta_packager: Arc::new(crate::event::crdt_sync::DeltaPackager::new()),
             mv_persistence: {
@@ -198,7 +191,8 @@ impl SharedState {
             permission_cache: Arc::new(tokio::sync::RwLock::new(
                 crate::control::security::permission_tree::PermissionCache::new(),
             )),
-            _shutdown_senders: shutdown_senders,
+            shutdown: Arc::clone(&shutdown),
+            loop_registry: Arc::clone(&loop_registry),
         })
     }
 
@@ -302,7 +296,8 @@ impl SharedState {
             }
         }
 
-        let mut shutdown_senders: Vec<tokio::sync::watch::Sender<bool>> = Vec::new();
+        let shutdown = Arc::new(crate::control::shutdown::ShutdownWatch::new());
+        let loop_registry = Arc::new(crate::control::shutdown::LoopRegistry::new());
         let state = Arc::new(Self {
             dispatcher: Mutex::new(dispatcher),
             tracker: RequestTracker::new(),
@@ -330,11 +325,7 @@ impl SharedState {
                 catalog_path.parent().unwrap_or(std::path::Path::new(".")),
             )?),
             ep_topic_registry,
-            webhook_manager: {
-                let (tx, rx) = tokio::sync::watch::channel(false);
-                shutdown_senders.push(tx);
-                crate::event::webhook::WebhookManager::new(rx)
-            },
+            webhook_manager: crate::event::webhook::WebhookManager::new(shutdown.raw_receiver()),
             mv_registry,
             consumer_assignments: crate::event::cdc::consumer_group::ConsumerAssignments::new(),
             watermark_tracker: Arc::new(crate::event::watermark_tracker::WatermarkTracker::new()),
@@ -343,11 +334,7 @@ impl SharedState {
             cross_shard_dlq: None,
             cross_shard_metrics: None,
             hwm_store: None,
-            kafka_manager: {
-                let (tx, rx) = tokio::sync::watch::channel(false);
-                shutdown_senders.push(tx);
-                crate::event::kafka::KafkaManager::new(rx)
-            },
+            kafka_manager: crate::event::kafka::KafkaManager::new(shutdown.raw_receiver()),
             crdt_sync_delivery: Arc::new(crate::event::crdt_sync::CrdtSyncDelivery::new()),
             delta_packager: Arc::new(crate::event::crdt_sync::DeltaPackager::new()),
             mv_persistence: Arc::new(crate::event::streaming_mv::MvPersistence::open(
@@ -427,7 +414,8 @@ impl SharedState {
                 ),
             )),
             permission_cache: Arc::new(tokio::sync::RwLock::new(permission_cache)),
-            _shutdown_senders: shutdown_senders,
+            shutdown: Arc::clone(&shutdown),
+            loop_registry: Arc::clone(&loop_registry),
         });
 
         Ok(state)

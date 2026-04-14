@@ -2,6 +2,7 @@ mod data_plane;
 mod engines;
 mod memory;
 mod network;
+mod shutdown;
 
 pub use data_plane::{DataPlaneTuning, QueryTuning};
 pub use engines::{
@@ -10,6 +11,7 @@ pub use engines::{
 };
 pub use memory::MemoryTuning;
 pub use network::{BridgeTuning, ClusterTransportTuning, NetworkTuning, WalTuning};
+pub use shutdown::ShutdownTuning;
 
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +45,8 @@ pub struct TuningConfig {
     pub cluster_transport: ClusterTransportTuning,
     #[serde(default)]
     pub memory: MemoryTuning,
+    #[serde(default)]
+    pub shutdown: ShutdownTuning,
 }
 
 #[cfg(test)]
@@ -84,6 +88,7 @@ mod tests {
         assert_eq!(parsed.memory.overflow_initial_bytes, 64 * 1024 * 1024);
         assert_eq!(parsed.memory.overflow_max_bytes, 1024 * 1024 * 1024);
         assert_eq!(parsed.memory.doc_cache_entries, 4096);
+        assert_eq!(parsed.shutdown.deadline_ms, 900);
     }
 
     #[test]

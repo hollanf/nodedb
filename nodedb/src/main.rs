@@ -304,7 +304,16 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    // All shutdown signals flow through the canonical
+    // `ShutdownWatch` held on `SharedState`. The local
+    // `shutdown_rx` binding below is a raw-receiver view of
+    // that same watch, preserved so the existing listener APIs
+    // (`PgListener::run`, `HttpServer::run`, `IlpListener::run`,
+    // `RespListener::run`, `spawn_cold_storage_loop`,
+    // `spawn_checkpoint_loop`, and the lease renewal loop)
+    // keep their `watch::Receiver<bool>` parameter unchanged.
+    // New code SHOULD use `shared.shutdown.subscribe()`.
+    let shutdown_rx = shared.shutdown.raw_receiver();
 
     // Start cluster Raft loop if in cluster mode. The returned
     // receiver flips to `true` after the metadata raft group has
@@ -336,18 +345,28 @@ async fn main() -> anyhow::Result<()> {
         shutdown_rx.clone(),
     );
 
-    // Start response poller: routes Data Plane responses to waiting sessions.
-    // Uses yield_now() instead of sleep() because Tokio's timer wheel has 1ms
-    // minimum granularity — sleep(100us) actually sleeps ~1ms, adding 1ms to
-    // every request's latency. yield_now() yields to the scheduler without a
-    // timer, polling on every scheduler cycle (microsecond-level).
+    // Start response poller: routes Data Plane responses to
+    // waiting sessions. Uses `yield_now()` instead of `sleep()`
+    // because tokio's timer wheel has 1ms minimum granularity —
+    // sleep(100us) actually sleeps ~1ms, adding 1ms to every
+    // request's latency. `yield_now()` yields to the scheduler
+    // without a timer, polling on every scheduler cycle
+    // (microsecond-level).
     let shared_poller = Arc::clone(&shared);
-    tokio::spawn(async move {
-        loop {
-            shared_poller.poll_and_route_responses();
-            tokio::task::yield_now().await;
-        }
-    });
+    nodedb::control::shutdown::spawn_loop(
+        &shared.loop_registry,
+        &shared.shutdown,
+        "response_poller",
+        move |shutdown| async move {
+            loop {
+                if shutdown.is_cancelled() {
+                    break;
+                }
+                shared_poller.poll_and_route_responses();
+                tokio::task::yield_now().await;
+            }
+        },
+    );
 
     // WAL catch-up is handled at startup by replay_timeseries_wal().
     // No continuous catch-up task is needed: the ILP listener's dispatch
@@ -376,30 +395,54 @@ async fn main() -> anyhow::Result<()> {
 
     // Tenant rate counter reset (1-second timer).
     let shared_rate = Arc::clone(&shared);
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            shared_rate.reset_tenant_rate_counters();
-        }
-    });
+    nodedb::control::shutdown::spawn_loop(
+        &shared.loop_registry,
+        &shared.shutdown,
+        "tenant_rate_reset",
+        move |mut shutdown| async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(1));
+            loop {
+                tokio::select! {
+                    _ = shutdown.wait_cancelled() => break,
+                    _ = tick.tick() => shared_rate.reset_tenant_rate_counters(),
+                }
+            }
+        },
+    );
 
     // Audit log flush (10-second timer).
     let shared_audit = Arc::clone(&shared);
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            shared_audit.flush_audit_log();
-        }
-    });
+    nodedb::control::shutdown::spawn_loop(
+        &shared.loop_registry,
+        &shared.shutdown,
+        "audit_log_flush",
+        move |mut shutdown| async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(10));
+            loop {
+                tokio::select! {
+                    _ = shutdown.wait_cancelled() => break,
+                    _ = tick.tick() => shared_audit.flush_audit_log(),
+                }
+            }
+        },
+    );
 
     // Tenant memory estimation (30-second timer).
     let shared_mem = Arc::clone(&shared);
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(30)).await;
-            shared_mem.update_tenant_memory_estimates();
-        }
-    });
+    nodedb::control::shutdown::spawn_loop(
+        &shared.loop_registry,
+        &shared.shutdown,
+        "tenant_memory_estimate",
+        move |mut shutdown| async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                tokio::select! {
+                    _ = shutdown.wait_cancelled() => break,
+                    _ = tick.tick() => shared_mem.update_tenant_memory_estimates(),
+                }
+            }
+        },
+    );
 
     // Checkpoint manager: periodic engine flush + WAL truncation.
     let shared_ckpt = Arc::clone(&shared);
@@ -511,7 +554,28 @@ async fn main() -> anyhow::Result<()> {
         )
         .await;
 
-        let _ = shutdown_tx.send(true);
+        // Flip the canonical watch, then await every registered
+        // background loop with the configured deadline. Async
+        // laggards are aborted; blocking laggards are logged.
+        shared_signal.shutdown.signal();
+        let report = shared_signal
+            .loop_registry
+            .shutdown_all(shared_signal.tuning.shutdown.deadline())
+            .await;
+        if report.is_clean() {
+            tracing::info!(
+                clean = report.exited_clean.len(),
+                total = ?report.total,
+                "all background loops exited cleanly"
+            );
+        } else {
+            tracing::error!(
+                clean = report.exited_clean.len(),
+                laggards = ?report.laggards,
+                total = ?report.total,
+                "background loops exceeded shutdown deadline"
+            );
+        }
 
         // Second Ctrl+C: force exit immediately.
         tokio::signal::ctrl_c().await.ok();
