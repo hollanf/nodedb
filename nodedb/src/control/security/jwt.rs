@@ -339,6 +339,14 @@ mod tests {
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
     }
 
+    /// Bit length used for RSA keys generated in this test module.
+    /// Production validates whatever the operator configures; the
+    /// signing/verification logic doesn't care about strength, so we
+    /// use 1024 here to keep `RsaPrivateKey::new` from dominating the
+    /// test runtime. RSA-1024 keygen is ~10x faster than RSA-2048
+    /// without changing what these tests actually exercise.
+    const TEST_RSA_BITS: usize = 1024;
+
     #[test]
     fn rs256_roundtrip() {
         use rsa::pkcs1v15::SigningKey;
@@ -346,7 +354,7 @@ mod tests {
 
         // Generate a test RSA key pair.
         let mut rng = rsa::rand_core::OsRng;
-        let private_key = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let private_key = rsa::RsaPrivateKey::new(&mut rng, TEST_RSA_BITS).unwrap();
         let public_key = rsa::RsaPublicKey::from(&private_key);
 
         // Export public key as DER (PKCS#8).
@@ -387,8 +395,8 @@ mod tests {
         use rsa::signature::{SignatureEncoding, Signer};
 
         let mut rng = rsa::rand_core::OsRng;
-        let key1 = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
-        let key2 = rsa::RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let key1 = rsa::RsaPrivateKey::new(&mut rng, TEST_RSA_BITS).unwrap();
+        let key2 = rsa::RsaPrivateKey::new(&mut rng, TEST_RSA_BITS).unwrap();
         let pub2 = rsa::RsaPublicKey::from(&key2);
 
         let pub2_der = {

@@ -107,6 +107,27 @@ impl SystemCatalog {
             let _ = write_txn
                 .open_table(super::rls::RLS_POLICIES)
                 .map_err(|e| catalog_err("init rls_policies table", e))?;
+            let _ = write_txn
+                .open_table(ALERT_RULES)
+                .map_err(|e| catalog_err("init alert_rules table", e))?;
+            let _ = write_txn
+                .open_table(RETENTION_POLICIES)
+                .map_err(|e| catalog_err("init retention_policies table", e))?;
+            let _ = write_txn
+                .open_table(SEQUENCES)
+                .map_err(|e| catalog_err("init sequences table", e))?;
+            let _ = write_txn
+                .open_table(SEQUENCE_STATE)
+                .map_err(|e| catalog_err("init sequence_state table", e))?;
+            let _ = write_txn
+                .open_table(COLUMN_STATS)
+                .map_err(|e| catalog_err("init column_stats table", e))?;
+            let _ = write_txn
+                .open_table(VECTOR_MODEL_METADATA)
+                .map_err(|e| catalog_err("init vector_model_metadata table", e))?;
+            let _ = write_txn
+                .open_table(CHECKPOINTS)
+                .map_err(|e| catalog_err("init checkpoints table", e))?;
         }
         write_txn
             .commit()

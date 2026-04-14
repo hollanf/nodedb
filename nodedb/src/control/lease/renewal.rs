@@ -163,26 +163,9 @@ impl LeaseRenewalLoop {
             "descriptor lease renewal: re-acquiring near-expiry leases"
         );
         for (id, held_version) in near_expiry {
-            // Look up the CURRENT persisted version from the
-            // local catalog before re-acquiring. If the
-            // descriptor has been altered since we last took
-            // the lease, we need to advance to the new version
-            // — otherwise the old lease sticks around forever
-            // and blocks drain on any ALTER that wants to bump
-            // past it.
-            //
-            // If the descriptor has been dropped we release the
-            // lease instead of renewing: renewing a lease on a
-            // non-existent descriptor would leak it.
             let current_version = lookup_current_version(&shared, &id);
             match current_version {
                 Some(v) => {
-                    // Re-acquire at whichever version is higher:
-                    // the persisted version, or the one we
-                    // already hold (defensive — a concurrent
-                    // PutCollection apply between cache read
-                    // and propose could leave us briefly
-                    // observing an older version).
                     let version = v.max(held_version);
                     if let Err(e) = super::propose::force_refresh_lease(
                         &shared,
@@ -199,8 +182,6 @@ impl LeaseRenewalLoop {
                     }
                 }
                 None => {
-                    // Descriptor dropped — release our lease so
-                    // drain on the drop path can make progress.
                     if let Err(e) = super::release::release_leases(&shared, vec![id.clone()]) {
                         warn!(
                             descriptor = ?id,
@@ -328,8 +309,10 @@ mod tests {
 
     #[test]
     fn threshold_clamped_at_100() {
-        let mut tuning = ClusterTransportTuning::default();
-        tuning.descriptor_lease_renewal_threshold_pct = 250;
+        let tuning = ClusterTransportTuning {
+            descriptor_lease_renewal_threshold_pct: 250,
+            ..ClusterTransportTuning::default()
+        };
         let config = LeaseRenewalConfig::from_tuning(&tuning);
         assert_eq!(config.threshold_pct, 100);
     }
