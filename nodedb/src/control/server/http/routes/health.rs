@@ -9,32 +9,22 @@ use super::super::auth::AppState;
 
 /// GET /health — liveness check.
 pub async fn health(State(state): State<AppState>) -> impl IntoResponse {
-    // Node count is authoritative from the live cluster topology when
-    // cluster mode is active — cluster_version_state is only seeded at
-    // startup and does not update when new members join via broadcast,
-    // so using it for the count produces divergent values across nodes.
-    // In single-node mode topology is absent; report 1.
-    let nodes = state
-        .shared
-        .cluster_topology
-        .as_ref()
-        .map(|topo| topo.read().unwrap_or_else(|p| p.into_inner()).node_count())
-        .unwrap_or(1);
-
-    let cluster_version = {
-        let vs = state
-            .shared
-            .cluster_version_state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        json!({
-            "nodes": nodes,
-            "min_version": vs.min_version,
-            "max_version": vs.max_version,
-            "mixed_version": vs.is_mixed_version(),
-            "compat_mode": crate::control::rolling_upgrade::should_compat_mode(&vs),
-        })
+    // Derive both the node count and version view from the live
+    // cluster topology in one read. Single-node mode reports 1
+    // via the view's fallback.
+    let view = state.shared.cluster_version_view();
+    let nodes = if view.node_count > 0 {
+        view.node_count
+    } else {
+        1
     };
+    let cluster_version = json!({
+        "nodes": nodes,
+        "min_version": view.min_version,
+        "max_version": view.max_version,
+        "mixed_version": view.is_mixed_version(),
+        "compat_mode": crate::control::rolling_upgrade::should_compat_mode(&view),
+    });
     let body = json!({
         "status": "ok",
         "node_id": state.shared.node_id,

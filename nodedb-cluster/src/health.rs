@@ -240,6 +240,7 @@ pub fn broadcast_topology(
                     addr: n.addr.clone(),
                     state: n.state.as_u8(),
                     raft_groups: n.raft_groups.clone(),
+                    wire_version: n.wire_version,
                 })
                 .collect(),
         });
@@ -292,6 +293,7 @@ pub fn handle_topology_update(
                 addr: node.addr.clone(),
                 state,
                 raft_groups: node.raft_groups.clone(),
+                wire_version: node.wire_version,
             };
             new_topo.add_node(info);
         }
@@ -342,12 +344,14 @@ mod tests {
                     addr: "10.0.0.1:9400".into(),
                     state: 1,
                     raft_groups: vec![],
+                    wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
                 },
                 JoinNodeInfo {
                     node_id: 2,
                     addr: "10.0.0.2:9400".into(),
                     state: 1,
                     raft_groups: vec![],
+                    wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
                 },
             ],
         };

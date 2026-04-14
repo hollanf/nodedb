@@ -26,7 +26,7 @@
 //! The `MetadataEntry::DescriptorDrainStart` / `End` variants are
 //! wire-format v4. Mixed clusters running v3 binaries can't decode
 //! them, so the proposer gates on
-//! `cluster_version_state.can_activate_feature(DESCRIPTOR_DRAIN_VERSION)`
+//! `cluster_version_view().can_activate_feature(DESCRIPTOR_DRAIN_VERSION)`
 //! and returns `Ok(())` immediately in compat mode — the same
 //! "degrade to no drain" fallback catalog DDL uses. Mixed clusters
 //! behave without drain safety until all nodes are upgraded.
@@ -67,10 +67,7 @@ pub fn drain_for_ddl(
 ) -> Result<(), Error> {
     // Rolling upgrade gate: no drain in mixed-version clusters.
     {
-        let vs = shared
-            .cluster_version_state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let vs = shared.cluster_version_view();
         if !vs.can_activate_feature(DESCRIPTOR_DRAIN_VERSION) {
             tracing::warn!(
                 min_version = vs.min_version,

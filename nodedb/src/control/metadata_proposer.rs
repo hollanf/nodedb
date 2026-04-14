@@ -142,10 +142,7 @@ pub fn propose_catalog_entry_with_timeout(
     // diverge catalog state across nodes — see
     // `control/rolling_upgrade.rs`.
     {
-        let vs = shared
-            .cluster_version_state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let vs = shared.cluster_version_view();
         if !vs.can_activate_feature(crate::control::rolling_upgrade::DISTRIBUTED_CATALOG_VERSION) {
             tracing::warn!(
                 min_version = vs.min_version,

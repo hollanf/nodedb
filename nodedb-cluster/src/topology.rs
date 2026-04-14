@@ -3,6 +3,26 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
+/// Wire format version carried on every `NodeInfo`. This is the
+/// single source of truth for "what version is this node running"
+/// once the node has registered itself with the cluster — the
+/// in-memory shadow map used by the old `ClusterVersionState` is
+/// gone. See `control::rolling_upgrade::view::ClusterVersionView`
+/// for the consumer.
+///
+/// Must match `nodedb::version::WIRE_FORMAT_VERSION`. The cluster
+/// crate defines the constant so the wire format lives next to
+/// the types it stamps.
+pub const CLUSTER_WIRE_FORMAT_VERSION: u16 = 4;
+
+fn default_wire_version() -> u16 {
+    // Records persisted by an older build that did not carry a
+    // `wire_version` field default to `1` — the minimum supported
+    // wire version — so rolling-upgrade feature gates treat them
+    // as N-1 until the node re-registers with its real version.
+    1
+}
+
 /// Node lifecycle states.
 #[derive(
     Debug,
@@ -82,16 +102,36 @@ pub struct NodeInfo {
     pub state: NodeState,
     /// Raft groups hosted on this node.
     pub raft_groups: Vec<u64>,
+    /// Wire format version this node is running. Stamped by the
+    /// node itself on self-registration (bootstrap / join) and by
+    /// `handle_join` when learning about a remote joiner. Read by
+    /// `control::rolling_upgrade::view::compute` to derive the
+    /// cluster-wide min/max/mixed view on demand from the live
+    /// topology.
+    #[serde(default = "default_wire_version")]
+    pub wire_version: u16,
 }
 
 impl NodeInfo {
+    /// Construct a NodeInfo stamped with this build's wire version.
+    /// Use [`NodeInfo::with_wire_version`] when stamping a remote
+    /// node whose version arrived over the wire.
     pub fn new(node_id: u64, addr: SocketAddr, state: NodeState) -> Self {
         Self {
             node_id,
             addr: addr.to_string(),
             state,
             raft_groups: Vec::new(),
+            wire_version: CLUSTER_WIRE_FORMAT_VERSION,
         }
+    }
+
+    /// Override the wire version on an otherwise-fresh NodeInfo.
+    /// Builder-style so call sites read as
+    /// `NodeInfo::new(id, addr, state).with_wire_version(remote_v)`.
+    pub fn with_wire_version(mut self, wire_version: u16) -> Self {
+        self.wire_version = wire_version;
+        self
     }
 
     pub fn socket_addr(&self) -> Option<SocketAddr> {

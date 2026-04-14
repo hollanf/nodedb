@@ -68,8 +68,14 @@ pub fn handle_join_request(
         return build_response(topology, routing, cluster_id);
     }
 
-    // Brand new node — admit as Active.
-    topology.add_node(NodeInfo::new(req.node_id, addr, NodeState::Active));
+    // Brand new node — admit as Active. Stamp the joiner's own
+    // wire version onto its NodeInfo so every peer that replays
+    // this topology sees the correct version in
+    // `cluster_version_view` without round-tripping through the
+    // old in-memory shadow map.
+    topology.add_node(
+        NodeInfo::new(req.node_id, addr, NodeState::Active).with_wire_version(req.wire_version),
+    );
     build_response(topology, routing, cluster_id)
 }
 
@@ -86,6 +92,7 @@ fn build_response(
             addr: n.addr.clone(),
             state: n.state.as_u8(),
             raft_groups: n.raft_groups.clone(),
+            wire_version: n.wire_version,
         })
         .collect();
 
@@ -144,6 +151,7 @@ mod tests {
         let req = JoinRequest {
             node_id: 2,
             listen_addr: "10.0.0.2:9400".into(),
+            wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
         };
 
         let resp = handle_join_request(&req, &mut topology, &routing, 42);
@@ -165,6 +173,7 @@ mod tests {
         let req = JoinRequest {
             node_id: 2,
             listen_addr: "10.0.0.2:9400".into(),
+            wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
         };
 
         let _ = handle_join_request(&req, &mut topology, &routing, 42);
@@ -186,6 +195,7 @@ mod tests {
         let req = JoinRequest {
             node_id: 2,
             listen_addr: "10.0.0.2:9400".into(),
+            wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
         };
 
         let resp1 = handle_join_request(&req, &mut topology, &routing, 7);
@@ -216,6 +226,7 @@ mod tests {
         let req1 = JoinRequest {
             node_id: 2,
             listen_addr: "10.0.0.2:9400".into(),
+            wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
         };
         let resp1 = handle_join_request(&req1, &mut topology, &routing, 11);
         assert!(resp1.success);
@@ -224,6 +235,7 @@ mod tests {
         let req2 = JoinRequest {
             node_id: 2,
             listen_addr: "10.0.0.99:9400".into(),
+            wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
         };
         let resp2 = handle_join_request(&req2, &mut topology, &routing, 11);
 
@@ -247,6 +259,7 @@ mod tests {
         let req = JoinRequest {
             node_id: 2,
             listen_addr: "not-a-valid-address".into(),
+            wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
         };
 
         let resp = handle_join_request(&req, &mut topology, &routing, 42);

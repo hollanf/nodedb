@@ -297,6 +297,7 @@ mod tests {
         let req = RaftRpc::JoinRequest(crate::rpc_codec::JoinRequest {
             node_id: 2,
             listen_addr: "127.0.0.1:9401".into(),
+            wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
         });
 
         let resp = raft_loop.handle_rpc(req).await.unwrap();

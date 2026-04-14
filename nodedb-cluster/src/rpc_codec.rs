@@ -168,6 +168,12 @@ pub struct JoinRequest {
     pub node_id: u64,
     /// Listen address for Raft RPCs (e.g. "10.0.0.5:9400").
     pub listen_addr: String,
+    /// Wire format version the joiner is running. The leader
+    /// stamps this onto the joiner's `NodeInfo` so every peer
+    /// sees the correct version in the topology snapshot they
+    /// receive back. See
+    /// `topology::CLUSTER_WIRE_FORMAT_VERSION`.
+    pub wire_version: u16,
 }
 
 /// Wire-level redirect contract between the join-flow producer
@@ -209,6 +215,10 @@ pub struct JoinNodeInfo {
     /// NodeState as u8 (0=Joining, 1=Active, 2=Draining, 3=Decommissioned).
     pub state: u8,
     pub raft_groups: Vec<u64>,
+    /// Mirror of `NodeInfo::wire_version` so joiners learn the
+    /// version of every peer in one RPC round-trip and never
+    /// silently fall back to the minimum-supported default.
+    pub wire_version: u16,
 }
 
 /// Raft group membership in the join response wire format.
@@ -880,6 +890,7 @@ mod tests {
         let req = JoinRequest {
             node_id: 42,
             listen_addr: "10.0.0.5:9400".into(),
+            wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
         };
 
         let rpc = RaftRpc::JoinRequest(req);
@@ -907,12 +918,14 @@ mod tests {
                     addr: "10.0.0.1:9400".into(),
                     state: 1,
                     raft_groups: vec![0, 1],
+                    wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
                 },
                 JoinNodeInfo {
                     node_id: 2,
                     addr: "10.0.0.2:9400".into(),
                     state: 1,
                     raft_groups: vec![0, 1],
+                    wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
                 },
             ],
             vshard_to_group: (0..1024u64).map(|i| i % 4).collect(),

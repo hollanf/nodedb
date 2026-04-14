@@ -145,20 +145,15 @@ impl MetadataCommitApplier {
         // treat it as "unknown, always re-fetch". Only the proposing
         // node's apply path observes the gate; followers run the
         // same applier and will reach the same conclusion because
-        // every node observes the same `cluster_version_state`
-        // (replicated via the gossip path).
+        // every node observes the same live topology (same
+        // `wire_version` on every NodeInfo, replicated via the
+        // gossip path).
         let stamped = if let Some(weak) = self.shared.get()
             && let Some(shared) = weak.upgrade()
         {
-            let compat = {
-                let vs = shared
-                    .cluster_version_state
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner());
-                !vs.can_activate_feature(
-                    crate::control::rolling_upgrade::DESCRIPTOR_VERSIONING_VERSION,
-                )
-            };
+            let compat = !shared.cluster_version_view().can_activate_feature(
+                crate::control::rolling_upgrade::DESCRIPTOR_VERSIONING_VERSION,
+            );
             if compat {
                 catalog_entry
             } else {

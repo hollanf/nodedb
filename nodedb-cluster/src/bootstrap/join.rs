@@ -120,6 +120,7 @@ pub(super) async fn join(
     let req_template = JoinRequest {
         node_id: config.node_id,
         listen_addr: config.listen_addr.to_string(),
+        wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
     };
 
     let mut last_err: Option<ClusterError> = None;
@@ -260,6 +261,7 @@ fn apply_join_response(
             addr: node.addr.clone(),
             state,
             raft_groups: node.raft_groups.clone(),
+            wire_version: node.wire_version,
         };
         if node.node_id == config.node_id {
             info.state = NodeState::Active;

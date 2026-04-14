@@ -181,9 +181,6 @@ impl SharedState {
             epoch_tracker: Mutex::new(std::collections::HashMap::new()),
             ts_partition_registries: Some(Mutex::new(std::collections::HashMap::new())),
             cold_storage: None,
-            cluster_version_state: Mutex::new(
-                crate::control::rolling_upgrade::ClusterVersionState::new(),
-            ),
             hlc_clock: Arc::new(nodedb_types::HlcClock::new()),
             lease_drain: Arc::new(crate::control::lease::DescriptorDrainTracker::new()),
             lease_refcount: Arc::new(crate::control::lease::LeaseRefCount::new()),
@@ -415,9 +412,6 @@ impl SharedState {
             epoch_tracker: Mutex::new(std::collections::HashMap::new()),
             ts_partition_registries: Some(Mutex::new(std::collections::HashMap::new())),
             cold_storage: None,
-            cluster_version_state: Mutex::new(
-                crate::control::rolling_upgrade::ClusterVersionState::new(),
-            ),
             hlc_clock: Arc::new(nodedb_types::HlcClock::new()),
             lease_drain: Arc::new(crate::control::lease::DescriptorDrainTracker::new()),
             lease_refcount: Arc::new(crate::control::lease::LeaseRefCount::new()),

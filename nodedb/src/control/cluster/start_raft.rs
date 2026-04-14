@@ -120,28 +120,22 @@ pub fn start_raft(
         }
     });
 
-    // Register this node's wire version in the rolling upgrade tracker.
+    // Wire version of every node is now carried on the live
+    // `NodeInfo` in `cluster_topology`, stamped by the joiner on
+    // join_request and the self-register path on bootstrap — no
+    // shadow map to populate here. Log the derived view for
+    // observability.
     {
-        let mut vs = shared
-            .cluster_version_state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        vs.report_version(handle.node_id, crate::version::WIRE_FORMAT_VERSION);
-
-        if let Ok(topo) = handle.topology.read() {
-            for node in topo.active_nodes() {
-                if node.node_id != handle.node_id {
-                    vs.report_version(node.node_id, crate::version::WIRE_FORMAT_VERSION);
-                }
-            }
-        }
-        let compat = crate::control::rolling_upgrade::should_compat_mode(&vs);
+        let view = shared.cluster_version_view();
+        let compat = crate::control::rolling_upgrade::should_compat_mode(&view);
         info!(
             node_id = handle.node_id,
-            nodes = vs.node_count,
-            mixed = vs.is_mixed_version(),
+            nodes = view.node_count,
+            min_version = view.min_version,
+            max_version = view.max_version,
+            mixed = view.is_mixed_version(),
             compat_mode = compat,
-            "cluster version state initialized"
+            "cluster version view derived from topology"
         );
     }
 
