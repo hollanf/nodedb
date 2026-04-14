@@ -153,7 +153,7 @@ cargo test --all-features
 
 ## Status
 
-Pre-release. All engines implemented and tested. Not yet deployed in production.
+Released and production-ready. All engines implemented and tested. Currently onboarding early adopters — full support provided.
 
 ## License
 
