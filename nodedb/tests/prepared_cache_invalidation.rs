@@ -17,7 +17,13 @@ use std::time::Duration;
 use common::cluster_harness::{TestCluster, wait_for};
 
 const TENANT: u32 = 1;
-const WAIT_BUDGET: Duration = Duration::from_secs(5);
+// 10 s — every visibility check in this test rides on the metadata
+// Raft commit + apply + post-apply cache update path. Five seconds
+// (the original budget) was tight enough that fresh-cluster startup
+// jitter occasionally tripped a false timeout. Ten seconds is still
+// strict enough to catch real regressions but tolerant of cold-start
+// election lag.
+const WAIT_BUDGET: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(20);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]

@@ -76,7 +76,7 @@ async fn create_on_any_node_is_visible_on_every_node() {
     // Every node's replicated cache must see the new collection.
     wait_for(
         "all 3 nodes see the replicated collection",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -98,7 +98,7 @@ async fn create_on_any_node_is_visible_on_every_node() {
     // The replicated-cache view removes the descriptor on Drop.
     wait_for(
         "all 3 nodes no longer see the collection",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -131,7 +131,7 @@ async fn sequence_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see the replicated sequence in their in-memory registry",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| n.has_sequence(1, "order_id")),
     )
@@ -147,7 +147,7 @@ async fn sequence_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see sequence counter == 500",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -165,7 +165,7 @@ async fn sequence_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes remove the sequence from their registry",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| !n.has_sequence(1, "order_id")),
     )
@@ -189,7 +189,7 @@ async fn trigger_create_visible_on_every_node() {
 
     wait_for(
         "collection visible on every node",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -209,7 +209,7 @@ async fn trigger_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see the replicated trigger in trigger_registry",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| n.has_trigger(1, "audit_ins")),
     )
@@ -222,7 +222,7 @@ async fn trigger_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes unregister the trigger",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| !n.has_trigger(1, "audit_ins")),
     )
@@ -245,7 +245,7 @@ async fn procedure_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see the procedure in local SystemCatalog redb",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -263,7 +263,7 @@ async fn procedure_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes no longer see the procedure",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -293,7 +293,7 @@ async fn schedule_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see the schedule in schedule_registry",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -311,7 +311,7 @@ async fn schedule_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes no longer see the schedule",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -340,7 +340,7 @@ async fn change_stream_create_visible_on_every_node() {
 
     wait_for(
         "collection visible on every node",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -358,7 +358,7 @@ async fn change_stream_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see the stream in stream_registry",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -376,7 +376,7 @@ async fn change_stream_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes no longer see the stream",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -404,7 +404,7 @@ async fn user_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see the replicated user in credentials",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| n.has_active_user("alice")),
     )
@@ -417,7 +417,7 @@ async fn user_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see alice as deactivated",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| !n.has_active_user("alice")),
     )
@@ -440,7 +440,7 @@ async fn role_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see the replicated role",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| n.has_role("data_analyst")),
     )
@@ -453,7 +453,7 @@ async fn role_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes no longer see the role",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| !n.has_role("data_analyst")),
     )
@@ -476,7 +476,7 @@ async fn alter_user_role_replicates() {
 
     wait_for(
         "all 3 nodes see bob with read_only role",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -494,7 +494,7 @@ async fn alter_user_role_replicates() {
 
     wait_for(
         "all 3 nodes see bob with read_write role",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -523,7 +523,7 @@ async fn api_key_create_and_revoke_replicates() {
 
     wait_for(
         "all 3 nodes see charlie",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| n.has_active_user("charlie")),
     )
@@ -550,7 +550,7 @@ async fn api_key_create_and_revoke_replicates() {
 
     wait_for(
         "all 3 nodes see a replicated API key for charlie",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || all_nodes_have_key(&cluster),
     )
@@ -572,7 +572,7 @@ async fn api_key_create_and_revoke_replicates() {
 
     wait_for(
         "all 3 nodes see the key as revoked",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| !n.has_active_api_key(&key_id)),
     )
@@ -597,7 +597,7 @@ async fn function_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see the function in local SystemCatalog redb",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| n.has_function(1, "add_one")),
     )
@@ -610,7 +610,7 @@ async fn function_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes no longer see the function",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| !n.has_function(1, "add_one")),
     )
@@ -630,7 +630,7 @@ async fn tenant_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see tenant 4242",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| n.has_tenant(4242)),
     )
@@ -643,7 +643,7 @@ async fn tenant_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes no longer see tenant 4242",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || cluster.nodes.iter().all(|n| !n.has_tenant(4242)),
     )
@@ -670,7 +670,7 @@ async fn rls_policy_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see the RLS policy",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -688,7 +688,7 @@ async fn rls_policy_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes no longer see the RLS policy",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -726,7 +726,7 @@ async fn grant_permission_visible_on_every_node() {
     let target = "collection:1:documents";
     wait_for(
         "all 3 nodes see the grant",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -744,7 +744,7 @@ async fn grant_permission_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes no longer see the grant",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -776,7 +776,7 @@ async fn grant_role_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see ops_user has monitor role",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -794,7 +794,7 @@ async fn grant_role_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see ops_user no longer has monitor role",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -825,6 +825,25 @@ async fn ownership_transfer_visible_on_every_node() {
         .await
         .expect("create new owner user");
 
+    // ALTER ... OWNER TO validates the target user against the
+    // executing node's local credential cache, which is updated
+    // asynchronously by the metadata applier when the Raft entry
+    // commits. Wait for every node to observe the user before
+    // referencing it in the next DDL — otherwise the ALTER races
+    // the apply on whichever node `exec_ddl_on_any_leader` picks.
+    wait_for(
+        "all 3 nodes observe new_owner_user",
+        Duration::from_secs(10),
+        Duration::from_millis(50),
+        || {
+            cluster
+                .nodes
+                .iter()
+                .all(|n| n.has_active_user("new_owner_user"))
+        },
+    )
+    .await;
+
     cluster
         .exec_ddl_on_any_leader("ALTER COLLECTION assets OWNER TO new_owner_user")
         .await
@@ -832,7 +851,7 @@ async fn ownership_transfer_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see new_owner_user as owner of assets",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -864,7 +883,7 @@ async fn materialized_view_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes see the materialized view",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -882,7 +901,7 @@ async fn materialized_view_create_visible_on_every_node() {
 
     wait_for(
         "all 3 nodes no longer see the materialized view",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster

@@ -28,7 +28,7 @@ async fn five_nodes_race_on_full_seed_list_form_one_cluster() {
     let mut transports: Vec<Arc<NexarTransport>> = Vec::with_capacity(NODE_COUNT as usize);
     for id in 1..=NODE_COUNT {
         transports.push(Arc::new(
-            NexarTransport::new(id, "127.0.0.1:0".parse().unwrap()).expect("bind transport"),
+            common::test_transport(id).expect("bind transport"),
         ));
     }
     let seeds: Vec<SocketAddr> = transports.iter().map(|t| t.local_addr()).collect();

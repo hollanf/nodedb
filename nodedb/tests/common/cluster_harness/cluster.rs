@@ -49,6 +49,43 @@ impl TestCluster {
         )
         .await;
 
+        // CRITICAL: wait for every node to exit rolling-upgrade
+        // compat mode before letting the test issue any DDL.
+        //
+        // `metadata_proposer::propose_catalog_entry` consults
+        // `cluster_version_view().can_activate_feature(DISTRIBUTED_CATALOG_VERSION)`
+        // and, while even one node still reports a lower wire
+        // version, returns `Ok(0)` without going through the raft
+        // group. The pgwire DDL handlers (CREATE USER, etc.) then
+        // fall through to a LEGACY path that writes the record
+        // directly on the proposing node — **with zero
+        // replication** to followers. Any subsequent
+        // `has_active_user` check on a follower returns false and
+        // the test flakes.
+        //
+        // Topology has three members the moment the join request
+        // completes, but the `wire_version` field on each node's
+        // topology entry is updated asynchronously by the gossip
+        // path. That's why `topology_size == 3` converges fast yet
+        // `can_activate_feature(...)` can still be false for
+        // several hundred milliseconds afterwards. Waiting here
+        // closes the window deterministically — no retries, no
+        // flakes, no compat-mode fallback silently breaking
+        // replication.
+        wait_for(
+            "all 3 nodes exit rolling-upgrade compat mode",
+            Duration::from_secs(10),
+            Duration::from_millis(20),
+            || {
+                cluster.nodes.iter().all(|n| {
+                    n.shared.cluster_version_view().can_activate_feature(
+                        nodedb::control::rolling_upgrade::DISTRIBUTED_CATALOG_VERSION,
+                    )
+                })
+            },
+        )
+        .await;
+
         Ok(cluster)
     }
 
@@ -57,13 +94,28 @@ impl TestCluster {
     /// `not metadata-group leader` errors via the pgwire error path;
     /// the retry loop tries the next node on failure so the test
     /// doesn't have to discover the leader explicitly.
+    ///
+    /// After the DDL is accepted, **blocks until every node's
+    /// metadata applier has caught up to the proposer's applied
+    /// index**. `propose_catalog_entry` already waits for the entry
+    /// to be applied on the proposing node before returning, but
+    /// followers apply asynchronously — without this barrier a
+    /// subsequent `wait_for("x visible on every node")` would race
+    /// the follower appliers and trip its timeout on the cold-start
+    /// attempt. Polling the watermark directly is O(applied_index)
+    /// and converges as soon as the followers drain their commit
+    /// queues, so it's both strictly more correct and strictly
+    /// faster than waiting on the visibility check itself.
     pub async fn exec_ddl_on_any_leader(&self, sql: &str) -> Result<usize, String> {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         let mut last_err = String::new();
         while std::time::Instant::now() < deadline {
             for (idx, node) in self.nodes.iter().enumerate() {
                 match node.exec(sql).await {
-                    Ok(()) => return Ok(idx),
+                    Ok(()) => {
+                        self.wait_for_applied_index_convergence(idx).await;
+                        return Ok(idx);
+                    }
                     Err(e) => last_err = e,
                 }
             }
@@ -72,6 +124,36 @@ impl TestCluster {
         Err(format!(
             "no node accepted DDL within 10s; last error: {last_err}"
         ))
+    }
+
+    /// Block until every node's metadata applier has caught up to the
+    /// proposer's current applied index. Called after every successful
+    /// DDL by `exec_ddl_on_any_leader`.
+    async fn wait_for_applied_index_convergence(&self, proposer_idx: usize) {
+        let target = self.nodes[proposer_idx]
+            .shared
+            .applied_index_watcher()
+            .current();
+        if target == 0 {
+            return;
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let all_caught_up = self
+                .nodes
+                .iter()
+                .all(|n| n.shared.applied_index_watcher().current() >= target);
+            if all_caught_up {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                // Don't panic — the caller's own `wait_for` assertion
+                // will report the specific visibility failure with a
+                // better error than "convergence timed out".
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 
     /// Cooperatively shut down every node. Reverse order so peers

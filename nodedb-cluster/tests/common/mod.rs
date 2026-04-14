@@ -37,6 +37,19 @@ use nodedb_cluster::{
     CacheApplier, ClusterCatalog, ClusterConfig, ClusterLifecycleState, ClusterLifecycleTracker,
     ClusterTopology, MetadataCache, NexarTransport, NoopForwarder, RaftLoop, start_cluster,
 };
+
+/// Build a `NexarTransport` with a tighter-than-production RPC
+/// timeout for tests. Production default is 5 s × 3 retries = ~15 s
+/// per failed peer contact. 4 s leaves enough headroom for legitimate
+/// Raft RPCs under contention while still cutting the join-failure
+/// tests (which retry against a dead seed) substantially.
+pub fn test_transport(node_id: u64) -> Result<NexarTransport, nodedb_cluster::ClusterError> {
+    NexarTransport::with_timeout(
+        node_id,
+        "127.0.0.1:0".parse().unwrap(),
+        Duration::from_secs(4),
+    )
+}
 use nodedb_raft::message::LogEntry;
 use tempfile::TempDir;
 use tokio::sync::watch;
@@ -100,10 +113,7 @@ impl TestNode {
         node_id: u64,
         seed_nodes: Vec<SocketAddr>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let transport = Arc::new(NexarTransport::new(
-            node_id,
-            "127.0.0.1:0".parse().unwrap(),
-        )?);
+        let transport = Arc::new(test_transport(node_id)?);
         Self::spawn_with_transport(node_id, transport, seed_nodes).await
     }
 
@@ -139,10 +149,7 @@ impl TestNode {
         data_dir: &Path,
         seed_nodes: Vec<SocketAddr>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let transport = Arc::new(NexarTransport::new(
-            node_id,
-            "127.0.0.1:0".parse().unwrap(),
-        )?);
+        let transport = Arc::new(test_transport(node_id)?);
         Self::spawn_inner(node_id, transport, seed_nodes, data_dir.to_path_buf(), None).await
     }
 
@@ -172,6 +179,13 @@ impl TestNode {
             replication_factor: 3,
             data_dir: data_dir_path.clone(),
             force_bootstrap: false,
+            // Fast retry policy: 2 s ceiling keeps the join-failure
+            // tests (especially `cluster_join_leader_crash`) under
+            // ~5 s of sleeping instead of the production ~64 s.
+            join_retry: nodedb_cluster::JoinRetryPolicy {
+                max_attempts: 8,
+                max_backoff_secs: 2,
+            },
         };
 
         let lifecycle = ClusterLifecycleTracker::new();

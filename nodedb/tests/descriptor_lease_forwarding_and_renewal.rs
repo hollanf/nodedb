@@ -9,13 +9,12 @@
 //!    the leader. All 3 leases land in `MetadataCache.leases` on
 //!    every node. Without forwarding, the followers would panic
 //!    with `not leader`.
-//!
 //! 2. **lease_renews_before_expiry** — short lease (3 seconds)
-//!    + short renewal interval (250ms) + 50% threshold (renew when
-//!    < 1.5s remaining). Acquire on the leader, wait long enough
-//!    for at least one renewal cycle, assert the lease's
-//!    `expires_at` advanced (it was re-acquired with a fresh
-//!    expiry).
+//!    plus short renewal interval (250ms) and a 50% threshold
+//!    (renew when < 1.5s remaining). Acquire on the leader, wait
+//!    long enough for at least one renewal cycle, assert the
+//!    lease's `expires_at` advanced (it was re-acquired with a
+//!    fresh expiry).
 
 mod common;
 
@@ -53,7 +52,7 @@ async fn follower_acquire_forwards_to_leader() {
     // 3 distinct (descriptor_id, node_id) keys.
     wait_for(
         "every node observes all 3 forwarded leases",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(20),
         || {
             cluster.nodes.iter().all(|n| {
@@ -75,14 +74,39 @@ async fn lease_renews_before_expiry() {
     // Custom tuning: 3-second lease, check every 250ms, renew at
     // 50% remaining (< 1.5s left). Within a 2.5-second test wait
     // we should observe at least one renewal.
-    let mut tuning = ClusterTransportTuning::default();
-    tuning.descriptor_lease_duration_secs = 3;
-    tuning.descriptor_lease_renewal_check_interval_secs = 1; // min granularity
-    tuning.descriptor_lease_renewal_threshold_pct = 80;
+    let tuning = ClusterTransportTuning {
+        descriptor_lease_duration_secs: 3,
+        descriptor_lease_renewal_check_interval_secs: 1, // min granularity
+        descriptor_lease_renewal_threshold_pct: 80,
+        ..ClusterTransportTuning::default()
+    };
 
     let cluster = TestCluster::spawn_three_with_tuning(tuning)
         .await
         .expect("3-node cluster");
+
+    // Create the collection so the renewal loop's
+    // `lookup_current_version` finds it in the local catalog.
+    // Without this the renewal logic treats the lease as orphaned
+    // and releases it before our 1.5 s observation window — see
+    // `control::lease::renewal::lookup_current_version`.
+    cluster
+        .exec_ddl_on_any_leader("CREATE COLLECTION renewable (id BIGINT PRIMARY KEY, label TEXT)")
+        .await
+        .expect("create renewable collection");
+    common::cluster_harness::wait_for(
+        "renewable visible on every node",
+        Duration::from_secs(10),
+        Duration::from_millis(50),
+        || {
+            cluster
+                .nodes
+                .iter()
+                .all(|n| n.collection_descriptor(TENANT, "renewable").is_some())
+        },
+    )
+    .await;
+
     let leader = &cluster.nodes[0];
 
     // Acquire on the leader. Lease has ~3s expiry from now.

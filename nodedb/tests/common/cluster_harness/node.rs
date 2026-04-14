@@ -155,7 +155,20 @@ impl TestClusterNode {
                 CoreLoop::open(0, data_side.request_rx, data_side.response_tx, &core_dir)
                     .expect("core open");
             core.set_event_producer(event_producer);
-            while core_stop_rx.try_recv().is_err() {
+            // Continue ticking only while the channel is Empty.
+            // `Ok(())` means we got an explicit stop signal;
+            // `Disconnected` means the sender was dropped (e.g. the
+            // owning `TestClusterNode` was dropped mid-panic). In
+            // both cases we must exit — `spawn_blocking` threads
+            // cannot be aborted, so a loop that continued on
+            // `Disconnected` would block tokio runtime shutdown
+            // indefinitely and force nextest to kill the test
+            // process at `slow-timeout` (~2 minutes of wasted CI
+            // time per flaky cluster test).
+            while matches!(
+                core_stop_rx.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Empty)
+            ) {
                 core.tick();
                 std::thread::sleep(Duration::from_millis(1));
             }
@@ -639,6 +652,42 @@ impl TestClusterNode {
         for _ in 0..32 {
             tokio::task::yield_now().await;
         }
+    }
+}
+
+/// Panic-safe teardown. Without this, a test that panics (e.g. a
+/// `wait_for` tripping its budget) would drop `TestClusterNode`
+/// without ever calling the async `shutdown()`, leaving every
+/// background task still running:
+///
+/// - `watch::Sender`s close on drop but DO NOT transmit their last
+///   value, so the raft / pgwire / poller loops block on
+///   `select { shutdown.changed() }` forever.
+/// - `JoinHandle`s on drop DETACH the task instead of cancelling it.
+/// - Those detached tasks keep the tempdir's redb files open, so
+///   `TempDir::drop` either hangs or the whole test process sticks
+///   around until nextest kills it at `slow-timeout` (previously
+///   ~2 minutes of wasted CI time per flaky cluster test).
+///
+/// The Drop here fires the watch senders synchronously and aborts
+/// every JoinHandle we own. `abort()` is non-blocking: the next time
+/// the task hits an `.await` it gets cancelled and releases its
+/// resources, including the redb handles. Combined with the
+/// already-present `core_stop_tx` drop (which disconnects the
+/// blocking Data Plane loop), this guarantees the node tears down
+/// in milliseconds instead of minutes.
+impl Drop for TestClusterNode {
+    fn drop(&mut self) {
+        let _ = self.pg_shutdown_tx.send(true);
+        let _ = self.cluster_shutdown_tx.send(true);
+        let _ = self.poller_shutdown_tx.send(true);
+        // `core_stop_tx` is a std mpsc Sender; dropping it disconnects
+        // the receiver the spawn_blocking data-plane loop polls, so
+        // no explicit signal needed here.
+        self._conn_handle.abort();
+        self._pg_handle.abort();
+        self._poller_handle.abort();
+        self._core_handle.abort();
     }
 }
 

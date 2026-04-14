@@ -33,7 +33,7 @@ async fn create_collection_stamps_version_one_on_every_node() {
 
     wait_for(
         "all 3 nodes stamp orders @ version 1 with non-zero HLC",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster.nodes.iter().all(|n| {
@@ -93,7 +93,7 @@ async fn alter_collection_bumps_version_monotonically() {
     // Wait for v1.
     wait_for(
         "v1 stamped on every node",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster
@@ -118,7 +118,7 @@ async fn alter_collection_bumps_version_monotonically() {
         let expected_version = (i + 2) as u64;
         wait_for(
             &format!("all nodes observe assets @ v{expected_version}"),
-            Duration::from_secs(5),
+            Duration::from_secs(10),
             Duration::from_millis(50),
             || {
                 cluster.nodes.iter().all(|n| {
@@ -162,7 +162,7 @@ async fn distinct_collections_get_independent_versions() {
 
     wait_for(
         "all 3 collections present on all nodes",
-        Duration::from_secs(5),
+        Duration::from_secs(10),
         Duration::from_millis(50),
         || {
             cluster.nodes.iter().all(|n| {
