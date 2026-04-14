@@ -152,6 +152,23 @@ impl NexarTransport {
         debug!(node_id, %addr, "peer registered");
     }
 
+    /// Pre-warm the QUIC connection cache for a peer by
+    /// performing the full dial + handshake and inserting
+    /// the connection into the peer cache. On success, the
+    /// next `send_rpc(target, ...)` skips the dial entirely
+    /// and reuses the cached `quinn::Connection`.
+    ///
+    /// Caller MUST have called [`register_peer`] first — this
+    /// function resolves the peer address from the
+    /// `peer_addrs` map. Used by the startup `warm_peers`
+    /// phase so the first replicated request after boot
+    /// doesn't pay a cold-connect penalty.
+    ///
+    /// [`register_peer`]: Self::register_peer
+    pub async fn warm_peer(&self, node_id: u64) -> Result<()> {
+        self.get_or_connect(node_id).await.map(|_| ())
+    }
+
     /// Run the inbound RPC accept loop until shutdown.
     ///
     /// For each incoming connection, spawns a task that accepts

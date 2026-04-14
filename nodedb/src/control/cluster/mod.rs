@@ -18,6 +18,7 @@ pub mod init;
 pub mod metadata_applier;
 pub mod spsc_applier;
 pub mod start_raft;
+pub mod warm_peers;
 
 pub use applied_index_watcher::AppliedIndexWatcher;
 pub use handle::ClusterHandle;
@@ -25,3 +26,4 @@ pub use init::{init_cluster, init_cluster_with_transport};
 pub use metadata_applier::MetadataCommitApplier;
 pub use spsc_applier::SpscCommitApplier;
 pub use start_raft::start_raft;
+pub use warm_peers::{PeerWarmReport, warm_known_peers};
