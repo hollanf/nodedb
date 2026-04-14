@@ -47,6 +47,7 @@ impl SharedState {
     fn new_inner(dispatcher: Dispatcher, wal: Arc<WalManager>) -> Arc<Self> {
         let shutdown = Arc::new(crate::control::shutdown::ShutdownWatch::new());
         let loop_registry = Arc::new(crate::control::shutdown::LoopRegistry::new());
+        let startup = Arc::new(crate::control::startup::Sequencer::new());
         let test_id = Self::unique_test_id();
         Arc::new(Self {
             dispatcher: Mutex::new(dispatcher),
@@ -193,6 +194,7 @@ impl SharedState {
             )),
             shutdown: Arc::clone(&shutdown),
             loop_registry: Arc::clone(&loop_registry),
+            startup: Arc::clone(&startup),
         })
     }
 
@@ -298,6 +300,7 @@ impl SharedState {
 
         let shutdown = Arc::new(crate::control::shutdown::ShutdownWatch::new());
         let loop_registry = Arc::new(crate::control::shutdown::LoopRegistry::new());
+        let startup = Arc::new(crate::control::startup::Sequencer::new());
         let state = Arc::new(Self {
             dispatcher: Mutex::new(dispatcher),
             tracker: RequestTracker::new(),
@@ -416,6 +419,7 @@ impl SharedState {
             permission_cache: Arc::new(tokio::sync::RwLock::new(permission_cache)),
             shutdown: Arc::clone(&shutdown),
             loop_registry: Arc::clone(&loop_registry),
+            startup: Arc::clone(&startup),
         });
 
         Ok(state)

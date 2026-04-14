@@ -328,6 +328,13 @@ pub struct SharedState {
     /// on shutdown and report laggards.
     pub loop_registry: Arc<crate::control::shutdown::LoopRegistry>,
 
+    /// Startup phase sequencer. `main.rs` advances this through
+    /// the fixed `StartupPhase` sequence; listeners gate on
+    /// `GatewayEnable` via
+    /// `control::startup::GatewayGuard::await_ready`. See
+    /// `control::startup` for the contract.
+    pub startup: Arc<crate::control::startup::Sequencer>,
+
     /// Performance tuning configuration.
     pub tuning: TuningConfig,
 

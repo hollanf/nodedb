@@ -220,6 +220,17 @@ async fn main() -> anyhow::Result<()> {
         config.tuning.clone(),
     )?;
 
+    // WAL has already been opened and replayed above; record the
+    // phase transition now that the sequencer exists on
+    // `SharedState`. The sequencer rejects regressions / skips, so
+    // any missing advance below will surface at startup rather
+    // than silently leave the node in a half-advanced state.
+    use nodedb::control::startup::StartupPhase;
+    shared.startup.advance_to(StartupPhase::WalRecovery)?;
+    shared
+        .startup
+        .advance_to(StartupPhase::ClusterCatalogOpen)?;
+
     // Wire cluster handles into SharedState so that every code path
     // which checks `state.cluster_topology` / `state.cluster_transport`
     // (pgwire routing, scatter-gather, CDC transport, /health, etc.)
@@ -628,11 +639,13 @@ async fn main() -> anyhow::Result<()> {
                 info!("metadata raft group ready — opening client listeners");
             }
             Ok(Err(_)) => {
+                shared.startup.fail();
                 return Err(anyhow::anyhow!(
                     "raft readiness watch dropped before signalling ready"
                 ));
             }
             Err(_) => {
+                shared.startup.fail();
                 return Err(anyhow::anyhow!(
                     "raft readiness timeout after {RAFT_READY_TIMEOUT:?} — \
                      metadata group failed to apply first entry"
@@ -640,6 +653,43 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
+    // Metadata raft group has applied its first entry (or we're
+    // in single-node mode with no raft). The post-apply hooks
+    // have rebuilt in-memory registries from redb.
+    shared
+        .startup
+        .advance_to(StartupPhase::RaftMetadataReplay)?;
+    shared.startup.advance_to(StartupPhase::SchemaCacheWarmup)?;
+    shared.startup.advance_to(StartupPhase::DataGroupsReplay)?;
+    shared.startup.advance_to(StartupPhase::TransportBind)?;
+
+    // Warm the QUIC peer cache so the first replicated request
+    // after boot doesn't pay a cold dial.
+    if let (Some(transport), Some(topology)) = (
+        shared.cluster_transport.as_ref(),
+        shared.cluster_topology.as_ref(),
+    ) {
+        let topo_guard = topology.read().unwrap_or_else(|p| p.into_inner());
+        let warm_report = nodedb::control::cluster::warm_known_peers(
+            transport,
+            &topo_guard,
+            shared.node_id,
+            Duration::from_secs(2),
+        )
+        .await;
+        drop(topo_guard);
+        if warm_report.attempted > 0 {
+            info!(report = %warm_report, "peer cache warm-up complete");
+            if !warm_report.is_complete() {
+                for (id, err) in &warm_report.failed {
+                    tracing::warn!(node_id = id, error = %err, "peer warm failed");
+                }
+            }
+        }
+    }
+    shared.startup.advance_to(StartupPhase::WarmPeers)?;
+    shared.startup.advance_to(StartupPhase::HealthLoopStart)?;
+    shared.startup.advance_to(StartupPhase::GatewayEnable)?;
 
     // Run pgwire listener in a separate task.
     let shared_pg = Arc::clone(&shared);
