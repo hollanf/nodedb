@@ -328,12 +328,13 @@ pub struct SharedState {
     /// on shutdown and report laggards.
     pub loop_registry: Arc<crate::control::shutdown::LoopRegistry>,
 
-    /// Startup phase sequencer. `main.rs` advances this through
-    /// the fixed `StartupPhase` sequence; listeners gate on
-    /// `GatewayEnable` via
-    /// `control::startup::GatewayGuard::await_ready`. See
-    /// `control::startup` for the contract.
-    pub startup: Arc<crate::control::startup::Sequencer>,
+    /// Startup phase observer handle. Listeners call
+    /// `startup.await_phase(GatewayEnable)` to block until the node
+    /// is ready to accept client traffic. `main.rs` drives phase
+    /// transitions via a `StartupSequencer` it constructs before
+    /// calling `SharedState::open`, then swaps this field via
+    /// `Arc::get_mut`. See `control::startup` for the contract.
+    pub startup: Arc<crate::control::startup::StartupGate>,
 
     /// Performance tuning configuration.
     pub tuning: TuningConfig,
@@ -362,4 +363,23 @@ pub struct SharedState {
     /// crossing to the Data Plane.
     pub permission_cache:
         Arc<tokio::sync::RwLock<crate::control::security::permission_tree::PermissionCache>>,
+
+    /// Gateway plan-cache invalidator.
+    ///
+    /// Called from `catalog_entry::post_apply` after every DDL commit that
+    /// mutates a descriptor. Evicts stale gateway plan-cache entries for the
+    /// changed collection so subsequent queries re-plan against the new schema.
+    ///
+    /// `None` until `Gateway::new` runs (after cluster topology is ready).
+    pub gateway_invalidator: Option<Arc<crate::control::gateway::PlanCacheInvalidator>>,
+
+    /// The gateway: single entry point for routing physical plans to the
+    /// correct cluster node. Constructed after cluster topology is ready
+    /// (after `Arc::get_mut` is possible on `SharedState`) and before
+    /// listeners bind.
+    ///
+    /// `None` in the brief window between `SharedState::open` and gateway
+    /// construction; listeners should gate on `startup.await_ready()` before
+    /// calling `gateway`.
+    pub gateway: Option<Arc<crate::control::gateway::Gateway>>,
 }

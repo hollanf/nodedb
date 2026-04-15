@@ -47,7 +47,10 @@ impl SharedState {
     fn new_inner(dispatcher: Dispatcher, wal: Arc<WalManager>) -> Arc<Self> {
         let shutdown = Arc::new(crate::control::shutdown::ShutdownWatch::new());
         let loop_registry = Arc::new(crate::control::shutdown::LoopRegistry::new());
-        let startup = Arc::new(crate::control::startup::Sequencer::new());
+        // Test helpers get a pre-fired gate so listeners start accepting
+        // immediately. Production code (main.rs) replaces this with a real
+        // StartupSequencer after calling `SharedState::open`.
+        let startup_gate = crate::control::startup::StartupGate::pre_fired();
         let test_id = Self::unique_test_id();
         Arc::new(Self {
             dispatcher: Mutex::new(dispatcher),
@@ -192,9 +195,11 @@ impl SharedState {
             permission_cache: Arc::new(tokio::sync::RwLock::new(
                 crate::control::security::permission_tree::PermissionCache::new(),
             )),
+            gateway_invalidator: None,
+            gateway: None,
             shutdown: Arc::clone(&shutdown),
             loop_registry: Arc::clone(&loop_registry),
-            startup: Arc::clone(&startup),
+            startup: Arc::clone(&startup_gate),
         })
     }
 
@@ -300,7 +305,10 @@ impl SharedState {
 
         let shutdown = Arc::new(crate::control::shutdown::ShutdownWatch::new());
         let loop_registry = Arc::new(crate::control::shutdown::LoopRegistry::new());
-        let startup = Arc::new(crate::control::startup::Sequencer::new());
+        // A pre-fired placeholder gate is installed here. `main.rs` replaces
+        // it after `open()` returns by swapping via `Arc::get_mut`, installing
+        // the real gate from the `StartupSequencer` it constructs.
+        let startup_gate = crate::control::startup::StartupGate::pre_fired();
         let state = Arc::new(Self {
             dispatcher: Mutex::new(dispatcher),
             tracker: RequestTracker::new(),
@@ -417,9 +425,11 @@ impl SharedState {
                 ),
             )),
             permission_cache: Arc::new(tokio::sync::RwLock::new(permission_cache)),
+            gateway_invalidator: None,
+            gateway: None,
             shutdown: Arc::clone(&shutdown),
             loop_registry: Arc::clone(&loop_registry),
-            startup: Arc::clone(&startup),
+            startup: Arc::clone(&startup_gate),
         });
 
         Ok(state)

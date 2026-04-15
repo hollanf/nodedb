@@ -1,23 +1,25 @@
 //! Deterministic startup phase sequencer.
 //!
-//! Every node advances through a fixed sequence of
-//! [`StartupPhase`] values from `Boot` to `GatewayEnable`. The
-//! `main.rs` startup code calls [`Sequencer::advance_to`] at
-//! each phase boundary, and client-facing listeners wait on
-//! [`GatewayGuard::await_ready`] before processing the first
-//! request. A phase regression or skip is a programming bug
-//! and is rejected at the sequencer.
+//! Every node advances through a fixed sequence of [`StartupPhase`] values.
+//! The **gate model** ([`StartupSequencer`]) is the canonical API: every
+//! subsystem that must complete before a phase transition registers a
+//! [`ReadyGate`] and fires it when it finishes startup work. The sequencer
+//! advances automatically when all gates for a phase have fired.
 //!
-//! See [`phase::StartupPhase`] for the canonical ordering.
+//! Observers — listeners, health checks — hold an [`Arc<StartupGate>`] and
+//! call [`StartupGate::await_phase`] to block until a specific phase is
+//! reached.
+//!
+//! [`StartupSequencer`]: startup_sequencer::StartupSequencer
+//! [`StartupGate::await_phase`]: gate::StartupGate::await_phase
 
 pub mod error;
-pub mod guard;
+pub mod gate;
+pub mod health;
 pub mod phase;
-pub mod sequencer;
-pub mod snapshot;
+pub mod startup_sequencer;
 
-pub use error::SequencerError;
-pub use guard::{GatewayGuard, GatewayRefusal};
+pub use error::StartupError;
+pub use gate::{ReadyGate, SequencerSnapshot, StartupGate};
 pub use phase::{PHASE_COUNT, StartupPhase};
-pub use sequencer::Sequencer;
-pub use snapshot::{PhaseEntry, StartupStatus};
+pub use startup_sequencer::StartupSequencer;

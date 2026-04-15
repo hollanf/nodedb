@@ -2,16 +2,18 @@
 //! the moment client-facing listeners begin processing
 //! requests.
 //!
-//! Phases advance strictly sequentially — `Sequencer::advance_to`
-//! rejects any non-monotonic transition. The underlying `u8`
-//! repr is kept stable so the sequencer can carry the current
-//! phase in an `AtomicU8` without a typed swap primitive.
+//! Phases advance strictly sequentially via the gate-based
+//! [`StartupSequencer`]. The underlying `u8` repr is kept stable
+//! so the sequencer can carry the current phase in an `AtomicU8`
+//! without a typed swap primitive.
+//!
+//! [`StartupSequencer`]: super::startup_sequencer::StartupSequencer
 
 use std::fmt;
 
 /// Total number of phases. Kept in sync with the enum below by
 /// the `phase_order_matches_u8` unit test.
-pub const PHASE_COUNT: usize = 11;
+pub const PHASE_COUNT: usize = 12;
 
 /// Startup phase. Ordered — use `Ord` / `PartialOrd` to compare.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -31,26 +33,34 @@ pub enum StartupPhase {
     /// (triggers, streams, schedules, permissions, etc.) from
     /// the now-fresh redb state.
     SchemaCacheWarmup = 4,
+    /// Applied-index gate, redb cross-table integrity, and
+    /// in-memory registry ⇔ redb verification have all run
+    /// without raising unrepairable divergences. See
+    /// `control::cluster::recovery_check`.
+    CatalogSanityCheck = 5,
     /// All data raft groups (vShards hosting data) have caught
     /// up to their committed watermark.
-    DataGroupsReplay = 5,
+    DataGroupsReplay = 6,
     /// Listener sockets bound (pgwire / HTTP / ILP / RESP /
     /// native). Not yet accepting requests.
-    TransportBind = 6,
+    TransportBind = 7,
     /// Parallel dials completed against every known peer so
     /// the QUIC peer cache is hot before any replicated
     /// request fires.
-    WarmPeers = 7,
+    WarmPeers = 8,
     /// Health monitor running.
-    HealthLoopStart = 8,
+    HealthLoopStart = 9,
     /// Listeners may now process accepted requests.
-    /// `GatewayGuard::await_ready` returns.
-    GatewayEnable = 9,
-    /// Terminal state — reserved for the future "startup
-    /// aborted" guard in `sequencer::Sequencer::fail`. Not
-    /// currently reachable from `advance_to`; callers use
-    /// `GatewayRefusal::StartupFailed` instead.
-    Failed = 10,
+    /// `StartupGate::await_phase(GatewayEnable)` resolves.
+    GatewayEnable = 10,
+    /// Terminal state — entered via [`StartupSequencer::fail`] or
+    /// when a [`ReadyGate`] is dropped without firing. All
+    /// [`StartupGate::await_phase`] waiters wake with an error.
+    ///
+    /// [`StartupSequencer::fail`]: super::startup_sequencer::StartupSequencer::fail
+    /// [`ReadyGate`]: super::gate::ReadyGate
+    /// [`StartupGate::await_phase`]: super::gate::StartupGate::await_phase
+    Failed = 11,
 }
 
 impl StartupPhase {
@@ -63,6 +73,7 @@ impl StartupPhase {
             Self::ClusterCatalogOpen => "cluster_catalog_open",
             Self::RaftMetadataReplay => "raft_metadata_replay",
             Self::SchemaCacheWarmup => "schema_cache_warmup",
+            Self::CatalogSanityCheck => "catalog_sanity_check",
             Self::DataGroupsReplay => "data_groups_replay",
             Self::TransportBind => "transport_bind",
             Self::WarmPeers => "warm_peers",
@@ -79,7 +90,8 @@ impl StartupPhase {
             Self::WalRecovery => Some(Self::ClusterCatalogOpen),
             Self::ClusterCatalogOpen => Some(Self::RaftMetadataReplay),
             Self::RaftMetadataReplay => Some(Self::SchemaCacheWarmup),
-            Self::SchemaCacheWarmup => Some(Self::DataGroupsReplay),
+            Self::SchemaCacheWarmup => Some(Self::CatalogSanityCheck),
+            Self::CatalogSanityCheck => Some(Self::DataGroupsReplay),
             Self::DataGroupsReplay => Some(Self::TransportBind),
             Self::TransportBind => Some(Self::WarmPeers),
             Self::WarmPeers => Some(Self::HealthLoopStart),
@@ -98,12 +110,13 @@ impl StartupPhase {
             2 => Some(Self::ClusterCatalogOpen),
             3 => Some(Self::RaftMetadataReplay),
             4 => Some(Self::SchemaCacheWarmup),
-            5 => Some(Self::DataGroupsReplay),
-            6 => Some(Self::TransportBind),
-            7 => Some(Self::WarmPeers),
-            8 => Some(Self::HealthLoopStart),
-            9 => Some(Self::GatewayEnable),
-            10 => Some(Self::Failed),
+            5 => Some(Self::CatalogSanityCheck),
+            6 => Some(Self::DataGroupsReplay),
+            7 => Some(Self::TransportBind),
+            8 => Some(Self::WarmPeers),
+            9 => Some(Self::HealthLoopStart),
+            10 => Some(Self::GatewayEnable),
+            11 => Some(Self::Failed),
             _ => None,
         }
     }
@@ -134,6 +147,7 @@ mod tests {
             StartupPhase::ClusterCatalogOpen,
             StartupPhase::RaftMetadataReplay,
             StartupPhase::SchemaCacheWarmup,
+            StartupPhase::CatalogSanityCheck,
             StartupPhase::DataGroupsReplay,
             StartupPhase::TransportBind,
             StartupPhase::WarmPeers,
