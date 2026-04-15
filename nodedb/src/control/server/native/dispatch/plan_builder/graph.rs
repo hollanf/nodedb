@@ -1,7 +1,5 @@
 //! Graph operation plan builders.
 
-use std::sync::Arc;
-
 use nodedb_types::protocol::TextFields;
 use sonic_rs;
 
@@ -22,7 +20,7 @@ pub(crate) fn build_rag_fusion(
         })?;
     Ok(PhysicalPlan::Graph(GraphOp::RagFusion {
         collection: collection.to_string(),
-        query_vector: Arc::from(query_vector.as_slice()),
+        query_vector: query_vector.clone(),
         vector_top_k: fields.vector_top_k.unwrap_or(20) as usize,
         edge_label: fields.edge_label.clone(),
         direction: parse_direction(fields.direction.as_deref()),

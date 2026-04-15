@@ -92,7 +92,7 @@ impl CoreLoop {
         ef_search: usize,
         fuzzy: bool,
         vector_weight: f32,
-        filter_bitmap: Option<&std::sync::Arc<[u8]>>,
+        filter_bitmap: Option<&[u8]>,
         rls_filters: &[u8],
     ) -> Response {
         let scoped_coll = scoped_collection(tid, collection);

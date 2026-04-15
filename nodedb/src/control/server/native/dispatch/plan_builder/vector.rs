@@ -1,7 +1,5 @@
 //! Vector engine plan builders.
 
-use std::sync::Arc;
-
 use nodedb_types::protocol::TextFields;
 
 use crate::bridge::envelope::PhysicalPlan;
@@ -20,7 +18,7 @@ pub(crate) fn build_search(fields: &TextFields, collection: &str) -> crate::Resu
 
     Ok(PhysicalPlan::Vector(VectorOp::Search {
         collection: collection.to_string(),
-        query_vector: Arc::from(query_vector.as_slice()),
+        query_vector: query_vector.clone(),
         top_k,
         ef_search,
         filter_bitmap: None,
@@ -93,7 +91,7 @@ pub(crate) fn build_multi_search(
 
     Ok(PhysicalPlan::Vector(VectorOp::MultiSearch {
         collection: collection.to_string(),
-        query_vector: Arc::from(query_vector.as_slice()),
+        query_vector: query_vector.clone(),
         top_k,
         ef_search,
         filter_bitmap: None,

@@ -9,7 +9,16 @@ use serde::{Deserialize, Serialize};
 ///
 /// Controls fan-out limits, partial result handling, and visited node caps
 /// for scatter-gather graph queries across shards.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct GraphTraversalOptions {
     /// Soft warning threshold (shards per hop).
     ///

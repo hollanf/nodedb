@@ -1,7 +1,5 @@
 //! Text search plan builders.
 
-use std::sync::Arc;
-
 use nodedb_types::protocol::TextFields;
 
 use crate::bridge::envelope::PhysicalPlan;
@@ -49,7 +47,7 @@ pub(crate) fn build_hybrid_search(
 
     Ok(PhysicalPlan::Text(TextOp::HybridSearch {
         collection: collection.to_string(),
-        query_vector: Arc::from(query_vector.as_slice()),
+        query_vector: query_vector.clone(),
         query_text: query_text.clone(),
         top_k,
         ef_search,

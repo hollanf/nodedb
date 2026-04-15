@@ -48,14 +48,35 @@ pub fn check_delete_allowed(
 }
 
 /// Parsed retention duration with calendar-accurate units.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct RetentionDuration {
     pub count: u32,
     pub unit: RetentionUnit,
 }
 
 /// Calendar-accurate duration units.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[msgpack(c_enum)]
 pub enum RetentionUnit {
     Seconds,
     Minutes,

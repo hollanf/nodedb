@@ -53,7 +53,7 @@ pub(in crate::data::executor) struct VectorSearchParams<'a> {
     pub query_vector: &'a [f32],
     pub top_k: usize,
     pub ef_search: usize,
-    pub filter_bitmap: Option<&'a std::sync::Arc<[u8]>>,
+    pub filter_bitmap: Option<&'a [u8]>,
     pub field_name: &'a str,
     /// RLS post-candidate filters. Applied after HNSW/IVF returns candidates.
     pub rls_filters: &'a [u8],
@@ -67,7 +67,7 @@ pub(in crate::data::executor) struct VectorMultiSearchParams<'a> {
     pub query_vector: &'a [f32],
     pub top_k: usize,
     pub ef_search: usize,
-    pub filter_bitmap: Option<&'a std::sync::Arc<[u8]>>,
+    pub filter_bitmap: Option<&'a [u8]>,
     /// RLS post-candidate filters (evaluated per-candidate after RRF fusion).
     pub rls_filters: &'a [u8],
 }
@@ -186,7 +186,7 @@ impl CoreLoop {
         ivf: &crate::engine::vector::ivf::IvfPqIndex,
         query_vector: &[f32],
         top_k: usize,
-        filter_bitmap: Option<&std::sync::Arc<[u8]>>,
+        filter_bitmap: Option<&[u8]>,
     ) -> Response {
         if ivf.is_empty() {
             return self.response_with_payload(task, b"[]".to_vec());

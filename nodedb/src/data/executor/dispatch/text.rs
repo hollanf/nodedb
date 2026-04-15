@@ -40,7 +40,7 @@ impl CoreLoop {
                 *ef_search,
                 *fuzzy,
                 *vector_weight,
-                filter_bitmap.as_ref(),
+                filter_bitmap.as_deref(),
                 rls_filters,
             ),
         }

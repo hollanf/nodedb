@@ -11,7 +11,19 @@ use serde::{Deserialize, Serialize};
 /// Each variant maps to a standalone algorithm implementation under
 /// `src/engine/graph/algo/`. Used by `PhysicalPlan::GraphAlgo` to
 /// identify which algorithm to dispatch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[msgpack(c_enum)]
 pub enum GraphAlgorithm {
     /// PageRank — link analysis (power iteration).
     PageRank,
@@ -110,7 +122,16 @@ pub enum AlgoColumnType {
 /// Each algorithm validates and extracts the parameters it needs,
 /// ignoring the rest. Unknown parameters are silently ignored rather
 /// than rejected — this allows forward-compatible DDL extensions.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct AlgoParams {
     /// Target collection name.
     pub collection: String,
