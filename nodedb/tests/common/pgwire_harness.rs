@@ -17,6 +17,7 @@ use nodedb::wal::WalManager;
 /// A running test server with a connected pgwire client.
 pub struct TestServer {
     pub client: tokio_postgres::Client,
+    pub pg_port: u16,
     _conn_handle: tokio::task::JoinHandle<()>,
     shutdown_bus: nodedb::control::shutdown::ShutdownBus,
     poller_shutdown_tx: tokio::sync::watch::Sender<bool>,
@@ -44,6 +45,16 @@ impl TestServer {
         let credentials = Arc::new(
             nodedb::control::security::credential::store::CredentialStore::open(&catalog_path)
                 .unwrap(),
+        );
+        // Provision the harness superuser `nodedb` so Trust-mode strict
+        // identity resolution accepts the default test connection. The
+        // bootstrap exception in the handler only fires when the store
+        // is empty, which would break as soon as any DDL creates a user.
+        let _ = credentials.create_user(
+            "nodedb",
+            "nodedb",
+            nodedb::types::TenantId::new(1),
+            vec![nodedb::control::security::identity::Role::Superuser],
         );
         let shared = SharedState::new_with_credentials(dispatcher, Arc::clone(&wal), credentials);
 
@@ -139,6 +150,7 @@ impl TestServer {
 
         Self {
             client,
+            pg_port: pg_addr.port(),
             _conn_handle: conn_handle,
             shutdown_bus,
             poller_shutdown_tx,
@@ -173,6 +185,26 @@ impl TestServer {
             Ok(_) => Ok(()),
             Err(e) => Err(pg_error_detail(&e)),
         }
+    }
+
+    /// Open a second pgwire connection on the same listener under a different
+    /// username. Returns a client and its background connection task handle.
+    pub async fn connect_as(
+        &self,
+        user: &str,
+        password: &str,
+    ) -> Result<(tokio_postgres::Client, tokio::task::JoinHandle<()>), String> {
+        let conn_str = format!(
+            "host=127.0.0.1 port={} user={} password={} dbname=nodedb",
+            self.pg_port, user, password
+        );
+        let (client, connection) = tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)
+            .await
+            .map_err(|e| pg_error_detail(&e))?;
+        let handle = tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        Ok((client, handle))
     }
 
     /// Execute a SQL statement expecting an error containing the given substring.
