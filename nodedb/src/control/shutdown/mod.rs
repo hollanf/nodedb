@@ -11,12 +11,16 @@
 //! registered handle with a shared deadline, aborting async
 //! laggards and logging blocking laggards.
 
+pub mod bus;
+pub mod phase;
 pub mod receiver;
 pub mod registry;
 pub mod report;
 pub mod spawn;
 pub mod watch;
 
+pub use bus::{DrainGuard, ShutdownBus, ShutdownHandle, TaskId, spawn_drainable};
+pub use phase::ShutdownPhase;
 pub use receiver::ShutdownReceiver;
 pub use registry::{LoopHandle, LoopRegistry, RegistryClosed};
 pub use report::{LaggardReport, ShutdownReport};
