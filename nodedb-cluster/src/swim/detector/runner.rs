@@ -13,11 +13,12 @@ use tokio::sync::{Mutex, watch};
 use tokio::time::{Instant, interval};
 
 use crate::swim::config::SwimConfig;
+use crate::swim::dissemination::{DisseminationQueue, apply_and_disseminate};
 use crate::swim::error::SwimError;
 use crate::swim::incarnation::Incarnation;
 use crate::swim::member::MemberState;
 use crate::swim::member::record::MemberUpdate;
-use crate::swim::membership::MembershipList;
+use crate::swim::membership::{MembershipList, MergeOutcome};
 use crate::swim::wire::{Ack, Ping, PingReq, ProbeId, SwimMessage};
 
 use super::probe_round::{InflightProbes, ProbeOutcome, ProbeRound};
@@ -37,6 +38,7 @@ pub struct FailureDetector {
     scheduler: Mutex<ProbeScheduler>,
     suspicion: Mutex<SuspicionTimer>,
     inflight: Arc<InflightProbes>,
+    dissemination: Arc<DisseminationQueue>,
     probe_counter: AtomicU64,
     local_incarnation: Mutex<Incarnation>,
 }
@@ -58,8 +60,31 @@ impl FailureDetector {
             scheduler: Mutex::new(scheduler),
             suspicion: Mutex::new(SuspicionTimer::new()),
             inflight: Arc::new(InflightProbes::new()),
+            dissemination: Arc::new(DisseminationQueue::new()),
             probe_counter: AtomicU64::new(0),
             local_incarnation: Mutex::new(initial_inc),
+        }
+    }
+
+    /// Shared reference to the dissemination queue. Tests use it to
+    /// enqueue synthetic rumours without constructing a full message.
+    pub fn dissemination(&self) -> &Arc<DisseminationQueue> {
+        &self.dissemination
+    }
+
+    /// Ingest every piggyback entry attached to an inbound datagram.
+    /// Applies each update to the membership list via
+    /// [`apply_and_disseminate`] and, on a self-refutation, bumps the
+    /// local incarnation so subsequent probes advertise the new value.
+    async fn ingest_piggyback(&self, piggyback: &[MemberUpdate]) {
+        for update in piggyback {
+            let outcome = apply_and_disseminate(&self.membership, &self.dissemination, update);
+            if let MergeOutcome::SelfRefute { new_incarnation } = outcome {
+                let mut guard = self.local_incarnation.lock().await;
+                if new_incarnation > *guard {
+                    *guard = new_incarnation;
+                }
+            }
         }
     }
 
@@ -109,12 +134,13 @@ impl FailureDetector {
         let expired = self.suspicion.lock().await.drain_expired(now);
         for node_id in expired {
             if let Some(member) = self.membership.get(&node_id) {
-                self.membership.apply(&MemberUpdate {
+                let dead_update = MemberUpdate {
                     node_id: node_id.clone(),
                     addr: member.addr.to_string(),
                     state: MemberState::Dead,
                     incarnation: member.incarnation,
-                });
+                };
+                apply_and_disseminate(&self.membership, &self.dissemination, &dead_update);
             }
         }
 
@@ -126,8 +152,11 @@ impl FailureDetector {
             membership: &self.membership,
             transport: &self.transport,
             inflight: &self.inflight,
+            dissemination: &self.dissemination,
             probe_timeout: self.cfg.probe_timeout,
             k_indirect: self.cfg.indirect_probes as usize,
+            max_piggyback: self.cfg.max_piggyback,
+            fanout_lambda: self.cfg.fanout_lambda,
             next_probe_id: || self.next_probe_id(),
             local_incarnation: local_inc,
         }
@@ -139,12 +168,13 @@ impl FailureDetector {
             Ok(ProbeOutcome::Idle) | Ok(ProbeOutcome::Acked { .. }) => {}
             Ok(ProbeOutcome::Suspect { target }) => {
                 if let Some(member) = self.membership.get(&target) {
-                    self.membership.apply(&MemberUpdate {
+                    let suspect_update = MemberUpdate {
                         node_id: target.clone(),
                         addr: member.addr.to_string(),
                         state: MemberState::Suspect,
                         incarnation: member.incarnation,
-                    });
+                    };
+                    apply_and_disseminate(&self.membership, &self.dissemination, &suspect_update);
                     let cluster_size = self.membership.len();
                     self.suspicion.lock().await.arm(
                         target,
@@ -159,6 +189,9 @@ impl FailureDetector {
     }
 
     async fn on_incoming(&self, from_addr: SocketAddr, msg: SwimMessage) {
+        // Every datagram carries piggyback; ingest before dispatching so
+        // a self-refutation bump is reflected in the outgoing Ack below.
+        self.ingest_piggyback(msg.piggyback()).await;
         match msg {
             SwimMessage::Ping(ping) => self.handle_ping(from_addr, ping).await,
             SwimMessage::PingReq(req) => self.handle_ping_req(from_addr, req).await,
@@ -177,15 +210,15 @@ impl FailureDetector {
 
     async fn handle_ping(&self, from_addr: SocketAddr, ping: Ping) {
         let local_inc = *self.local_incarnation.lock().await;
-        // Any self-refutation bump from piggyback is handled by
-        // `MembershipList::apply`; E-γ does not yet ingest piggyback
-        // (that's E-δ) but the reply incarnation still reflects any
-        // local bump the detector already performed.
+        let fanout =
+            DisseminationQueue::fanout_threshold(self.membership.len(), self.cfg.fanout_lambda);
         let ack = SwimMessage::Ack(Ack {
             probe_id: ping.probe_id,
             from: self.membership.local_node_id().clone(),
             incarnation: local_inc,
-            piggyback: vec![],
+            piggyback: self
+                .dissemination
+                .take_for_message(self.cfg.max_piggyback, fanout),
         });
         let _ = self.transport.send(from_addr, ack).await;
     }
@@ -208,7 +241,11 @@ impl FailureDetector {
         let local_inc = *self.local_incarnation.lock().await;
         let transport = Arc::clone(&self.transport);
         let inflight = Arc::clone(&self.inflight);
+        let dissemination = Arc::clone(&self.dissemination);
         let timeout_dur = self.cfg.probe_timeout;
+        let max_piggyback = self.cfg.max_piggyback;
+        let fanout =
+            DisseminationQueue::fanout_threshold(self.membership.len(), self.cfg.fanout_lambda);
         let original_probe_id = req.probe_id;
 
         tokio::spawn(async move {
@@ -219,7 +256,7 @@ impl FailureDetector {
                         probe_id: forward_id,
                         from: local_node.clone(),
                         incarnation: local_inc,
-                        piggyback: vec![],
+                        piggyback: dissemination.take_for_message(max_piggyback, fanout),
                     }),
                 )
                 .await;
@@ -233,7 +270,7 @@ impl FailureDetector {
                         probe_id: original_probe_id,
                         from: ack.from,
                         incarnation: ack.incarnation,
-                        piggyback: vec![],
+                        piggyback: dissemination.take_for_message(max_piggyback, fanout),
                     });
                     let _ = transport.send(requester_addr, relay).await;
                 }
@@ -278,6 +315,8 @@ mod tests {
             suspicion_mult: 4,
             min_suspicion: Duration::from_millis(500),
             initial_incarnation: Incarnation::ZERO,
+            max_piggyback: 6,
+            fanout_lambda: 3,
         }
     }
 
@@ -428,6 +467,120 @@ mod tests {
         let (det_a, sd_a, h_a) = spawn_node(&fab, "a", 7040, &[]).await;
         let bumped = det_a.bump_local_incarnation(Incarnation::new(5)).await;
         assert!(bumped > Incarnation::new(5));
+        let _ = sd_a.send(true);
+        let _ = tokio::time::timeout(Duration::from_millis(100), h_a).await;
+    }
+
+    /// Enqueue a synthetic rumour about a never-probed peer on node A's
+    /// dissemination queue, then let the 3-node mesh run a few probe
+    /// rounds. Nodes B and C must observe the delta via piggyback.
+    #[tokio::test(start_paused = true)]
+    async fn piggyback_propagates_delta_to_peers() {
+        let fab = TransportFabric::new();
+        let peers_of = |me: &str| {
+            ["a", "b", "c"]
+                .iter()
+                .filter(|p| **p != me)
+                .map(|p| {
+                    let port = match *p {
+                        "a" => 7050,
+                        "b" => 7051,
+                        "c" => 7052,
+                        _ => unreachable!(),
+                    };
+                    (p.to_string(), port)
+                })
+                .collect::<Vec<_>>()
+        };
+        let (det_a, sd_a, h_a) = spawn_node(&fab, "a", 7050, &peers_of("a")).await;
+        let (det_b, sd_b, h_b) = spawn_node(&fab, "b", 7051, &peers_of("b")).await;
+        let (det_c, sd_c, h_c) = spawn_node(&fab, "c", 7052, &peers_of("c")).await;
+
+        // Synthetic rumour: "ghost" is an Alive peer A learned about
+        // out of band. It is NOT in B or C's membership initially.
+        det_a.dissemination().enqueue(MemberUpdate {
+            node_id: NodeId::new("ghost"),
+            addr: "127.0.0.1:9999".to_string(),
+            state: MemberState::Alive,
+            incarnation: Incarnation::new(1),
+        });
+        // A's list has to know about ghost too, otherwise the outgoing
+        // piggyback is still correct but there's nothing asserting the
+        // local state. Apply it now.
+        det_a.membership.apply(&MemberUpdate {
+            node_id: NodeId::new("ghost"),
+            addr: "127.0.0.1:9999".to_string(),
+            state: MemberState::Alive,
+            incarnation: Incarnation::new(1),
+        });
+
+        // Run enough probe rounds for gossip to reach B and C.
+        for _ in 0..20 {
+            tokio::time::advance(cfg().probe_interval).await;
+            tokio::task::yield_now().await;
+        }
+
+        assert!(
+            det_b.membership.get(&NodeId::new("ghost")).is_some(),
+            "B must learn about ghost via piggyback"
+        );
+        assert!(
+            det_c.membership.get(&NodeId::new("ghost")).is_some(),
+            "C must learn about ghost via piggyback"
+        );
+
+        let _ = sd_a.send(true);
+        let _ = sd_b.send(true);
+        let _ = sd_c.send(true);
+        let _ = tokio::time::timeout(Duration::from_millis(200), h_a).await;
+        let _ = tokio::time::timeout(Duration::from_millis(200), h_b).await;
+        let _ = tokio::time::timeout(Duration::from_millis(200), h_c).await;
+    }
+
+    /// A receives a Ping whose piggyback claims A is Suspect. A must
+    /// bump its own incarnation and enqueue an Alive refutation.
+    #[tokio::test(start_paused = true)]
+    async fn self_refute_bumps_incarnation_via_piggyback() {
+        let fab = TransportFabric::new();
+        let (det_a, sd_a, h_a) = spawn_node(&fab, "a", 7060, &[]).await;
+        let probe = Arc::new(fab.bind(addr(7061)).await);
+
+        // Send a ping whose piggyback suspects "a" at inc 7.
+        probe
+            .send(
+                addr(7060),
+                SwimMessage::Ping(Ping {
+                    probe_id: ProbeId::new(1),
+                    from: NodeId::new("probe"),
+                    incarnation: Incarnation::ZERO,
+                    piggyback: vec![MemberUpdate {
+                        node_id: NodeId::new("a"),
+                        addr: addr(7060).to_string(),
+                        state: MemberState::Suspect,
+                        incarnation: Incarnation::new(7),
+                    }],
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Drain the Ack so the detector actually processes recv.
+        let (_from, _ack) = tokio::time::timeout(Duration::from_millis(50), probe.recv())
+            .await
+            .expect("did not time out")
+            .expect("recv");
+
+        // A's local incarnation must now be > 7.
+        let bumped = *det_a.local_incarnation.lock().await;
+        assert!(
+            bumped > Incarnation::new(7),
+            "local incarnation {bumped:?} did not refute rumoured Suspect(7)"
+        );
+        // A's membership view for itself is Alive at the bumped value.
+        let me = det_a.membership.get(&NodeId::new("a")).expect("self");
+        assert_eq!(me.state, MemberState::Alive);
+        assert!(me.incarnation > Incarnation::new(7));
+
         let _ = sd_a.send(true);
         let _ = tokio::time::timeout(Duration::from_millis(100), h_a).await;
     }

@@ -22,6 +22,7 @@
 
 pub mod config;
 pub mod detector;
+pub mod dissemination;
 pub mod error;
 pub mod incarnation;
 pub mod member;
@@ -32,6 +33,7 @@ pub use config::SwimConfig;
 pub use detector::{
     FailureDetector, InMemoryTransport, ProbeScheduler, Transport, TransportFabric,
 };
+pub use dissemination::{DisseminationQueue, PendingUpdate, apply_and_disseminate};
 pub use error::SwimError;
 pub use incarnation::Incarnation;
 pub use member::{Member, MemberState};

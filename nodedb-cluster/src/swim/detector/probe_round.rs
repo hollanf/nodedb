@@ -28,6 +28,7 @@ use crate::swim::wire::{Ping, PingReq, ProbeId, SwimMessage};
 
 use super::scheduler::ProbeScheduler;
 use super::transport::Transport;
+use crate::swim::dissemination::DisseminationQueue;
 use crate::swim::membership::MembershipList;
 
 /// Upper bound on concurrent inflight probes. The detector only issues a
@@ -98,8 +99,11 @@ pub struct ProbeRound<'a, F: Fn() -> ProbeId> {
     pub membership: &'a MembershipList,
     pub transport: &'a Arc<dyn Transport>,
     pub inflight: &'a Arc<InflightProbes>,
+    pub dissemination: &'a Arc<DisseminationQueue>,
     pub probe_timeout: Duration,
     pub k_indirect: usize,
+    pub max_piggyback: usize,
+    pub fanout_lambda: u32,
     pub next_probe_id: F,
     pub local_incarnation: Incarnation,
 }
@@ -113,11 +117,16 @@ impl<'a, F: Fn() -> ProbeId> ProbeRound<'a, F> {
             membership,
             transport,
             inflight,
+            dissemination,
             probe_timeout,
             k_indirect,
+            max_piggyback,
+            fanout_lambda,
             next_probe_id,
             local_incarnation,
         } = self;
+
+        let fanout = DisseminationQueue::fanout_threshold(membership.len(), fanout_lambda);
 
         let Some((target_id, target_addr)) = scheduler.next_target(membership) else {
             return Ok(ProbeOutcome::Idle);
@@ -134,7 +143,7 @@ impl<'a, F: Fn() -> ProbeId> ProbeRound<'a, F> {
                     probe_id: direct_id,
                     from: local.clone(),
                     incarnation: local_incarnation,
-                    piggyback: vec![],
+                    piggyback: dissemination.take_for_message(max_piggyback, fanout),
                 }),
             )
             .await?;
@@ -170,7 +179,7 @@ impl<'a, F: Fn() -> ProbeId> ProbeRound<'a, F> {
                         from: local.clone(),
                         target: target_id.clone(),
                         target_addr: target_addr.to_string(),
-                        piggyback: vec![],
+                        piggyback: dissemination.take_for_message(max_piggyback, fanout),
                     }),
                 )
                 .await?;
@@ -251,6 +260,8 @@ mod tests {
             suspicion_mult: 4,
             min_suspicion: Duration::from_millis(500),
             initial_incarnation: Incarnation::ZERO,
+            max_piggyback: 6,
+            fanout_lambda: 3,
         }
     }
 
@@ -287,13 +298,17 @@ mod tests {
         let list = membership_with_peers("local", 7000, &[]).await;
         let mut sched = ProbeScheduler::with_seed(1);
         let inflight = Arc::new(InflightProbes::new());
+        let dissemination = Arc::new(DisseminationQueue::new());
         let outcome = ProbeRound {
             scheduler: &mut sched,
             membership: &list,
             transport: &local,
             inflight: &inflight,
+            dissemination: &dissemination,
             probe_timeout: cfg().probe_timeout,
             k_indirect: 2,
+            max_piggyback: 6,
+            fanout_lambda: 3,
             next_probe_id: pid_gen(1),
             local_incarnation: Incarnation::ZERO,
         }
@@ -314,13 +329,17 @@ mod tests {
         let list = membership_with_peers("local", 7000, &[("n1", 7001, MemberState::Alive)]).await;
         let mut sched = ProbeScheduler::with_seed(1);
         let inflight = Arc::new(InflightProbes::new());
+        let dissemination = Arc::new(DisseminationQueue::new());
         let outcome = ProbeRound {
             scheduler: &mut sched,
             membership: &list,
             transport: &local,
             inflight: &inflight,
+            dissemination: &dissemination,
             probe_timeout: cfg().probe_timeout,
             k_indirect: 2,
+            max_piggyback: 6,
+            fanout_lambda: 3,
             next_probe_id: pid_gen(1),
             local_incarnation: Incarnation::ZERO,
         }
@@ -367,13 +386,17 @@ mod tests {
             }
         });
 
+        let dissemination = Arc::new(DisseminationQueue::new());
         let outcome = ProbeRound {
             scheduler: &mut sched,
             membership: &list,
             transport: &local,
             inflight: &inflight,
+            dissemination: &dissemination,
             probe_timeout: cfg().probe_timeout,
             k_indirect: 2,
+            max_piggyback: 6,
+            fanout_lambda: 3,
             next_probe_id: pid_gen(1),
             local_incarnation: Incarnation::ZERO,
         }
@@ -436,13 +459,17 @@ mod tests {
             }
         });
 
+        let dissemination = Arc::new(DisseminationQueue::new());
         let outcome = ProbeRound {
             scheduler: &mut sched,
             membership: &list,
             transport: &local,
             inflight: &inflight,
+            dissemination: &dissemination,
             probe_timeout: cfg().probe_timeout,
             k_indirect: 2,
+            max_piggyback: 6,
+            fanout_lambda: 3,
             next_probe_id: pid_gen(1),
             local_incarnation: Incarnation::ZERO,
         }
@@ -468,5 +495,4 @@ mod tests {
             .expect_err("full");
         assert!(matches!(err, SwimError::ProbeInflightOverflow));
     }
-
 }

@@ -92,6 +92,8 @@ mod tests {
             suspicion_mult: 4,
             min_suspicion: Duration::from_millis(500),
             initial_incarnation: crate::swim::incarnation::Incarnation::ZERO,
+            max_piggyback: 6,
+            fanout_lambda: 3,
         }
     }
 
