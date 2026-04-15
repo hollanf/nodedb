@@ -1,7 +1,15 @@
 //! CRDT engine operations dispatched to the Data Plane.
 
 /// CRDT engine physical operations.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum CrdtOp {
     /// CRDT state read for a document.
     Read {

@@ -7,7 +7,15 @@
 use serde::{Deserialize, Serialize};
 
 /// Definition of a continuous aggregate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct ContinuousAggregateDef {
     /// Name of this aggregate (e.g., "metrics_1m").
     pub name: String,
@@ -31,7 +39,13 @@ pub struct ContinuousAggregateDef {
 
 /// An aggregate expression: function + source column → result column.
 #[derive(
-    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
 )]
 pub struct AggregateExpr {
     /// Aggregate function.
@@ -94,7 +108,17 @@ impl AggFunction {
 }
 
 /// When to refresh the aggregate.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum RefreshPolicy {
     /// Refresh on every memtable flush. Lowest latency.
     #[default]

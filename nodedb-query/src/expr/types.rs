@@ -3,7 +3,7 @@
 use nodedb_types::Value;
 
 /// A serializable SQL expression that can be evaluated against a document.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SqlExpr {
     /// Column reference: extract field value from the document.
     Column(String),
@@ -47,6 +47,8 @@ pub enum SqlExpr {
     Debug,
     Clone,
     Copy,
+    PartialEq,
+    Eq,
     serde::Serialize,
     serde::Deserialize,
     zerompk::ToMessagePack,
@@ -74,6 +76,8 @@ pub enum BinaryOp {
 #[derive(
     Debug,
     Clone,
+    PartialEq,
+    Eq,
     serde::Serialize,
     serde::Deserialize,
     zerompk::ToMessagePack,

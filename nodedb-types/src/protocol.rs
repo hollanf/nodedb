@@ -11,9 +11,9 @@ use crate::value::Value;
 
 /// Operation codes for the native binary protocol.
 ///
-/// Encoded as a single `u8` in the MessagePack request frame.
-/// Opcodes are grouped by functional area with 16-slot gaps to allow
-/// future additions without renumbering.
+/// Encoded as a single `u8` in both the MessagePack frame and JSON frame
+/// (e.g. `{"op":3}` for `Status`). The `#[serde(try_from = "u8", into = "u8")]`
+/// attribute makes JSON encoding consistent with the numeric opcode values.
 #[repr(u8)]
 #[derive(
     Debug,
@@ -27,11 +27,15 @@ use crate::value::Value;
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[serde(try_from = "u8", into = "u8")]
 #[msgpack(c_enum)]
 pub enum OpCode {
     // ── Auth & session ──────────────────────────────────────────
     Auth = 0x01,
     Ping = 0x02,
+    /// Report startup/readiness status. Returns the current startup phase
+    /// and whether the node is healthy. Does not require authentication.
+    Status = 0x03,
 
     // ── Data operations (direct Data Plane dispatch) ────────────
     PointGet = 0x10,
@@ -185,6 +189,98 @@ impl OpCode {
                 | OpCode::KvRegisterSortedIndex
                 | OpCode::KvDropSortedIndex
         )
+    }
+}
+
+impl From<OpCode> for u8 {
+    fn from(op: OpCode) -> u8 {
+        op as u8
+    }
+}
+
+impl TryFrom<u8> for OpCode {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(OpCode::Auth),
+            0x02 => Ok(OpCode::Ping),
+            0x03 => Ok(OpCode::Status),
+            0x10 => Ok(OpCode::PointGet),
+            0x11 => Ok(OpCode::PointPut),
+            0x12 => Ok(OpCode::PointDelete),
+            0x13 => Ok(OpCode::VectorSearch),
+            0x14 => Ok(OpCode::RangeScan),
+            0x15 => Ok(OpCode::CrdtRead),
+            0x16 => Ok(OpCode::CrdtApply),
+            0x17 => Ok(OpCode::GraphRagFusion),
+            0x18 => Ok(OpCode::AlterCollectionPolicy),
+            0x19 => Ok(OpCode::SpatialScan),
+            0x1A => Ok(OpCode::TimeseriesScan),
+            0x1B => Ok(OpCode::TimeseriesIngest),
+            0x20 => Ok(OpCode::Sql),
+            0x21 => Ok(OpCode::Ddl),
+            0x22 => Ok(OpCode::Explain),
+            0x23 => Ok(OpCode::CopyFrom),
+            0x30 => Ok(OpCode::Set),
+            0x31 => Ok(OpCode::Show),
+            0x32 => Ok(OpCode::Reset),
+            0x40 => Ok(OpCode::Begin),
+            0x41 => Ok(OpCode::Commit),
+            0x42 => Ok(OpCode::Rollback),
+            0x50 => Ok(OpCode::GraphHop),
+            0x51 => Ok(OpCode::GraphNeighbors),
+            0x52 => Ok(OpCode::GraphPath),
+            0x53 => Ok(OpCode::GraphSubgraph),
+            0x54 => Ok(OpCode::EdgePut),
+            0x55 => Ok(OpCode::EdgeDelete),
+            0x56 => Ok(OpCode::GraphAlgo),
+            0x57 => Ok(OpCode::GraphMatch),
+            0x60 => Ok(OpCode::TextSearch),
+            0x61 => Ok(OpCode::HybridSearch),
+            0x70 => Ok(OpCode::VectorBatchInsert),
+            0x71 => Ok(OpCode::DocumentBatchInsert),
+            0x72 => Ok(OpCode::KvScan),
+            0x73 => Ok(OpCode::KvExpire),
+            0x74 => Ok(OpCode::KvPersist),
+            0x75 => Ok(OpCode::KvGetTtl),
+            0x76 => Ok(OpCode::KvBatchGet),
+            0x77 => Ok(OpCode::KvBatchPut),
+            0x78 => Ok(OpCode::KvFieldGet),
+            0x79 => Ok(OpCode::KvFieldSet),
+            0x7A => Ok(OpCode::DocumentUpdate),
+            0x7B => Ok(OpCode::DocumentScan),
+            0x7C => Ok(OpCode::DocumentUpsert),
+            0x7D => Ok(OpCode::DocumentBulkUpdate),
+            0x7E => Ok(OpCode::DocumentBulkDelete),
+            0x7F => Ok(OpCode::VectorInsert),
+            0x80 => Ok(OpCode::VectorMultiSearch),
+            0x81 => Ok(OpCode::VectorDelete),
+            0x82 => Ok(OpCode::ColumnarScan),
+            0x83 => Ok(OpCode::ColumnarInsert),
+            0x84 => Ok(OpCode::RecursiveScan),
+            0x85 => Ok(OpCode::DocumentTruncate),
+            0x86 => Ok(OpCode::DocumentEstimateCount),
+            0x87 => Ok(OpCode::DocumentInsertSelect),
+            0x88 => Ok(OpCode::DocumentRegister),
+            0x89 => Ok(OpCode::DocumentDropIndex),
+            0x8A => Ok(OpCode::KvRegisterIndex),
+            0x8B => Ok(OpCode::KvDropIndex),
+            0x8C => Ok(OpCode::KvTruncate),
+            0x8D => Ok(OpCode::VectorSetParams),
+            0x8E => Ok(OpCode::KvIncr),
+            0x8F => Ok(OpCode::KvIncrFloat),
+            0x90 => Ok(OpCode::KvCas),
+            0x91 => Ok(OpCode::KvGetSet),
+            0x92 => Ok(OpCode::KvRegisterSortedIndex),
+            0x93 => Ok(OpCode::KvDropSortedIndex),
+            0x94 => Ok(OpCode::KvSortedIndexRank),
+            0x95 => Ok(OpCode::KvSortedIndexTopK),
+            0x96 => Ok(OpCode::KvSortedIndexRange),
+            0x97 => Ok(OpCode::KvSortedIndexCount),
+            0x98 => Ok(OpCode::KvSortedIndexScore),
+            other => Err(format!("unknown OpCode byte: 0x{other:02X}")),
+        }
     }
 }
 

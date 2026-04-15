@@ -1,13 +1,19 @@
 //! Graph engine operations dispatched to the Data Plane.
 
-use std::sync::Arc;
-
 use crate::engine::graph::algo::params::{AlgoParams, GraphAlgorithm};
 use crate::engine::graph::edge_store::Direction;
 use crate::engine::graph::traversal_options::GraphTraversalOptions;
 
 /// Graph engine physical operations.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum GraphOp {
     /// Insert a graph edge with properties.
     EdgePut {
@@ -68,7 +74,7 @@ pub enum GraphOp {
     /// GraphRAG fusion: vector search → graph expansion → RRF ranking.
     RagFusion {
         collection: String,
-        query_vector: Arc<[f32]>,
+        query_vector: Vec<f32>,
         vector_top_k: usize,
         edge_label: Option<String>,
         direction: Direction,

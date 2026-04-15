@@ -12,7 +12,14 @@ use crate::geometry::Geometry;
 
 /// A dynamic value that can represent any field type in a document
 /// or any parameter in a SQL query.
+///
+/// Serialized with `#[serde(untagged)]` so that JSON output uses plain
+/// JSON types (`"string"`, `1`, `true`, `null`, `[…]`, `{…}`) rather than
+/// the externally-tagged form (`{"String":"…"}`, `{"Integer":1}`, etc.).
+/// MessagePack (de)serialization is handled by custom `ToMessagePack` /
+/// `FromMessagePack` impls and is unaffected by this attribute.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(untagged)]
 pub enum Value {
     #[default]
     /// SQL NULL / missing value.

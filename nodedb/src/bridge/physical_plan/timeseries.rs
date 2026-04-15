@@ -1,7 +1,15 @@
 //! Timeseries engine operations dispatched to the Data Plane.
 
 /// Timeseries engine physical operations.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum TimeseriesOp {
     /// Columnar partition scan with time-range pruning.
     ///

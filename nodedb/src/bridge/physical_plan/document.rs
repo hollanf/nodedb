@@ -14,7 +14,7 @@ use nodedb_types::columnar::StrictSchema;
 ///   document at apply time. Used for arithmetic (`col + 1`), functions
 ///   (`LOWER(col)`, `NOW()`), `CASE`, concatenation, and anything else
 ///   whose result depends on the row being updated.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum UpdateValue {
     Literal(Vec<u8>),
     Expr(crate::bridge::expr_eval::SqlExpr),
@@ -55,7 +55,16 @@ impl<'a> zerompk::FromMessagePack<'a> for UpdateValue {
 /// Determines how documents are serialized before storage in the sparse engine.
 /// Propagated from the Control Plane catalog to the Data Plane via
 /// `DocumentOp::Register`.
-#[derive(Debug, Clone, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum StorageMode {
     /// Schemaless: documents stored as MessagePack blobs. Self-describing,
     /// supports arbitrary nested fields. Default for collections without a schema.
@@ -71,36 +80,63 @@ pub enum StorageMode {
 ///
 /// These flags are cached by the Data Plane in `CollectionConfig` and checked
 /// on every write operation (INSERT, UPDATE, DELETE).
-#[derive(Debug, Clone, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct EnforcementOptions {
     /// Reject UPDATE/DELETE operations.
+    #[serde(default)]
     pub append_only: bool,
     /// Maintain SHA-256 hash chain on INSERT.
+    #[serde(default)]
     pub hash_chain: bool,
     /// Balanced constraint definition (debit/credit sums must match per group_key).
+    #[serde(default)]
     pub balanced: Option<BalancedDef>,
     /// Period lock: cross-collection lookup to check if the period is open.
+    #[serde(default)]
     pub period_lock: Option<PeriodLockConfig>,
     /// Data retention duration. DELETE rejected if row age < this.
     /// Uses calendar-accurate arithmetic (months/years not approximated).
+    #[serde(default)]
     pub retention: Option<crate::data::executor::enforcement::retention::RetentionDuration>,
     /// Whether any legal hold is active. DELETE unconditionally rejected.
+    #[serde(default)]
     pub has_legal_hold: bool,
     /// State transition constraints: column value transitions must follow declared paths.
+    #[serde(default)]
     pub state_constraints: Vec<crate::control::security::catalog::types::StateTransitionDef>,
     /// Transition check predicates: OLD/NEW expressions evaluated on UPDATE.
+    #[serde(default)]
     pub transition_checks: Vec<crate::control::security::catalog::types::TransitionCheckDef>,
     /// Materialized sum bindings where THIS collection is the source.
     /// On INSERT, each binding triggers an atomic balance update on the target.
+    #[serde(default)]
     pub materialized_sum_sources: Vec<MaterializedSumBinding>,
     /// Stored generated (computed) columns materialized on write.
     /// On INSERT: evaluate expression, store result alongside other columns.
     /// On UPDATE: re-evaluate if any `depends_on` column changed.
+    #[serde(default)]
     pub generated_columns: Vec<GeneratedColumnSpec>,
 }
 
 /// A stored generated column: expression evaluated at write time.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct GeneratedColumnSpec {
     /// Column name for the generated field.
     pub name: String,
@@ -113,7 +149,15 @@ pub struct GeneratedColumnSpec {
 /// A materialized sum binding: when a row is INSERTed into this (source)
 /// collection, evaluate `value_expr` and atomically add the result to
 /// `target_column` on the matching row in `target_collection`.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct MaterializedSumBinding {
     /// Target collection holding the balance column (e.g. `accounts`).
     pub target_collection: String,
@@ -126,7 +170,15 @@ pub struct MaterializedSumBinding {
 }
 
 /// Period lock configuration propagated to Data Plane.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct PeriodLockConfig {
     /// Column in this collection identifying the period (e.g. `fiscal_period`).
     pub period_column: String,
@@ -141,7 +193,15 @@ pub struct PeriodLockConfig {
 }
 
 /// Bridge-level balanced constraint definition (mirrors catalog BalancedConstraintDef).
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct BalancedDef {
     /// Column used to group entries (e.g. `journal_id`).
     pub group_key_column: String,
@@ -156,7 +216,15 @@ pub struct BalancedDef {
 }
 
 /// Document engine physical operations (schemaless + strict + DML).
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum DocumentOp {
     /// Point lookup by document ID.
     PointGet {

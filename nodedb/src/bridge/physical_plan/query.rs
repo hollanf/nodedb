@@ -1,7 +1,15 @@
 //! Query operations (joins, aggregates) dispatched to the Data Plane.
 
 /// Aggregate specification for Data Plane aggregate execution.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct AggregateSpec {
     pub function: String,
     /// Internal aggregate key used by HAVING and downstream references.
@@ -14,14 +22,30 @@ pub struct AggregateSpec {
     pub expr: Option<crate::bridge::expr_eval::SqlExpr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct JoinProjection {
     pub source: String,
     pub output: String,
 }
 
 /// Query-level physical operations (joins, aggregates).
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum QueryOp {
     /// Aggregate: GROUP BY + aggregate functions.
     Aggregate {

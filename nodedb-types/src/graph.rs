@@ -3,7 +3,19 @@
 use serde::{Deserialize, Serialize};
 
 /// Edge traversal direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[msgpack(c_enum)]
 pub enum Direction {
     /// Outgoing edges only.
     Out,

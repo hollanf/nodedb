@@ -1,19 +1,25 @@
 //! Vector engine operations dispatched to the Data Plane.
 
-use std::sync::Arc;
-
 /// Vector engine physical operations.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum VectorOp {
     /// Vector similarity search.
     Search {
         collection: String,
-        query_vector: Arc<[f32]>,
+        query_vector: Vec<f32>,
         top_k: usize,
         /// Optional search beam width override. If 0, uses default `4 * top_k`.
         ef_search: usize,
         /// Pre-computed bitmap of eligible document IDs (from filter evaluation).
-        filter_bitmap: Option<Arc<[u8]>>,
+        filter_bitmap: Option<Vec<u8>>,
         /// Named vector field to search. Empty string = default field.
         field_name: String,
         /// RLS post-candidate filters (serialized `Vec<ScanFilter>`).
@@ -43,10 +49,10 @@ pub enum VectorOp {
     /// Multi-vector search: query across all named vector fields, fuse via RRF.
     MultiSearch {
         collection: String,
-        query_vector: Arc<[f32]>,
+        query_vector: Vec<f32>,
         top_k: usize,
         ef_search: usize,
-        filter_bitmap: Option<Arc<[u8]>>,
+        filter_bitmap: Option<Vec<u8>>,
         /// RLS post-candidate filters.
         rls_filters: Vec<u8>,
     },
@@ -168,7 +174,7 @@ pub enum VectorOp {
         /// Named vector field. Empty = default.
         field_name: String,
         /// Query vector.
-        query_vector: Arc<[f32]>,
+        query_vector: Vec<f32>,
         /// Maximum documents to return.
         top_k: usize,
         /// HNSW ef_search override. 0 = auto.

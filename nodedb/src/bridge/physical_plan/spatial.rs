@@ -1,7 +1,18 @@
 //! Spatial engine operations dispatched to the Data Plane.
 
 /// Spatial predicate type for R-tree index scan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+#[msgpack(c_enum)]
 pub enum SpatialPredicate {
     /// ST_DWithin: geometry within distance (meters).
     DWithin,
@@ -14,7 +25,15 @@ pub enum SpatialPredicate {
 }
 
 /// Spatial engine physical operations.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum SpatialOp {
     /// R-tree index scan with spatial predicate and exact refinement.
     Scan {

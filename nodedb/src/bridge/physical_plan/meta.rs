@@ -4,7 +4,15 @@ use crate::engine::timeseries::continuous_agg::ContinuousAggregateDef;
 use crate::types::RequestId;
 
 /// Meta / maintenance physical operations.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum MetaOp {
     /// WAL append (write path).
     WalAppend { payload: Vec<u8> },

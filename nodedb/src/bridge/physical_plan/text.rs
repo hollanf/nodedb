@@ -1,9 +1,15 @@
 //! Full-text search operations dispatched to the Data Plane.
 
-use std::sync::Arc;
-
 /// Full-text search physical operations.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum TextOp {
     /// BM25 full-text search on the inverted index.
     Search {
@@ -21,14 +27,14 @@ pub enum TextOp {
     /// Hybrid search: vector similarity + BM25 text, fused via RRF.
     HybridSearch {
         collection: String,
-        query_vector: Arc<[f32]>,
+        query_vector: Vec<f32>,
         query_text: String,
         top_k: usize,
         ef_search: usize,
         fuzzy: bool,
         /// Weight for vector results in RRF (0.0–1.0). Default: 0.5.
         vector_weight: f32,
-        filter_bitmap: Option<Arc<[u8]>>,
+        filter_bitmap: Option<Vec<u8>>,
         /// RLS post-fusion filters.
         rls_filters: Vec<u8>,
     },

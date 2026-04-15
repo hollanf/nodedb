@@ -15,6 +15,7 @@ pub mod spatial;
 pub mod text;
 pub mod timeseries;
 pub mod vector;
+pub mod wire;
 
 pub use columnar::ColumnarOp;
 pub use crdt::CrdtOp;
@@ -30,12 +31,21 @@ pub use spatial::{SpatialOp, SpatialPredicate};
 pub use text::TextOp;
 pub use timeseries::TimeseriesOp;
 pub use vector::VectorOp;
+pub use wire::{decode, encode};
 
 /// Physical plan dispatched to the Data Plane.
 ///
 /// Each variant wraps a per-engine operation enum. The Data Plane dispatcher
 /// matches on the top-level variant, then delegates to engine-specific handlers.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum PhysicalPlan {
     /// Vector engine: HNSW search, insert, delete, params.
     Vector(VectorOp),

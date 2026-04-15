@@ -8,7 +8,15 @@
 //! All profiles share the same `ColumnarMemtable` → `SegmentWriter` infrastructure.
 
 /// Base columnar physical operations.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum ColumnarOp {
     /// Read rows from columnar memtable + segments.
     ///

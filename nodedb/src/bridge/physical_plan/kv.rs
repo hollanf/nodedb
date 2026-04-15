@@ -4,7 +4,15 @@
 ///
 /// All operations target a hash-indexed collection with O(1) point lookups.
 /// Keys and values are serialized as Binary Tuples.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum KvOp {
     /// Point lookup by primary key. Returns Binary Tuple value or nil.
     Get {
