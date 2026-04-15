@@ -17,4 +17,4 @@ pub use probe_round::{ProbeOutcome, ProbeRound};
 pub use runner::FailureDetector;
 pub use scheduler::ProbeScheduler;
 pub use suspicion::SuspicionTimer;
-pub use transport::{InMemoryTransport, Transport, TransportFabric};
+pub use transport::{InMemoryTransport, Transport, TransportFabric, UdpTransport};

@@ -1,44 +1,15 @@
-//! SWIM transport abstraction.
-//!
-//! The detector talks to the network exclusively through the [`Transport`]
-//! trait. Two impls exist in the crate:
-//!
-//! 1. [`InMemoryTransport`] — a tokio-mpsc fabric used by every E-γ unit
-//!    test. Supports per-edge drop and partition injection so tests can
-//!    deterministically simulate unreachable peers.
-//! 2. The real UDP transport — lands in E-ε, not in this file.
-//!
-//! The trait is `Send + Sync` and its methods are `async`. Errors are
-//! typed [`SwimError::TransportClosed`] variants so callers never see
-//! raw `io::Error`.
+//! Test-only tokio-mpsc fabric implementing [`super::Transport`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::{Mutex, mpsc};
 
+use super::Transport;
 use crate::swim::error::SwimError;
 use crate::swim::wire::SwimMessage;
-
-/// Abstract SWIM transport. Implementations may be unreliable (UDP-like);
-/// the detector assumes nothing about ordering or delivery guarantees.
-#[async_trait]
-pub trait Transport: Send + Sync {
-    /// Send a single SWIM datagram to `to`. Errors indicate the transport
-    /// itself is broken, not that the peer is unreachable — an unreachable
-    /// peer is modelled as a silent drop.
-    async fn send(&self, to: SocketAddr, msg: SwimMessage) -> Result<(), SwimError>;
-
-    /// Block until the next inbound datagram is available. Returns
-    /// [`SwimError::TransportClosed`] when the transport is shut down.
-    async fn recv(&self) -> Result<(SocketAddr, SwimMessage), SwimError>;
-
-    /// The local bind address — returned so callers can include it in
-    /// outgoing messages without plumbing the address through separately.
-    fn local_addr(&self) -> SocketAddr;
-}
 
 /// Test-only tokio-mpsc fabric that hosts multiple [`InMemoryTransport`]
 /// endpoints sharing the same address space.
@@ -56,7 +27,7 @@ struct FabricInner {
     /// Inbound queue per bound address.
     inboxes: HashMap<SocketAddr, mpsc::Sender<(SocketAddr, SwimMessage)>>,
     /// Set of (from, to) pairs whose datagrams are silently dropped.
-    dropped_edges: std::collections::HashSet<(SocketAddr, SocketAddr)>,
+    dropped_edges: HashSet<(SocketAddr, SocketAddr)>,
 }
 
 impl TransportFabric {
@@ -69,7 +40,7 @@ impl TransportFabric {
 
     /// Bind a new endpoint on the fabric. Panics only if `addr` is already
     /// bound in the fabric (test-only assertion — production transport
-    /// lives in E-ε).
+    /// is [`super::UdpTransport`]).
     pub async fn bind(self: &Arc<Self>, addr: SocketAddr) -> InMemoryTransport {
         let (tx, rx) = mpsc::channel(1024);
         let mut guard = self.inner.lock().await;
@@ -171,7 +142,6 @@ mod tests {
         let _b = fab.bind(addr(7001)).await;
         fab.drop_edge(addr(7000), addr(7001)).await;
         a.send(addr(7001), ping()).await.expect("send");
-        // Recv should time out — nothing delivered.
         let got = tokio::time::timeout(std::time::Duration::from_millis(20), _b.recv()).await;
         assert!(got.is_err(), "dropped edge should not deliver");
     }
@@ -188,10 +158,7 @@ mod tests {
         let fab = TransportFabric::new();
         let b = fab.bind(addr(7001)).await;
         fab.remove(addr(7001)).await;
-        // The bound transport still holds its Receiver — sender half is
-        // removed from the fabric, so future sends from other endpoints
-        // will now silently drop. The existing inbox is still drainable.
-        let _ = b; // silence unused
+        let _ = b;
     }
 
     #[tokio::test]
