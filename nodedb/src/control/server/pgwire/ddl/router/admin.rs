@@ -441,6 +441,15 @@ pub(super) async fn dispatch(
     if upper.starts_with("REMOVE NODE ") {
         return Some(super::super::cluster::remove_node(state, identity, parts));
     }
+    if upper.starts_with("SHOW RANGES") {
+        return Some(super::super::cluster::show_ranges(state, identity));
+    }
+    if upper.starts_with("SHOW ROUTING") {
+        return Some(super::super::cluster::show_routing(state, identity));
+    }
+    if upper.starts_with("SHOW SCHEMA VERSION") {
+        return Some(super::super::cluster::show_schema_version(state, identity));
+    }
 
     // Introspection.
     if upper.starts_with("SHOW USERS") {
