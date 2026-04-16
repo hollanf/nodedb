@@ -1,6 +1,7 @@
 pub mod bootstrap;
 pub mod catalog;
 pub mod circuit_breaker;
+pub mod closed_timestamp;
 pub mod cluster_info;
 pub mod conf_change;
 pub mod cross_shard_txn;
@@ -12,6 +13,7 @@ pub mod distributed_spatial;
 pub mod distributed_timeseries;
 pub mod distributed_vector;
 pub mod error;
+pub mod follower_read;
 pub mod forward;
 pub mod ghost;
 pub mod ghost_sweeper;
@@ -43,6 +45,7 @@ pub mod wire;
 
 pub use bootstrap::{ClusterConfig, ClusterState, JoinRetryPolicy, start_cluster};
 pub use catalog::ClusterCatalog;
+pub use closed_timestamp::ClosedTimestampTracker;
 pub use cluster_info::{
     ClusterInfoSnapshot, ClusterObserver, GroupSnapshot, GroupStatusProvider, PeerSnapshot,
 };
@@ -52,6 +55,7 @@ pub use decommission::{
     DecommissionSafetyError, MetadataProposer, check_can_decommission, plan_full_decommission,
 };
 pub use error::{ClusterError, Result};
+pub use follower_read::{FollowerReadGate, ReadLevel};
 pub use forward::{NoopPlanExecutor, PlanExecutor};
 pub use ghost::{GhostStub, GhostTable};
 pub use health::{HealthConfig, HealthMonitor};
