@@ -46,6 +46,14 @@ pub struct NetworkTuning {
     pub drain_timeout_secs: u64,
     #[serde(default = "default_max_frame_size")]
     pub max_frame_size: u32,
+    /// Hard cap on the total payload bytes a single dispatched query may
+    /// accumulate across streamed partials in the Control Plane. Any
+    /// query whose combined response exceeds this is cancelled and the
+    /// session sees a typed `ExecutionLimitExceeded` — prevents a
+    /// runaway `SELECT *` from a scheduled job (or any caller) from
+    /// filling Control-Plane RAM.
+    #[serde(default = "default_max_query_result_bytes")]
+    pub max_query_result_bytes: u64,
 }
 
 impl Default for NetworkTuning {
@@ -59,6 +67,7 @@ impl Default for NetworkTuning {
             token_refresh_window_secs: default_token_refresh_window_secs(),
             drain_timeout_secs: default_drain_timeout_secs(),
             max_frame_size: default_max_frame_size(),
+            max_query_result_bytes: default_max_query_result_bytes(),
         }
     }
 }
@@ -86,6 +95,12 @@ fn default_drain_timeout_secs() -> u64 {
 }
 fn default_max_frame_size() -> u32 {
     16 * 1024 * 1024
+}
+fn default_max_query_result_bytes() -> u64 {
+    // 1 GiB — enough headroom for legitimate analytic scans while
+    // preventing an unbounded result-set from pinning Control-Plane
+    // RAM. Configurable via `[tuning.network] max_query_result_bytes`.
+    1024 * 1024 * 1024
 }
 
 /// WAL writer and double-write buffer tuning.

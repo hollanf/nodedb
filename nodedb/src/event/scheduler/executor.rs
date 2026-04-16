@@ -26,6 +26,7 @@ use crate::control::state::SharedState;
 use crate::types::TenantId;
 
 use super::cron::CronExpr;
+use super::dispatcher::{DispatchOutcome, JobDispatcher, JobDispatcherConfig};
 use super::history::JobHistoryStore;
 use super::registry::ScheduleRegistry;
 use super::types::{JobRun, ScheduleDef, ScheduleScope};
@@ -56,18 +57,32 @@ async fn scheduler_loop(
     let running: Arc<std::sync::Mutex<HashSet<(u32, String)>>> =
         Arc::new(std::sync::Mutex::new(HashSet::new()));
 
+    // Bounded job dispatcher — caps concurrency (from SchedulerTuning)
+    // and owns the shutdown bus every job observes. The result-byte
+    // ceiling is advisory for callers that have a planner estimate;
+    // the scheduler enforces memory by routing each job through the
+    // statement executor's `ExecutionBudget` wall-clock timeout below.
+    let sched_tuning = &state.tuning.scheduler;
+    let dispatcher = Arc::new(JobDispatcher::new(JobDispatcherConfig {
+        max_concurrent_jobs: sched_tuning.max_concurrent_jobs,
+        max_result_bytes: u64::MAX,
+    }));
+    let job_timeout_secs = sched_tuning.job_timeout_secs;
+
     loop {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(1)) => {}
             _ = shutdown.changed() => {
                 if *shutdown.borrow() {
                     debug!("scheduler shutting down");
+                    dispatcher.shutdown_and_drain().await;
                     return;
                 }
             }
         }
 
         if *shutdown.borrow() {
+            dispatcher.shutdown_and_drain().await;
             return;
         }
 
@@ -151,10 +166,17 @@ async fn scheduler_loop(
             let running_clone = Arc::clone(&running);
             let sched_clone = sched.clone();
 
-            // Spawn each job as a separate task so the scheduler loop doesn't block.
-            // The task removes itself from `running` on completion.
-            tokio::spawn(async move {
-                let result = execute_job(&state_clone, &sched_clone).await;
+            // Dispatch through the bounded dispatcher. Rejection at the
+            // concurrency cap surfaces as a recorded failure — the job
+            // simply didn't run this tick, rather than starving the
+            // Tokio runtime with unbounded parallel SQL.
+            let outcome = dispatcher.try_spawn(move |mut shutdown_rx| async move {
+                let result = tokio::select! {
+                    r = execute_job(&state_clone, &sched_clone, job_timeout_secs) => r,
+                    _ = shutdown_rx.changed() => {
+                        return Err("scheduler shutdown".to_string());
+                    }
+                };
                 let now_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
@@ -190,11 +212,23 @@ async fn scheduler_loop(
                     warn!(error = %e, "failed to record job history");
                 }
 
-                // Remove from running set — allows next scheduled fire.
                 let key = (sched_clone.tenant_id, sched_clone.name.clone());
                 let mut guard = running_clone.lock().unwrap_or_else(|p| p.into_inner());
                 guard.remove(&key);
+                Ok(())
             });
+
+            if outcome == DispatchOutcome::OverBudget {
+                // Release the running-set slot we reserved — the job
+                // didn't actually start.
+                let mut guard = running.lock().unwrap_or_else(|p| p.into_inner());
+                guard.remove(&key);
+                warn!(
+                    schedule = %sched.name,
+                    max_concurrent = sched_tuning.max_concurrent_jobs,
+                    "scheduled job rejected: concurrency cap reached"
+                );
+            }
         }
     }
 }
@@ -305,14 +339,31 @@ fn is_raft_group_healthy(sched: &ScheduleDef, state: &SharedState) -> bool {
     true
 }
 
-/// Execute a single scheduled job.
+/// Execute a single scheduled job under a wall-clock `ExecutionBudget`.
 ///
-/// Returns the duration in milliseconds on success.
-async fn execute_job(state: &SharedState, sched: &ScheduleDef) -> crate::Result<u64> {
+/// `job_timeout_secs` bounds total statement-executor time for the job,
+/// so a runaway body cannot hold `Arc<SharedState>` past the shutdown
+/// deadline. Returns the duration in milliseconds on success.
+async fn execute_job(
+    state: &SharedState,
+    sched: &ScheduleDef,
+    job_timeout_secs: u64,
+) -> crate::Result<u64> {
+    use crate::control::planner::procedural::executor::fuel::ExecutionBudget;
+
     let start = std::time::Instant::now();
     let identity = scheduler_identity(TenantId::new(sched.tenant_id), &sched.owner);
 
-    // Parse and execute the body as procedural SQL.
+    // Pre-execution guard: reject unbounded `SELECT *` bodies before we
+    // dispatch a single task, so the runtime byte ceiling isn't the only
+    // thing standing between a careless schedule and hours of wasted
+    // scanning.
+    if let Err(msg) = super::body_guard::validate_scheduled_body(&sched.body_sql) {
+        return Err(crate::Error::BadRequest {
+            detail: format!("schedule '{}': {msg}", sched.name),
+        });
+    }
+
     let block = crate::control::planner::procedural::parse_block(&sched.body_sql).map_err(|e| {
         crate::Error::BadRequest {
             detail: format!("schedule '{}' body parse error: {e}", sched.name),
@@ -322,10 +373,15 @@ async fn execute_job(state: &SharedState, sched: &ScheduleDef) -> crate::Result<
     let executor =
         StatementExecutor::new(state, identity.clone(), TenantId::new(sched.tenant_id), 0);
     let bindings = RowBindings::empty();
+    // One budget for the whole job — retries consume the same wall-clock
+    // and fuel pool as the first attempt so a runaway job can't double
+    // its timeout by failing once.
+    let mut budget = ExecutionBudget::new(100_000, job_timeout_secs);
 
-    // Execute with one retry — if a vShard migrated mid-job, the scatter-gather
-    // layer retries on the new location. Jobs are idempotent at the statement level.
-    match executor.execute_block(&block, &bindings).await {
+    match executor
+        .execute_block_with_budget(&block, &bindings, &mut budget)
+        .await
+    {
         Ok(()) => {}
         Err(first_err) => {
             tracing::warn!(
@@ -333,10 +389,11 @@ async fn execute_job(state: &SharedState, sched: &ScheduleDef) -> crate::Result<
                 error = %first_err,
                 "scheduled job failed, retrying once (possible vShard migration)"
             );
-            // Retry with a fresh executor.
             let retry_executor =
                 StatementExecutor::new(state, identity, TenantId::new(sched.tenant_id), 0);
-            retry_executor.execute_block(&block, &bindings).await?;
+            retry_executor
+                .execute_block_with_budget(&block, &bindings, &mut budget)
+                .await?;
         }
     }
 
