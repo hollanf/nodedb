@@ -5,6 +5,7 @@
 //! reads, comparisons, and hashing all work on raw byte offsets.
 
 pub mod aggregate;
+pub mod aggregate_helpers;
 pub mod compare;
 pub mod field;
 pub mod filter;

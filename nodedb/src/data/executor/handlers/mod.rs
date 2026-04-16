@@ -1,3 +1,4 @@
+mod accum;
 pub mod aggregate;
 pub mod bulk_dml;
 pub mod columnar_agg;
