@@ -244,7 +244,7 @@ pub async fn restore_tenant(
         })?;
         let mut aad = [0u8; nodedb_wal::record::HEADER_SIZE];
         aad[..6].copy_from_slice(b"BACKUP");
-        key.decrypt(0, &aad, &raw_bytes[4..])
+        key.decrypt(key.epoch(), 0, &aad, &raw_bytes[4..])
             .map_err(|e| sqlstate_error("XX000", &format!("backup decryption failed: {e}")))?
     } else {
         raw_bytes

@@ -112,10 +112,17 @@ impl QueryParser for NodeDbQueryParser {
             .unwrap_or(1);
         let (param_types, result_fields) = self.try_infer_types(sql, types, tenant_id);
 
+        // If type inference produced no result fields and the SQL matches a
+        // known DSL prefix, mark the statement as a DSL passthrough. The
+        // Execute handler will route it through the full DSL dispatcher
+        // (same as the simple-query path) instead of `execute_planned_sql_with_params`.
+        let is_dsl = result_fields.is_empty() && is_dsl_statement(sql);
+
         Ok(ParsedStatement {
             sql: sql.to_owned(),
             param_types,
             result_fields,
+            is_dsl,
         })
     }
 
@@ -134,6 +141,25 @@ impl QueryParser for NodeDbQueryParser {
     ) -> PgWireResult<Vec<FieldInfo>> {
         Ok(stmt.result_fields.clone())
     }
+}
+
+/// Return true if `sql` starts with a DSL keyword that `plan_sql` cannot parse.
+///
+/// Mirrors the prefix checks in `ddl/router/dsl.rs` so the extended-query
+/// Parse handler can mark such statements as DSL passthroughs and route them
+/// through the DSL dispatcher at Execute time.
+fn is_dsl_statement(sql: &str) -> bool {
+    let upper = sql.trim().to_uppercase();
+    upper.starts_with("SEARCH ")
+        || upper.starts_with("GRAPH ")
+        || upper.starts_with("MATCH ")
+        || upper.starts_with("OPTIONAL MATCH ")
+        || upper.starts_with("CRDT MERGE ")
+        || upper.starts_with("UPSERT INTO ")
+        || upper.starts_with("CREATE VECTOR INDEX ")
+        || upper.starts_with("CREATE FULLTEXT INDEX ")
+        || upper.starts_with("CREATE SEARCH INDEX ")
+        || upper.starts_with("CREATE SPARSE INDEX ")
 }
 
 /// Count $1, $2, ... placeholders in SQL text.

@@ -21,4 +21,8 @@ pub struct ParsedStatement {
     /// Result column schema inferred from the logical plan.
     /// Empty for DML statements (INSERT/UPDATE/DELETE).
     pub result_fields: Vec<FieldInfo>,
+    /// True when the SQL is a DSL statement (SEARCH, GRAPH, MATCH, UPSERT INTO,
+    /// etc.) that `plan_sql` cannot parse. The Execute handler routes these
+    /// through the full DSL dispatcher instead of `execute_planned_sql_with_params`.
+    pub is_dsl: bool,
 }

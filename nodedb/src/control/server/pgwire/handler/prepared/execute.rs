@@ -5,14 +5,17 @@
 //! all DDL dispatch, transaction handling, and permission checks.
 
 use std::fmt::Debug;
+use std::sync::Arc;
 
 use bytes::Bytes;
+use futures::StreamExt;
 use futures::sink::Sink;
 use pgwire::api::portal::Portal;
-use pgwire::api::results::Response;
+use pgwire::api::results::{DataRowEncoder, FieldInfo, QueryResponse, Response};
 use pgwire::api::{ClientInfo, ClientPortalStore, Type};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 use pgwire::messages::PgWireBackendMessage;
+use sonic_rs;
 
 use super::super::core::NodeDbPgHandler;
 use super::statement::ParsedStatement;
@@ -39,6 +42,15 @@ impl NodeDbPgHandler {
         let stmt = &portal.statement.statement;
         let tenant_id = identity.tenant_id;
 
+        // DSL passthroughs (SEARCH, GRAPH, MATCH, UPSERT INTO, etc.) cannot be
+        // handled by the planned-SQL path. Route them through the same full DSL
+        // dispatcher used by the simple-query handler. DSL statements do not use
+        // SQL parameter placeholders, so bound parameters are intentionally ignored.
+        if stmt.is_dsl {
+            let mut results = self.execute_sql(&identity, &addr, &stmt.sql).await?;
+            return Ok(results.pop().unwrap_or(Response::EmptyQuery));
+        }
+
         // Convert pgwire binary parameters to typed ParamValues for AST binding.
         let params = convert_portal_params(&portal.parameters, &stmt.param_types)?;
 
@@ -46,8 +58,118 @@ impl NodeDbPgHandler {
         let mut results = self
             .execute_planned_sql_with_params(&identity, &stmt.sql, tenant_id, &addr, &params)
             .await?;
-        Ok(results.pop().unwrap_or(Response::EmptyQuery))
+        let result = results.pop().unwrap_or(Response::EmptyQuery);
+
+        // When the statement declared typed result columns via Describe, the
+        // client expects DataRow messages with one field per declared column.
+        //
+        // The generic `payload_to_response` path produces a single-column
+        // QueryResponse with the full JSON as one text field. In the extended-
+        // query protocol the RowDescription was already sent by Describe, so
+        // pgwire sends only the DataRow messages on Execute — the client maps
+        // them against the previously-described schema. A 1-field row against
+        // an N-column schema causes null values for columns 2..N.
+        //
+        // Fix: when result_fields is non-empty, consume the single-field stream,
+        // parse each JSON object, and re-encode with one pgwire field per
+        // declared column.
+        if !stmt.result_fields.is_empty() {
+            reproject_response(result, &stmt.result_fields).await
+        } else {
+            Ok(result)
+        }
     }
+}
+
+/// Re-encode a query response to match the column schema declared by Describe.
+///
+/// Each DataRow from `payload_to_response` contains a single text field holding
+/// a JSON object. We parse each object and extract fields in `result_fields`
+/// order, producing a new QueryResponse whose rows have one field per declared
+/// column. Missing fields are sent as SQL NULL.
+///
+/// Non-query responses (execution tags) pass through unchanged.
+async fn reproject_response(
+    response: Response,
+    result_fields: &[FieldInfo],
+) -> PgWireResult<Response> {
+    let qr = match response {
+        Response::Query(qr) => qr,
+        other => return Ok(other),
+    };
+
+    let schema = Arc::new(result_fields.to_vec());
+    let field_names: Vec<String> = result_fields.iter().map(|f| f.name().to_string()).collect();
+
+    // Collect JSON objects from the single-column stream produced by
+    // payload_to_response. Each DataRow has exactly one field: a JSON string.
+    let json_rows = collect_json_rows(qr).await?;
+
+    let mut pgwire_rows = Vec::with_capacity(json_rows.len());
+    for obj in &json_rows {
+        let mut encoder = DataRowEncoder::new(schema.clone());
+        for name in &field_names {
+            match obj.get(name) {
+                None | Some(serde_json::Value::Null) => {
+                    let _ = encoder.encode_field(&Option::<String>::None);
+                }
+                Some(v) => {
+                    let text = match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    let _ = encoder.encode_field(&text);
+                }
+            }
+        }
+        pgwire_rows.push(Ok(encoder.take_row()));
+    }
+
+    Ok(Response::Query(QueryResponse::new(
+        schema,
+        futures::stream::iter(pgwire_rows),
+    )))
+}
+
+/// Consume a `QueryResponse` stream and decode the single text field of each
+/// `DataRow` as a JSON object.
+///
+/// `payload_to_response` always produces rows where field[0] is a JSON string.
+/// The pgwire `DataRow.data` format is: for each field, 4-byte length (i32,
+/// big-endian) followed by the field bytes. `-1` (0xFFFFFFFF) means SQL NULL.
+async fn collect_json_rows(mut qr: QueryResponse) -> PgWireResult<Vec<serde_json::Value>> {
+    let mut rows = Vec::new();
+    while let Some(row_result) = qr.data_rows.next().await {
+        let row = row_result?;
+        // Decode field[0] from the raw DataRow wire format.
+        let text = decode_first_field_text(&row.data);
+        if let Some(t) = text {
+            let val: serde_json::Value =
+                sonic_rs::from_str(t).unwrap_or_else(|_| serde_json::Value::String(t.to_string()));
+            rows.push(val);
+        }
+    }
+    Ok(rows)
+}
+
+/// Decode the text bytes of the first field from a pgwire `DataRow` wire buffer.
+///
+/// Wire format: for each field, 4-byte big-endian length followed by bytes.
+/// Returns `None` for NULL fields or invalid encodings.
+fn decode_first_field_text(data: &bytes::BytesMut) -> Option<&str> {
+    if data.len() < 4 {
+        return None;
+    }
+    let len = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+    if len < 0 {
+        // NULL field.
+        return None;
+    }
+    let len = len as usize;
+    if data.len() < 4 + len {
+        return None;
+    }
+    std::str::from_utf8(&data[4..4 + len]).ok()
 }
 
 /// Convert pgwire portal parameters to typed `ParamValue` for AST-level binding.
@@ -155,5 +277,28 @@ mod tests {
             let result = convert_portal_params(&params, &types).unwrap();
             assert!(matches!(result[0], nodedb_sql::ParamValue::Bool(v) if v == expected));
         }
+    }
+
+    #[test]
+    fn decode_first_field_text_normal() {
+        // Wire format: 4-byte length (big-endian) + UTF-8 bytes.
+        let text = b"hello";
+        let mut data = bytes::BytesMut::new();
+        data.extend_from_slice(&(text.len() as i32).to_be_bytes());
+        data.extend_from_slice(text);
+        assert_eq!(decode_first_field_text(&data), Some("hello"));
+    }
+
+    #[test]
+    fn decode_first_field_text_null() {
+        // -1 length means SQL NULL.
+        let mut data = bytes::BytesMut::new();
+        data.extend_from_slice(&(-1i32).to_be_bytes());
+        assert_eq!(decode_first_field_text(&data), None);
+    }
+
+    #[test]
+    fn decode_first_field_text_empty() {
+        assert_eq!(decode_first_field_text(&bytes::BytesMut::new()), None);
     }
 }
