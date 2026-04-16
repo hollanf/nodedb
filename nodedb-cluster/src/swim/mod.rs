@@ -28,6 +28,7 @@ pub mod error;
 pub mod incarnation;
 pub mod member;
 pub mod membership;
+pub mod subscriber;
 pub mod wire;
 
 pub use bootstrap::{SwimHandle, spawn};
@@ -40,4 +41,5 @@ pub use error::SwimError;
 pub use incarnation::Incarnation;
 pub use member::{Member, MemberState};
 pub use membership::{MembershipList, MembershipSnapshot, merge_update};
+pub use subscriber::MembershipSubscriber;
 pub use wire::{Ack, Nack, NackReason, Ping, PingReq, ProbeId, SwimMessage};

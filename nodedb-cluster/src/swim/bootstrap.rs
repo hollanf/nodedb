@@ -29,6 +29,7 @@ use super::incarnation::Incarnation;
 use super::member::MemberState;
 use super::member::record::MemberUpdate;
 use super::membership::MembershipList;
+use super::subscriber::MembershipSubscriber;
 
 /// Owns a running SWIM detector and its shutdown plumbing.
 ///
@@ -89,6 +90,20 @@ pub async fn spawn(
     seeds: Vec<SocketAddr>,
     transport: Arc<dyn Transport>,
 ) -> Result<SwimHandle, SwimError> {
+    spawn_with_subscribers(cfg, local_id, local_addr, seeds, transport, Vec::new()).await
+}
+
+/// Same as [`spawn`] but installs the given [`MembershipSubscriber`]s
+/// on the detector before its run loop starts, so every state
+/// transition is observed from the very first probe round.
+pub async fn spawn_with_subscribers(
+    cfg: SwimConfig,
+    local_id: NodeId,
+    local_addr: SocketAddr,
+    seeds: Vec<SocketAddr>,
+    transport: Arc<dyn Transport>,
+    subscribers: Vec<Arc<dyn MembershipSubscriber>>,
+) -> Result<SwimHandle, SwimError> {
     cfg.validate()?;
 
     let membership = Arc::new(MembershipList::new_local(
@@ -112,11 +127,12 @@ pub async fn spawn(
     }
 
     let initial_inc = cfg.initial_incarnation;
-    let detector = Arc::new(FailureDetector::new(
+    let detector = Arc::new(FailureDetector::with_subscribers(
         cfg,
         Arc::clone(&membership),
         transport,
         ProbeScheduler::new(),
+        subscribers,
     ));
 
     // Prime the dissemination queue with our own Alive record so the

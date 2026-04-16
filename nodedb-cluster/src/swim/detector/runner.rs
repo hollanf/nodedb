@@ -19,6 +19,7 @@ use crate::swim::incarnation::Incarnation;
 use crate::swim::member::MemberState;
 use crate::swim::member::record::MemberUpdate;
 use crate::swim::membership::{MembershipList, MergeOutcome};
+use crate::swim::subscriber::MembershipSubscriber;
 use crate::swim::wire::{Ack, Ping, PingReq, ProbeId, SwimMessage};
 
 use super::probe_round::{InflightProbes, ProbeOutcome, ProbeRound};
@@ -41,6 +42,7 @@ pub struct FailureDetector {
     dissemination: Arc<DisseminationQueue>,
     probe_counter: AtomicU64,
     local_incarnation: Mutex<Incarnation>,
+    subscribers: Vec<Arc<dyn MembershipSubscriber>>,
 }
 
 impl FailureDetector {
@@ -51,6 +53,18 @@ impl FailureDetector {
         membership: Arc<MembershipList>,
         transport: Arc<dyn Transport>,
         scheduler: ProbeScheduler,
+    ) -> Self {
+        Self::with_subscribers(cfg, membership, transport, scheduler, Vec::new())
+    }
+
+    /// Construct with a list of [`MembershipSubscriber`]s that will be
+    /// notified on every member state transition.
+    pub fn with_subscribers(
+        cfg: SwimConfig,
+        membership: Arc<MembershipList>,
+        transport: Arc<dyn Transport>,
+        scheduler: ProbeScheduler,
+        subscribers: Vec<Arc<dyn MembershipSubscriber>>,
     ) -> Self {
         let initial_inc = cfg.initial_incarnation;
         Self {
@@ -63,7 +77,30 @@ impl FailureDetector {
             dissemination: Arc::new(DisseminationQueue::new()),
             probe_counter: AtomicU64::new(0),
             local_incarnation: Mutex::new(initial_inc),
+            subscribers,
         }
+    }
+
+    /// Apply an update via [`apply_and_disseminate`] while notifying
+    /// every subscriber of any resulting state transition. Returns the
+    /// raw [`MergeOutcome`] so callers can still react to
+    /// `SelfRefute` etc.
+    fn apply_and_notify(&self, update: &MemberUpdate) -> MergeOutcome {
+        let old_state = self.membership.get(&update.node_id).map(|m| m.state);
+        let outcome = apply_and_disseminate(&self.membership, &self.dissemination, update);
+        if self.subscribers.is_empty() {
+            return outcome;
+        }
+        let new_state = match self.membership.get(&update.node_id) {
+            Some(m) => m.state,
+            None => return outcome,
+        };
+        if old_state != Some(new_state) {
+            for sub in &self.subscribers {
+                sub.on_state_change(&update.node_id, old_state, new_state);
+            }
+        }
+        outcome
     }
 
     /// Shared reference to the dissemination queue. Tests use it to
@@ -78,7 +115,7 @@ impl FailureDetector {
     /// local incarnation so subsequent probes advertise the new value.
     async fn ingest_piggyback(&self, piggyback: &[MemberUpdate]) {
         for update in piggyback {
-            let outcome = apply_and_disseminate(&self.membership, &self.dissemination, update);
+            let outcome = self.apply_and_notify(update);
             if let MergeOutcome::SelfRefute { new_incarnation } = outcome {
                 let mut guard = self.local_incarnation.lock().await;
                 if new_incarnation > *guard {
@@ -140,7 +177,7 @@ impl FailureDetector {
                     state: MemberState::Dead,
                     incarnation: member.incarnation,
                 };
-                apply_and_disseminate(&self.membership, &self.dissemination, &dead_update);
+                self.apply_and_notify(&dead_update);
             }
         }
 
@@ -174,7 +211,7 @@ impl FailureDetector {
                         state: MemberState::Suspect,
                         incarnation: member.incarnation,
                     };
-                    apply_and_disseminate(&self.membership, &self.dissemination, &suspect_update);
+                    self.apply_and_notify(&suspect_update);
                     let cluster_size = self.membership.len();
                     self.suspicion.lock().await.arm(
                         target,
