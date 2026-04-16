@@ -1,4 +1,4 @@
-//! Liveness-driven routing invalidation (checklist item E.2).
+//! Liveness-driven routing invalidation.
 //!
 //! [`RoutingLivenessHook`] is a [`MembershipSubscriber`] that clears
 //! the leader hint for every Raft group whose leaseholder has just
@@ -6,14 +6,9 @@
 //! detector. After the hook fires, the next query that consults the
 //! routing table observes `leader == 0` (the "no leader known"
 //! sentinel) and falls through to a fresh leader discovery via the
-//! existing NotLeader-triggered election path — which is exactly the
-//! behaviour the checklist requires:
-//!
-//! > 1. The routing cache invalidates all vShards whose leaseholder
-//! >    was that node.
-//! > 2. The next query against those vShards gets `NotLeader`,
-//! >    triggers a leader election, and updates the routing table.
-//! > 3. Clients see at most one retry.
+//! existing `NotLeader`-triggered election path. Clients see at most
+//! one retry: the stale hint, the failed dispatch, and a refreshed
+//! leader lookup.
 //!
 //! The hook is storage-agnostic: it holds `Arc<RwLock<RoutingTable>>`
 //! and a resolver closure that maps the string-keyed SWIM `NodeId`

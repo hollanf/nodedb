@@ -145,6 +145,26 @@ impl CircuitBreaker {
             .unwrap_or(CircuitState::Closed)
     }
 
+    /// Return the ids of every peer whose breaker is currently Open.
+    ///
+    /// Used by the reachability driver to find peers that need an
+    /// active probe — without a periodic poke these peers never
+    /// transition back to HalfOpen (no traffic → no `check()` call
+    /// → no cooldown re-evaluation).
+    pub fn open_peers(&self) -> Vec<u64> {
+        let peers = self.peers.read().unwrap_or_else(|p| p.into_inner());
+        peers
+            .iter()
+            .filter_map(|(id, b)| {
+                if b.state == CircuitState::Open {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Get consecutive failure count for a peer.
     pub fn failure_count(&self, peer: u64) -> u32 {
         let peers = self.peers.read().unwrap_or_else(|p| p.into_inner());
