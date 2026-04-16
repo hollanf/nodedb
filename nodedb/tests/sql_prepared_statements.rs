@@ -23,3 +23,86 @@ async fn prepare_execute_deallocate_lifecycle() {
     server.exec("DEALLOCATE ALL").await.unwrap();
     server.expect_error("EXECUTE q1", "does not exist").await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn prepared_search_vector_dsl() {
+    let server = TestServer::start().await;
+
+    // Create a document collection and a vector index on the embedding field.
+    server
+        .exec("CREATE COLLECTION vec_ep TYPE document")
+        .await
+        .unwrap();
+    server
+        .exec("CREATE VECTOR INDEX idx_vec_ep ON vec_ep METRIC cosine DIM 3")
+        .await
+        .unwrap();
+
+    // Insert a document with an embedding vector.
+    server
+        .exec("INSERT INTO vec_ep (id, embedding) VALUES ('v1', ARRAY[1.0, 0.0, 0.0])")
+        .await
+        .unwrap();
+
+    // DSL SEARCH statements must not be rejected by the extended-protocol path
+    // with "Expected: an SQL statement". The statement should succeed and return
+    // results (or an empty result set — the key is no parse-time rejection).
+    let result = server
+        .query_text("SEARCH vec_ep USING VECTOR(embedding, ARRAY[1.0, 0.0, 0.0], 3)")
+        .await;
+    assert!(
+        result.is_ok(),
+        "SEARCH via extended protocol must not be rejected: {:?}",
+        result.err()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn prepared_upsert_dsl() {
+    let server = TestServer::start().await;
+
+    server.exec("CREATE COLLECTION upsert_ep").await.unwrap();
+
+    // UPSERT INTO DSL statements must not be rejected by the extended-protocol
+    // path with "Expected: an SQL statement".
+    let result = server
+        .exec("UPSERT INTO upsert_ep { id: 'u1', name: 'alice' }")
+        .await;
+    assert!(
+        result.is_ok(),
+        "UPSERT INTO via extended protocol must not be rejected: {:?}",
+        result.err()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn prepared_select_strict_doc_returns_data() {
+    let server = TestServer::start().await;
+
+    server
+        .exec(
+            "CREATE COLLECTION strict_ep TYPE DOCUMENT STRICT \
+             (id TEXT PRIMARY KEY, name TEXT)",
+        )
+        .await
+        .unwrap();
+    server
+        .exec("INSERT INTO strict_ep (id, name) VALUES ('a', 'alice')")
+        .await
+        .unwrap();
+
+    // SELECT on a STRICT doc collection via the extended-query protocol must
+    // return the inserted row with actual column values, not null/empty columns.
+    let rows = server
+        .query_text("SELECT id, name FROM strict_ep WHERE id = 'a'")
+        .await
+        .unwrap();
+    assert!(!rows.is_empty(), "SELECT should return the inserted row");
+
+    // Regression guard: the row must contain actual data, not null.
+    assert!(
+        rows[0].contains("alice"),
+        "extended protocol must not return null columns for STRICT doc, got: {:?}",
+        rows[0]
+    );
+}
