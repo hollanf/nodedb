@@ -1,4 +1,12 @@
 //! Health check endpoints.
+//!
+//! | Endpoint          | Method | Purpose                     | k8s probe     |
+//! |-------------------|--------|-----------------------------|---------------|
+//! | `/health/live`    | GET    | Process alive (always 200)  | liveness      |
+//! | `/healthz`        | GET    | Ready to serve traffic      | readiness     |
+//! | `/health`         | GET    | Liveness with cluster info  | —             |
+//! | `/health/ready`   | GET    | WAL recovered               | readiness alt |
+//! | `/health/drain`   | POST   | Trigger graceful drain      | preStop hook  |
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -7,13 +15,36 @@ use serde_json::json;
 
 use super::super::auth::AppState;
 
-/// GET /healthz — k8s-style readiness/liveness probe.
+/// GET /health/live — unconditional liveness probe.
 ///
-/// Returns `200 OK` when the node has reached `GatewayEnable` and is
-/// serving traffic. Returns `503 Service Unavailable` during startup or if
-/// startup has failed. This endpoint bypasses the startup gate middleware
-/// and is always reachable, making it suitable as a k8s readiness probe.
+/// Always returns 200. If this endpoint fails to respond, the
+/// process is dead and should be restarted. No internal state is
+/// checked — the mere ability to respond proves the event loop and
+/// HTTP listener are alive.
+pub async fn live() -> impl IntoResponse {
+    (StatusCode::OK, axum::Json(json!({ "status": "alive" })))
+}
+
+/// GET /healthz — k8s-style readiness probe.
+///
+/// Returns `200 OK` when the node has reached `GatewayEnable`, is
+/// serving traffic, and is NOT draining/decommissioned. Returns
+/// `503 Service Unavailable` during startup, after startup failure,
+/// or when the node is being decommissioned.
 pub async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
+    // Check decommission state via the cluster observer (if present).
+    if let Some(obs) = state.shared.cluster_observer.get() {
+        let snap = obs.snapshot();
+        let label = snap.lifecycle_label();
+        if label == "draining" || label == "decommissioned" || label == "failed" {
+            let body = json!({
+                "status": "draining",
+                "lifecycle": label,
+                "node_id": state.shared.node_id,
+            });
+            return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body));
+        }
+    }
     let health = crate::control::startup::health::observe(&state.shared.startup);
     let (status, body) = crate::control::startup::health::to_http_response(&health);
     (status, axum::Json(body))
@@ -59,4 +90,32 @@ pub async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         "node_id": state.shared.node_id,
     });
     (status, axum::Json(body))
+}
+
+/// POST /health/drain — trigger graceful connection drain.
+///
+/// Signals the canonical `ShutdownWatch` so every background loop
+/// begins its cooperative exit. Subsequent `/healthz` calls return
+/// 503, which causes the k8s readiness probe to fail and the
+/// service mesh to stop routing new connections to this node.
+///
+/// Designed for use as a k8s `preStop` hook:
+///
+/// ```yaml
+/// lifecycle:
+///   preStop:
+///     httpGet:
+///       path: /health/drain
+///       port: http
+/// ```
+pub async fn drain(State(state): State<AppState>) -> impl IntoResponse {
+    tracing::info!(node_id = state.shared.node_id, "drain requested via HTTP");
+    state.shared.shutdown.signal();
+    (
+        StatusCode::OK,
+        axum::Json(json!({
+            "status": "draining",
+            "node_id": state.shared.node_id,
+        })),
+    )
 }

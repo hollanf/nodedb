@@ -3,7 +3,9 @@
 //! Endpoints:
 //! - GET  /healthz      — k8s readiness/liveness (always reachable; 503 until GatewayEnable)
 //! - GET  /health       — liveness
+//! - GET  /health/live  — unconditional liveness probe
 //! - GET  /health/ready — readiness (WAL recovered)
+//! - POST /health/drain — trigger graceful drain
 //! - GET  /metrics      — Prometheus-format metrics (requires monitor role)
 //! - POST /query        — execute DDL via HTTP (requires auth)
 
@@ -29,7 +31,9 @@ fn build_router(state: AppState) -> Router {
         // /healthz is always reachable — returns 503 during startup, 200 after.
         .route("/healthz", get(routes::health::healthz))
         .route("/health", get(routes::health::health))
+        .route("/health/live", get(routes::health::live))
         .route("/health/ready", get(routes::health::ready))
+        .route("/health/drain", post(routes::health::drain))
         .route("/metrics", get(routes::metrics::metrics))
         .route("/query", post(routes::query::query))
         .route("/status", get(routes::status::status))
@@ -98,8 +102,8 @@ fn build_router(state: AppState) -> Router {
 
 /// Axum middleware that gates non-health routes on [`StartupPhase::GatewayEnable`].
 ///
-/// `/healthz`, `/health`, and `/health/ready` are always let through so k8s
-/// readiness probes can observe startup progress. All other routes receive a
+/// All `/health*` paths (liveness, readiness, drain) are always let through so
+/// k8s probes can observe startup progress. All other routes receive a
 /// `503 Service Unavailable` until the node reaches `GatewayEnable`.
 async fn startup_gate_middleware(
     State(app_state): State<AppState>,
