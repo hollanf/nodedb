@@ -16,8 +16,10 @@ use std::time::Duration;
 use tracing::{debug, info};
 
 use crate::conf_change::{ConfChange, ConfChangeType};
+use crate::decommission::MetadataProposer;
 use crate::error::{ClusterError, Result};
 use crate::ghost::{GhostStub, GhostTable};
+use crate::metadata_group::{MetadataEntry, RoutingChange};
 use crate::migration::{MigrationPhase, MigrationState};
 use crate::multi_raft::MultiRaft;
 use crate::routing::RoutingTable;
@@ -65,6 +67,13 @@ pub struct MigrationExecutor {
     topology: Arc<RwLock<ClusterTopology>>,
     transport: Arc<NexarTransport>,
     ghost_table: Arc<Mutex<GhostTable>>,
+    /// Optional metadata proposer for replicated routing updates.
+    /// When set, Phase 3 cut-over proposes a `RoutingChange` through
+    /// the metadata Raft group so every node applies the routing
+    /// update atomically on commit. When `None`, falls back to
+    /// local-only routing mutation (used by tests that don't stand
+    /// up a metadata group).
+    metadata_proposer: Option<Arc<dyn MetadataProposer>>,
 }
 
 impl MigrationExecutor {
@@ -80,7 +89,15 @@ impl MigrationExecutor {
             topology,
             transport,
             ghost_table: Arc::new(Mutex::new(GhostTable::new())),
+            metadata_proposer: None,
         }
+    }
+
+    /// Attach a metadata proposer for replicated Phase 3 cut-over.
+    /// Production wiring calls this; tests may omit it for simplicity.
+    pub fn with_metadata_proposer(mut self, proposer: Arc<dyn MetadataProposer>) -> Self {
+        self.metadata_proposer = Some(proposer);
+        self
     }
 
     /// Access the ghost table (for scatter-gather resolution).
@@ -180,9 +197,11 @@ impl MigrationExecutor {
             "phase 1: adding target to raft group"
         );
 
-        // Add target node as a voter to the Raft group via ConfChange.
+        // Add target node as a LEARNER so it can catch up via Raft
+        // replication without participating in elections or voting.
+        // Promotion to voter happens after Phase 2 confirms catch-up.
         let change = ConfChange {
-            change_type: ConfChangeType::AddNode,
+            change_type: ConfChangeType::AddLearner,
             node_id: req.target_node,
         };
 
@@ -202,12 +221,13 @@ impl MigrationExecutor {
 
         // The ConfChange will be replicated and applied. The target node
         // receives the full log through Raft's normal replication.
-        // Mark base copy as complete immediately — Raft handles the transfer.
+        // Mark base copy as complete — Raft replication is now in
+        // progress; the real progress signal is match_index in Phase 2.
         state.update_base_copy(committed);
 
         debug!(
             vshard = req.vshard_id,
-            "phase 1 complete: target added to raft group"
+            "phase 1 complete: target added as learner to raft group"
         );
 
         Ok(())
@@ -313,9 +333,21 @@ impl MigrationExecutor {
             state.update_wal_catchup(leader_commit, target_match);
 
             if state.is_catchup_ready() {
+                // Learner has caught up — promote to voter so the
+                // group has enough replicas for a safe cut-over.
+                let promote = ConfChange {
+                    change_type: ConfChangeType::PromoteLearner,
+                    node_id: req.target_node,
+                };
+                {
+                    let mut mr = self.multi_raft.lock().unwrap_or_else(|p| p.into_inner());
+                    mr.propose_conf_change(group_id, &promote)?;
+                }
                 debug!(
                     vshard = req.vshard_id,
-                    leader_commit, target_match, "phase 2 complete: target caught up"
+                    leader_commit,
+                    target_match,
+                    "phase 2 complete: target caught up and promoted to voter"
                 );
                 return Ok(());
             }
@@ -331,15 +363,20 @@ impl MigrationExecutor {
         }
     }
 
-    /// Phase 3: Atomic routing table update via Raft.
+    /// Phase 3: Atomic routing table update.
+    ///
+    /// When a [`MetadataProposer`] is attached, the cut-over proposes
+    /// a `LeadershipTransfer` through the metadata Raft group so
+    /// every node applies the routing update atomically on commit.
+    /// Without a proposer (tests), falls back to a local-only
+    /// mutation.
     async fn phase3_cutover(
         &self,
         state: &mut MigrationState,
         group_id: u64,
         req: &MigrationRequest,
     ) -> Result<()> {
-        // Estimate pause (time to propose + commit the routing update).
-        let estimated_pause_us = 10_000; // ~10ms estimate for Raft round-trip.
+        let estimated_pause_us = 10_000;
 
         state.start_cutover(estimated_pause_us).map_err(|e| {
             state.fail(format!("cutover rejected: {e}"));
@@ -353,28 +390,23 @@ impl MigrationExecutor {
             estimated_pause_us, "phase 3: atomic cut-over"
         );
 
-        // Propose the routing update as a Raft entry so all nodes apply it
-        // atomically when committed. The entry is serialized as a ConfChange
-        // with a special routing marker that the applier interprets.
-        let routing_change = ConfChange {
-            change_type: ConfChangeType::AddNode,
-            node_id: req.target_node,
-        };
-        {
-            let mut mr = self.multi_raft.lock().unwrap_or_else(|p| p.into_inner());
-            mr.propose_conf_change(group_id, &routing_change)?;
-        }
-
-        // Update the local routing table. Other nodes update theirs when they
-        // apply the committed entry through their own applier.
-        {
+        // Propose the routing change. With a metadata proposer the
+        // `CacheApplier::with_live_state` on every node handles the
+        // actual routing mutation when the entry commits; without a
+        // proposer we mutate locally for backward-compat.
+        if let Some(proposer) = &self.metadata_proposer {
+            let entry = MetadataEntry::RoutingChange(RoutingChange::LeadershipTransfer {
+                group_id,
+                new_leader_node_id: req.target_node,
+            });
+            proposer.propose_and_wait(entry).await?;
+        } else {
             let mut routing = self.routing.write().unwrap_or_else(|p| p.into_inner());
-            routing.reassign_vshard(req.vshard_id, group_id);
+            routing.set_leader(group_id, req.target_node);
         }
 
-        // Install ghost stub on source so scatter-gather queries that arrive
-        // before the client refreshes its routing table are transparently
-        // forwarded to the new owner.
+        // Ghost stub so in-flight scatter-gather queries that still
+        // target the old leader are transparently forwarded.
         {
             let mut ghosts = self.ghost_table.lock().unwrap_or_else(|p| p.into_inner());
             ghosts.insert(GhostStub {
@@ -387,18 +419,13 @@ impl MigrationExecutor {
                     .as_millis() as u64,
             });
         }
-        debug!(
-            vshard = req.vshard_id,
-            target = req.target_node,
-            "ghost stub registered for transparent forwarding"
-        );
 
         let actual_pause_us = cutover_start.elapsed().as_micros() as u64;
         state.complete(actual_pause_us);
 
         debug!(
             vshard = req.vshard_id,
-            actual_pause_us, "phase 3 complete: routing updated via raft"
+            actual_pause_us, "phase 3 complete: routing updated"
         );
 
         Ok(())
@@ -521,14 +548,14 @@ mod tests {
             write_pause_budget_us: 500_000,
         };
 
-        // Phase 1 should succeed (adds node 2 to group 0).
+        // Phase 1 should succeed (adds node 2 as learner to group 0).
         executor
             .phase1_base_copy(&mut state, 0, &req)
             .await
             .unwrap();
 
-        // Verify: the ConfChange was proposed (it's in the Raft log).
-        // The actual application happens when committed, which requires tick().
+        // Verify: the ConfChange (AddLearner) was proposed in the Raft log.
+        // Application happens on next tick/commit cycle.
     }
 
     #[test]
