@@ -106,6 +106,11 @@ impl MetadataCache {
                 }
             }
             MetadataEntry::DescriptorDrainEnd { .. } => {}
+            MetadataEntry::Batch { entries } => {
+                for sub in entries {
+                    self.apply(index, sub);
+                }
+            }
         }
     }
 }

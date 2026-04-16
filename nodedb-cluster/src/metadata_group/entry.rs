@@ -39,6 +39,14 @@ pub enum MetadataEntry {
         payload: Vec<u8>,
     },
 
+    /// Atomic batch of metadata entries proposed by a transactional
+    /// DDL session (`BEGIN; CREATE ...; CREATE ...; COMMIT;`). The
+    /// applier unpacks and applies each sub-entry in order at a
+    /// single raft log index, so either all commit or none do.
+    Batch {
+        entries: Vec<MetadataEntry>,
+    },
+
     // ── Topology / routing ─────────────────────────────────────────────
     TopologyChange(TopologyChange),
     RoutingChange(RoutingChange),

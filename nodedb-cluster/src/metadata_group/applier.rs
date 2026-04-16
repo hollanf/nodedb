@@ -108,6 +108,21 @@ impl CacheApplier {
         }
     }
 
+    /// Cascade live-state mutations for a committed entry. Handles
+    /// `Batch` by recursing into each sub-entry.
+    fn cascade_live_state(&self, entry: &MetadataEntry) {
+        match entry {
+            MetadataEntry::TopologyChange(change) => self.apply_topology_change(change),
+            MetadataEntry::RoutingChange(change) => self.apply_routing_change(change),
+            MetadataEntry::Batch { entries } => {
+                for sub in entries {
+                    self.cascade_live_state(sub);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Mutate the live routing handle (if attached) in response to
     /// a committed `RoutingChange`.
     fn apply_routing_change(&self, change: &RoutingChange) {
@@ -152,12 +167,7 @@ impl MetadataApplier for CacheApplier {
             match decode_entry(data) {
                 Ok(entry) => {
                     guard.apply(*index, &entry);
-                    // Cascade to live state (if attached).
-                    match &entry {
-                        MetadataEntry::TopologyChange(change) => self.apply_topology_change(change),
-                        MetadataEntry::RoutingChange(change) => self.apply_routing_change(change),
-                        _ => {}
-                    }
+                    self.cascade_live_state(&entry);
                 }
                 Err(e) => warn!(index = *index, error = %e, "metadata decode failed"),
             }
