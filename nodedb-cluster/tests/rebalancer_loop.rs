@@ -160,14 +160,16 @@ async fn rebalancer_loop_dispatches_and_mutates_routing() {
 
     // Routing mutation: at least one group previously led by 1 now
     // has a non-1 leader.
-    let rt = routing.read().unwrap();
-    let still_on_1 = (0..6)
-        .filter(|gid| rt.group_info(*gid).unwrap().leader == 1)
-        .count();
-    assert!(
-        still_on_1 < 6,
-        "at least one group should have moved off node 1"
-    );
+    {
+        let rt = routing.read().unwrap();
+        let still_on_1 = (0..6)
+            .filter(|gid| rt.group_info(*gid).unwrap().leader == 1)
+            .count();
+        assert!(
+            still_on_1 < 6,
+            "at least one group should have moved off node 1"
+        );
+    }
 
     let _ = shutdown_tx.send(true);
     let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
