@@ -77,6 +77,11 @@ pub struct RebalancerLoopConfig {
     /// Plan computation config propagated to
     /// [`compute_load_based_plan`] on every tick.
     pub plan: RebalancerPlanConfig,
+    /// CPU utilization threshold (0.0–1.0) above which the
+    /// rebalancer pauses to avoid amplifying load. If ANY node in
+    /// the metrics snapshot exceeds this value, the sweep is skipped
+    /// and a STATUS event is logged. Default 0.80 (80%).
+    pub backpressure_cpu_threshold: f64,
 }
 
 impl Default for RebalancerLoopConfig {
@@ -84,6 +89,7 @@ impl Default for RebalancerLoopConfig {
         Self {
             interval: Duration::from_secs(30),
             plan: RebalancerPlanConfig::default(),
+            backpressure_cpu_threshold: 0.80,
         }
     }
 }
@@ -173,6 +179,18 @@ impl RebalancerLoop {
                 return;
             }
         };
+        if let Some(hot) = metrics
+            .iter()
+            .find(|m| m.cpu_utilization > self.cfg.backpressure_cpu_threshold)
+        {
+            info!(
+                node_id = hot.node_id,
+                cpu = format!("{:.0}%", hot.cpu_utilization * 100.0),
+                threshold = format!("{:.0}%", self.cfg.backpressure_cpu_threshold * 100.0),
+                "rebalancer: back-pressure — cluster under load, skipping sweep"
+            );
+            return;
+        }
         let plan = {
             let routing = self.routing.read().unwrap_or_else(|p| p.into_inner());
             let topo = self.topology.read().unwrap_or_else(|p| p.into_inner());
@@ -273,6 +291,7 @@ mod tests {
             bytes_stored: bytes_mib * 1_048_576,
             writes_per_sec: w,
             reads_per_sec: r,
+            cpu_utilization: 0.0,
         }
     }
 
@@ -289,7 +308,7 @@ mod tests {
         let rloop = Arc::new(RebalancerLoop::new(
             RebalancerLoopConfig {
                 interval: Duration::from_millis(50),
-                plan: RebalancerPlanConfig::default(),
+                ..Default::default()
             },
             metrics,
             disp_dyn,
@@ -368,5 +387,41 @@ mod tests {
 
         let _ = tx.send(true);
         let _ = tokio::time::timeout(Duration::from_millis(500), handle).await;
+    }
+
+    #[tokio::test]
+    async fn sweep_skipped_under_cpu_backpressure() {
+        let metrics: Arc<dyn LoadMetricsProvider> = Arc::new(StaticMetrics(vec![
+            LoadMetrics {
+                node_id: 1,
+                vshards_led: 500,
+                bytes_stored: 5000 * 1_048_576,
+                writes_per_sec: 200.0,
+                reads_per_sec: 200.0,
+                cpu_utilization: 0.95, // above 80% threshold
+            },
+            lm(2, 5, 5, 5.0, 5.0),
+            lm(3, 5, 5, 5.0, 5.0),
+        ]));
+        let dispatcher = RecordingDispatcher::new();
+        let rloop = Arc::new(RebalancerLoop::new(
+            RebalancerLoopConfig {
+                interval: Duration::from_millis(50),
+                ..Default::default()
+            },
+            metrics,
+            dispatcher.clone() as Arc<dyn MigrationDispatcher>,
+            Arc::new(AlwaysReadyGate),
+            routing_hot_on(1),
+            topo(&[1, 2, 3]),
+        ));
+        rloop.sweep_once().await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            dispatcher.take().is_empty(),
+            "dispatcher should not fire when cluster is under CPU backpressure"
+        );
     }
 }

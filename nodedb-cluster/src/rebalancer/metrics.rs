@@ -28,6 +28,10 @@ pub struct LoadMetrics {
     pub writes_per_sec: f64,
     /// Reads per second (rolling average, caller-defined window).
     pub reads_per_sec: f64,
+    /// Per-core CPU utilization (0.0–1.0). Used by the
+    /// back-pressure gate to pause the rebalancer when the cluster
+    /// is already stressed.
+    pub cpu_utilization: f64,
 }
 
 /// Relative weights for the four load dimensions. Scaled linearly;
@@ -89,6 +93,7 @@ mod tests {
             bytes_stored: bytes_mib * 1_048_576,
             writes_per_sec: w,
             reads_per_sec: r,
+            cpu_utilization: 0.0,
         }
     }
 

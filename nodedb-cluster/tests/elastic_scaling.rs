@@ -17,7 +17,7 @@ use nodedb_cluster::error::Result;
 use nodedb_cluster::rebalance::PlannedMove;
 use nodedb_cluster::rebalancer::{
     AlwaysReadyGate, ElectionGate, LoadMetrics, LoadMetricsProvider, MigrationDispatcher,
-    RebalancerKickHook, RebalancerLoop, RebalancerLoopConfig, RebalancerPlanConfig,
+    RebalancerKickHook, RebalancerLoop, RebalancerLoopConfig,
 };
 use nodedb_cluster::routing::RoutingTable;
 use nodedb_cluster::swim::MemberState;
@@ -77,6 +77,7 @@ fn lm(id: u64, v: u32, bytes_mib: u64, w: f64, r: f64) -> LoadMetrics {
         bytes_stored: bytes_mib * 1_048_576,
         writes_per_sec: w,
         reads_per_sec: r,
+        cpu_utilization: 0.0,
     }
 }
 
@@ -111,7 +112,7 @@ async fn add_node_triggers_rebalance_via_kick() {
     let rloop = Arc::new(RebalancerLoop::new(
         RebalancerLoopConfig {
             interval: Duration::from_secs(300),
-            plan: RebalancerPlanConfig::default(),
+            ..Default::default()
         },
         provider.clone() as Arc<dyn LoadMetricsProvider>,
         dispatcher.clone() as Arc<dyn MigrationDispatcher>,

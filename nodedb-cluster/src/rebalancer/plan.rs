@@ -207,6 +207,7 @@ mod tests {
             bytes_stored: bytes_mib * 1_048_576,
             writes_per_sec: w,
             reads_per_sec: r,
+            cpu_utilization: 0.0,
         }
     }
 
