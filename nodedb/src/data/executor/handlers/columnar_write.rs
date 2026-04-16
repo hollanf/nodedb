@@ -98,6 +98,40 @@ impl CoreLoop {
             }
         }
 
+        // Flush memtable to a segment if the threshold has been reached.
+        if engine.should_flush() {
+            let new_segment_id = engine.next_segment_id();
+            let (schema, columns, row_count) = engine.memtable_mut().drain_optimized();
+            if row_count > 0 {
+                match nodedb_columnar::SegmentWriter::plain()
+                    .write_segment(&schema, &columns, row_count)
+                {
+                    Ok(bytes) => {
+                        self.columnar_flushed_segments
+                            .entry(collection.to_string())
+                            .or_default()
+                            .push(bytes);
+                        tracing::debug!(
+                            core = self.core_id,
+                            %collection,
+                            new_segment_id,
+                            row_count,
+                            "columnar memtable flushed and segment bytes retained in memory"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            core = self.core_id,
+                            %collection,
+                            error = %e,
+                            "columnar segment encode failed; flushed rows may be lost"
+                        );
+                    }
+                }
+            }
+            engine.on_memtable_flushed(new_segment_id);
+        }
+
         // Populate R-tree for geometry columns so spatial predicates work.
         {
             let tid = task.request.tenant_id;

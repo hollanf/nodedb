@@ -108,26 +108,83 @@ impl CoreLoop {
         };
 
         let schema = engine.schema();
-        let rows: Vec<_> = engine.scan_memtable_rows().take(limit).collect();
-        let mut results = Vec::with_capacity(rows.len());
+        let mut results = Vec::new();
 
-        for row in rows {
-            // Build a nodedb_types::Value::Object directly — no JSON intermediary.
-            let mut map = std::collections::HashMap::new();
-            let mut id = String::new();
-            for (i, col_def) in schema.columns.iter().enumerate() {
-                if i < row.len() {
-                    if col_def.name == "id"
-                        && let nodedb_types::value::Value::String(s) = &row[i]
-                    {
-                        id.clone_from(s);
+        // 1. Read from flushed segments (older rows drained from prior memtable flushes).
+        if let Some(segments) = self.columnar_flushed_segments.get(collection) {
+            for seg_bytes in segments {
+                if results.len() >= limit {
+                    break;
+                }
+                let reader = match nodedb_columnar::SegmentReader::open(seg_bytes) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to open flushed columnar segment for scan");
+                        continue;
                     }
-                    map.insert(col_def.name.clone(), row[i].clone());
+                };
+                let seg_row_count = reader.row_count() as usize;
+                let remaining = limit - results.len();
+                let take = seg_row_count.min(remaining);
+
+                // Decode all columns for this segment.
+                let col_count = schema.columns.len();
+                let mut decoded_cols = Vec::with_capacity(col_count);
+                let mut decode_ok = true;
+                for col_idx in 0..col_count {
+                    match reader.read_column(col_idx) {
+                        Ok(dc) => decoded_cols.push(dc),
+                        Err(e) => {
+                            tracing::warn!(error = %e, col_idx, "failed to decode columnar segment column");
+                            decode_ok = false;
+                            break;
+                        }
+                    }
+                }
+                if !decode_ok {
+                    continue;
+                }
+
+                for row_idx in 0..take {
+                    let mut map = std::collections::HashMap::new();
+                    let mut id = String::new();
+                    for (col_idx, col_def) in schema.columns.iter().enumerate() {
+                        let val = decoded_col_to_value(&decoded_cols[col_idx], row_idx);
+                        if col_def.name == "id"
+                            && let nodedb_types::value::Value::String(s) = &val
+                        {
+                            id.clone_from(s);
+                        }
+                        map.insert(col_def.name.clone(), val);
+                    }
+                    let ndb_val = nodedb_types::value::Value::Object(map);
+                    let mp = nodedb_types::value_to_msgpack(&ndb_val).unwrap_or_default();
+                    results.push((id, mp));
                 }
             }
-            let ndb_val = nodedb_types::value::Value::Object(map);
-            let mp = nodedb_types::value_to_msgpack(&ndb_val).unwrap_or_default();
-            results.push((id, mp));
+        }
+
+        // 2. Read from the live memtable (most-recent rows not yet flushed).
+        if results.len() < limit {
+            let remaining = limit - results.len();
+            let rows: Vec<_> = engine.scan_memtable_rows().take(remaining).collect();
+            for row in rows {
+                let mut map = std::collections::HashMap::new();
+                let mut id = String::new();
+                for (i, col_def) in schema.columns.iter().enumerate() {
+                    if i < row.len() {
+                        if col_def.name == "id"
+                            && let nodedb_types::value::Value::String(s) = &row[i]
+                        {
+                            id.clone_from(s);
+                        }
+                        map.insert(col_def.name.clone(), row[i].clone());
+                    }
+                }
+                let ndb_val = nodedb_types::value::Value::Object(map);
+                let mp = nodedb_types::value_to_msgpack(&ndb_val).unwrap_or_default();
+                results.push((id, mp));
+            }
         }
 
         results
@@ -172,6 +229,87 @@ impl CoreLoop {
                 normalized.push((id, mp));
             }
             Ok(normalized)
+        }
+    }
+}
+
+/// Convert a single row from a `DecodedColumn` to a `nodedb_types::value::Value`.
+///
+/// Returns `Value::Null` if the row index is out of range or the validity bit is false.
+fn decoded_col_to_value(
+    col: &nodedb_columnar::reader::DecodedColumn,
+    row_idx: usize,
+) -> nodedb_types::value::Value {
+    use nodedb_columnar::reader::DecodedColumn;
+    use nodedb_types::value::Value;
+
+    match col {
+        DecodedColumn::Int64 { values, valid } => {
+            if row_idx < valid.len() && valid[row_idx] {
+                Value::Integer(values[row_idx])
+            } else {
+                Value::Null
+            }
+        }
+        DecodedColumn::Float64 { values, valid } => {
+            if row_idx < valid.len() && valid[row_idx] {
+                Value::Float(values[row_idx])
+            } else {
+                Value::Null
+            }
+        }
+        DecodedColumn::Timestamp { values, valid } => {
+            if row_idx < valid.len() && valid[row_idx] {
+                // Represent as integer microseconds (same as Value::Integer for timestamps).
+                Value::Integer(values[row_idx])
+            } else {
+                Value::Null
+            }
+        }
+        DecodedColumn::Bool { values, valid } => {
+            if row_idx < valid.len() && valid[row_idx] {
+                Value::Bool(values[row_idx])
+            } else {
+                Value::Null
+            }
+        }
+        DecodedColumn::Binary {
+            data,
+            offsets,
+            valid,
+        } => {
+            if row_idx < valid.len() && valid[row_idx] && row_idx + 1 < offsets.len() {
+                let start = offsets[row_idx] as usize;
+                let end = offsets[row_idx + 1] as usize;
+                if start <= end && end <= data.len() {
+                    let bytes = &data[start..end];
+                    // Best-effort UTF-8 interpretation; fall back to bytes.
+                    match std::str::from_utf8(bytes) {
+                        Ok(s) => Value::String(s.to_string()),
+                        Err(_) => Value::Bytes(bytes.to_vec()),
+                    }
+                } else {
+                    Value::Null
+                }
+            } else {
+                Value::Null
+            }
+        }
+        DecodedColumn::DictEncoded {
+            ids,
+            dictionary,
+            valid,
+        } => {
+            if row_idx < valid.len() && valid[row_idx] {
+                let id = ids[row_idx] as usize;
+                if id < dictionary.len() {
+                    Value::String(dictionary[id].clone())
+                } else {
+                    Value::Null
+                }
+            } else {
+                Value::Null
+            }
         }
     }
 }

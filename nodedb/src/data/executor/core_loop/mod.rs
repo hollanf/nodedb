@@ -155,6 +155,13 @@ pub struct CoreLoop {
     pub(in crate::data::executor) columnar_engines:
         HashMap<String, nodedb_columnar::MutationEngine>,
 
+    /// Flushed columnar segment bytes, keyed by "{tid}:{collection}".
+    /// Each entry is a list of encoded segment buffers produced by `SegmentWriter`.
+    /// Kept in memory so `scan_columnar` can read rows that were drained from the
+    /// active memtable during a flush (otherwise those rows would be lost until a
+    /// real on-disk segment reader is wired up).
+    pub(in crate::data::executor) columnar_flushed_segments: HashMap<String, Vec<Vec<u8>>>,
+
     /// Per-collection max WAL LSN that has been ingested into the memtable.
     /// Used by the WAL catch-up deduplication: if a catch-up record's LSN
     /// is <= this value, the Data Plane skips it (already ingested).
@@ -283,6 +290,7 @@ impl CoreLoop {
             ),
             columnar_memtables: HashMap::new(),
             columnar_engines: HashMap::new(),
+            columnar_flushed_segments: HashMap::new(),
             ts_max_ingested_lsn: HashMap::new(),
             last_ts_ingest: None,
             ts_last_value_caches: HashMap::new(),
