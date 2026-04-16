@@ -9,6 +9,7 @@
 //! ```
 
 pub mod catalog;
+pub mod ddl_ast;
 pub mod engine_rules;
 pub mod error;
 pub mod functions;
