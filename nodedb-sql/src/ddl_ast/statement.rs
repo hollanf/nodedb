@@ -5,7 +5,7 @@
 /// Handlers receive a fully-parsed variant instead of raw `&[&str]`
 /// parts, eliminating array-index panics and enabling exhaustive
 /// match coverage for new DDL commands.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NodedbStatement {
     // ── Collection lifecycle ─────────────────────────────────────
     CreateCollection {
@@ -268,6 +268,68 @@ pub enum NodedbStatement {
         collection: String,
     },
 
+    // ── Graph DSL ─────────────────────────────────────────────────
+    //
+    // Typed variants replace substring-matched parsing in the
+    // pgwire handlers. The `ddl_ast::graph_parse` module is the
+    // single source of truth for graph-DSL syntax — quote- and
+    // brace-aware, so node ids / labels / property values that
+    // shadow DSL keywords cannot short-circuit extraction.
+    GraphInsertEdge {
+        src: String,
+        dst: String,
+        label: String,
+        properties: GraphProperties,
+    },
+    GraphDeleteEdge {
+        src: String,
+        dst: String,
+        label: String,
+    },
+    /// `GRAPH LABEL` / `GRAPH UNLABEL`.
+    GraphSetLabels {
+        node_id: String,
+        labels: Vec<String>,
+        /// `true` for `UNLABEL`, `false` for `LABEL`.
+        remove: bool,
+    },
+    GraphTraverse {
+        start: String,
+        depth: usize,
+        edge_label: Option<String>,
+        direction: GraphDirection,
+    },
+    GraphNeighbors {
+        node: String,
+        edge_label: Option<String>,
+        direction: GraphDirection,
+    },
+    GraphPath {
+        src: String,
+        dst: String,
+        max_depth: usize,
+        edge_label: Option<String>,
+    },
+    GraphAlgo {
+        algorithm: String,
+        collection: String,
+        damping: Option<f64>,
+        tolerance: Option<f64>,
+        resolution: Option<f64>,
+        max_iterations: Option<usize>,
+        sample_size: Option<usize>,
+        source_node: Option<String>,
+        direction: Option<String>,
+        mode: Option<String>,
+    },
+    /// `MATCH (x)-[:l]->(y) RETURN x, y` — the query body is
+    /// compiled deep inside the Data Plane via
+    /// `engine::graph::pattern::compiler::parse`, so the AST
+    /// variant just captures the raw SQL for that consumer.
+    MatchQuery {
+        raw_sql: String,
+    },
+
     /// Catch-all for DDL-like commands not yet promoted to their
     /// own variant. Preserves the raw SQL for the legacy dispatch
     /// path so new variants can be added incrementally without
@@ -275,4 +337,30 @@ pub enum NodedbStatement {
     Other {
         raw_sql: String,
     },
+}
+
+/// Traversal direction for graph DSL variants. Mirrors the engine's
+/// own `Direction` enum so `nodedb-sql` has no dependency cycle with
+/// `nodedb`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphDirection {
+    In,
+    Out,
+    Both,
+}
+
+/// The `PROPERTIES` clause of `GRAPH INSERT EDGE`. Captured in its
+/// source form so the pgwire handler — which already depends on a
+/// JSON serializer (sonic_rs) — can do the conversion to storage
+/// bytes without dragging JSON deps into `nodedb-sql`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GraphProperties {
+    None,
+    /// Raw `{ ... }` object-literal span, including the outer braces
+    /// and brace-balanced inner content. Parsed by
+    /// `crate::parser::object_literal` at the handler boundary.
+    Object(String),
+    /// Content of `'...'` (outer quotes stripped, `''` un-escaped);
+    /// expected to already be a JSON document.
+    Quoted(String),
 }

@@ -1,5 +1,6 @@
 //! Parse raw SQL into a [`NodedbStatement`].
 
+use super::graph_parse;
 use super::statement::NodedbStatement;
 
 /// Try to parse a DDL statement from raw SQL. Returns `None` for
@@ -14,6 +15,17 @@ pub fn parse(sql: &str) -> Option<NodedbStatement> {
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
     if parts.is_empty() {
         return None;
+    }
+
+    // Graph DSL (`GRAPH ...`, `MATCH ...`) has its own tokenising
+    // parser — delegate early so the string-prefix branches below
+    // cannot accidentally shadow quoted values that contain DSL
+    // keywords.
+    if upper.starts_with("GRAPH ")
+        || upper.starts_with("MATCH ")
+        || upper.starts_with("OPTIONAL MATCH ")
+    {
+        return graph_parse::try_parse(trimmed);
     }
 
     // ── Collection lifecycle ─────────────────────────────────────

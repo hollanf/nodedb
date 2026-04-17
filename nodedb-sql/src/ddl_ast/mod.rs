@@ -9,8 +9,9 @@
 //! using whitespace-split token matching — the same technique the
 //! old string-prefix router used, but producing a typed output.
 
+pub mod graph_parse;
 pub mod parse;
 pub mod statement;
 
 pub use parse::parse;
-pub use statement::NodedbStatement;
+pub use statement::{GraphDirection, GraphProperties, NodedbStatement};
