@@ -43,10 +43,16 @@ pub fn raft_transport_config(tuning: &ClusterTransportTuning) -> quinn::Transpor
     config
 }
 
-/// Build a QUIC server config with self-signed TLS (dev/bootstrap mode).
+/// Build a QUIC server config with self-signed TLS (unauthenticated).
 ///
-/// Production clusters use mTLS via [`nexar::transport::tls::ClusterCa`].
-pub fn make_raft_server_config(tuning: &ClusterTransportTuning) -> Result<quinn::ServerConfig> {
+/// **Crate-private** — reachable only via
+/// [`TransportCredentials::Insecure`](super::credentials::TransportCredentials::Insecure),
+/// which logs a loud startup warning and bumps
+/// [`insecure_transport_count`](super::credentials::insecure_transport_count).
+/// Production clusters use the mTLS variant.
+pub(crate) fn make_raft_server_config(
+    tuning: &ClusterTransportTuning,
+) -> Result<quinn::ServerConfig> {
     let (cert, key) = nexar::transport::tls::generate_self_signed_cert().map_err(|e| {
         ClusterError::Transport {
             detail: format!("generate cert: {e}"),
@@ -77,10 +83,16 @@ pub fn make_raft_server_config(tuning: &ClusterTransportTuning) -> Result<quinn:
     Ok(server_config)
 }
 
-/// Build a QUIC client config that skips server verification (dev/bootstrap mode).
+/// Build a QUIC client config that skips server verification (unauthenticated).
 ///
-/// Production clusters use mTLS via [`nexar::transport::tls::make_client_config_mtls`].
-pub fn make_raft_client_config(tuning: &ClusterTransportTuning) -> Result<quinn::ClientConfig> {
+/// **Crate-private** — reachable only via
+/// [`TransportCredentials::Insecure`](super::credentials::TransportCredentials::Insecure),
+/// which logs a loud startup warning and bumps
+/// [`insecure_transport_count`](super::credentials::insecure_transport_count).
+/// Production clusters use the mTLS variant.
+pub(crate) fn make_raft_client_config(
+    tuning: &ClusterTransportTuning,
+) -> Result<quinn::ClientConfig> {
     let provider = rustls::crypto::ring::default_provider();
     let mut tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(provider))
         .with_safe_default_protocol_versions()
@@ -111,6 +123,13 @@ pub struct TlsCredentials {
     /// Optional CRL (Certificate Revocation List) in DER format.
     /// When present, revoked peer certificates are rejected during handshake.
     pub crls: Vec<rustls::pki_types::CertificateRevocationListDer<'static>>,
+    /// Cluster-wide 32-byte symmetric secret used as the HMAC-SHA256 key for
+    /// the authenticated frame envelope (see
+    /// [`crate::rpc_codec::auth_envelope`]). Generated at bootstrap, persisted
+    /// under `data_dir/tls/cluster_secret.bin`, distributed to joining nodes
+    /// via the join RPC (L.4). Treat as key material — never log, always
+    /// 0600 at rest.
+    pub cluster_secret: [u8; 32],
 }
 
 /// Build a QUIC server config with mutual TLS (production mode).
@@ -218,6 +237,9 @@ pub fn generate_node_credentials(
         .map_err(|e| ClusterError::Transport {
             detail: format!("issue node cert: {e}"),
         })?;
+    use rand::RngCore;
+    let mut cluster_secret = [0u8; 32];
+    rand::rng().fill_bytes(&mut cluster_secret);
     Ok((
         ca,
         TlsCredentials {
@@ -225,6 +247,7 @@ pub fn generate_node_credentials(
             key,
             ca_cert,
             crls: Vec::new(),
+            cluster_secret,
         },
     ))
 }

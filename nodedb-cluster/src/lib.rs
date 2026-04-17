@@ -77,9 +77,13 @@ pub use rebalancer::{
 };
 pub use routing::RoutingTable;
 pub use routing_liveness::{NodeIdResolver, RoutingLivenessHook};
-pub use rpc_codec::RaftRpc;
+pub use rpc_codec::{MacKey, RaftRpc};
 pub use topology::{ClusterTopology, NodeInfo, NodeState};
-pub use transport::{NexarTransport, RaftRpcHandler};
+pub use transport::{
+    NexarTransport, RaftRpcHandler, TlsCredentials, TransportCredentials,
+    generate_node_credentials, insecure_transport_count, load_crls_from_pem,
+    make_raft_client_config_mtls, make_raft_server_config_mtls,
+};
 pub use wire::VShardEnvelope;
 
 pub use cross_shard_txn::{

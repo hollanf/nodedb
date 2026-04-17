@@ -3769,6 +3769,7 @@ version = "0.0.4"
 dependencies = [
  "async-trait",
  "crc32c",
+ "hmac 0.12.1",
  "nexar",
  "nodedb-raft",
  "nodedb-types",
@@ -3781,6 +3782,7 @@ dependencies = [
  "sd-notify",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sonic-rs",
  "tempfile",
  "thiserror 2.0.18",

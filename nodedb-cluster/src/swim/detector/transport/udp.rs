@@ -1,16 +1,19 @@
-//! Real UDP transport for SWIM.
+//! Authenticated UDP transport for SWIM.
 //!
 //! Binds a single `tokio::net::UdpSocket` and implements [`super::Transport`]
-//! by framing every outbound `SwimMessage` with the zerompk wire codec
-//! and parsing every inbound datagram the same way. Malformed inbound
-//! bytes surface as [`SwimError::Decode`] but do not close the socket —
-//! the failure detector's recv loop treats non-`TransportClosed` errors
-//! as transient and keeps running.
+//! by wrapping every outbound [`SwimMessage`] in an authenticated envelope
+//! (HMAC-SHA256 MAC + per-peer monotonic sequence) and rejecting inbound
+//! datagrams whose MAC fails, whose claimed origin does not match the
+//! observed source, or whose sequence replays.
 //!
-//! Datagram size is capped by [`RECV_BUF_BYTES`], which must be large
-//! enough to hold a zerompk-encoded `SwimMessage` at the configured
-//! `max_piggyback` budget. 64 KiB is the IPv4 UDP maximum and is
-//! comfortably larger than any realistic SWIM payload.
+//! Malformed or unauthenticated inbound bytes surface as
+//! [`SwimError::Decode`] but do not close the socket — the failure
+//! detector's recv loop treats non-`TransportClosed` errors as transient
+//! and keeps running.
+//!
+//! Datagram size is capped by [`RECV_BUF_BYTES`] = 64 KiB (IPv4 UDP
+//! maximum). The envelope adds 53 bytes of overhead over the bare
+//! zerompk-encoded message.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -20,11 +23,12 @@ use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 
 use super::Transport;
+use crate::rpc_codec::MacKey;
 use crate::swim::error::SwimError;
-use crate::swim::wire::{self, SwimMessage};
+use crate::swim::wire::{SwimAuth, SwimMessage, unwrap, wrap};
 
-/// IPv4 UDP maximum datagram size. zerompk-encoded SWIM messages with a
-/// 6-entry piggyback fit in well under 2 KiB, so 64 KiB is abundant.
+/// IPv4 UDP maximum datagram size. Authenticated SWIM messages with a
+/// 6-entry piggyback fit in well under 2.5 KiB; 64 KiB is abundant.
 pub const RECV_BUF_BYTES: usize = 65_536;
 
 /// SWIM datagram transport backed by a real UDP socket.
@@ -32,6 +36,9 @@ pub const RECV_BUF_BYTES: usize = 65_536;
 pub struct UdpTransport {
     socket: Arc<UdpSocket>,
     local_addr: SocketAddr,
+    /// Shared MAC key + per-peer sequence state for every packet this
+    /// socket sends or receives.
+    auth: SwimAuth,
     /// Serializes access to the recv buffer. `recv_from` takes `&self`
     /// on `UdpSocket`, but we need a reusable buffer without allocating
     /// 64 KiB per datagram; the mutex guards that buffer.
@@ -39,9 +46,14 @@ pub struct UdpTransport {
 }
 
 impl UdpTransport {
-    /// Bind to `addr`. Passing `127.0.0.1:0` picks an ephemeral port,
-    /// which [`UdpTransport::local_addr`] then reports.
-    pub async fn bind(addr: SocketAddr) -> Result<Self, SwimError> {
+    /// Bind to `addr` with the cluster MAC key. Passing `127.0.0.1:0`
+    /// picks an ephemeral port, which [`UdpTransport::local_addr`] then
+    /// reports.
+    ///
+    /// Pass [`MacKey::zero`] explicitly to run the transport in insecure
+    /// mode (mirrors the Raft transport's `TransportCredentials::Insecure`
+    /// escape hatch — only safe on isolated networks).
+    pub async fn bind(addr: SocketAddr, mac_key: MacKey) -> Result<Self, SwimError> {
         let socket = UdpSocket::bind(addr).await.map_err(|e| SwimError::Encode {
             detail: format!("udp bind {addr}: {e}"),
         })?;
@@ -51,6 +63,7 @@ impl UdpTransport {
         Ok(Self {
             socket: Arc::new(socket),
             local_addr,
+            auth: SwimAuth::new(mac_key, local_addr),
             recv_buf: Mutex::new(vec![0u8; RECV_BUF_BYTES]),
         })
     }
@@ -59,7 +72,7 @@ impl UdpTransport {
 #[async_trait]
 impl Transport for UdpTransport {
     async fn send(&self, to: SocketAddr, msg: SwimMessage) -> Result<(), SwimError> {
-        let bytes = wire::encode(&msg)?;
+        let bytes = wrap(&self.auth, to, &msg)?;
         // UDP send_to is atomic per datagram; partial sends aren't a
         // thing, so we only have to handle the error case.
         self.socket
@@ -80,7 +93,7 @@ impl Transport for UdpTransport {
                 .map_err(|e| SwimError::Decode {
                     detail: format!("udp recv_from: {e}"),
                 })?;
-        let msg = wire::decode(&buf[..n])?;
+        let msg = unwrap(&self.auth, from, &buf[..n])?;
         Ok((from, msg))
     }
 
@@ -102,17 +115,27 @@ mod tests {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
     }
 
+    fn shared_key() -> MacKey {
+        MacKey::from_bytes([0x5Au8; 32])
+    }
+
     #[tokio::test]
     async fn bind_and_report_local_addr() {
-        let t = UdpTransport::bind(any_loopback()).await.expect("bind");
+        let t = UdpTransport::bind(any_loopback(), shared_key())
+            .await
+            .expect("bind");
         assert_eq!(t.local_addr().ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
         assert_ne!(t.local_addr().port(), 0);
     }
 
     #[tokio::test]
     async fn send_and_recv_roundtrip_between_real_sockets() {
-        let a = UdpTransport::bind(any_loopback()).await.expect("bind a");
-        let b = UdpTransport::bind(any_loopback()).await.expect("bind b");
+        let a = UdpTransport::bind(any_loopback(), shared_key())
+            .await
+            .expect("bind a");
+        let b = UdpTransport::bind(any_loopback(), shared_key())
+            .await
+            .expect("bind b");
         let ping = SwimMessage::Ping(Ping {
             probe_id: ProbeId::new(42),
             from: NodeId::new("a"),
@@ -130,8 +153,12 @@ mod tests {
 
     #[tokio::test]
     async fn recv_decodes_ack_variant() {
-        let a = UdpTransport::bind(any_loopback()).await.expect("bind a");
-        let b = UdpTransport::bind(any_loopback()).await.expect("bind b");
+        let a = UdpTransport::bind(any_loopback(), shared_key())
+            .await
+            .expect("bind a");
+        let b = UdpTransport::bind(any_loopback(), shared_key())
+            .await
+            .expect("bind b");
         let ack = SwimMessage::Ack(Ack {
             probe_id: ProbeId::new(1),
             from: NodeId::new("b"),
@@ -148,16 +175,14 @@ mod tests {
 
     #[tokio::test]
     async fn decode_error_on_garbage_datagram() {
-        // Bind one socket, send raw garbage to it from a second
-        // loopback socket, then call `recv` through the transport
-        // wrapper. The malformed bytes must surface as SwimError::Decode
-        // rather than close the socket.
-        let victim = UdpTransport::bind(any_loopback()).await.expect("bind");
+        let victim = UdpTransport::bind(any_loopback(), shared_key())
+            .await
+            .expect("bind");
         let sender = tokio::net::UdpSocket::bind(any_loopback())
             .await
             .expect("sender bind");
         sender
-            .send_to(&[0xff_u8; 8], victim.local_addr())
+            .send_to(&[0xff_u8; 100], victim.local_addr())
             .await
             .expect("send garbage");
         let err = tokio::time::timeout(Duration::from_secs(1), victim.recv())
@@ -166,9 +191,11 @@ mod tests {
             .expect_err("decode should fail");
         assert!(matches!(err, SwimError::Decode { .. }));
 
-        // Follow up with a valid datagram to prove the socket still
-        // works after a bad one.
-        let sender_transport = UdpTransport::bind(any_loopback()).await.expect("bind");
+        // Follow up with a valid authenticated datagram to prove the
+        // socket still works after a bad one.
+        let sender_transport = UdpTransport::bind(any_loopback(), shared_key())
+            .await
+            .expect("bind");
         let ping = SwimMessage::Ping(Ping {
             probe_id: ProbeId::new(1),
             from: NodeId::new("x"),
@@ -184,5 +211,32 @@ mod tests {
             .expect("recv timed out")
             .expect("recv ok");
         assert_eq!(msg, ping);
+    }
+
+    #[tokio::test]
+    async fn rejects_mismatched_cluster_key() {
+        let k1 = MacKey::from_bytes([0x01u8; 32]);
+        let k2 = MacKey::from_bytes([0x02u8; 32]);
+        let sender = UdpTransport::bind(any_loopback(), k1)
+            .await
+            .expect("bind sender");
+        let receiver = UdpTransport::bind(any_loopback(), k2)
+            .await
+            .expect("bind receiver");
+        let ping = SwimMessage::Ping(Ping {
+            probe_id: ProbeId::new(1),
+            from: NodeId::new("attacker"),
+            incarnation: Incarnation::ZERO,
+            piggyback: vec![],
+        });
+        sender
+            .send(receiver.local_addr(), ping)
+            .await
+            .expect("send");
+        let err = tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+            .await
+            .expect("recv timed out")
+            .expect_err("receiver must reject wrong-key MAC");
+        assert!(err.to_string().contains("MAC verification failed"));
     }
 }
