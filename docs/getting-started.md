@@ -504,14 +504,15 @@ SHOW CHANGE STREAMS;
 ### Backup, Restore, and Purge
 
 ```sql
--- Backup all tenant data across all engines (encrypted with AES-256-GCM)
-BACKUP TENANT acme TO '/backups/acme-2026-03-31.bak';
+-- Backup all tenant data across all engines (encrypted with AES-256-GCM).
+-- Bytes stream over the pgwire COPY framing; the client redirects to disk.
+COPY (BACKUP TENANT acme) TO STDOUT;
 
 -- Validate a backup without restoring
-RESTORE TENANT acme FROM '/backups/acme-2026-03-31.bak' DRY RUN;
+COPY tenant_restore(acme) FROM STDIN DRY RUN;
 
 -- Restore
-RESTORE TENANT acme FROM '/backups/acme-2026-03-31.bak';
+COPY tenant_restore(acme) FROM STDIN;
 
 -- Permanently delete all tenant data (GDPR erasure) — requires CONFIRM
 PURGE TENANT acme CONFIRM;

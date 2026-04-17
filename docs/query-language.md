@@ -463,15 +463,18 @@ SHOW SCHEDULES;
 
 ### Backup, Restore, and Purge
 
+Backup bytes stream over the pgwire COPY framing; the client redirects
+output to (or reads input from) a file under the operator's UID.
+
 ```sql
 -- Backup a tenant across all 7 engines (encrypted AES-256-GCM, MessagePack)
-BACKUP TENANT acme TO '/backups/acme-2026-03-31.bak';
+COPY (BACKUP TENANT acme) TO STDOUT;
 
 -- Validate without restoring
-RESTORE TENANT acme FROM '/backups/acme-2026-03-31.bak' DRY RUN;
+COPY tenant_restore(acme) FROM STDIN DRY RUN;
 
 -- Restore
-RESTORE TENANT acme FROM '/backups/acme-2026-03-31.bak';
+COPY tenant_restore(acme) FROM STDIN;
 
 -- Remove ALL tenant data across all engines and caches (requires CONFIRM)
 PURGE TENANT acme CONFIRM;
@@ -749,10 +752,13 @@ Returns rows with columns: `pick_index`, `key`, `weight`. Uses Vose's alias meth
 
 ## Bulk Import
 
+Bytes stream from the client over pgwire COPY; the database never opens
+a file by a caller-named path.
+
 ```sql
--- Import from file (NDJSON, JSON array, or CSV — auto-detected)
-COPY users FROM '/path/to/users.ndjson';
-COPY users FROM '/path/to/users.csv' WITH (FORMAT csv);
+-- Import from a client-side file (NDJSON, JSON array, or CSV)
+COPY users FROM STDIN;
+COPY users FROM STDIN WITH (FORMAT csv);
 ```
 
 ## Introspection

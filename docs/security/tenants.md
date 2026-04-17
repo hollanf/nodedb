@@ -34,21 +34,25 @@ CREATE USER alice WITH PASSWORD 'secret' ROLE readwrite TENANT 42;
 
 ## Tenant Backup/Restore
 
+Backup bytes flow over the pgwire COPY framing. The client redirects
+output to (or reads input from) a file under the operator's UID; the
+database never touches a caller-named filesystem path.
+
 ```sql
 -- Grant backup permission
 GRANT BACKUP ON TENANT acme TO ops_user;
 
--- Backup (encrypted AES-256-GCM with tenant WAL key)
-BACKUP TENANT acme TO '/backups/acme-2026-04.bak';
+-- Backup: bytes stream to STDOUT over the wire.
+COPY (BACKUP TENANT acme) TO STDOUT;
 
--- Validate before restoring
-RESTORE TENANT acme FROM '/backups/acme-2026-04.bak' DRY RUN;
+-- Validate a backup blob before restoring.
+COPY tenant_restore(acme) FROM STDIN DRY RUN;
 
--- Restore
-RESTORE TENANT acme FROM '/backups/acme-2026-04.bak';
+-- Restore.
+COPY tenant_restore(acme) FROM STDIN;
 ```
 
-Backups cover all 7 engines: documents, indexes, vectors, graph edges, KV tables, timeseries, and CRDT state.
+Backups cover all 7 engines: documents, indexes, vectors, graph edges, KV tables, timeseries, and CRDT state. Payloads are encrypted with AES-256-GCM under the tenant WAL key.
 
 ## Tenant Purge (GDPR Erasure)
 
