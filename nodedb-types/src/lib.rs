@@ -1,6 +1,7 @@
 pub mod config;
 
 pub mod approx;
+pub mod backup_envelope;
 pub mod bbox;
 pub mod collection;
 pub mod columnar;

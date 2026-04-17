@@ -22,6 +22,7 @@ nanoid = { workspace = true }
 rand = { workspace = true }
 rust_decimal = { workspace = true }
 nodedb-codec = { workspace = true }
+crc32c = { workspace = true }
 
 [dev-dependencies]
 toml = { workspace = true }
