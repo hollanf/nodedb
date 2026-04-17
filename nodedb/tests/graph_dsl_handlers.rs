@@ -1,0 +1,271 @@
+//! Integration coverage for the Graph DSL pgwire handlers
+//! (`pgwire/ddl/graph_ops.rs`, `pgwire/ddl/match_ops.rs`).
+//!
+//! The handlers are substring-parsed and thin-dispatched; this file locks
+//! in four correctness contracts that must hold for every graph DSL
+//! statement reaching the pgwire layer:
+//!
+//! 1. `GRAPH PATH` returns an actual source→…→destination path, not the
+//!    BFS discovery set.
+//! 2. `MATCH` returns user-facing (unscoped) node ids, never the internal
+//!    `{tenant_id}:{name}` form.
+//! 3. Numeric DSL parameters (`DEPTH`, `MAX_DEPTH`, `ITERATIONS`,
+//!    `VECTOR_TOP_K`) are clamped; absurd values are rejected with
+//!    SQLSTATE 22023 instead of being forwarded unchanged to the engine.
+//! 4. The `extract_*_after` helpers must parse statement structure, not
+//!    user data: node ids, labels, and object-literal property values
+//!    that contain DSL keywords must not short-circuit extraction.
+//!
+//! Every test asserts the correct specification. Tests for items that
+//! are currently broken will fail until the fixes land — that red is the
+//! intended regression surface for the handler rewrite.
+
+mod common;
+
+use common::pgwire_harness::TestServer;
+use tokio_postgres::SimpleQueryMessage;
+
+// ── 1. GRAPH PATH returns a path, not a BFS frontier ─────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_path_returns_ordered_path_not_bfs_frontier() {
+    let server = TestServer::start().await;
+
+    server.exec("CREATE COLLECTION path_nodes").await.unwrap();
+
+    // Chain a → b → c, plus branches off `a` that must not appear in the path.
+    server
+        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .await
+        .unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM 'b' TO 'c' TYPE 'l'")
+        .await
+        .unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM 'a' TO 'x' TYPE 'l'")
+        .await
+        .unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM 'a' TO 'y' TYPE 'l'")
+        .await
+        .unwrap();
+
+    let rows = server
+        .query_text("GRAPH PATH FROM 'a' TO 'c' MAX_DEPTH 5 LABEL 'l'")
+        .await
+        .unwrap();
+
+    let blob = rows.join("");
+    // Regression guard: the handler must not return branch nodes that
+    // happen to be in the BFS closure but are not on the path.
+    assert!(
+        !blob.contains("\"x\"") && !blob.contains("\"y\""),
+        "GRAPH PATH must not leak BFS frontier; got: {blob}"
+    );
+    // Spec: the path is exactly [a, b, c] in order.
+    let idx_a = blob.find("\"a\"").expect("path must include src");
+    let idx_b = blob
+        .find("\"b\"")
+        .expect("path must include intermediate hop");
+    let idx_c = blob.find("\"c\"").expect("path must include dst");
+    assert!(
+        idx_a < idx_b && idx_b < idx_c,
+        "path must be ordered src→hop→dst; got: {blob}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_path_returns_empty_when_dst_unreachable() {
+    let server = TestServer::start().await;
+    server.exec("CREATE COLLECTION path_nodes").await.unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .await
+        .unwrap();
+
+    let rows = server
+        .query_text("GRAPH PATH FROM 'a' TO 'z' MAX_DEPTH 5 LABEL 'l'")
+        .await
+        .unwrap();
+    let blob = rows.join("");
+    assert!(
+        !blob.contains("\"a\"") && !blob.contains("\"b\""),
+        "unreachable dst must yield empty path, not BFS closure; got: {blob}"
+    );
+}
+
+// ── 2. MATCH returns unscoped node ids ────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn match_does_not_leak_tenant_scoped_node_ids() {
+    let server = TestServer::start().await;
+    server.exec("CREATE COLLECTION match_docs").await.unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM 'alice' TO 'bob' TYPE 'l'")
+        .await
+        .unwrap();
+
+    // Read all columns — `query_text` only exposes column 0.
+    let msgs = server
+        .client
+        .simple_query("MATCH (x)-[:l]->(y) RETURN x, y")
+        .await
+        .expect("MATCH should succeed");
+
+    let mut row_count = 0usize;
+    for msg in msgs {
+        if let SimpleQueryMessage::Row(row) = msg {
+            row_count += 1;
+            let x = row.get(0).unwrap_or("").to_string();
+            let y = row.get(1).unwrap_or("").to_string();
+            // Regression guard: no "<digits>:" tenant prefix may leak.
+            assert!(
+                !x.contains(':'),
+                "column x must be unscoped (no tenant prefix); got {x:?}"
+            );
+            assert!(
+                !y.contains(':'),
+                "column y must be unscoped (no tenant prefix); got {y:?}"
+            );
+            assert_eq!(x, "alice", "expected unscoped src id");
+            assert_eq!(y, "bob", "expected unscoped dst id");
+        }
+    }
+    assert_eq!(row_count, 1, "expected exactly one matched row");
+}
+
+// ── 3. Numeric DSL parameters are clamped / rejected ──────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_traverse_rejects_absurd_depth() {
+    let server = TestServer::start().await;
+    server.exec("CREATE COLLECTION tdocs").await.unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .await
+        .unwrap();
+
+    // Spec from issue #52 checklist item 3: out-of-range numeric params
+    // must be rejected with SQLSTATE 22023 before dispatch, not
+    // forwarded to `cross_core_bfs` unchanged.
+    server
+        .expect_error(
+            "GRAPH TRAVERSE FROM 'a' DEPTH 4294967295 LABEL 'l' DIRECTION both",
+            "22023",
+        )
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_path_rejects_absurd_max_depth() {
+    let server = TestServer::start().await;
+    server.exec("CREATE COLLECTION pdocs").await.unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .await
+        .unwrap();
+
+    server
+        .expect_error(
+            "GRAPH PATH FROM 'a' TO 'b' MAX_DEPTH 4294967295 LABEL 'l'",
+            "22023",
+        )
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_algo_rejects_absurd_iterations() {
+    let server = TestServer::start().await;
+    server.exec("CREATE COLLECTION algodocs").await.unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .await
+        .unwrap();
+
+    server
+        .expect_error(
+            "GRAPH ALGO PAGERANK ON algodocs ITERATIONS 1000000000 TOLERANCE 1e-30",
+            "22023",
+        )
+        .await;
+}
+
+// ── 4. extract_*_after must parse statement structure, not user data ─
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_insert_edge_with_keyword_shaped_node_ids() {
+    let server = TestServer::start().await;
+    server.exec("CREATE COLLECTION kwnodes").await.unwrap();
+
+    // Node ids, label, and edge type all shadow DSL keywords. The
+    // handler must parse statement structure (quoted values after
+    // keywords), not match the literal substrings 'TO', 'FROM',
+    // 'LABEL', 'TYPE' inside user data.
+    server
+        .exec("GRAPH INSERT EDGE FROM 'TO' TO 'FROM' TYPE 'LABEL'")
+        .await
+        .expect("keyword-shaped ids must parse");
+
+    // The edge is addressable from its real src 'TO', not the literal
+    // 'FROM' that appears later in the statement.
+    let neighbors = server
+        .query_text("GRAPH NEIGHBORS OF 'TO' LABEL 'LABEL' DIRECTION out")
+        .await
+        .unwrap();
+    let blob = neighbors.join("");
+    assert!(
+        blob.contains("\"FROM\""),
+        "neighbor lookup must return dst id 'FROM' (was the TO-arg); got: {blob}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_insert_edge_properties_with_brace_in_string_value() {
+    let server = TestServer::start().await;
+    server.exec("CREATE COLLECTION bracedocs").await.unwrap();
+
+    // Object-literal extraction must be brace/quote-aware, not
+    // "everything from `{` to end of statement minus `;`". A `}` or
+    // `;` embedded in a string value must not terminate the object.
+    server
+        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l' PROPERTIES { note: '} DEPTH 999' }")
+        .await
+        .expect("brace-balanced property parsing must accept `}` inside strings");
+
+    // And the note value must not have been mis-parsed as a DEPTH
+    // argument — the edge still exists with its correct TYPE.
+    let rows = server
+        .query_text("GRAPH NEIGHBORS OF 'a' LABEL 'l' DIRECTION out")
+        .await
+        .unwrap();
+    let blob = rows.join("");
+    assert!(
+        blob.contains("\"b\""),
+        "edge must exist despite `}}` inside property value; got: {blob}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_traverse_node_id_containing_keyword_substring() {
+    let server = TestServer::start().await;
+    server.exec("CREATE COLLECTION kwnodes2").await.unwrap();
+
+    // A node id containing the literal substring DEPTH must not be
+    // mistaken for the DEPTH keyword. The handler must tokenise, not
+    // `upper.find("DEPTH")`.
+    server
+        .exec("GRAPH INSERT EDGE FROM 'node_with_DEPTH_in_name' TO 'b' TYPE 'l'")
+        .await
+        .unwrap();
+
+    let rows = server
+        .query_text("GRAPH TRAVERSE FROM 'node_with_DEPTH_in_name' DEPTH 2 LABEL 'l'")
+        .await
+        .expect("traversal from keyword-substring node id must succeed");
+    let blob = rows.join("");
+    assert!(
+        blob.contains("\"b\""),
+        "traversal must reach 'b'; substring 'DEPTH' in src id must not be parsed as DEPTH keyword; got: {blob}"
+    );
+}
