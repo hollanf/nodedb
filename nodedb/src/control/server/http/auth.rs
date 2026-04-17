@@ -5,6 +5,8 @@
 
 use std::sync::Arc;
 
+use axum::extract::FromRequestParts;
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 
@@ -184,6 +186,69 @@ impl IntoResponse for ApiError {
                 (status, axum::Json(body)).into_response()
             }
         }
+    }
+}
+
+/// Axum extractor that resolves and enforces HTTP auth before a handler runs.
+///
+/// Add this as the first parameter to any handler that performs tenant-scoped
+/// or admin work. Handlers that should remain public (health probes, etc.) must
+/// NOT include this extractor.
+///
+/// Produces a 401/403 response and short-circuits the handler if auth fails.
+pub struct ResolvedIdentity(pub crate::control::security::identity::AuthenticatedIdentity);
+
+impl ResolvedIdentity {
+    /// The resolved tenant ID (convenience accessor).
+    pub fn tenant_id(&self) -> crate::types::TenantId {
+        self.0.tenant_id
+    }
+}
+
+impl FromRequestParts<AppState> for ResolvedIdentity {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let peer = parts
+            .extensions
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|ci| ci.0.to_string())
+            .unwrap_or_else(|| "http".to_string());
+        let identity = resolve_identity(&parts.headers, state, &peer)?;
+        Ok(ResolvedIdentity(identity))
+    }
+}
+
+/// Like `ResolvedIdentity` but also resolves an `AuthContext` for handlers
+/// that need fine-grained RLS / permission checks.
+pub struct ResolvedAuth(
+    pub crate::control::security::identity::AuthenticatedIdentity,
+    pub crate::control::security::auth_context::AuthContext,
+);
+
+impl ResolvedAuth {
+    pub fn tenant_id(&self) -> crate::types::TenantId {
+        self.0.tenant_id
+    }
+}
+
+impl FromRequestParts<AppState> for ResolvedAuth {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let peer = parts
+            .extensions
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|ci| ci.0.to_string())
+            .unwrap_or_else(|| "http".to_string());
+        let (identity, auth_ctx) = resolve_auth(&parts.headers, state, &peer)?;
+        Ok(ResolvedAuth(identity, auth_ctx))
     }
 }
 
