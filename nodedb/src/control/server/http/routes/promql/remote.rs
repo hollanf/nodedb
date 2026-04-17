@@ -17,18 +17,20 @@ use crate::control::promql::remote_proto::{
     WriteRequest,
 };
 use crate::control::promql::{self, types::DEFAULT_LOOKBACK_MS};
-use crate::control::server::http::auth::AppState;
-use crate::types::{TenantId, VShardId};
+use crate::control::server::http::auth::{AppState, ResolvedIdentity};
+use crate::types::VShardId;
 
 /// POST `/obsv/api/v1/write` — Prometheus remote write endpoint.
 ///
 /// Accepts: `Content-Encoding: snappy`, body = snappy-compressed protobuf `WriteRequest`.
 /// Converts each `TimeSeries` to ILP lines and dispatches to the Data Plane.
 pub async fn remote_write(
+    identity: ResolvedIdentity,
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
+    let tenant_id = identity.tenant_id();
     // Decompress snappy if Content-Encoding indicates it (Prometheus always sends snappy).
     let decompressed = if is_snappy(&headers) {
         match snap::raw::Decoder::new().decompress_vec(&body) {
@@ -81,14 +83,14 @@ pub async fn remote_write(
         let dispatch_result = match state.shared.gateway.as_ref() {
             Some(gw) => {
                 let gw_ctx = QueryContext {
-                    tenant_id: TenantId::new(1),
+                    tenant_id,
                     trace_id: 0,
                 };
                 gw.execute(&gw_ctx, plan).await
             }
             None => crate::control::server::dispatch_utils::dispatch_to_data_plane(
                 &state.shared,
-                TenantId::new(1),
+                tenant_id,
                 vshard,
                 plan,
                 0,
@@ -134,6 +136,7 @@ pub async fn remote_write(
 /// Accepts: snappy-compressed protobuf `ReadRequest`.
 /// Returns: snappy-compressed protobuf `ReadResponse`.
 pub async fn remote_read(
+    _identity: ResolvedIdentity,
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Bytes,

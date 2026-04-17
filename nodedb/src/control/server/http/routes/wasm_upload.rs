@@ -2,54 +2,66 @@
 //!
 //! Accepts a raw WASM binary as the request body, stores it content-addressed,
 //! and updates the function's `wasm_hash` in the catalog.
-
-use std::sync::Arc;
+//!
+//! Auth: tenant_id is resolved via `resolve_identity` before any catalog
+//! access, ensuring the caller's identity — not a hardcoded literal — governs
+//! which tenant's function catalog is written to.
 
 use axum::body::Bytes;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 
+use super::super::auth::{AppState, resolve_identity};
 use crate::control::planner::wasm;
-use crate::control::state::SharedState;
 
 /// `PUT /v1/functions/:name/wasm` — upload a WASM binary for a function.
 ///
 /// The function must already exist with `language = WASM` in the catalog.
 /// The binary replaces the previous one (if any) atomically.
 pub async fn upload_wasm(
-    State(state): State<Arc<SharedState>>,
+    State(state): State<AppState>,
     Path(name): Path<String>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    let name = name.to_lowercase();
+    // Resolve identity before any catalog access. This is the source of
+    // tenant_id — never a hardcoded literal or a request parameter.
+    let identity = match resolve_identity(&headers, &state, "http") {
+        Ok(id) => id,
+        Err(e) => return e.into_response(),
+    };
 
-    let catalog = match state.credentials.catalog() {
+    let name = name.to_lowercase();
+    let tenant_id = identity.tenant_id.as_u32();
+
+    let catalog = match state.shared.credentials.catalog() {
         Some(c) => c,
         None => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "system catalog not available".to_string(),
-            );
+            )
+                .into_response();
         }
     };
 
     // Verify the function exists and is a WASM function.
-    // Use tenant 0 for now — multi-tenant HTTP auth is handled by middleware.
-    let tenant_id = 0u32;
     let mut func = match catalog.get_function(tenant_id, &name) {
         Ok(Some(f)) => f,
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
                 format!("function '{name}' does not exist"),
-            );
+            )
+                .into_response();
         }
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("catalog read error: {e}"),
-            );
+            )
+                .into_response();
         }
     };
 
@@ -57,7 +69,8 @@ pub async fn upload_wasm(
         return (
             StatusCode::BAD_REQUEST,
             format!("function '{name}' is not a WASM function"),
-        );
+        )
+            .into_response();
     }
 
     // Store the binary.
@@ -65,7 +78,7 @@ pub async fn upload_wasm(
     let hash = match wasm::store::store_wasm_binary(catalog, &body, config.max_binary_size) {
         Ok(h) => h,
         Err(e) => {
-            return (StatusCode::BAD_REQUEST, format!("invalid WASM binary: {e}"));
+            return (StatusCode::BAD_REQUEST, format!("invalid WASM binary: {e}")).into_response();
         }
     };
 
@@ -75,10 +88,11 @@ pub async fn upload_wasm(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("catalog write error: {e}"),
-        );
+        )
+            .into_response();
     }
 
-    state.audit_record(
+    state.shared.audit_record(
         crate::control::security::audit::AuditEvent::AdminAction,
         None,
         "_http_upload",
@@ -89,4 +103,5 @@ pub async fn upload_wasm(
         StatusCode::OK,
         serde_json::json!({"hash": hash}).to_string(),
     )
+        .into_response()
 }

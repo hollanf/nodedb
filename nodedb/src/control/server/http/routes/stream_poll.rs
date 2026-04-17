@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 
-use super::super::auth::AppState;
+use super::super::auth::{AppState, ResolvedIdentity};
 use crate::event::cdc::consume::{ConsumeError, ConsumeParams, ConsumeResult, consume_stream};
 
 /// Query parameters.
@@ -23,7 +23,8 @@ pub struct PollParams {
     pub limit: Option<usize>,
     /// Optional: consume from a specific partition only.
     pub partition: Option<u16>,
-    /// Tenant ID. Default: 1.
+    /// Detected and rejected — callers must not supply `tenant_id` as a
+    /// query parameter. Tenant is always sourced from the bearer token.
     pub tenant_id: Option<u32>,
 }
 
@@ -40,10 +41,23 @@ pub struct PollResponse {
 
 /// `GET /v1/streams/{stream}/poll`
 pub async fn poll_stream(
+    identity: ResolvedIdentity,
     Path(stream_name): Path<String>,
     Query(params): Query<PollParams>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
+    // Reject any attempt to override the caller's tenant via query string.
+    if params.tenant_id.is_some() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "tenant_id must not be supplied as a query parameter; \
+                          tenant is determined from the bearer token"
+            })),
+        )
+            .into_response();
+    }
+
     let group = match params.group {
         Some(g) => g.to_lowercase(),
         None => {
@@ -55,7 +69,7 @@ pub async fn poll_stream(
         }
     };
 
-    let tenant_id = params.tenant_id.unwrap_or(1);
+    let tenant_id = identity.tenant_id().as_u32();
     let limit = params.limit.unwrap_or(100).min(10_000);
     let stream_name = stream_name.to_lowercase();
 

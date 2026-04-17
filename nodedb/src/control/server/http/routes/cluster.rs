@@ -13,10 +13,16 @@ use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
-use super::super::auth::AppState;
+use super::super::auth::{AppState, ResolvedIdentity};
 
 /// `GET /cluster/status` — full observability snapshot.
-pub async fn cluster_status(State(state): State<AppState>) -> Response {
+///
+/// Requires authentication — cluster metadata (peer addresses, Raft group
+/// membership, shard topology) must not leak to unauthenticated callers.
+pub async fn cluster_status(
+    _identity: ResolvedIdentity,
+    State(state): State<AppState>,
+) -> Response {
     match state.shared.cluster_observer.get() {
         Some(observer) => {
             let snap = observer.snapshot();

@@ -16,7 +16,7 @@ use futures::stream::Stream;
 use serde::Deserialize;
 use sonic_rs;
 
-use super::super::auth::AppState;
+use super::super::auth::{ApiError, AppState, ResolvedIdentity};
 use crate::control::state::SharedState;
 use crate::event::cdc::consume::{ConsumeError, ConsumeParams, consume_stream};
 
@@ -27,7 +27,8 @@ pub struct SseParams {
     pub group: Option<String>,
     /// Optional: stream from a specific partition only.
     pub partition: Option<u16>,
-    /// Tenant ID. Default: 1.
+    /// Detected and rejected — callers must not supply `tenant_id` as a
+    /// query parameter. Tenant is always sourced from the bearer token.
     pub tenant_id: Option<u32>,
 }
 
@@ -54,12 +55,22 @@ impl Drop for ConsumerGuard {
 
 /// `GET /v1/streams/{stream}/events`
 pub async fn stream_events(
+    identity: ResolvedIdentity,
     Path(stream_name): Path<String>,
     Query(params): Query<SseParams>,
     State(state): State<AppState>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    // Reject any attempt to override the caller's tenant via query string.
+    if params.tenant_id.is_some() {
+        return Err(ApiError::Forbidden(
+            "tenant_id must not be supplied as a query parameter; \
+             tenant is determined from the bearer token"
+                .into(),
+        ));
+    }
+
     let group = params.group.unwrap_or_default().to_lowercase();
-    let tenant_id = params.tenant_id.unwrap_or(1);
+    let tenant_id = identity.tenant_id().as_u32();
     let stream_name = stream_name.to_lowercase();
     let partition = params.partition;
 
@@ -144,11 +155,10 @@ pub async fn stream_events(
         // _guard dropped here on any exit → leave() called.
     };
 
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 /// Generate a unique consumer ID using process ID + monotonic counter.
-/// Guaranteed unique within a process lifetime (no timestamp collisions).
 fn unique_consumer_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);

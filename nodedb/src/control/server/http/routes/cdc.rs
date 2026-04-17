@@ -15,21 +15,26 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::stream::Stream;
 use serde::Deserialize;
 
-use super::super::auth::AppState;
+use super::super::auth::{ApiError, AppState, ResolvedIdentity};
 use crate::control::change_stream::ChangeEvent;
 use crate::types::TenantId;
 
 /// Query parameters for the SSE endpoint.
+///
+/// `tenant_id` is intentionally removed — callers must not control which
+/// tenant they act as via a query-string parameter.
 #[derive(Deserialize, Default)]
 pub struct SseParams {
     /// Start streaming from this timestamp (epoch ms). Default: now.
     pub since_ms: Option<u64>,
-    /// Tenant ID filter. Default: 1.
+    /// If a caller passes `tenant_id`, we detect and reject it to prevent
+    /// cross-tenant escalation. The field is present only for rejection.
     pub tenant_id: Option<u32>,
 }
 
@@ -42,28 +47,28 @@ pub struct PollParams {
     pub since_lsn: Option<u64>,
     /// Maximum changes to return. Default: 100.
     pub limit: Option<usize>,
-    /// Tenant ID filter. Default: 1.
+    /// Detected and rejected — never honoured.
     pub tenant_id: Option<u32>,
 }
 
 /// SSE streaming endpoint: `GET /cdc/{collection}`
-///
-/// Streams change events as Server-Sent Events. Each event contains:
-/// ```text
-/// id: <lsn>
-/// event: <operation>
-/// data: {"collection":"users","operation":"INSERT","document_id":"u1","timestamp_ms":1234567890,"lsn":42}
-/// ```
-///
-/// Supports reconnection via `Last-Event-ID` header — on reconnect,
-/// replays missed events from the ring buffer starting after that LSN.
 pub async fn sse_stream(
+    identity: ResolvedIdentity,
     Path(collection): Path<String>,
     Query(params): Query<SseParams>,
     State(state): State<AppState>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
+    // Reject any attempt to override the caller's tenant via query string.
+    if params.tenant_id.is_some() {
+        return Err(ApiError::Forbidden(
+            "tenant_id must not be supplied as a query parameter; \
+             tenant is determined from the bearer token"
+                .into(),
+        ));
+    }
+
     let collection = collection.to_lowercase();
-    let tenant_id = TenantId::new(params.tenant_id.unwrap_or(1));
+    let tenant_id = identity.tenant_id();
     let since_ms = params.since_ms.unwrap_or(0);
     let shared = Arc::clone(&state.shared);
 
@@ -90,7 +95,6 @@ pub async fn sse_stream(
                     yield Ok(format_sse_event(&event));
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    // Subscriber fell behind. Send a warning event.
                     yield Ok(Event::default()
                         .event("warning")
                         .data(format!("lagged {n} events")));
@@ -102,30 +106,28 @@ pub async fn sse_stream(
         }
     };
 
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 /// Poll endpoint: `GET /cdc/{collection}/poll`
-///
-/// Returns a JSON batch of changes since the given cursor.
-/// Non-streaming — returns immediately with available changes.
-///
-/// Response:
-/// ```json
-/// {
-///   "changes": [
-///     {"operation": "INSERT", "document_id": "u1", "timestamp_ms": 123, "lsn": 42},
-///     ...
-///   ],
-///   "next_cursor": {"since_ms": 124, "since_lsn": 43},
-///   "has_more": false
-/// }
-/// ```
 pub async fn poll_changes(
+    identity: ResolvedIdentity,
     Path(collection): Path<String>,
     Query(params): Query<PollParams>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
+    // Reject any attempt to override the caller's tenant via query string.
+    if params.tenant_id.is_some() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "tenant_id must not be supplied as a query parameter"
+            })),
+        )
+            .into_response();
+    }
+
+    let _tenant_id: TenantId = identity.tenant_id();
     let collection = collection.to_lowercase();
     let since_ms = params.since_ms.unwrap_or(0);
     let limit = params.limit.unwrap_or(100).min(10_000);
@@ -163,6 +165,7 @@ pub async fn poll_changes(
         "has_more": has_more,
         "count": changes.len(),
     }))
+    .into_response()
 }
 
 /// Format a ChangeEvent as an SSE Event.
