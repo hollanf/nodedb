@@ -40,9 +40,17 @@ impl RlsPolicyStore {
                             warn!(
                                 policy = %policy.name,
                                 error = %e,
-                                "RLS write policy predicate deserialization failed"
+                                "RLS write policy predicate deserialization failed \
+                                 — denying write (fail-closed)"
                             );
-                            continue;
+                            return Err(crate::Error::RejectedAuthz {
+                                tenant_id: crate::types::TenantId::new(tenant_id),
+                                resource: format!(
+                                    "RLS policy '{}' on collection '{}': \
+                                     predicate deserialization failed",
+                                    policy.name, collection
+                                ),
+                            });
                         }
                     };
 
@@ -67,31 +75,6 @@ impl RlsPolicyStore {
         }
 
         Ok(())
-    }
-
-    /// Legacy (static) combined read predicate — AND-combined filters.
-    pub fn combined_read_predicate(&self, tenant_id: u32, collection: &str) -> Vec<u8> {
-        let policies = self.read_policies(tenant_id, collection);
-        if policies.is_empty() {
-            return Vec::new();
-        }
-
-        let mut all_filters: Vec<crate::bridge::scan_filter::ScanFilter> = Vec::new();
-        for policy in &policies {
-            if !policy.predicate.is_empty()
-                && let Ok(filters) = zerompk::from_msgpack::<
-                    Vec<crate::bridge::scan_filter::ScanFilter>,
-                >(&policy.predicate)
-            {
-                all_filters.extend(filters);
-            }
-        }
-
-        if all_filters.is_empty() {
-            Vec::new()
-        } else {
-            zerompk::to_msgpack_vec(&all_filters).unwrap_or_default()
-        }
     }
 
     /// Primary read-path RLS method: substitutes `$auth.*` variables
@@ -120,12 +103,21 @@ impl RlsPolicyStore {
         for policy in &policies {
             if let Some(ref compiled) = policy.compiled_predicate {
                 compiled_policies.push((compiled.clone(), policy.mode));
-            } else if !policy.predicate.is_empty()
-                && let Ok(filters) = zerompk::from_msgpack::<
-                    Vec<crate::bridge::scan_filter::ScanFilter>,
-                >(&policy.predicate)
-            {
-                legacy_filters.extend(filters);
+            } else if !policy.predicate.is_empty() {
+                match zerompk::from_msgpack::<Vec<crate::bridge::scan_filter::ScanFilter>>(
+                    &policy.predicate,
+                ) {
+                    Ok(filters) => legacy_filters.extend(filters),
+                    Err(e) => {
+                        warn!(
+                            policy = %policy.name,
+                            error = %e,
+                            "RLS read policy predicate deserialization failed \
+                             — denying read (fail-closed)"
+                        );
+                        return None;
+                    }
+                }
             }
         }
 
@@ -235,9 +227,17 @@ fn check_legacy_write(
                 warn!(
                     policy = %policy.name,
                     error = %e,
-                    "RLS write policy predicate deserialization failed"
+                    "RLS write policy predicate deserialization failed \
+                     — denying write (fail-closed)"
                 );
-                return Ok(());
+                return Err(crate::Error::RejectedAuthz {
+                    tenant_id: crate::types::TenantId::new(tenant_id),
+                    resource: format!(
+                        "RLS policy '{}' on collection '{}': \
+                         predicate deserialization failed",
+                        policy.name, collection
+                    ),
+                });
             }
         };
 
@@ -263,6 +263,7 @@ fn check_legacy_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::security::auth_context::AuthContext;
     use crate::control::security::rls::types::PolicyType;
 
     fn make_policy(name: &str, collection: &str, policy_type: PolicyType) -> RlsPolicy {
@@ -313,5 +314,76 @@ mod tests {
         let store = RlsPolicyStore::new();
         let doc = serde_json::json!({"anything": "goes"});
         assert!(store.check_write(1, "whatever", &doc, "anyone").is_ok());
+    }
+
+    /// A policy whose stored predicate bytes cannot be deserialized must
+    /// deny the write (fail-closed). Legacy-branch of `check_write`.
+    #[test]
+    fn check_write_denies_on_undeserializable_predicate() {
+        let store = RlsPolicyStore::new();
+        let mut policy = make_policy("corrupt", "orders", PolicyType::Write);
+        // Non-empty, syntactically invalid msgpack bytes.
+        policy.predicate = vec![0xFF, 0xFE, 0xFD, 0xFC];
+        store.create_policy(policy).unwrap();
+
+        let doc = serde_json::json!({"status": "active"});
+        let result = store.check_write(1, "orders", &doc, "alice");
+        assert!(
+            result.is_err(),
+            "RLS must fail-closed on predicate deser failure; got {result:?}"
+        );
+    }
+
+    /// Legacy branch of `check_write_with_auth` (`check_legacy_write`) must
+    /// also deny when the stored predicate cannot be deserialized.
+    fn nonsuper_auth() -> AuthContext {
+        use crate::control::security::identity::{AuthMethod, AuthenticatedIdentity, Role};
+        use crate::types::TenantId;
+        let identity = AuthenticatedIdentity {
+            user_id: 42,
+            username: "alice".into(),
+            tenant_id: TenantId::new(1),
+            auth_method: AuthMethod::ScramSha256,
+            roles: vec![Role::ReadWrite],
+            is_superuser: false,
+        };
+        AuthContext::from_identity(&identity, "s_test".into())
+    }
+
+    #[test]
+    fn check_write_with_auth_denies_on_undeserializable_legacy_predicate() {
+        let store = RlsPolicyStore::new();
+        let mut policy = make_policy("corrupt_legacy", "orders", PolicyType::Write);
+        policy.predicate = vec![0xFF, 0xFE, 0xFD, 0xFC];
+        // No compiled_predicate → goes through legacy branch.
+        store.create_policy(policy).unwrap();
+
+        let doc = serde_json::json!({"status": "active"});
+        let auth = nonsuper_auth();
+        let result = store.check_write_with_auth(1, "orders", &doc, &auth);
+        assert!(
+            result.is_err(),
+            "legacy write path must fail-closed on deser failure; got {result:?}"
+        );
+    }
+
+    /// Read-path: `combined_read_predicate_with_auth` legacy branch must
+    /// not silently drop a policy whose predicate bytes fail to
+    /// deserialize. Dropping it would give an unrestricted read.
+    #[test]
+    fn combined_read_with_auth_fails_closed_on_undeserializable_predicate() {
+        let store = RlsPolicyStore::new();
+        let mut policy = make_policy("corrupt_read", "orders", PolicyType::Read);
+        policy.predicate = vec![0xFF, 0xFE, 0xFD, 0xFC];
+        store.create_policy(policy).unwrap();
+
+        let auth = nonsuper_auth();
+        let result = store.combined_read_predicate_with_auth(1, "orders", &auth);
+        // Fail-closed: either None (denial) or a predicate that evaluates
+        // to no rows. Silently returning `Some(empty)` removes the policy.
+        assert!(
+            result.is_none() || result.as_ref().is_some_and(|b| !b.is_empty()),
+            "read path must fail-closed on deser failure; got unrestricted Some(empty)"
+        );
     }
 }

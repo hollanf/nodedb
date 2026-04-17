@@ -277,7 +277,6 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
             MetaOp::RegisterContinuousAggregate { .. }
             | MetaOp::UnregisterContinuousAggregate { .. }
             | MetaOp::ListContinuousAggregates
-            | MetaOp::RefreshMaterializedView { .. }
             | MetaOp::ConvertCollection { .. },
         ) => Permission::Alter,
 
