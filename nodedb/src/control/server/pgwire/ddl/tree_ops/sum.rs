@@ -1,7 +1,7 @@
 //! `SELECT TREE_SUM(column, graph_index, root_id [, collection]) [MAX_DEPTH n]`
 //!
 //! BFS traversal from `root_id`, summing column values over all descendants
-//! + root. If `collection` is provided, lookups are O(N). Without it,
+//! plus root. If `collection` is provided, lookups are O(N). Without it,
 //! lookups scan all tenant collections (O(N×C)) — pass the collection
 //! name for production use.
 
