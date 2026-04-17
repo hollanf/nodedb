@@ -89,6 +89,19 @@ impl QueryParser for NodeDbQueryParser {
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
+        // Wire-streaming COPY shapes for backup/restore: bypass nodedb-sql
+        // entirely. The Execute handler intercepts these via
+        // `control::backup::detect`. Returning early avoids a fruitless
+        // sqlparser pass on syntax it doesn't model.
+        if crate::control::backup::detect(sql).is_some() {
+            return Ok(ParsedStatement {
+                sql: sql.to_owned(),
+                param_types: Vec::new(),
+                result_fields: Vec::new(),
+                is_dsl: false,
+            });
+        }
+
         // Resolve the connecting user's tenant from pgwire metadata so
         // parse-time catalog lookups are scoped to the right tenant.
         // Unknown users fall back to tenant 1 only during bootstrap

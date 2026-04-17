@@ -1,3 +1,4 @@
+mod copy_handler;
 mod core;
 mod cursor_cmds;
 mod dispatch;
@@ -14,5 +15,6 @@ mod sql_prepared;
 mod transaction_cmds;
 mod wal_dispatch;
 
+pub use self::copy_handler::NodeDbCopyHandler;
 pub use self::core::NodeDbPgHandler;
 pub use self::listen_notify::ListenNotifyManager;

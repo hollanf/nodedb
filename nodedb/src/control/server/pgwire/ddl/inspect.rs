@@ -348,14 +348,12 @@ fn show_audit_log_memory(state: &SharedState, limit: usize) -> PgWireResult<Vec<
     ))])
 }
 
-/// EXPORT AUDIT LOG TO '<path>' [LIMIT <n>]
-///
-/// Exports audit entries as NDJSON (newline-delimited JSON) to a file.
-/// Superuser only. External tools (Filebeat, Fluentd) can process the output.
+/// Audit entries are read with a regular `SELECT` query against
+/// `system.audit_log`; the client redirects the result.
 pub fn export_audit_log(
-    state: &SharedState,
+    _state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    _parts: &[&str],
 ) -> PgWireResult<Vec<Response>> {
     if !identity.is_superuser {
         return Err(sqlstate_error(
@@ -363,86 +361,9 @@ pub fn export_audit_log(
             "permission denied: only superuser can export audit log",
         ));
     }
-
-    let to_idx = parts
-        .iter()
-        .position(|p| p.eq_ignore_ascii_case("TO"))
-        .ok_or_else(|| {
-            sqlstate_error("42601", "syntax: EXPORT AUDIT LOG TO '<path>' [LIMIT <n>]")
-        })?;
-
-    let path = super::user::extract_quoted_string(parts, to_idx + 1)
-        .ok_or_else(|| sqlstate_error("42601", "path must be a single-quoted string"))?;
-
-    let limit = parts
-        .iter()
-        .position(|p| p.eq_ignore_ascii_case("LIMIT"))
-        .and_then(|i| parts.get(i + 1))
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(10_000);
-
-    let entries = if let Some(catalog) = state.credentials.catalog() {
-        catalog.load_recent_audit_entries(limit).unwrap_or_default()
-    } else {
-        match state.audit.lock() {
-            Ok(log) => log
-                .all()
-                .iter()
-                .map(|e| crate::control::security::catalog::StoredAuditEntry {
-                    seq: e.seq,
-                    timestamp_us: e.timestamp_us,
-                    event: format!("{:?}", e.event),
-                    tenant_id: e.tenant_id.map(|t| t.as_u32()),
-                    source: e.source.clone(),
-                    detail: e.detail.clone(),
-                    prev_hash: e.prev_hash.clone(),
-                })
-                .collect(),
-            Err(_) => Vec::new(),
-        }
-    };
-
-    use std::io::Write;
-    let mut file = std::fs::File::create(&path)
-        .map_err(|e| sqlstate_error("XX000", &format!("failed to create '{path}': {e}")))?;
-
-    let mut count = 0usize;
-    for entry in &entries {
-        let json = serde_json::json!({
-            "seq": entry.seq,
-            "timestamp_us": entry.timestamp_us,
-            "event": entry.event,
-            "tenant_id": entry.tenant_id,
-            "source": entry.source,
-            "detail": entry.detail,
-        });
-        writeln!(file, "{json}")
-            .map_err(|e| sqlstate_error("XX000", &format!("write failed: {e}")))?;
-        count += 1;
-    }
-
-    file.flush()
-        .map_err(|e| sqlstate_error("XX000", &format!("flush failed: {e}")))?;
-
-    state.audit_record(
-        crate::control::security::audit::AuditEvent::AdminAction,
-        None,
-        &identity.username,
-        &format!("exported {count} audit entries to '{path}'"),
-    );
-
-    let schema = Arc::new(vec![text_field("path"), int8_field("entries_exported")]);
-    let mut encoder = DataRowEncoder::new(schema.clone());
-    encoder
-        .encode_field(&path)
-        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
-    encoder
-        .encode_field(&(count as i64))
-        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
-    let row = encoder.take_row();
-
-    Ok(vec![Response::Query(QueryResponse::new(
-        schema,
-        stream::iter(vec![Ok(row)]),
-    ))])
+    Err(sqlstate_error(
+        "0A000",
+        "use `SELECT ... FROM system.audit_log` and redirect the query \
+         result on the client",
+    ))
 }

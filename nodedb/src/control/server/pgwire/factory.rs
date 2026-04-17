@@ -175,6 +175,13 @@ impl PgWireServerHandlers for NodeDbPgHandlerFactory {
         self.handler.clone()
     }
 
+    fn copy_handler(&self) -> Arc<impl pgwire::api::copy::CopyHandler> {
+        Arc::new(super::handler::NodeDbCopyHandler {
+            state: Arc::clone(&self.state),
+            restore_state: Arc::clone(&self.handler.restore_state),
+        })
+    }
+
     fn startup_handler(&self) -> Arc<impl StartupHandler> {
         match self.auth_mode {
             AuthMode::Trust => Arc::new(AuthStartup::Trust(self.handler.clone())),

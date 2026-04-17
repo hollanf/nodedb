@@ -3956,6 +3956,7 @@ dependencies = [
 name = "nodedb-types"
 version = "0.0.4"
 dependencies = [
+ "crc32c",
  "nanoid",
  "nodedb-codec",
  "rand 0.9.4",

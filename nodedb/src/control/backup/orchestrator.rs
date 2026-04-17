@@ -1,0 +1,186 @@
+//! BACKUP TENANT orchestrator.
+//!
+//! Discovers every node that holds a vShard owning some of the
+//! tenant's data, dispatches `MetaOp::CreateTenantSnapshot` to each
+//! (local SPSC for self, `RaftRpc::ExecuteRequest` for remotes),
+//! and packs the gathered per-node snapshots into a `BackupEnvelope`.
+//!
+//! Single-node mode is the degenerate case: routing table absent
+//! (or 1 node) → 1 section, origin = self.
+
+use std::collections::BTreeSet;
+use std::sync::Arc;
+use std::time::Duration;
+
+use bytes::Bytes;
+use nodedb_cluster::routing::VSHARD_COUNT;
+use nodedb_cluster::rpc_codec::{ExecuteRequest, ExecuteResponse, RaftRpc, TypedClusterError};
+use nodedb_types::backup_envelope::{EnvelopeMeta, EnvelopeWriter};
+
+use crate::Error;
+use crate::bridge::envelope::PhysicalPlan;
+use crate::bridge::physical_plan::{MetaOp, wire as plan_wire};
+use crate::control::server::pgwire::ddl::sync_dispatch;
+use crate::control::state::SharedState;
+use crate::types::TenantId;
+
+/// Default per-node snapshot dispatch timeout.
+const NODE_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Build a complete tenant backup envelope by fanning out across the
+/// cluster, gathering each node's slice, and framing the result.
+///
+/// Single-node and cluster paths converge here — a single-node server
+/// produces a one-section envelope with origin = self.
+pub async fn backup_tenant(state: &Arc<SharedState>, tenant_id: u32) -> Result<Bytes, Error> {
+    let nodes = unique_origin_nodes(state);
+    let snapshot_plan = PhysicalPlan::Meta(MetaOp::CreateTenantSnapshot { tenant_id });
+
+    let meta = EnvelopeMeta {
+        tenant_id,
+        source_vshard_count: VSHARD_COUNT,
+        hash_seed: 0,          // VSHARD_COUNT-derived hash; no seed today
+        snapshot_watermark: 0, // global watermark capture is a future enhancement
+    };
+    let mut writer = EnvelopeWriter::new(meta);
+
+    for node_id in nodes {
+        let body = if is_self(state, node_id) {
+            snapshot_self(state, tenant_id, &snapshot_plan).await?
+        } else {
+            snapshot_remote(state, node_id, tenant_id, &snapshot_plan).await?
+        };
+        writer
+            .push_section(node_id, body)
+            .map_err(|e| Error::Internal {
+                detail: format!("backup envelope: {e}"),
+            })?;
+    }
+
+    Ok(Bytes::from(writer.finalize()))
+}
+
+/// Enumerate the unique node IDs that hold any vShard right now.
+///
+/// In single-node mode (no routing table) returns `[self.node_id]`,
+/// which may be 0 — that's fine; the section's origin_node_id is
+/// only carried for traceability/debugging, not for routing.
+fn unique_origin_nodes(state: &SharedState) -> Vec<u64> {
+    let Some(routing) = state.cluster_routing.as_ref() else {
+        return vec![state.node_id];
+    };
+    let table = routing.read().expect("routing table poisoned");
+    let mut set = BTreeSet::new();
+    for info in table.group_members().values() {
+        if info.leader != 0 {
+            set.insert(info.leader);
+        }
+        for &m in &info.members {
+            set.insert(m);
+        }
+    }
+    if set.is_empty() {
+        vec![state.node_id]
+    } else {
+        set.into_iter().collect()
+    }
+}
+
+fn is_self(state: &SharedState, node_id: u64) -> bool {
+    node_id == state.node_id || node_id == 0 || state.cluster_transport.is_none()
+}
+
+async fn snapshot_self(
+    state: &Arc<SharedState>,
+    tenant_id: u32,
+    plan: &PhysicalPlan,
+) -> Result<Vec<u8>, Error> {
+    sync_dispatch::dispatch_async(
+        state,
+        TenantId::new(tenant_id),
+        "__system",
+        plan.clone(),
+        NODE_SNAPSHOT_TIMEOUT,
+    )
+    .await
+}
+
+async fn snapshot_remote(
+    state: &Arc<SharedState>,
+    node_id: u64,
+    tenant_id: u32,
+    plan: &PhysicalPlan,
+) -> Result<Vec<u8>, Error> {
+    let transport = state
+        .cluster_transport
+        .as_ref()
+        .ok_or_else(|| Error::Internal {
+            detail: format!("backup: cluster_transport unavailable but node {node_id} is remote"),
+        })?;
+
+    let plan_bytes = plan_wire::encode(plan).map_err(|e| Error::Internal {
+        detail: format!("backup: plan encode failed: {e}"),
+    })?;
+    let req = RaftRpc::ExecuteRequest(ExecuteRequest {
+        plan_bytes,
+        tenant_id,
+        deadline_remaining_ms: NODE_SNAPSHOT_TIMEOUT.as_millis() as u64,
+        trace_id: 0,
+        descriptor_versions: Vec::new(),
+    });
+
+    let resp = transport
+        .send_rpc(node_id, req)
+        .await
+        .map_err(|e| Error::Internal {
+            detail: format!("backup: snapshot RPC to node {node_id} failed: {e}"),
+        })?;
+    match resp {
+        RaftRpc::ExecuteResponse(ExecuteResponse {
+            success: true,
+            mut payloads,
+            ..
+        }) => {
+            // CreateTenantSnapshot returns exactly one payload.
+            if payloads.len() != 1 {
+                return Err(Error::Internal {
+                    detail: format!(
+                        "backup: expected 1 payload from node {node_id}, got {}",
+                        payloads.len()
+                    ),
+                });
+            }
+            Ok(payloads.remove(0))
+        }
+        RaftRpc::ExecuteResponse(ExecuteResponse {
+            error: Some(err), ..
+        }) => Err(map_typed_error(err, node_id)),
+        RaftRpc::ExecuteResponse(_) => Err(Error::Internal {
+            detail: format!("backup: empty error response from node {node_id}"),
+        }),
+        other => Err(Error::Internal {
+            detail: format!(
+                "backup: unexpected RPC response variant from node {node_id}: {other:?}"
+            ),
+        }),
+    }
+}
+
+fn map_typed_error(err: TypedClusterError, node_id: u64) -> Error {
+    match err {
+        TypedClusterError::Internal { message, .. } => Error::Internal {
+            detail: format!("backup node {node_id}: {message}"),
+        },
+        TypedClusterError::DeadlineExceeded { elapsed_ms } => Error::Internal {
+            detail: format!("backup node {node_id}: deadline exceeded after {elapsed_ms}ms"),
+        },
+        TypedClusterError::NotLeader { .. } => Error::Internal {
+            detail: format!("backup node {node_id}: snapshot RPC routed to non-leader"),
+        },
+        TypedClusterError::DescriptorMismatch { collection, .. } => Error::Internal {
+            detail: format!(
+                "backup node {node_id}: descriptor mismatch on collection {collection}"
+            ),
+        },
+    }
+}

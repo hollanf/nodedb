@@ -52,6 +52,8 @@ pub struct NodeDbPgHandler {
     auth_mode: AuthMode,
     /// Per-connection session state (transaction blocks, parameters).
     pub(crate) sessions: SessionStore,
+    /// Per-connection in-flight COPY IN restore accumulators.
+    pub(crate) restore_state: Arc<crate::control::backup::RestoreState>,
 }
 
 impl NodeDbPgHandler {
@@ -71,6 +73,7 @@ impl NodeDbPgHandler {
             query_parser,
             auth_mode,
             sessions: SessionStore::new(),
+            restore_state: Arc::new(crate::control::backup::RestoreState::new()),
         }
     }
 

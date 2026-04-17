@@ -42,6 +42,13 @@ impl NodeDbPgHandler {
         let stmt = &portal.statement.statement;
         let tenant_id = identity.tenant_id;
 
+        // Wire-streaming COPY shapes for backup/restore. Recognised before
+        // sqlparser-based execution because the shapes aren't standard COPY
+        // grammar. See `control::backup::detect`.
+        if let Some(intent) = crate::control::backup::detect(&stmt.sql) {
+            return self.intent_to_response(&identity, addr, intent).await;
+        }
+
         // DSL passthroughs (SEARCH, GRAPH, MATCH, UPSERT INTO, etc.) cannot be
         // handled by the planned-SQL path. Route them through the same full DSL
         // dispatcher used by the simple-query handler. DSL statements do not use

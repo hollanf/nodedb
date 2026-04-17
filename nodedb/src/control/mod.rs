@@ -1,4 +1,5 @@
 pub mod arrow_convert;
+pub mod backup;
 pub mod catalog_entry;
 pub mod change_stream;
 pub mod checkpoint_manager;

@@ -81,6 +81,17 @@ impl NodeDbPgHandler {
             return result;
         }
 
+        // ── Wire-streaming COPY shapes for backup/restore ─────────────
+        // Recognised before sqlparser because `COPY (BACKUP TENANT n) TO
+        // STDOUT` and `COPY tenant_restore(n) FROM STDIN` aren't standard
+        // COPY grammar. See `control::backup::detect`.
+        if let Some(intent) = crate::control::backup::detect(sql_trimmed) {
+            return self
+                .intent_to_response(identity, *addr, intent)
+                .await
+                .map(|r| vec![r]);
+        }
+
         if upper.starts_with("SAVEPOINT ") {
             return self.handle_savepoint(addr, sql_trimmed);
         }
