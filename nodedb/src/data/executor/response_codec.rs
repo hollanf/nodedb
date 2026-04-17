@@ -516,6 +516,14 @@ pub(super) struct NeighborEntry<'a> {
 
 #[derive(Serialize, zerompk::ToMessagePack)]
 #[msgpack(map)]
+pub(super) struct NeighborMultiEntry<'a> {
+    pub src: &'a str,
+    pub label: &'a str,
+    pub node: &'a str,
+}
+
+#[derive(Serialize, zerompk::ToMessagePack)]
+#[msgpack(map)]
 pub(super) struct SubgraphEdge<'a> {
     pub src: &'a str,
     pub label: &'a str,

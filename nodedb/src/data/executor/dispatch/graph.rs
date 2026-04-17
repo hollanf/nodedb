@@ -17,11 +17,17 @@ impl CoreLoop {
                 properties,
             } => self.execute_edge_put(task, tid, src_id, label, dst_id, properties),
 
+            GraphOp::EdgePutBatch { edges } => self.execute_edge_put_batch(task, tid, edges),
+
             GraphOp::EdgeDelete {
                 src_id,
                 label,
                 dst_id,
             } => self.execute_edge_delete(task, tid, src_id, label, dst_id),
+
+            GraphOp::EdgeDeleteBatch { edges } => {
+                self.execute_edge_delete_batch(task, tid, edges)
+            }
 
             GraphOp::Hop {
                 start_nodes,
@@ -38,6 +44,21 @@ impl CoreLoop {
                 direction,
                 rls_filters: _,
             } => self.execute_graph_neighbors(task, tid, node_id, edge_label, *direction),
+
+            GraphOp::NeighborsMulti {
+                node_ids,
+                edge_label,
+                direction,
+                max_results,
+                rls_filters: _,
+            } => self.execute_graph_neighbors_multi(
+                task,
+                tid,
+                node_ids,
+                edge_label,
+                *direction,
+                *max_results,
+            ),
 
             GraphOp::Path {
                 src,

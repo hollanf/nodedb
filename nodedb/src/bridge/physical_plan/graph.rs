@@ -4,6 +4,22 @@ use crate::engine::graph::algo::params::{AlgoParams, GraphAlgorithm};
 use crate::engine::graph::edge_store::Direction;
 use crate::engine::graph::traversal_options::GraphTraversalOptions;
 
+/// One edge in an `EdgePutBatch` / `EdgeDeleteBatch`.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+pub struct BatchEdge {
+    pub src_id: String,
+    pub label: String,
+    pub dst_id: String,
+}
+
 /// Graph engine physical operations.
 #[derive(
     Debug,
@@ -23,11 +39,24 @@ pub enum GraphOp {
         properties: Vec<u8>,
     },
 
+    /// Batched edge insert: many `(src, label, dst)` triples with a
+    /// shared set of properties. Used by `CREATE GRAPH INDEX` and other
+    /// bulk-edge writers to avoid O(N) serial RPCs.
+    EdgePutBatch {
+        edges: Vec<BatchEdge>,
+    },
+
     /// Delete a graph edge.
     EdgeDelete {
         src_id: String,
         label: String,
         dst_id: String,
+    },
+
+    /// Batched edge delete: used to revert a partial `EdgePutBatch` on
+    /// failure so the DDL leaves no stranded edges.
+    EdgeDeleteBatch {
+        edges: Vec<BatchEdge>,
     },
 
     /// Graph hop traversal: BFS from start nodes via label, bounded by depth.
@@ -46,6 +75,24 @@ pub enum GraphOp {
         node_id: String,
         edge_label: Option<String>,
         direction: Direction,
+        /// RLS filters applied to neighbor nodes before returning.
+        rls_filters: Vec<u8>,
+    },
+
+    /// Batched 1-hop neighbors lookup: one RPC per hop of a BFS frontier
+    /// instead of one RPC per frontier node. Returns
+    /// `[{ src, label, node }, ...]` so the caller can attribute each
+    /// neighbor to its origin (needed for shortest-path parent pointers).
+    ///
+    /// `max_results` is the per-RPC cap: the Data Plane handler stops
+    /// emitting entries once the batch reaches this size so a single
+    /// wide hop cannot allocate past the caller's budget. `0` means
+    /// unbounded (use with care).
+    NeighborsMulti {
+        node_ids: Vec<String>,
+        edge_label: Option<String>,
+        direction: Direction,
+        max_results: u32,
         /// RLS filters applied to neighbor nodes before returning.
         rls_filters: Vec<u8>,
     },

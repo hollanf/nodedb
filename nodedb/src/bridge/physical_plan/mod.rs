@@ -23,7 +23,7 @@ pub use document::{
     BalancedDef, DocumentOp, EnforcementOptions, GeneratedColumnSpec, MaterializedSumBinding,
     PeriodLockConfig, StorageMode, UpdateValue,
 };
-pub use graph::GraphOp;
+pub use graph::{BatchEdge, GraphOp};
 pub use kv::KvOp;
 pub use meta::MetaOp;
 pub use query::{AggregateSpec, JoinProjection, QueryOp};
@@ -83,6 +83,7 @@ impl PhysicalPlan {
                 | PhysicalPlan::Query(QueryOp::PartialAggregate { .. })
                 | PhysicalPlan::Graph(GraphOp::Hop { .. })
                 | PhysicalPlan::Graph(GraphOp::Neighbors { .. })
+                | PhysicalPlan::Graph(GraphOp::NeighborsMulti { .. })
                 | PhysicalPlan::Graph(GraphOp::Path { .. })
                 | PhysicalPlan::Graph(GraphOp::Subgraph { .. })
                 | PhysicalPlan::Graph(GraphOp::RagFusion { .. })

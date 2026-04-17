@@ -184,6 +184,7 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
         PhysicalPlan::Graph(
             GraphOp::Hop { .. }
             | GraphOp::Neighbors { .. }
+            | GraphOp::NeighborsMulti { .. }
             | GraphOp::Path { .. }
             | GraphOp::Subgraph { .. }
             | GraphOp::RagFusion { .. }
@@ -245,7 +246,9 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
 
         PhysicalPlan::Graph(
             GraphOp::EdgePut { .. }
+            | GraphOp::EdgePutBatch { .. }
             | GraphOp::EdgeDelete { .. }
+            | GraphOp::EdgeDeleteBatch { .. }
             | GraphOp::SetNodeLabels { .. }
             | GraphOp::RemoveNodeLabels { .. },
         ) => Permission::Write,

@@ -32,10 +32,23 @@ impl CoreLoop {
         // Execute the pattern match on CSR + EdgeStore.
         match crate::engine::graph::pattern::executor::execute(&query, &self.csr, &self.edge_store)
         {
-            Ok(rows) => match crate::engine::graph::pattern::executor::rows_to_msgpack(&rows) {
-                Ok(payload) => self.response_with_payload(task, payload),
-                Err(e) => self.response_error(task, ErrorCode::from(e)),
-            },
+            Ok(outcome) => {
+                match crate::engine::graph::pattern::executor::rows_to_msgpack(&outcome.rows) {
+                    Ok(payload) => {
+                        if outcome.truncated {
+                            // Variable-length expansion hit a hard cap.
+                            // Surface via the envelope's `partial` flag
+                            // so merging / client response paths can see
+                            // the incomplete result — silent truncation
+                            // is not allowed (§CLAUDE.md "Do the Ripple").
+                            self.response_partial(task, payload)
+                        } else {
+                            self.response_with_payload(task, payload)
+                        }
+                    }
+                    Err(e) => self.response_error(task, ErrorCode::from(e)),
+                }
+            }
             Err(e) => self.response_error(task, ErrorCode::from(e)),
         }
     }

@@ -118,11 +118,23 @@ impl CoreLoop {
                             .put_edge(&scoped_src, &label, &scoped_dst, &old_properties);
                     let weight =
                         crate::engine::graph::csr::extract_weight_from_properties(&old_properties);
-                    if weight != 1.0 {
+                    // Rollback path: LabelOverflow here can't be surfaced
+                    // (we're already undoing a transaction), but must not
+                    // be silently ignored either. Log at warn — the CSR
+                    // state is then known to be incomplete, and the outer
+                    // transaction error is what the client actually sees.
+                    let csr_res = if weight != 1.0 {
                         self.csr
-                            .add_edge_weighted(&scoped_src, &label, &scoped_dst, weight);
+                            .add_edge_weighted(&scoped_src, &label, &scoped_dst, weight)
                     } else {
-                        self.csr.add_edge(&scoped_src, &label, &scoped_dst);
+                        self.csr.add_edge(&scoped_src, &label, &scoped_dst)
+                    };
+                    if let Err(e) = csr_res {
+                        tracing::warn!(
+                            core = self.core_id,
+                            error = %e,
+                            "transaction undo: CSR re-insert failed; CSR may be incomplete"
+                        );
                     }
                 }
             }

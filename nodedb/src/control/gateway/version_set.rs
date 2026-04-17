@@ -205,9 +205,12 @@ pub fn touched_collections(plan: &PhysicalPlan) -> Vec<String> {
 
                 // Structural ops use node IDs, not a collection name.
                 EdgePut { .. }
+                | EdgePutBatch { .. }
                 | EdgeDelete { .. }
+                | EdgeDeleteBatch { .. }
                 | Hop { .. }
                 | Neighbors { .. }
+                | NeighborsMulti { .. }
                 | Path { .. }
                 | Subgraph { .. }
                 | Algo { .. }

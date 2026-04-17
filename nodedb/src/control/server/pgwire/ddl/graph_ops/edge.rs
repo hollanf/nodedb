@@ -18,6 +18,43 @@ use crate::control::server::pgwire::types::sqlstate_error;
 use crate::control::state::SharedState;
 use crate::types::VShardId;
 
+/// Maximum byte length for an edge label string. Keeps a single `TYPE`
+/// clause from bloating the CSR label table and the msgpack wire payload.
+const MAX_EDGE_LABEL_BYTES: usize = 256;
+
+/// Validate a user-supplied edge label. Rejects empty, overlong, and
+/// labels containing ASCII control characters (0x00..=0x1F, 0x7F).
+///
+/// Runs at every DSL ingress so the CSR interner never sees degenerate
+/// input — a complement to the `u32` widening of the label id space.
+fn validate_edge_label(label: &str) -> PgWireResult<()> {
+    if label.is_empty() {
+        return Err(sqlstate_error(
+            "42601",
+            "edge TYPE label must not be empty",
+        ));
+    }
+    if label.len() > MAX_EDGE_LABEL_BYTES {
+        return Err(sqlstate_error(
+            "42601",
+            &format!(
+                "edge TYPE label is {} bytes; maximum is {MAX_EDGE_LABEL_BYTES}",
+                label.len()
+            ),
+        ));
+    }
+    if label
+        .chars()
+        .any(|c| c.is_control() || c == '\u{007F}')
+    {
+        return Err(sqlstate_error(
+            "42601",
+            "edge TYPE label must not contain control characters",
+        ));
+    }
+    Ok(())
+}
+
 /// `GRAPH INSERT EDGE FROM '<src>' TO '<dst>' TYPE '<label>' [PROPERTIES '<json>' | { ... }]`
 pub async fn insert_edge(
     state: &SharedState,
@@ -27,12 +64,13 @@ pub async fn insert_edge(
     label: String,
     properties: GraphProperties,
 ) -> PgWireResult<Vec<Response>> {
-    if src.is_empty() || dst.is_empty() || label.is_empty() {
+    if src.is_empty() || dst.is_empty() {
         return Err(sqlstate_error(
             "42601",
-            "GRAPH INSERT EDGE requires FROM, TO, and TYPE",
+            "GRAPH INSERT EDGE requires FROM and TO",
         ));
     }
+    validate_edge_label(&label)?;
     let properties_json = properties_to_json(properties)?;
     let tenant_id = identity.tenant_id;
     let vshard_id = VShardId::from_key(src.as_bytes());
@@ -61,12 +99,13 @@ pub async fn delete_edge(
     dst: String,
     label: String,
 ) -> PgWireResult<Vec<Response>> {
-    if src.is_empty() || dst.is_empty() || label.is_empty() {
+    if src.is_empty() || dst.is_empty() {
         return Err(sqlstate_error(
             "42601",
-            "GRAPH DELETE EDGE requires FROM, TO, and TYPE",
+            "GRAPH DELETE EDGE requires FROM and TO",
         ));
     }
+    validate_edge_label(&label)?;
     let tenant_id = identity.tenant_id;
     let vshard_id = VShardId::from_key(src.as_bytes());
 
