@@ -7952,18 +7952,16 @@ dependencies = [
 
 [[package]]
 name = "zerompk"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9e4182dd6882abeabce84e03b947f36d280a0e98793741b0f28b80cfe742719"
+version = "0.4.1"
+source = "git+https://github.com/farhan-syah/zerompk?rev=1dd71a0de6b6c99f2c2dbbc69106bb87b1e2cdcb#1dd71a0de6b6c99f2c2dbbc69106bb87b1e2cdcb"
 dependencies = [
  "zerompk_derive",
 ]
 
 [[package]]
 name = "zerompk_derive"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eadd0b853ceb30ac63b19414b19ca54c4d2cb5ad0cc892cab97fdf799f941a9"
+version = "0.4.1"
+source = "git+https://github.com/farhan-syah/zerompk?rev=1dd71a0de6b6c99f2c2dbbc69106bb87b1e2cdcb#1dd71a0de6b6c99f2c2dbbc69106bb87b1e2cdcb"
 dependencies = [
  "proc-macro2",
  "quote",

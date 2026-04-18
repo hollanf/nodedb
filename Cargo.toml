@@ -136,7 +136,7 @@ chrono = { version = "0.4", features = ["std"], default-features = false }
 
 # MessagePack
 rmpv = "1"
-zerompk = { version = "0.3", features = ["std", "derive"] }
+zerompk = { version = "0.4", features = ["std", "derive"] }
 
 # Bitmap
 roaring = "0.11"
@@ -234,3 +234,10 @@ incremental = false
 [profile.debugging]
 inherits = "dev"
 debug = true
+
+[patch.crates-io]
+# Pinned to the fork carrying opt-in schema-evolution support
+# (`#[msgpack(default)]`, `skip_value`, mid-struct-default compile guard).
+# Bump the `rev` whenever the fork is updated.
+zerompk = { git = "https://github.com/farhan-syah/zerompk", rev = "1dd71a0de6b6c99f2c2dbbc69106bb87b1e2cdcb" }
+zerompk_derive = { git = "https://github.com/farhan-syah/zerompk", rev = "1dd71a0de6b6c99f2c2dbbc69106bb87b1e2cdcb" }
