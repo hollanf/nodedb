@@ -10,7 +10,9 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
+
+use tracing::{Instrument, info_span};
 
 use nodedb_cluster::forward::PlanExecutor;
 use nodedb_cluster::rpc_codec::{ExecuteRequest, ExecuteResponse, TypedClusterError};
@@ -45,6 +47,30 @@ impl LocalPlanExecutor {
 
 impl PlanExecutor for LocalPlanExecutor {
     async fn execute_plan(&self, req: ExecuteRequest) -> ExecuteResponse {
+        let trace_id = req.trace_id;
+        let tenant_id = req.tenant_id;
+        let exporter = Arc::clone(&self.state.trace_exporter);
+        let start = SystemTime::now();
+        let span = info_span!("executor.execute_plan", trace_id, tenant_id);
+        let resp = self.execute_plan_inner(req).instrument(span).await;
+        // Emit one OTLP executor span per leaseholder so the gateway's
+        // upstream span joins the N leaseholder spans into a single
+        // distributed trace via the shared `trace_id`.
+        exporter.emit(
+            "executor.execute_plan",
+            trace_id,
+            start,
+            SystemTime::now(),
+            tenant_id,
+            0,
+            resp.success,
+        );
+        resp
+    }
+}
+
+impl LocalPlanExecutor {
+    async fn execute_plan_inner(&self, req: ExecuteRequest) -> ExecuteResponse {
         // ── 1. Deadline check ─────────────────────────────────────────────────
         if req.deadline_remaining_ms == 0 {
             return ExecuteResponse::err(TypedClusterError::DeadlineExceeded { elapsed_ms: 0 });

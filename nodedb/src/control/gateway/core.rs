@@ -18,8 +18,9 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::SystemTime;
 
-use tracing::debug;
+use tracing::{Instrument, debug, info_span};
 
 use crate::Error;
 use crate::bridge::physical_plan::PhysicalPlan;
@@ -79,8 +80,31 @@ impl Gateway {
         ctx: &QueryContext,
         plan: PhysicalPlan,
     ) -> Result<Vec<Vec<u8>>, Error> {
+        let span = info_span!(
+            "gateway.execute",
+            trace_id = ctx.trace_id,
+            tenant_id = ctx.tenant_id.as_u32()
+        );
+        let start = SystemTime::now();
         let version_set = self.collect_version_set(&plan, ctx.tenant_id.as_u32());
-        self.execute_with_version_set(ctx, plan, version_set).await
+        let result = self
+            .execute_with_version_set(ctx, plan, version_set)
+            .instrument(span)
+            .await;
+        // Emit an OTLP span covering the whole gateway execute so an
+        // enabled collector correlates this with the executor spans
+        // emitted by every leaseholder we dispatched to — they all
+        // share the same `trace_id`.
+        self.shared.trace_exporter.emit(
+            "gateway.execute",
+            ctx.trace_id,
+            start,
+            SystemTime::now(),
+            ctx.tenant_id.as_u32(),
+            0,
+            result.is_ok(),
+        );
+        result
     }
 
     /// SQL-text entry point: checks the plan cache first.

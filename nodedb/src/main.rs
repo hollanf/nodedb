@@ -340,6 +340,25 @@ async fn main() -> anyhow::Result<()> {
         state.governor = Some(Arc::clone(&governor));
     }
 
+    // Wire the OTLP trace exporter. When `observability.otlp.export`
+    // is disabled or its endpoint is empty, the exporter is a no-op
+    // and gateway/executor emit calls skip all HTTP work — no
+    // conditional at the call site.
+    if let Some(state) = Arc::get_mut(&mut shared) {
+        let otlp = &config.observability.otlp.export;
+        state.trace_exporter = if otlp.enabled && !otlp.endpoint.is_empty() {
+            nodedb::control::trace_export::TraceExporter::new(
+                otlp.endpoint.clone(),
+                std::time::Duration::from_secs(5),
+            )
+            .map_err(|e| nodedb::Error::Config {
+                detail: format!("OTLP trace exporter: {e}"),
+            })?
+        } else {
+            nodedb::control::trace_export::TraceExporter::disabled()
+        };
+    }
+
     // Construct the gateway and install it (plus its DDL invalidator) on
     // SharedState. Must happen after cluster topology is wired and before
     // listeners bind. Arc::get_mut is valid here because no listener has
@@ -446,7 +465,11 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&shared),
         &config.tuning.cluster_transport,
         shutdown_rx.clone(),
-    );
+    )
+    .map(|(join, metrics)| {
+        shared.loop_metrics_registry.register(metrics);
+        join
+    });
 
     // Start response poller: routes Data Plane responses to
     // waiting sessions.

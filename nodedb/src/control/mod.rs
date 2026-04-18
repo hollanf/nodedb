@@ -31,6 +31,7 @@ pub mod sql_dispatch;
 pub mod startup;
 pub mod state;
 pub mod trace_context;
+pub mod trace_export;
 pub mod trigger;
 pub mod wal_catchup;
 pub mod wal_replication;
