@@ -42,6 +42,19 @@ impl NodeDbPgHandler {
         let stmt = &portal.statement.statement;
         let tenant_id = identity.tenant_id;
 
+        // J.4: mirror `do_query`'s audit scope. The extended-query
+        // path also triggers DDL (a prepared `CREATE COLLECTION`
+        // binds parameters then dispatches), so audit context must
+        // be installed here too or followers receive a plain
+        // `CatalogDdl` with no SQL trail.
+        let _audit_scope = crate::control::server::pgwire::session::audit_context::AuditScope::new(
+            crate::control::server::pgwire::session::audit_context::AuditCtx {
+                auth_user_id: identity.user_id.to_string(),
+                auth_user_name: identity.username.clone(),
+                sql_text: stmt.sql.clone(),
+            },
+        );
+
         // Wire-streaming COPY shapes for backup/restore. Recognised before
         // sqlparser-based execution because the shapes aren't standard COPY
         // grammar. See `control::backup::detect`.

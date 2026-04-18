@@ -185,7 +185,19 @@ pub fn propose_catalog_entry_with_timeout(
         return Ok(0);
     }
 
-    let metadata_entry = MetadataEntry::CatalogDdl { payload };
+    // Attach J.4 audit context when the pgwire statement boundary
+    // installed one. Internal callers (descriptor lease grant/release,
+    // drain proposer) run outside that scope and emit the plain
+    // `CatalogDdl` variant — they have no SQL text to log.
+    let metadata_entry = match crate::control::server::pgwire::session::audit_context::current() {
+        Some(ctx) => MetadataEntry::CatalogDdlAudited {
+            payload,
+            auth_user_id: ctx.auth_user_id,
+            auth_user_name: ctx.auth_user_name,
+            sql_text: ctx.sql_text,
+        },
+        None => MetadataEntry::CatalogDdl { payload },
+    };
     let raw = encode_entry(&metadata_entry).map_err(|e| Error::Config {
         detail: format!("metadata entry encode: {e}"),
     })?;

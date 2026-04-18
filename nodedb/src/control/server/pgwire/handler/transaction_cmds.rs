@@ -177,9 +177,21 @@ impl NodeDbPgHandler {
             && !payloads.is_empty()
         {
             use nodedb_cluster::{MetadataEntry, encode_entry};
+            // Each buffered entry carries the audit context captured
+            // at its own statement boundary (not COMMIT time). Map to
+            // `CatalogDdlAudited` when present so every sub-DDL gets
+            // its own audit record on every replica.
             let sub_entries: Vec<MetadataEntry> = payloads
                 .into_iter()
-                .map(|p| MetadataEntry::CatalogDdl { payload: p })
+                .map(|e| match e.audit {
+                    Some(ctx) => MetadataEntry::CatalogDdlAudited {
+                        payload: e.payload,
+                        auth_user_id: ctx.auth_user_id,
+                        auth_user_name: ctx.auth_user_name,
+                        sql_text: ctx.sql_text,
+                    },
+                    None => MetadataEntry::CatalogDdl { payload: e.payload },
+                })
                 .collect();
             let batch = MetadataEntry::Batch {
                 entries: sub_entries,

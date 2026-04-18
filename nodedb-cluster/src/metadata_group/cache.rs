@@ -59,10 +59,12 @@ impl MetadataCache {
         self.applied_index = index;
 
         match entry {
-            MetadataEntry::CatalogDdl { payload: _ } => {
+            MetadataEntry::CatalogDdl { payload: _ }
+            | MetadataEntry::CatalogDdlAudited { payload: _, .. } => {
                 // Opaque to the cluster crate. The host-side applier
                 // decodes the payload and writes through to
-                // `SystemCatalog`. We just count it.
+                // `SystemCatalog`. We just count it — both DDL
+                // shapes contribute to `catalog_entries_applied`.
                 self.catalog_entries_applied += 1;
             }
             MetadataEntry::TopologyChange(change) => self.topology_log.push(change.clone()),
@@ -106,6 +108,12 @@ impl MetadataCache {
                 }
             }
             MetadataEntry::DescriptorDrainEnd { .. } => {}
+            MetadataEntry::CaTrustChange { .. } => {
+                // CA trust mutations are host-side only: the production
+                // applier in the nodedb crate writes/deletes
+                // `tls/ca.d/<fp>.crt` and rebuilds the rustls config.
+                // Cluster cache has nothing to track.
+            }
             MetadataEntry::Batch { entries } => {
                 for sub in entries {
                     self.apply(index, sub);

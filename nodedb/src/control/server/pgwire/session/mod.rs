@@ -1,3 +1,4 @@
+pub mod audit_context;
 mod cursor;
 pub mod cursor_spill;
 pub mod ddl_buffer;

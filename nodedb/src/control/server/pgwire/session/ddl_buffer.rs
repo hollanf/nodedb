@@ -13,10 +13,22 @@
 
 use std::cell::RefCell;
 
-/// Encoded DDL payloads buffered during a transaction. Each entry
-/// is a serialized `CatalogEntry` ready for
-/// `MetadataEntry::CatalogDdl { payload }`.
-pub type DdlBuffer = Vec<Vec<u8>>;
+use super::audit_context::AuditCtx;
+
+/// One buffered DDL statement: the encoded `CatalogEntry` payload
+/// plus the optional audit context captured from
+/// [`super::audit_context::current()`] at buffer time. The audit
+/// context is stamped at *statement* time, not at COMMIT time, so
+/// each sub-entry's audit record correctly names the DDL that
+/// produced it (not just the COMMIT).
+#[derive(Debug, Clone)]
+pub struct BufferedDdl {
+    pub payload: Vec<u8>,
+    pub audit: Option<AuditCtx>,
+}
+
+/// Encoded DDL payloads buffered during a transaction.
+pub type DdlBuffer = Vec<BufferedDdl>;
 
 thread_local! {
     /// Thread-local flag: when `Some`, `propose_catalog_entry` pushes
@@ -48,7 +60,10 @@ pub fn try_buffer(payload: Vec<u8>) -> bool {
     ACTIVE_BUFFER.with(|b| {
         let mut guard = b.borrow_mut();
         if let Some(buf) = guard.as_mut() {
-            buf.push(payload);
+            buf.push(BufferedDdl {
+                payload,
+                audit: super::audit_context::current(),
+            });
             true
         } else {
             false
@@ -99,6 +114,8 @@ mod tests {
         assert!(try_buffer(vec![2]));
         let buf = take().unwrap();
         assert_eq!(buf.len(), 2);
+        assert_eq!(buf[0].payload, vec![1]);
+        assert_eq!(buf[1].payload, vec![2]);
         assert!(!is_active());
     }
 

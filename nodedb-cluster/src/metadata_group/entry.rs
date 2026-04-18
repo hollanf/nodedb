@@ -39,6 +39,32 @@ pub enum MetadataEntry {
         payload: Vec<u8>,
     },
 
+    /// DDL entry with attached audit context. Produced by pgwire DDL
+    /// handlers that have the authenticated identity + raw statement
+    /// text bound at the call site (every `CREATE`, `ALTER`, `DROP`,
+    /// `GRANT`, `REVOKE` path). Applied identically to `CatalogDdl`
+    /// on every node; additionally, the production applier fsync-
+    /// appends an audit record to the audit segment WAL with the
+    /// authenticated user, HLC at commit, descriptor versions before
+    /// + after, and the raw SQL — exactly what J.4 requires.
+    ///
+    /// Carries its own payload so legacy proposers (internal lease
+    /// and descriptor-drain flows that have no SQL text) can keep
+    /// using the plain `CatalogDdl` variant without synthesizing
+    /// fake audit context.
+    CatalogDdlAudited {
+        payload: Vec<u8>,
+        /// Authenticated user id at propose time.
+        auth_user_id: String,
+        /// Authenticated username at propose time.
+        auth_user_name: String,
+        /// Raw SQL statement as the client sent it. Not parsed here —
+        /// the cluster crate is opaque to SQL syntax. Persisted on
+        /// every replica so post-hoc audit queries don't depend on
+        /// the proposing node still being alive.
+        sql_text: String,
+    },
+
     /// Atomic batch of metadata entries proposed by a transactional
     /// DDL session (`BEGIN; CREATE ...; CREATE ...; COMMIT;`). The
     /// applier unpacks and applies each sub-entry in order at a
@@ -86,6 +112,28 @@ pub enum MetadataEntry {
     /// hatch for the failure path.
     DescriptorDrainEnd {
         descriptor_id: DescriptorId,
+    },
+
+    /// Cluster-wide CA trust mutation (L.4). Proposed by
+    /// `nodedb rotate-ca --stage` (to add a new CA) and
+    /// `nodedb rotate-ca --finalize --remove <fp>` (to drop an old
+    /// CA). Applied on every node by `MetadataCommitApplier`: writes
+    /// or deletes `data_dir/tls/ca.d/<fp_hex>.crt` and triggers a
+    /// live rebuild of the rustls server + client configs so the
+    /// new trust set takes effect without restart.
+    ///
+    /// `add_ca_cert` and `remove_ca_fingerprint` are independent:
+    /// the `--stage` form sets `add_ca_cert = Some(new_ca_der)` +
+    /// `remove_ca_fingerprint = None`; `--finalize` flips both. A
+    /// single entry carrying both performs the cutover atomically
+    /// once the operator has confirmed every node has reissued.
+    CaTrustChange {
+        /// DER-encoded CA certificate to add to the trust set. `None`
+        /// when this entry only removes.
+        add_ca_cert: Option<Vec<u8>>,
+        /// SHA-256 fingerprint of the CA to remove from the trust set.
+        /// `None` when this entry only adds.
+        remove_ca_fingerprint: Option<[u8; 32]>,
     },
 }
 
