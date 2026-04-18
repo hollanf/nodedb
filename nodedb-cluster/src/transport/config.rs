@@ -260,29 +260,68 @@ pub fn make_raft_client_config_mtls(
 pub fn generate_node_credentials(
     node_san: &str,
 ) -> Result<(nexar::transport::tls::ClusterCa, TlsCredentials)> {
+    generate_node_credentials_multi_san(&[node_san, SNI_HOSTNAME])
+}
+
+/// Like [`generate_node_credentials`] but binds multiple SANs to the
+/// issued leaf. The first SAN becomes the primary subject; the cluster
+/// SNI `"nodedb"` is added automatically if not already present so
+/// QUIC connects keep working against the fixed SNI.
+pub fn generate_node_credentials_multi_san(
+    sans: &[&str],
+) -> Result<(nexar::transport::tls::ClusterCa, TlsCredentials)> {
     let ca = nexar::transport::tls::ClusterCa::generate().map_err(|e| ClusterError::Transport {
         detail: format!("generate cluster CA: {e}"),
     })?;
+    let creds = issue_leaf_for_sans(&ca, sans)?;
+    Ok((ca, creds))
+}
+
+/// Issue a leaf cert under an already-loaded CA with the given SANs,
+/// bundling a fresh `cluster_secret`. Used by operator tooling that
+/// reissues a per-node cert without regenerating the cluster CA
+/// (`nodedb regen-certs`).
+///
+/// A fresh `cluster_secret` is generated; callers that want to keep
+/// the existing secret should overwrite the returned credential's
+/// `cluster_secret` field with the loaded value before persisting.
+///
+/// The CA is borrowed and left untouched — no round-trip through
+/// DER, no new owned `ClusterCa` synthesised. Callers that already
+/// own the CA just keep it; callers that only had a borrow continue
+/// to only have a borrow. If an owned CA handle is needed alongside
+/// the creds, use `generate_node_credentials_multi_san` which returns
+/// the freshly-generated CA directly.
+pub fn issue_leaf_for_sans(
+    ca: &nexar::transport::tls::ClusterCa,
+    sans: &[&str],
+) -> Result<TlsCredentials> {
+    if sans.is_empty() {
+        return Err(ClusterError::Transport {
+            detail: "issue_leaf_for_sans requires at least one SAN".into(),
+        });
+    }
+    let mut effective: Vec<&str> = sans.to_vec();
+    if !effective.contains(&SNI_HOSTNAME) {
+        effective.push(SNI_HOSTNAME);
+    }
     let ca_cert = ca.cert_der();
     let (cert, key) = ca
-        .issue_cert(node_san)
+        .issue_cert_multi(&effective)
         .map_err(|e| ClusterError::Transport {
             detail: format!("issue node cert: {e}"),
         })?;
     use rand::RngCore;
     let mut cluster_secret = [0u8; 32];
     rand::rng().fill_bytes(&mut cluster_secret);
-    Ok((
-        ca,
-        TlsCredentials {
-            cert,
-            key,
-            ca_cert,
-            additional_ca_certs: Vec::new(),
-            crls: Vec::new(),
-            cluster_secret,
-        },
-    ))
+    Ok(TlsCredentials {
+        cert,
+        key,
+        ca_cert,
+        additional_ca_certs: Vec::new(),
+        crls: Vec::new(),
+        cluster_secret,
+    })
 }
 
 /// SHA-256 fingerprint (32 bytes) of a DER-encoded CA certificate.
