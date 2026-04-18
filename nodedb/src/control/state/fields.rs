@@ -37,7 +37,18 @@ pub struct SharedState {
     pub credentials: Arc<CredentialStore>,
 
     /// Audit log for security-relevant events.
-    pub audit: Mutex<AuditLog>,
+    ///
+    /// Behind an `Arc` so sub-systems (e.g. `SessionHandleStore`) can hold
+    /// a clone of the handle for their own emission path without needing
+    /// to call back into `SharedState` — a weak reference would block
+    /// `Arc::get_mut` during the cluster wire-up phase.
+    ///
+    /// **Plane affinity:** Control Plane only. Emitters must be
+    /// `Send + Sync` and must never run inside a Data Plane TPC loop —
+    /// a contended `Mutex::lock()` would stall the io_uring reactor.
+    /// Current emitters (pgwire handlers, HTTP handlers,
+    /// `SessionHandleStore` hooks, DDL applier) all live on Tokio.
+    pub audit: Arc<Mutex<AuditLog>>,
 
     /// API key store.
     pub api_keys: ApiKeyStore,

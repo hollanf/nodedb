@@ -13,9 +13,13 @@
 //! SELECT * FROM orders;  -- Uses the cached AuthContext from the session handle
 //! ```
 
-use axum::extract::State;
+use std::net::SocketAddr;
+
+use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
+
+use crate::control::security::session_handle::ClientFingerprint;
 
 use super::super::auth::{ApiError, AppState, resolve_auth};
 
@@ -24,13 +28,19 @@ use super::super::auth::{ApiError, AppState, resolve_auth};
 /// Validates the bearer token (JWT or API key), creates a server-side
 /// cached `AuthContext`, and returns a UUID handle the client can use
 /// with `SET LOCAL nodedb.auth_session = '<handle>'` on pgwire connections.
+///
+/// The caller's `(tenant_id, peer IP)` is captured as a `ClientFingerprint`
+/// and bound to the handle; subsequent resolves from a different origin are
+/// rejected per the configured `FingerprintMode` (issue #67).
 pub async fn create_session(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let (_identity, auth_ctx) = resolve_auth(&headers, &state, "http")?;
+    let (identity, auth_ctx) = resolve_auth(&headers, &state, "http")?;
 
-    let handle = state.shared.session_handles.create(auth_ctx);
+    let fingerprint = ClientFingerprint::from_peer(identity.tenant_id, &peer);
+    let handle = state.shared.session_handles.create(auth_ctx, fingerprint);
 
     Ok(axum::Json(serde_json::json!({
         "session_id": handle,

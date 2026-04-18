@@ -173,7 +173,7 @@ impl NodeDbPgHandler {
         // ── Session commands ──────────────────────────────────────────
 
         if upper.starts_with("SET ") {
-            return self.handle_set(addr, sql_trimmed);
+            return self.handle_set(identity, addr, sql_trimmed);
         }
 
         if upper == "SHOW CONNECTIONS" {

@@ -52,13 +52,13 @@ impl SharedState {
         // StartupSequencer after calling `SharedState::open`.
         let startup_gate = crate::control::startup::StartupGate::pre_fired();
         let test_id = Self::unique_test_id();
-        Arc::new(Self {
+        let state = Arc::new(Self {
             dispatcher: Mutex::new(dispatcher),
             tracker: RequestTracker::new(),
             wal,
             http_client: Arc::new(reqwest::Client::new()),
             credentials: Arc::new(CredentialStore::new()),
-            audit: Mutex::new(AuditLog::new(10_000)),
+            audit: Arc::new(Mutex::new(AuditLog::new(10_000))),
             api_keys: ApiKeyStore::new(),
             roles: RoleStore::new(),
             permissions: PermissionStore::new(),
@@ -207,7 +207,24 @@ impl SharedState {
             shutdown: Arc::clone(&shutdown),
             loop_registry: Arc::clone(&loop_registry),
             startup: Arc::clone(&startup_gate),
-        })
+        });
+        Self::wire_session_handle_audit(&state);
+        state
+    }
+
+    /// Point the session-handle store's audit hook at this state's
+    /// `AuditLog`, so `SessionHandleFingerprintMismatch` (issue #67) and
+    /// `SessionHandleResolveMissSpike` (issue #68) are hash-chained with
+    /// the rest of the auth-plane event stream. Captures the audit Arc
+    /// directly — a `Weak<Self>` would block the cluster wire-up phase's
+    /// `Arc::get_mut` on `SharedState`.
+    fn wire_session_handle_audit(state: &Arc<Self>) {
+        let audit = Arc::clone(&state.audit);
+        state.session_handles.set_audit_hook(move |event| {
+            if let Ok(mut log) = audit.lock() {
+                let _ = log.record(event, None, "session_handle", "");
+            }
+        });
     }
 
     /// Create shared state with persistent credential store (for production).
@@ -322,7 +339,7 @@ impl SharedState {
             wal,
             http_client: Arc::new(reqwest::Client::new()),
             credentials: Arc::new(credentials),
-            audit: Mutex::new(audit_log),
+            audit: Arc::new(Mutex::new(audit_log)),
             api_keys,
             roles,
             permissions,
@@ -390,8 +407,10 @@ impl SharedState {
             scope_defs: crate::control::security::scope::store::ScopeStore::new(),
             scope_grants: crate::control::security::scope::grant::ScopeGrantStore::new(),
             rate_limiter: crate::control::security::ratelimit::limiter::RateLimiter::default(),
-            session_handles: crate::control::security::session_handle::SessionHandleStore::default(
-            ),
+            session_handles:
+                crate::control::security::session_handle::SessionHandleStore::from_config(
+                    &auth_config.session,
+                ),
             session_registry: crate::control::security::session_registry::SessionRegistry::new(),
             escalation: crate::control::security::escalation::EscalationEngine::default(),
             usage_counter: Arc::new(
@@ -445,6 +464,8 @@ impl SharedState {
             loop_registry: Arc::clone(&loop_registry),
             startup: Arc::clone(&startup_gate),
         });
+
+        Self::wire_session_handle_audit(&state);
 
         Ok(state)
     }

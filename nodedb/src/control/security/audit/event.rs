@@ -65,6 +65,15 @@ pub enum AuditEvent {
     /// every replica from `MetadataCommitApplier` with full before /
     /// after descriptor versions + HLC + raw SQL text. (J.4)
     DdlChange = 22,
+    /// Session handle resolve failed fingerprint check — caller's
+    /// (tenant_id, ip) didn't match the fingerprint captured at
+    /// `SessionHandleStore::create()`. Signals handle theft across
+    /// origins even when the handle itself is otherwise valid.
+    SessionHandleFingerprintMismatch = 23,
+    /// Resolve-miss rate on a single connection crossed the configured
+    /// threshold within the detection window. Signals enumeration
+    /// attempts or misconfigured clients probing bogus handles.
+    SessionHandleResolveMissSpike = 24,
 }
 
 impl AuditEvent {
@@ -103,6 +112,9 @@ impl AuditEvent {
             Self::QueryExec | Self::RlsDenied => AuditLevel::Full,
             Self::RowChange => AuditLevel::Forensic,
             Self::DdlChange => AuditLevel::Standard,
+            Self::SessionHandleFingerprintMismatch | Self::SessionHandleResolveMissSpike => {
+                AuditLevel::Standard
+            }
         }
     }
 }

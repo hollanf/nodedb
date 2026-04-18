@@ -14,6 +14,7 @@ impl NodeDbPgHandler {
     /// Handle SET commands: parse, validate, store in session.
     pub(super) fn handle_set(
         &self,
+        identity: &AuthenticatedIdentity,
         addr: &std::net::SocketAddr,
         sql: &str,
     ) -> PgWireResult<Vec<Response>> {
@@ -86,6 +87,37 @@ impl NodeDbPgHandler {
                 "22023".to_owned(),
                 format!("invalid value for nodedb.tenant_id: '{value}'. Must be an integer."),
             ))));
+        }
+
+        // Eager validation for `nodedb.auth_session`: drive the resolve path
+        // now so rate-limit / audit / fingerprint checks fire on each SET
+        // rather than being deferred to the next query. A probing client
+        // that hammers SET LOCAL with bogus handles and never runs a query
+        // must still be throttled and observed (issue #68).
+        if key == "nodedb.auth_session" {
+            use crate::control::security::session_handle::{ClientFingerprint, ResolveOutcome};
+            let caller_fp = ClientFingerprint::from_peer(identity.tenant_id, addr);
+            let conn_key = addr.to_string();
+            match self
+                .state
+                .session_handles
+                .resolve(&value, &conn_key, &caller_fp)
+            {
+                ResolveOutcome::RateLimited => {
+                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                        "FATAL".to_owned(),
+                        "53300".to_owned(),
+                        "session handle resolve rate limit exceeded on this \
+                         connection — closing"
+                            .to_owned(),
+                    ))));
+                }
+                ResolveOutcome::Resolved(_) | ResolveOutcome::Miss => {
+                    // Store the raw value either way — Miss might be a
+                    // handle that was valid previously and expired; the
+                    // next query's resolve will fall back to base identity.
+                }
+            }
         }
 
         self.sessions.set_parameter(addr, key, value);

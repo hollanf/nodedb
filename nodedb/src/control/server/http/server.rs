@@ -189,12 +189,19 @@ pub async fn run_with_listener(
     let router = build_router(state);
     let local_addr = listener.local_addr()?;
     info!(%local_addr, "HTTP API server listening (pre-bound listener)");
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            let _ = shutdown_rx.changed().await;
-        })
-        .await
-        .map_err(crate::Error::Io)?;
+    // `with_connect_info` is required so routes that take
+    // `ConnectInfo<SocketAddr>` (e.g. `/api/auth/session` for the
+    // fingerprint-bound session handle path) resolve the peer address.
+    // Without it, axum rejects those requests with 500.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        let _ = shutdown_rx.changed().await;
+    })
+    .await
+    .map_err(crate::Error::Io)?;
     drain_guard.report_drained();
     Ok(())
 }
@@ -247,7 +254,7 @@ pub async fn run(
 
         axum_server::bind_rustls(listen, rustls_config)
             .handle(handle)
-            .serve(router.into_make_service())
+            .serve(router.into_make_service_with_connect_info::<std::net::SocketAddr>())
             .await
             .map_err(crate::Error::Io)?;
     } else {
@@ -256,12 +263,15 @@ pub async fn run(
         let local_addr = listener.local_addr()?;
         info!(%local_addr, "HTTP API server listening");
 
-        axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                let _ = shutdown_rx.changed().await;
-            })
-            .await
-            .map_err(crate::Error::Io)?;
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.changed().await;
+        })
+        .await
+        .map_err(crate::Error::Io)?;
     }
 
     drain_guard.report_drained();

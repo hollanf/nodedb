@@ -93,18 +93,49 @@ impl NodeDbPgHandler {
         params: &[nodedb_sql::ParamValue],
     ) -> PgWireResult<Vec<Response>> {
         // Resolve opaque session handle if SET LOCAL nodedb.auth_session is set.
-        let mut auth_ctx = if let Some(handle) =
-            self.sessions.get_parameter(addr, "nodedb.auth_session")
-            && let Some(cached) = self.state.session_handles.resolve(&handle)
-        {
-            cached
-        } else {
-            crate::control::server::session_auth::build_auth_context_with_session(
-                identity,
-                &self.sessions,
-                addr,
-            )
-        };
+        // Bind the resolve to the caller's (tenant_id, peer IP) fingerprint so
+        // a handle leaked cross-origin does not grant access (issue #67). The
+        // store also enforces per-connection rate limits + emits audit events
+        // on miss spikes (issue #68); a `RateLimited` outcome here becomes a
+        // fatal pgwire error that closes the connection.
+        let caller_fp = crate::control::security::session_handle::ClientFingerprint::from_peer(
+            identity.tenant_id,
+            addr,
+        );
+        let conn_key = addr.to_string();
+        let mut auth_ctx =
+            if let Some(handle) = self.sessions.get_parameter(addr, "nodedb.auth_session") {
+                use crate::control::security::session_handle::ResolveOutcome;
+                match self
+                    .state
+                    .session_handles
+                    .resolve(&handle, &conn_key, &caller_fp)
+                {
+                    ResolveOutcome::Resolved(cached) => *cached,
+                    ResolveOutcome::RateLimited => {
+                        return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                            "FATAL".to_owned(),
+                            "53300".to_owned(),
+                            "session handle resolve rate limit exceeded on this \
+                         connection — closing"
+                                .to_owned(),
+                        ))));
+                    }
+                    ResolveOutcome::Miss => {
+                        crate::control::server::session_auth::build_auth_context_with_session(
+                            identity,
+                            &self.sessions,
+                            addr,
+                        )
+                    }
+                }
+            } else {
+                crate::control::server::session_auth::build_auth_context_with_session(
+                    identity,
+                    &self.sessions,
+                    addr,
+                )
+            };
 
         // Extract per-query ON DENY override.
         let clean_sql =
