@@ -153,4 +153,34 @@ impl NexarTransport {
     pub fn node_id(&self) -> u64 {
         self.node_id
     }
+
+    /// Snapshot of every peer the transport has addresses cached for,
+    /// with a per-peer `connected` flag for whether a nexar client is
+    /// currently held in the pool. Sorted by peer id so
+    /// `/cluster/debug/transport` output is deterministic.
+    pub fn peer_snapshot(&self) -> Vec<TransportPeerSnapshot> {
+        let addrs = self.peer_addrs.read().unwrap_or_else(|p| p.into_inner());
+        let peers = self.peers.read().unwrap_or_else(|p| p.into_inner());
+        let mut out: Vec<TransportPeerSnapshot> = addrs
+            .iter()
+            .map(|(id, addr)| TransportPeerSnapshot {
+                peer_id: *id,
+                addr: addr.to_string(),
+                connected: peers.contains_key(id),
+            })
+            .collect();
+        out.sort_by_key(|p| p.peer_id);
+        out
+    }
+}
+
+/// Per-peer view emitted by [`NexarTransport::peer_snapshot`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TransportPeerSnapshot {
+    pub peer_id: u64,
+    pub addr: String,
+    /// True when a nexar client is currently held in the connection
+    /// cache. False means either we've never connected or the client
+    /// was evicted.
+    pub connected: bool,
 }

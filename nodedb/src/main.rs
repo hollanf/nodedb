@@ -45,6 +45,22 @@ fn build_tls_acceptor(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Operator subcommand dispatch (L.4): handled before config load
+    // + tracing init so `nodedb regen-certs`, `nodedb rotate-ca`,
+    // `nodedb join-token` exit cleanly without spinning up the
+    // server's global allocator arenas or file locks. A first arg
+    // that doesn't match a known subcommand is treated as a config
+    // file path and falls through to the normal server bootstrap.
+    let cli_args: Vec<String> = std::env::args().skip(1).collect();
+    match nodedb::ctl::parse_subcommand(&cli_args) {
+        Ok(Some(cmd)) => std::process::exit(nodedb::ctl::run_subcommand(cmd)),
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::exit(2);
+        }
+    }
+
     // Resolve config file path.
     // Priority: CLI arg (highest) > NODEDB_CONFIG env var > default.
     let config_path: Option<PathBuf> = std::env::args()
@@ -357,6 +373,8 @@ async fn main() -> anyhow::Result<()> {
         } else {
             nodedb::control::trace_export::TraceExporter::disabled()
         };
+        state.debug_endpoints_enabled = config.observability.debug_endpoints_enabled;
+        state.data_dir = config.data_dir.clone();
     }
 
     // Construct the gateway and install it (plus its DDL invalidator) on

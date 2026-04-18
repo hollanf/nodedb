@@ -46,6 +46,7 @@ pub mod wire;
 
 pub use bootstrap::{ClusterConfig, ClusterState, JoinRetryPolicy, start_cluster};
 pub use catalog::ClusterCatalog;
+pub use circuit_breaker::BreakerSnapshot;
 pub use closed_timestamp::ClosedTimestampTracker;
 pub use cluster_info::{
     ClusterInfoSnapshot, ClusterObserver, GroupSnapshot, GroupStatusProvider, PeerSnapshot,
@@ -82,9 +83,9 @@ pub use routing_liveness::{NodeIdResolver, RoutingLivenessHook};
 pub use rpc_codec::{MacKey, RaftRpc};
 pub use topology::{ClusterTopology, NodeInfo, NodeState};
 pub use transport::{
-    NexarTransport, RaftRpcHandler, TlsCredentials, TransportCredentials,
-    generate_node_credentials, insecure_transport_count, load_crls_from_pem,
-    make_raft_client_config_mtls, make_raft_server_config_mtls,
+    NexarTransport, RaftRpcHandler, TlsCredentials, TransportCredentials, TransportPeerSnapshot,
+    ca_fingerprint, ca_fingerprint_hex, generate_node_credentials, insecure_transport_count,
+    load_crls_from_pem, make_raft_client_config_mtls, make_raft_server_config_mtls,
 };
 pub use wire::VShardEnvelope;
 

@@ -56,6 +56,7 @@ mod tests {
             cert: CertificateDer::from(vec![1, 2, 3]),
             key: PrivateKeyDer::from(PrivatePkcs8KeyDer::from(vec![4, 5, 6])),
             ca_cert: CertificateDer::from(vec![7, 8, 9]),
+            additional_ca_certs: Vec::new(),
             crls: Vec::new(),
             cluster_secret: secret,
         }

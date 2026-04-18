@@ -6,10 +6,10 @@ pub mod server;
 
 pub use auth_context::AuthContext;
 
-pub use client::NexarTransport;
+pub use client::{NexarTransport, TransportPeerSnapshot};
 pub use config::{
-    TlsCredentials, generate_node_credentials, load_crls_from_pem, make_raft_client_config_mtls,
-    make_raft_server_config_mtls,
+    TlsCredentials, ca_fingerprint, ca_fingerprint_hex, generate_node_credentials,
+    load_crls_from_pem, make_raft_client_config_mtls, make_raft_server_config_mtls,
 };
 
 /// Re-exported PKI types used in the public shape of [`TlsCredentials`].

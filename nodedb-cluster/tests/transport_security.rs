@@ -90,6 +90,7 @@ fn creds_signed_by(
         cert,
         key,
         ca_cert,
+        additional_ca_certs: Vec::new(),
         crls: Vec::new(),
         cluster_secret,
     }
@@ -224,6 +225,7 @@ async fn l2_mismatched_mac_key_rejects_rpcs() {
         cert: client_cert,
         key: client_key,
         ca_cert: ca.cert_der(),
+        additional_ca_certs: Vec::new(),
         crls: Vec::new(),
         cluster_secret: [0xAAu8; 32],
     };
@@ -359,6 +361,7 @@ fn debug_on_transport_credentials_redacts() {
         cert: CertificateDer::from(vec![0u8; 8]),
         key: PrivateKeyDer::from(PrivatePkcs8KeyDer::from(vec![0xFFu8; 16])),
         ca_cert: CertificateDer::from(vec![0u8; 8]),
+        additional_ca_certs: Vec::new(),
         crls: Vec::new(),
         cluster_secret: [0xAB; 32],
     };

@@ -13,7 +13,7 @@ pub mod send;
 pub mod serve;
 pub mod transport;
 
-pub use transport::NexarTransport;
+pub use transport::{NexarTransport, TransportPeerSnapshot};
 
 #[cfg(test)]
 mod tests;

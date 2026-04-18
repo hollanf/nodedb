@@ -119,7 +119,17 @@ pub(crate) fn make_raft_client_config(
 pub struct TlsCredentials {
     pub cert: rustls::pki_types::CertificateDer<'static>,
     pub key: rustls::pki_types::PrivateKeyDer<'static>,
+    /// The primary CA that signed this node's own `cert`. Always the
+    /// currently-active issuer for freshly-issued node certs.
     pub ca_cert: rustls::pki_types::CertificateDer<'static>,
+    /// Additional CAs to trust as peer-cert issuers, beyond `ca_cert`.
+    /// Populated during a rotation overlap window (L.4): the new CA is
+    /// added, every node rebuilds its rustls config with *both* CAs in
+    /// the root store, the operator reissues node certs signed by the
+    /// new CA, and finally the old CA is removed. Rustls' `RootCertStore`
+    /// treats every anchor as an acceptable issuer, so peers presenting
+    /// certs signed by any of them handshake successfully.
+    pub additional_ca_certs: Vec<rustls::pki_types::CertificateDer<'static>>,
     /// Optional CRL (Certificate Revocation List) in DER format.
     /// When present, revoked peer certificates are rejected during handshake.
     pub crls: Vec<rustls::pki_types::CertificateRevocationListDer<'static>>,
@@ -145,6 +155,17 @@ pub fn make_raft_server_config_mtls(
         .map_err(|e| ClusterError::Transport {
             detail: format!("add CA to root store: {e}"),
         })?;
+    // Overlap-window CAs (L.4). Every additional anchor is an
+    // acceptable peer-cert issuer for the lifetime of this config;
+    // rotation cutover happens by rebuilding the config with the
+    // old CA dropped from `additional_ca_certs`.
+    for extra in &creds.additional_ca_certs {
+        root_store
+            .add(extra.clone())
+            .map_err(|e| ClusterError::Transport {
+                detail: format!("add overlap CA to root store: {e}"),
+            })?;
+    }
 
     let mut verifier_builder = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store));
 
@@ -196,6 +217,17 @@ pub fn make_raft_client_config_mtls(
         .map_err(|e| ClusterError::Transport {
             detail: format!("add CA to root store: {e}"),
         })?;
+    // Overlap-window CAs (L.4). Every additional anchor is an
+    // acceptable peer-cert issuer for the lifetime of this config;
+    // rotation cutover happens by rebuilding the config with the
+    // old CA dropped from `additional_ca_certs`.
+    for extra in &creds.additional_ca_certs {
+        root_store
+            .add(extra.clone())
+            .map_err(|e| ClusterError::Transport {
+                detail: format!("add overlap CA to root store: {e}"),
+            })?;
+    }
 
     let provider = rustls::crypto::ring::default_provider();
     let mut tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(provider))
@@ -246,10 +278,31 @@ pub fn generate_node_credentials(
             cert,
             key,
             ca_cert,
+            additional_ca_certs: Vec::new(),
             crls: Vec::new(),
             cluster_secret,
         },
     ))
+}
+
+/// SHA-256 fingerprint (32 bytes) of a DER-encoded CA certificate.
+/// Used as the stable identifier for CA trust add/remove operations.
+pub fn ca_fingerprint(cert: &rustls::pki_types::CertificateDer<'_>) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(cert.as_ref());
+    hasher.finalize().into()
+}
+
+/// Format a CA fingerprint as a short lowercase hex string (8 bytes).
+/// Used as the filename stem under `data_dir/tls/ca.d/<fp>.crt`.
+pub fn ca_fingerprint_hex(fp: &[u8; 32]) -> String {
+    let mut out = String::with_capacity(16);
+    for b in &fp[..8] {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{b:02x}");
+    }
+    out
 }
 
 /// Load CRLs from a PEM file.

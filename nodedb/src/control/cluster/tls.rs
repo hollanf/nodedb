@@ -40,6 +40,13 @@ pub const TLS_SUBDIR: &str = "tls";
 const NODE_CERT_FILE: &str = "node.crt";
 const NODE_KEY_FILE: &str = "node.key";
 const CA_CERT_FILE: &str = "ca.crt";
+/// Subdirectory of `tls/` holding **additional** trusted CA anchors
+/// active during an L.4 rotation overlap window. One `<fp>.crt` file
+/// per extra CA; the primary `ca.crt` (issuer of this node's own
+/// cert) stays at the top level so `ca.d/` is strictly the overlap
+/// set. Every CA in this directory is added to the rustls
+/// RootCertStore for both the server and client configs.
+pub const CA_TRUST_DIR: &str = "ca.d";
 /// Cluster-wide HMAC key used by the authenticated Raft frame envelope.
 /// Persisted as raw 32 bytes (no PEM framing) with 0600 perms.
 const CLUSTER_SECRET_FILE: &str = "cluster_secret.bin";
@@ -133,10 +140,12 @@ fn load_from_paths(paths: &TlsPaths, tls_dir: &Path) -> crate::Result<TlsCredent
         .clone()
         .unwrap_or_else(|| tls_dir.join(CLUSTER_SECRET_FILE));
     let cluster_secret = read_cluster_secret(&secret_path)?;
+    let additional_ca_certs = load_extra_cas(tls_dir)?;
     Ok(TlsCredentials {
         cert,
         key,
         ca_cert,
+        additional_ca_certs,
         crls,
         cluster_secret,
     })
@@ -147,13 +156,69 @@ fn load_from_data_dir(tls_dir: &Path) -> crate::Result<TlsCredentials> {
     let key = read_private_key(&tls_dir.join(NODE_KEY_FILE))?;
     let ca_cert = read_single_cert(&tls_dir.join(CA_CERT_FILE))?;
     let cluster_secret = read_cluster_secret(&tls_dir.join(CLUSTER_SECRET_FILE))?;
+    let additional_ca_certs = load_extra_cas(tls_dir)?;
     Ok(TlsCredentials {
         cert,
         key,
         ca_cert,
+        additional_ca_certs,
         crls: Vec::new(),
         cluster_secret,
     })
+}
+
+/// Load every PEM-encoded CA certificate from `tls_dir/ca.d/*.crt`,
+/// sorted by filename for deterministic output. Missing directory is
+/// treated as "no overlap CAs" and returns an empty vec.
+fn load_extra_cas(tls_dir: &Path) -> crate::Result<Vec<CertificateDer<'static>>> {
+    let dir = tls_dir.join(CA_TRUST_DIR);
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut entries: Vec<PathBuf> = fs::read_dir(&dir)
+        .map_err(|e| crate::Error::Config {
+            detail: format!("read ca.d {}: {e}", dir.display()),
+        })?
+        .filter_map(|r| r.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("crt"))
+        .collect();
+    entries.sort();
+    let mut out = Vec::with_capacity(entries.len());
+    for p in entries {
+        out.push(read_single_cert(&p)?);
+    }
+    Ok(out)
+}
+
+/// Write a PEM-encoded CA cert into `tls_dir/ca.d/<fp_hex>.crt`.
+/// Called by the production applier when a `CaTrustChange { add: ... }`
+/// entry commits.
+pub fn write_trusted_ca(tls_dir: &Path, ca_der: &[u8]) -> crate::Result<[u8; 32]> {
+    let dir = tls_dir.join(CA_TRUST_DIR);
+    fs::create_dir_all(&dir).map_err(|e| crate::Error::Config {
+        detail: format!("create ca.d dir {}: {e}", dir.display()),
+    })?;
+    let cert = CertificateDer::from(ca_der.to_vec());
+    let fp = nodedb_cluster::ca_fingerprint(&cert);
+    let path = dir.join(format!("{}.crt", nodedb_cluster::ca_fingerprint_hex(&fp)));
+    write_pem_cert(&path, ca_der)?;
+    Ok(fp)
+}
+
+/// Delete the overlap-CA file identified by `fp` from `tls_dir/ca.d/`.
+/// No-op (and returns `Ok(())`) when the file isn't present — applier
+/// behaviour must be idempotent across re-apply and snapshot replay.
+pub fn remove_trusted_ca(tls_dir: &Path, fp: &[u8; 32]) -> crate::Result<()> {
+    let dir = tls_dir.join(CA_TRUST_DIR);
+    let path = dir.join(format!("{}.crt", nodedb_cluster::ca_fingerprint_hex(fp)));
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(crate::Error::Config {
+            detail: format!("remove ca.d entry {}: {e}", path.display()),
+        }),
+    }
 }
 
 fn bootstrap_credentials(
@@ -181,6 +246,11 @@ fn bootstrap_credentials(
     write_pem_private_key(&tls_dir.join(NODE_KEY_FILE), creds.key.secret_der())?;
     write_cluster_secret(&tls_dir.join(CLUSTER_SECRET_FILE), &creds.cluster_secret)?;
 
+    // Load the (empty-by-default) overlap-CA set so the bootstrap path
+    // behaves the same as a reload — any `ca.d/` pre-seeded by the
+    // operator is honoured on first start.
+    let mut creds = creds;
+    creds.additional_ca_certs = load_extra_cas(tls_dir)?;
     Ok(creds)
 }
 
