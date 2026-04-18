@@ -1,4 +1,5 @@
 pub mod bootstrap;
+pub mod bootstrap_listener;
 pub mod catalog;
 pub mod circuit_breaker;
 pub mod closed_timestamp;
@@ -84,7 +85,8 @@ pub use rpc_codec::{MacKey, RaftRpc};
 pub use topology::{ClusterTopology, NodeInfo, NodeState};
 pub use transport::{
     NexarTransport, RaftRpcHandler, TlsCredentials, TransportCredentials, TransportPeerSnapshot,
-    ca_fingerprint, ca_fingerprint_hex, generate_node_credentials, insecure_transport_count,
+    ca_fingerprint, ca_fingerprint_hex, generate_node_credentials,
+    generate_node_credentials_multi_san, insecure_transport_count, issue_leaf_for_sans,
     load_crls_from_pem, make_raft_client_config_mtls, make_raft_server_config_mtls,
 };
 pub use wire::VShardEnvelope;
