@@ -104,12 +104,34 @@ pub struct StoredPermission {
 /// Serializable ownership record.
 #[derive(zerompk::ToMessagePack, zerompk::FromMessagePack, Debug, Clone)]
 pub struct StoredOwner {
-    /// "collection", "index"
+    /// One of the [`object_type`] constants (or "index" for the
+    /// standalone path).
     pub object_type: String,
     /// Object name (e.g. collection name).
     pub object_name: String,
     pub tenant_id: u32,
     pub owner_username: String,
+}
+
+/// Canonical `object_type` discriminants for `StoredOwner`. These
+/// strings are part of the on-disk schema (the redb OWNERS table
+/// key is `"{object_type}:{tenant_id}:{name}"`), so they MUST stay
+/// stable across releases. Every applier writing an owner row and
+/// every verifier checking one references these — typo mismatches
+/// between writer and reader sites would silently break the
+/// orphan check.
+pub mod object_type {
+    pub const COLLECTION: &str = "collection";
+    pub const FUNCTION: &str = "function";
+    pub const PROCEDURE: &str = "procedure";
+    pub const TRIGGER: &str = "trigger";
+    pub const MATERIALIZED_VIEW: &str = "materialized_view";
+    pub const SEQUENCE: &str = "sequence";
+    pub const SCHEDULE: &str = "schedule";
+    pub const CHANGE_STREAM: &str = "change_stream";
+    /// Standalone-path owner — used for indexes that have no
+    /// parent `Stored<T>` record.
+    pub const INDEX: &str = "index";
 }
 
 /// Serializable blacklist entry for redb storage.
