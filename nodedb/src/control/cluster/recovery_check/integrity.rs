@@ -4,8 +4,13 @@
 //! tables. A crash mid-apply (or a code bug in the applier)
 //! can leave any of the following invariants broken:
 //!
-//! - Every `StoredCollection` has a matching `StoredOwner`
-//!   with `object_type = "collection"`.
+//! - Every parent-replicated DDL object (collection, function,
+//!   procedure, trigger, materialized_view, sequence, schedule,
+//!   change_stream) has a matching `StoredOwner` row keyed by
+//!   its `object_type`. The primary row's `owner` field is
+//!   canonical; the `OWNERS` table is the persistent backing
+//!   for the in-memory `PermissionStore.owners` HashMap and
+//!   must be rewritten in lockstep with every primary write.
 //! - Every `StoredOwner.owner_username` resolves to a
 //!   `StoredUser`.
 //! - Every `StoredPermission.grantee` resolves to either a
@@ -26,6 +31,7 @@
 use std::collections::HashSet;
 
 use crate::control::security::catalog::SystemCatalog;
+use crate::control::security::catalog::auth_types::object_type;
 
 use super::divergence::{Divergence, DivergenceKind};
 
@@ -81,6 +87,48 @@ pub fn verify_redb_integrity(catalog: &SystemCatalog) -> Vec<Divergence> {
             Vec::new()
         }
     };
+    let functions = match catalog.load_all_functions() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "integrity: failed to load functions");
+            Vec::new()
+        }
+    };
+    let procedures = match catalog.load_all_procedures() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "integrity: failed to load procedures");
+            Vec::new()
+        }
+    };
+    let materialized_views = match catalog.load_all_materialized_views() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "integrity: failed to load materialized_views");
+            Vec::new()
+        }
+    };
+    let sequences = match catalog.load_all_sequences() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "integrity: failed to load sequences");
+            Vec::new()
+        }
+    };
+    let schedules = match catalog.load_all_schedules() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "integrity: failed to load schedules");
+            Vec::new()
+        }
+    };
+    let change_streams = match catalog.load_all_change_streams() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "integrity: failed to load change_streams");
+            Vec::new()
+        }
+    };
     let rls = match catalog.load_all_rls_policies() {
         Ok(v) => v,
         Err(e) => {
@@ -102,15 +150,84 @@ pub fn verify_redb_integrity(catalog: &SystemCatalog) -> Vec<Divergence> {
         .map(|o| (o.object_type.clone(), o.tenant_id, o.object_name.clone()))
         .collect();
 
-    // ── Check 1: every collection has an owner. ──
-    for c in &collections {
-        let key = ("collection".to_string(), c.tenant_id, c.name.clone());
-        if !owner_keys.contains(&key) {
-            violations.push(Divergence::new(DivergenceKind::OrphanRow {
-                kind: "collection",
-                key: format!("{}:{}", c.tenant_id, c.name),
-                expected_parent_kind: "owner",
-            }));
+    // ── Check 1: every parent-replicated DDL object has an owner. ──
+    // Table-driven so a new parent-replicated type only needs one
+    // row added here plus its `apply/<type>.rs::put` call to
+    // `owner::put_parent_owner`. Omitting either half trips an
+    // OrphanRow on the next restart.
+    let parent_replicated: [(&'static str, Vec<(u32, String)>); 8] = [
+        (
+            object_type::COLLECTION,
+            // Active AND soft-deleted collections both require an
+            // owner row. `DeactivateCollection` preserves the
+            // primary record for undrop and must preserve the
+            // owner alongside it; splitting them would break
+            // undrop ownership restoration.
+            collections
+                .iter()
+                .map(|c| (c.tenant_id, c.name.clone()))
+                .collect(),
+        ),
+        (
+            object_type::FUNCTION,
+            functions
+                .iter()
+                .map(|f| (f.tenant_id, f.name.clone()))
+                .collect(),
+        ),
+        (
+            object_type::PROCEDURE,
+            procedures
+                .iter()
+                .map(|p| (p.tenant_id, p.name.clone()))
+                .collect(),
+        ),
+        (
+            object_type::TRIGGER,
+            triggers
+                .iter()
+                .map(|t| (t.tenant_id, t.name.clone()))
+                .collect(),
+        ),
+        (
+            object_type::MATERIALIZED_VIEW,
+            materialized_views
+                .iter()
+                .map(|m| (m.tenant_id, m.name.clone()))
+                .collect(),
+        ),
+        (
+            object_type::SEQUENCE,
+            sequences
+                .iter()
+                .map(|s| (s.tenant_id, s.name.clone()))
+                .collect(),
+        ),
+        (
+            object_type::SCHEDULE,
+            schedules
+                .iter()
+                .map(|s| (s.tenant_id, s.name.clone()))
+                .collect(),
+        ),
+        (
+            object_type::CHANGE_STREAM,
+            change_streams
+                .iter()
+                .map(|c| (c.tenant_id, c.name.clone()))
+                .collect(),
+        ),
+    ];
+    for (kind, rows) in &parent_replicated {
+        for (tenant, name) in rows {
+            let key = ((*kind).to_string(), *tenant, name.clone());
+            if !owner_keys.contains(&key) {
+                violations.push(Divergence::new(DivergenceKind::OrphanRow {
+                    kind,
+                    key: format!("{tenant}:{name}"),
+                    expected_parent_kind: "owner",
+                }));
+            }
         }
     }
 

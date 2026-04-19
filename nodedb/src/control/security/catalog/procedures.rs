@@ -70,6 +70,29 @@ impl SystemCatalog {
         Ok(existed)
     }
 
+    /// Load every stored procedure across all tenants. Used by
+    /// the startup integrity check and any cross-tenant audit.
+    pub fn load_all_procedures(&self) -> crate::Result<Vec<StoredProcedure>> {
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| catalog_err("read txn", e))?;
+        let table = read_txn
+            .open_table(PROCEDURES)
+            .map_err(|e| catalog_err("open procedures", e))?;
+        let mut procs = Vec::new();
+        for entry in table
+            .range::<&str>(..)
+            .map_err(|e| catalog_err("range procedures", e))?
+        {
+            let (_key, value) = entry.map_err(|e| catalog_err("read procedure", e))?;
+            let p: StoredProcedure = zerompk::from_msgpack(value.value())
+                .map_err(|e| catalog_err("deser procedure", e))?;
+            procs.push(p);
+        }
+        Ok(procs)
+    }
+
     /// Load all procedures for a tenant.
     pub fn load_procedures_for_tenant(
         &self,

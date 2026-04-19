@@ -3,6 +3,7 @@
 use tracing::warn;
 
 use crate::control::security::catalog::SystemCatalog;
+use crate::control::security::catalog::auth_types::object_type;
 use crate::control::security::catalog::procedure_types::StoredProcedure;
 
 pub fn put(stored: &StoredProcedure, catalog: &SystemCatalog) {
@@ -14,6 +15,13 @@ pub fn put(stored: &StoredProcedure, catalog: &SystemCatalog) {
             "catalog_entry: put_procedure failed"
         );
     }
+    super::owner::put_parent_owner(
+        object_type::PROCEDURE,
+        stored.tenant_id,
+        &stored.name,
+        &stored.owner,
+        catalog,
+    );
 }
 
 pub fn delete(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
@@ -25,4 +33,5 @@ pub fn delete(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
             "catalog_entry: delete_procedure failed"
         );
     }
+    super::owner::delete_parent_owner(object_type::PROCEDURE, tenant_id, name, catalog);
 }

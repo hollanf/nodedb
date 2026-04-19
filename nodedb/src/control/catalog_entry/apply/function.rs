@@ -3,6 +3,7 @@
 use tracing::warn;
 
 use crate::control::security::catalog::SystemCatalog;
+use crate::control::security::catalog::auth_types::object_type;
 use crate::control::security::catalog::function_types::StoredFunction;
 
 pub fn put(stored: &StoredFunction, catalog: &SystemCatalog) {
@@ -14,6 +15,13 @@ pub fn put(stored: &StoredFunction, catalog: &SystemCatalog) {
             "catalog_entry: put_function failed"
         );
     }
+    super::owner::put_parent_owner(
+        object_type::FUNCTION,
+        stored.tenant_id,
+        &stored.name,
+        &stored.owner,
+        catalog,
+    );
 }
 
 pub fn delete(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
@@ -25,4 +33,5 @@ pub fn delete(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
             "catalog_entry: delete_function failed"
         );
     }
+    super::owner::delete_parent_owner(object_type::FUNCTION, tenant_id, name, catalog);
 }

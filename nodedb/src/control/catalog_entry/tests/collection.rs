@@ -60,8 +60,12 @@ fn apply_deactivate_collection_preserves_record() {
     let (credentials, _tmp) = open_catalog();
     let catalog = credentials.catalog().as_ref().expect("catalog present");
 
+    // Set up through `apply_to` so the owner row is written
+    // alongside the primary row — deactivate would otherwise
+    // trip the debug-build integrity check on an orphan
+    // collection left over from the direct `put_collection`.
     let stored = StoredCollection::new(1, "archived", "carol");
-    catalog.put_collection(&stored).unwrap();
+    apply_to(&CatalogEntry::PutCollection(Box::new(stored)), catalog);
 
     apply_to(
         &CatalogEntry::DeactivateCollection {

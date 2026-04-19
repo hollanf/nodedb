@@ -3,6 +3,7 @@
 use tracing::warn;
 
 use crate::control::security::catalog::SystemCatalog;
+use crate::control::security::catalog::auth_types::object_type;
 use crate::control::security::catalog::sequence_types::{SequenceState, StoredSequence};
 
 pub fn put(stored: &StoredSequence, catalog: &SystemCatalog) {
@@ -14,6 +15,13 @@ pub fn put(stored: &StoredSequence, catalog: &SystemCatalog) {
             "catalog_entry: put_sequence failed"
         );
     }
+    super::owner::put_parent_owner(
+        object_type::SEQUENCE,
+        stored.tenant_id,
+        &stored.name,
+        &stored.owner,
+        catalog,
+    );
 }
 
 pub fn delete(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
@@ -25,6 +33,7 @@ pub fn delete(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
             "catalog_entry: delete_sequence failed"
         );
     }
+    super::owner::delete_parent_owner(object_type::SEQUENCE, tenant_id, name, catalog);
 }
 
 pub fn put_state(state: &SequenceState, catalog: &SystemCatalog) {

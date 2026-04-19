@@ -2,6 +2,7 @@
 
 use tracing::{debug, warn};
 
+use crate::control::security::catalog::auth_types::object_type;
 use crate::control::security::catalog::{StoredCollection, SystemCatalog};
 
 pub fn put(stored: &StoredCollection, catalog: &SystemCatalog) {
@@ -13,6 +14,13 @@ pub fn put(stored: &StoredCollection, catalog: &SystemCatalog) {
             "catalog_entry: put_collection failed"
         );
     }
+    super::owner::put_parent_owner(
+        object_type::COLLECTION,
+        stored.tenant_id,
+        &stored.name,
+        &stored.owner,
+        catalog,
+    );
 }
 
 pub fn deactivate(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
@@ -42,4 +50,14 @@ pub fn deactivate(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
             "catalog_entry: deactivate_collection get failed"
         ),
     }
+    // Intentionally preserve the `StoredOwner` row on soft-delete.
+    // The primary `StoredCollection` record is kept for audit and
+    // undrop (see `CatalogEntry::DeactivateCollection` doc and
+    // `ddl/collection/drop.rs`). Stripping the owner row would
+    // split truth from the preserved primary row whose
+    // `stored.owner` is still populated, and would break any
+    // future `UNDROP COLLECTION` by requiring admin to restore
+    // ownership that was still knowable from the primary. Hard
+    // deletion of the collection (not wired today) would remove
+    // both halves via `delete_parent_owner`.
 }

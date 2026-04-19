@@ -3,6 +3,7 @@
 use tracing::warn;
 
 use crate::control::security::catalog::SystemCatalog;
+use crate::control::security::catalog::auth_types::object_type;
 use crate::event::scheduler::types::ScheduleDef;
 
 pub fn put(stored: &ScheduleDef, catalog: &SystemCatalog) {
@@ -14,6 +15,13 @@ pub fn put(stored: &ScheduleDef, catalog: &SystemCatalog) {
             "catalog_entry: put_schedule failed"
         );
     }
+    super::owner::put_parent_owner(
+        object_type::SCHEDULE,
+        stored.tenant_id,
+        &stored.name,
+        &stored.owner,
+        catalog,
+    );
 }
 
 pub fn delete(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
@@ -25,4 +33,5 @@ pub fn delete(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
             "catalog_entry: delete_schedule failed"
         );
     }
+    super::owner::delete_parent_owner(object_type::SCHEDULE, tenant_id, name, catalog);
 }

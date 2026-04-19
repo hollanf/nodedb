@@ -49,6 +49,29 @@ impl SystemCatalog {
         }
     }
 
+    /// Load every materialized view across all tenants. Used by
+    /// the startup integrity check and any cross-tenant audit.
+    pub fn load_all_materialized_views(&self) -> crate::Result<Vec<StoredMaterializedView>> {
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| catalog_err("read txn", e))?;
+        let table = read_txn
+            .open_table(MATERIALIZED_VIEWS)
+            .map_err(|e| catalog_err("open materialized_views", e))?;
+        let mut views = Vec::new();
+        for entry in table
+            .range::<&str>(..)
+            .map_err(|e| catalog_err("range scan", e))?
+        {
+            let (_key, val) = entry.map_err(|e| catalog_err("read entry", e))?;
+            let view: StoredMaterializedView = zerompk::from_msgpack(val.value())
+                .map_err(|e| catalog_err("deser materialized_view", e))?;
+            views.push(view);
+        }
+        Ok(views)
+    }
+
     /// List all materialized views for a tenant.
     pub fn list_materialized_views(
         &self,

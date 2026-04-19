@@ -28,7 +28,9 @@ pub enum CatalogEntry {
     /// append_only toggles, materialized_sum bindings).
     PutCollection(Box<StoredCollection>),
     /// Mark a collection as `is_active = false`. Record is
-    /// preserved for audit + undrop.
+    /// preserved for audit + undrop. Metadata-only — see
+    /// `resource/collection-hard-delete-checklist.md` for the
+    /// known gap (no storage reclamation, no UNDROP wired).
     DeactivateCollection { tenant_id: u32, name: String },
 
     // ── Sequence ───────────────────────────────────────────────────

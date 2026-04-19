@@ -40,16 +40,20 @@ pub async fn put_async(stored: StoredCollection, shared: Arc<SharedState>) {
     );
 }
 
-pub fn deactivate(tenant_id: u32, name: String, shared: Arc<SharedState>) {
-    // Remove the ownership record so `is_owner` checks return false
-    // after drop — the in-memory map would otherwise keep a stale
-    // entry until the next process restart.
-    shared
-        .permissions
-        .install_replicated_remove_owner("collection", tenant_id, &name);
+pub fn deactivate(tenant_id: u32, name: String, _shared: Arc<SharedState>) {
+    // Ownership is intentionally preserved on soft-delete. The
+    // primary `StoredCollection` record is kept for audit / undrop
+    // (see `CatalogEntry::DeactivateCollection`); removing the
+    // in-memory owner entry would split truth from the preserved
+    // primary row's `stored.owner` field and force any future
+    // UNDROP to be admin-only. `is_owner` returning true for a
+    // soft-deleted collection is the correct semantics: the former
+    // owner remains the rightful restorer. Hard deletion of the
+    // collection (not wired today) would clear both halves via
+    // `delete_parent_owner` in the applier.
     debug!(
         collection = %name,
         tenant = tenant_id,
-        "catalog_entry: DeactivateCollection post-apply (owner record removed; Data Plane Unregister deferred)"
+        "catalog_entry: DeactivateCollection post-apply (owner retained for undrop; Data Plane Unregister deferred)"
     );
 }

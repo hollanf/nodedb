@@ -30,7 +30,42 @@ use crate::control::security::catalog::SystemCatalog;
 /// logged + swallowed inside the family handlers so a single write
 /// failure doesn't stall the raft apply path. Startup replay will
 /// re-run the entry if needed.
+///
+/// Debug builds run the full referential-integrity verifier after
+/// every apply and panic on any violation. This catches the
+/// "forgot-to-write-the-owner-row" class of bug on the first DDL a
+/// developer runs instead of deferring to the next restart, so
+/// reviewers don't need to rely on a user report to surface
+/// half-finished sync work. Release builds skip the check.
 pub fn apply_to(entry: &CatalogEntry, catalog: &SystemCatalog) {
+    apply_to_inner(entry, catalog);
+    #[cfg(debug_assertions)]
+    {
+        // Narrow to OrphanRow — the "half-finished sync" class this
+        // check exists to catch (a primary row written without its
+        // owner row, or vice versa). DanglingReference is test-fixture
+        // hygiene (e.g. a test owner with no StoredUser backing) and
+        // legitimate startup state — leave those to the full
+        // startup-time verifier.
+        use crate::control::cluster::recovery_check::divergence::DivergenceKind;
+        let orphans: Vec<_> =
+            crate::control::cluster::recovery_check::integrity::verify_redb_integrity(catalog)
+                .into_iter()
+                .filter(|d| matches!(d.kind, DivergenceKind::OrphanRow { .. }))
+                .collect();
+        assert!(
+            orphans.is_empty(),
+            "catalog_entry::apply_to({}) left the catalog in a state \
+             that fails verify_redb_integrity — every parent-replicated \
+             Put* variant must write both the primary row and the \
+             StoredOwner row. Orphan violations: {:?}",
+            entry.kind(),
+            orphans,
+        );
+    }
+}
+
+fn apply_to_inner(entry: &CatalogEntry, catalog: &SystemCatalog) {
     match entry {
         CatalogEntry::PutCollection(stored) => collection::put(stored, catalog),
         CatalogEntry::DeactivateCollection { tenant_id, name } => {

@@ -75,6 +75,29 @@ impl SystemCatalog {
         Ok(existed)
     }
 
+    /// Load every user-defined function across all tenants. Used
+    /// by the startup integrity check and any cross-tenant audit.
+    pub fn load_all_functions(&self) -> crate::Result<Vec<StoredFunction>> {
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| catalog_err("read txn", e))?;
+        let table = read_txn
+            .open_table(FUNCTIONS)
+            .map_err(|e| catalog_err("open functions", e))?;
+        let mut funcs = Vec::new();
+        for entry in table
+            .range::<&str>(..)
+            .map_err(|e| catalog_err("range functions", e))?
+        {
+            let (_key, value) = entry.map_err(|e| catalog_err("read function", e))?;
+            let func: StoredFunction = zerompk::from_msgpack(value.value())
+                .map_err(|e| catalog_err("deser function", e))?;
+            funcs.push(func);
+        }
+        Ok(funcs)
+    }
+
     /// Load all user-defined functions for a tenant.
     pub fn load_functions_for_tenant(&self, tenant_id: u32) -> crate::Result<Vec<StoredFunction>> {
         let prefix = format!("{tenant_id}:");
