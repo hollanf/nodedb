@@ -38,18 +38,14 @@ impl CoreLoop {
         let hnsw_indexes: Vec<HnswSnapshot> = self
             .vector_collections
             .iter()
-            .filter_map(|(name, coll)| {
+            .filter_map(|(key, coll)| {
                 let checkpoint_bytes = coll.checkpoint_to_bytes();
                 if checkpoint_bytes.is_empty() {
                     return None;
                 }
-                let (tenant_id, collection) = name
-                    .split_once(':')
-                    .map(|(t, c)| (t.parse::<u32>().unwrap_or(0), c.to_string()))
-                    .unwrap_or((0, name.clone()));
                 Some(HnswSnapshot {
-                    tenant_id,
-                    collection,
+                    tenant_id: key.0.as_u32(),
+                    collection: key.1.clone(),
                     checkpoint_bytes,
                 })
             })

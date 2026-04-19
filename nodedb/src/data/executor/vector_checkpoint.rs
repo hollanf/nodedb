@@ -4,15 +4,36 @@
 
 use super::core_loop::CoreLoop;
 
+/// Parse a `"{tid}:{coll_key}"` string (used in `BuildComplete.key` and on-disk
+/// checkpoint filenames) back into the `(TenantId, String)` tuple map key.
+///
+/// If the string has no `':'` separator the entire string is used as the
+/// collection key with tenant 0 (should not happen in practice).
+fn parse_build_key(s: &str) -> (crate::types::TenantId, String) {
+    match s.split_once(':') {
+        Some((tid_str, coll_key)) => {
+            let tid = tid_str.parse::<u32>().unwrap_or(0);
+            (crate::types::TenantId::new(tid), coll_key.to_string())
+        }
+        None => (crate::types::TenantId::new(0), s.to_string()),
+    }
+}
+
 impl CoreLoop {
     /// Drain completed HNSW builds from the background builder thread and
     /// promote the corresponding building segments to sealed segments.
     ///
     /// Called at the top of `tick()` before draining new requests.
+    ///
+    /// `BuildComplete.key` is the old-style `"{tid}:{coll}"` string (produced
+    /// by `VectorCollection::seal` which still takes `&str`). Parse it back to
+    /// the tuple key to look up the map.
     pub fn poll_build_completions(&mut self) {
         let Some(rx) = &self.build_rx else { return };
         while let Ok(complete) = rx.try_recv() {
-            if let Some(coll) = self.vector_collections.get_mut(&complete.key) {
+            // Parse the string key `"{tid}:{coll_key}"` back into the tuple.
+            let tuple_key = parse_build_key(&complete.key);
+            if let Some(coll) = self.vector_collections.get_mut(&tuple_key) {
                 coll.complete_build(complete.segment_id, complete.index);
                 tracing::info!(
                     core = self.core_id,
@@ -55,9 +76,11 @@ impl CoreLoop {
             if bytes.is_empty() {
                 continue;
             }
-            // Write to temp file, then rename for atomicity.
-            let ckpt_path = ckpt_dir.join(format!("{key}.ckpt"));
-            let tmp_path = ckpt_dir.join(format!("{key}.ckpt.tmp"));
+            // Checkpoint filename uses the old-style `"{tid}:{coll}"` form so
+            // existing on-disk checkpoint files remain valid across upgrades.
+            let filename = CoreLoop::vector_checkpoint_filename(key);
+            let ckpt_path = ckpt_dir.join(format!("{filename}.ckpt"));
+            let tmp_path = ckpt_dir.join(format!("{filename}.ckpt.tmp"));
             if std::fs::write(&tmp_path, &bytes).is_ok()
                 && std::fs::rename(&tmp_path, &ckpt_path).is_ok()
             {
@@ -98,14 +121,16 @@ impl CoreLoop {
                 continue;
             }
 
-            let key = path
+            // Checkpoint filenames are `"{tid}:{coll}.ckpt"` — parse back to tuple.
+            let filename = path
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_string();
-            if key.is_empty() {
+            if filename.is_empty() {
                 continue;
             }
+            let tuple_key = parse_build_key(&filename);
 
             if let Ok(bytes) = std::fs::read(&path)
                 && let Some(collection) =
@@ -113,11 +138,11 @@ impl CoreLoop {
             {
                 tracing::info!(
                     core = self.core_id,
-                    %key,
+                    key = %filename,
                     vectors = collection.len(),
                     "loaded vector checkpoint"
                 );
-                self.vector_collections.insert(key, collection);
+                self.vector_collections.insert(tuple_key, collection);
                 loaded += 1;
             }
         }

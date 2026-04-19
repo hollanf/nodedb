@@ -26,19 +26,20 @@ impl CoreLoop {
         }
 
         let mut checkpointed = 0;
-        for (key, rtree) in &self.spatial_indexes {
+        for ((tid, coll, field), rtree) in &self.spatial_indexes {
+            let key_str = format!("{}:{}:{}", tid.as_u32(), coll, field);
             let bytes = match rtree.checkpoint_to_bytes() {
                 Ok(b) if !b.is_empty() => b,
                 Ok(_) => continue,
                 Err(e) => {
-                    tracing::warn!(key, error = %e, "R-tree checkpoint failed");
+                    tracing::warn!(%key_str, error = %e, "R-tree checkpoint failed");
                     continue;
                 }
             };
 
             // Write R-tree checkpoint.
-            let ckpt_path = ckpt_dir.join(format!("{}.ckpt", sanitize_key(key)));
-            let tmp_path = ckpt_dir.join(format!("{}.ckpt.tmp", sanitize_key(key)));
+            let ckpt_path = ckpt_dir.join(format!("{}.ckpt", sanitize_key(&key_str)));
+            let tmp_path = ckpt_dir.join(format!("{}.ckpt.tmp", sanitize_key(&key_str)));
             if std::fs::write(&tmp_path, &bytes).is_ok()
                 && std::fs::rename(&tmp_path, &ckpt_path).is_ok()
             {
@@ -49,12 +50,12 @@ impl CoreLoop {
             let doc_entries: Vec<(u64, String)> = self
                 .spatial_doc_map
                 .iter()
-                .filter(|((k, _), _)| k == key)
-                .map(|((_, entry_id), doc_id)| (*entry_id, doc_id.clone()))
+                .filter(|((t, c, f, _), _)| t == tid && c == coll && f == field)
+                .map(|((_, _, _, entry_id), doc_id)| (*entry_id, doc_id.clone()))
                 .collect();
             if !doc_entries.is_empty() {
                 let map_bytes = zerompk::to_msgpack_vec(&doc_entries).unwrap_or_default();
-                let map_path = ckpt_dir.join(format!("{}.docmap", sanitize_key(key)));
+                let map_path = ckpt_dir.join(format!("{}.docmap", sanitize_key(&key_str)));
                 let _ = std::fs::write(&map_path, &map_bytes);
             }
         }
@@ -104,13 +105,23 @@ impl CoreLoop {
             if let Ok(bytes) = std::fs::read(&path)
                 && let Ok(rtree) = crate::engine::spatial::RTree::from_checkpoint(&bytes)
             {
+                // Parse key string "{tid}:{coll}:{field}" back to tuple.
+                // unsanitize_key restores the ':' separators.
+                let Some(map_key) = parse_spatial_key(&key) else {
+                    tracing::warn!(
+                        core = self.core_id,
+                        %key,
+                        "failed to parse spatial checkpoint key, skipping"
+                    );
+                    continue;
+                };
                 tracing::info!(
                     core = self.core_id,
                     %key,
                     entries = rtree.len(),
                     "loaded spatial checkpoint"
                 );
-                self.spatial_indexes.insert(key.clone(), rtree);
+                self.spatial_indexes.insert(map_key.clone(), rtree);
                 loaded += 1;
 
                 // Load doc_map.
@@ -119,7 +130,9 @@ impl CoreLoop {
                     && let Ok(doc_entries) = zerompk::from_msgpack::<Vec<(u64, String)>>(&map_bytes)
                 {
                     for (entry_id, doc_id) in doc_entries {
-                        self.spatial_doc_map.insert((key.clone(), entry_id), doc_id);
+                        let (tid, coll, field) = map_key.clone();
+                        self.spatial_doc_map
+                            .insert((tid, coll, field, entry_id), doc_id);
                     }
                 }
             }
@@ -137,9 +150,10 @@ fn sanitize_key(key: &str) -> String {
 }
 
 /// Reverse sanitize: restore ':' separators (best-effort).
+///
+/// Keys are "{tid}:{collection}:{field}" → sanitized as "{tid}_{collection}_{field}".
+/// Only the first two `_` are replaced since `tid` is numeric (no underscores).
 fn unsanitize_key(sanitized: &str) -> String {
-    // Keys are "{tid}:{collection}:{field}" → sanitized as "{tid}_{collection}_{field}".
-    // Restore by replacing first two '_' with ':'.
     let mut result = sanitized.to_string();
     if let Some(pos) = result.find('_') {
         result.replace_range(pos..pos + 1, ":");
@@ -148,4 +162,15 @@ fn unsanitize_key(sanitized: &str) -> String {
         }
     }
     result
+}
+
+/// Parse a key string of the form "{tid}:{collection}:{field}" into a tuple.
+/// Returns `None` if the string doesn't have at least two ':' separators.
+fn parse_spatial_key(key: &str) -> Option<(crate::types::TenantId, String, String)> {
+    let mut parts = key.splitn(3, ':');
+    let tid_str = parts.next()?;
+    let coll = parts.next()?.to_string();
+    let field = parts.next().unwrap_or("").to_string();
+    let tid_u32: u32 = tid_str.parse().ok()?;
+    Some((crate::types::TenantId::new(tid_u32), coll, field))
 }

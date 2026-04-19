@@ -24,7 +24,7 @@ impl CoreLoop {
         }
 
         let mut checkpointed = 0;
-        for (key, index) in &self.sparse_vector_indexes {
+        for ((tid, coll, field), index) in &self.sparse_vector_indexes {
             if index.is_empty() {
                 continue;
             }
@@ -33,8 +33,9 @@ impl CoreLoop {
                 continue;
             }
             // Atomic write via temp file + rename.
-            // Key may contain ':' (tenant:collection:field), replace with '_' for filename.
-            let safe_key = key.replace(':', "_");
+            // Key is "{tid}:{collection}:{field}", replace ':' with '_' for filename safety.
+            let key_str = format!("{}:{}:{}", tid.as_u32(), coll, field);
+            let safe_key = key_str.replace(':', "_");
             let ckpt_path = ckpt_dir.join(format!("{safe_key}.ckpt"));
             let tmp_path = ckpt_dir.join(format!("{safe_key}.ckpt.tmp"));
             if std::fs::write(&tmp_path, &bytes).is_ok()
@@ -83,13 +84,21 @@ impl CoreLoop {
                 continue;
             }
 
-            // Restore original key format (underscore → colon).
-            let key = safe_key.replace('_', ":");
+            // Restore original key format (underscore → colon, first two only).
+            let key = unsanitize_sparse_key(&safe_key);
 
             if let Ok(bytes) = std::fs::read(&path)
                 && let Some(index) =
                     crate::engine::vector::sparse::SparseInvertedIndex::from_checkpoint(&bytes)
             {
+                let Some(map_key) = parse_sparse_key(&key) else {
+                    tracing::warn!(
+                        core = self.core_id,
+                        %key,
+                        "failed to parse sparse vector checkpoint key, skipping"
+                    );
+                    continue;
+                };
                 tracing::info!(
                     core = self.core_id,
                     %key,
@@ -97,7 +106,7 @@ impl CoreLoop {
                     dims = index.dim_count(),
                     "loaded sparse vector checkpoint"
                 );
-                self.sparse_vector_indexes.insert(key, index);
+                self.sparse_vector_indexes.insert(map_key, index);
                 loaded += 1;
             }
         }
@@ -110,4 +119,26 @@ impl CoreLoop {
             );
         }
     }
+}
+
+/// Reverse sanitize: restore ':' separators (first two `_` → `:`)  .
+fn unsanitize_sparse_key(sanitized: &str) -> String {
+    let mut result = sanitized.to_string();
+    if let Some(pos) = result.find('_') {
+        result.replace_range(pos..pos + 1, ":");
+        if let Some(pos2) = result[pos + 1..].find('_') {
+            result.replace_range(pos + 1 + pos2..pos + 1 + pos2 + 1, ":");
+        }
+    }
+    result
+}
+
+/// Parse "{tid}:{collection}:{field}" into a (TenantId, String, String) tuple.
+fn parse_sparse_key(key: &str) -> Option<(crate::types::TenantId, String, String)> {
+    let mut parts = key.splitn(3, ':');
+    let tid_str = parts.next()?;
+    let coll = parts.next()?.to_string();
+    let field = parts.next().unwrap_or("_sparse").to_string();
+    let tid_u32: u32 = tid_str.parse().ok()?;
+    Some((crate::types::TenantId::new(tid_u32), coll, field))
 }
