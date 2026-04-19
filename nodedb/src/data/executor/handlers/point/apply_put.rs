@@ -76,7 +76,8 @@ impl CoreLoop {
                 if !text_content.is_empty()
                     && let Err(e) = self.inverted.index_document_in_txn(
                         txn,
-                        &config_key, // "{tid}:{collection}" — tenant-scoped
+                        crate::types::TenantId::new(tid),
+                        collection,
                         document_id,
                         &text_content,
                     )

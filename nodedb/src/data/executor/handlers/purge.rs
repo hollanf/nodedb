@@ -61,7 +61,10 @@ impl CoreLoop {
             .remove(&crate::types::TenantId::new(tenant_id));
 
         // 3. Inverted index (fulltext): postings + doc_lengths (persistent, redb).
-        let inv = match self.inverted.purge_tenant(tenant_id) {
+        let inv = match self
+            .inverted
+            .purge_tenant(crate::types::TenantId::new(tenant_id))
+        {
             Ok(n) => n,
             Err(e) => {
                 warn!(tenant_id, error = %e, "inverted index purge failed");

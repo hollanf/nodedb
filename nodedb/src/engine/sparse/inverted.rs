@@ -2,8 +2,14 @@
 //!
 //! Wraps `nodedb_fts::FtsIndex<RedbFtsBackend>` to provide persistent
 //! full-text search with BM25 scoring. All scoring, tokenization, and
-//! fuzzy logic lives in `nodedb-fts`; this module provides the Origin-specific
-//! integration (redb backend, transaction support, tenant purge).
+//! fuzzy logic lives in `nodedb-fts`; this module adds Origin-specific
+//! features: transaction-participating indexing and structural tenant
+//! purge that bypass the LSM memtable.
+//!
+//! The public API takes `TenantId` as a first-class parameter. Every
+//! persistent redb table is keyed by the structural tuple
+//! `(tenant_id, collection, …)` — per-tenant drops are a tuple range scan,
+//! not a lexical-prefix scan.
 
 use std::sync::Arc;
 
@@ -11,11 +17,12 @@ use redb::{Database, ReadableTable, WriteTransaction};
 use tracing::debug;
 
 use nodedb_fts::index::FtsIndex;
+use nodedb_types::TenantId;
 
 pub use nodedb_fts::posting::{MatchOffset, Posting, QueryMode, TextSearchResult};
 
 use super::fts_redb::RedbFtsBackend;
-use super::fts_redb::tables::{DOC_LENGTHS, INDEX_META, POSTINGS};
+use super::fts_redb::tables::{DOC_LENGTHS, INDEX_META, POSTINGS, STATS};
 
 /// Full-text inverted index backed by redb via `nodedb-fts`.
 pub struct InvertedIndex {
@@ -31,55 +38,22 @@ impl InvertedIndex {
         })
     }
 
-    /// Purge all inverted index entries for a tenant.
-    pub fn purge_tenant(&self, tenant_id: u32) -> crate::Result<usize> {
-        let prefix = format!("{tenant_id}:");
-        let end = format!("{tenant_id}:\u{ffff}");
-
-        let db = self.inner.backend().db();
-        let write_txn = db
-            .begin_write()
-            .map_err(|e| inverted_err("purge write txn", e))?;
-        let mut removed = 0;
-
-        {
-            let mut postings = write_txn
-                .open_table(POSTINGS)
-                .map_err(|e| inverted_err("open postings", e))?;
-            let keys: Vec<String> = postings
-                .range(prefix.as_str()..end.as_str())
-                .map_err(|e| inverted_err("postings range", e))?
-                .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
-                .collect();
-            removed += keys.len();
-            for key in &keys {
-                let _ = postings.remove(key.as_str());
-            }
-        }
-
-        {
-            let mut doc_lengths = write_txn
-                .open_table(DOC_LENGTHS)
-                .map_err(|e| inverted_err("open doc_lengths", e))?;
-            let keys: Vec<String> = doc_lengths
-                .range(prefix.as_str()..end.as_str())
-                .map_err(|e| inverted_err("doc_lengths range", e))?
-                .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
-                .collect();
-            removed += keys.len();
-            for key in &keys {
-                let _ = doc_lengths.remove(key.as_str());
-            }
-        }
-
-        write_txn
-            .commit()
-            .map_err(|e| inverted_err("commit purge", e))?;
-        Ok(removed)
+    /// Purge all inverted index entries for a tenant. Structural drop via
+    /// tuple ranges on every FTS table.
+    pub fn purge_tenant(&self, tid: TenantId) -> crate::Result<usize> {
+        self.inner
+            .purge_tenant(tid.as_u32())
+            .map_err(into_result_err)
     }
 
     /// Index a document's text content.
-    pub fn index_document(&self, collection: &str, doc_id: &str, text: &str) -> crate::Result<()> {
+    pub fn index_document(
+        &self,
+        tid: TenantId,
+        collection: &str,
+        doc_id: &str,
+        text: &str,
+    ) -> crate::Result<()> {
         let tokens = nodedb_fts::analyze(text);
         if tokens.is_empty() {
             return Ok(());
@@ -87,7 +61,7 @@ impl InvertedIndex {
 
         let db = self.inner.backend().db();
         let write_txn = db.begin_write().map_err(|e| inverted_err("write txn", e))?;
-        self.write_index_data(&write_txn, collection, doc_id, &tokens)?;
+        self.write_index_data(&write_txn, tid, collection, doc_id, &tokens)?;
         write_txn
             .commit()
             .map_err(|e| inverted_err("commit index", e))?;
@@ -98,6 +72,7 @@ impl InvertedIndex {
     pub fn index_document_in_txn(
         &self,
         txn: &WriteTransaction,
+        tid: TenantId,
         collection: &str,
         doc_id: &str,
         text: &str,
@@ -106,18 +81,23 @@ impl InvertedIndex {
         if tokens.is_empty() {
             return Ok(());
         }
-        self.write_index_data(txn, collection, doc_id, &tokens)
+        self.write_index_data(txn, tid, collection, doc_id, &tokens)
     }
 
-    /// Core indexing logic: writes postings and doc length within a transaction.
+    /// Core indexing logic: writes postings, doc length, and stats within
+    /// a transaction. Bypasses the LSM memtable so Origin transactions can
+    /// stay atomic with the document write.
     fn write_index_data(
         &self,
         txn: &WriteTransaction,
+        tid: TenantId,
         collection: &str,
         doc_id: &str,
         tokens: &[String],
     ) -> crate::Result<()> {
         use std::collections::HashMap;
+
+        let t = tid.as_u32();
 
         let mut term_postings: HashMap<&str, (u32, Vec<u32>)> = HashMap::new();
         for (pos, token) in tokens.iter().enumerate() {
@@ -128,7 +108,6 @@ impl InvertedIndex {
             entry.1.push(pos as u32);
         }
 
-        let scoped_doc_id = format!("{collection}:{doc_id}");
         let doc_len = tokens.len() as u32;
 
         let mut postings_table = txn
@@ -136,27 +115,26 @@ impl InvertedIndex {
             .map_err(|e| inverted_err("open postings", e))?;
 
         for (term, (freq, positions)) in &term_postings {
-            let term_key = format!("{collection}:{term}");
             let posting = Posting {
-                doc_id: scoped_doc_id.clone(),
+                doc_id: doc_id.to_string(),
                 term_freq: *freq,
                 positions: positions.clone(),
             };
 
             let mut existing: Vec<Posting> = postings_table
-                .get(term_key.as_str())
+                .get((t, collection, *term))
                 .ok()
                 .flatten()
                 .and_then(|v| zerompk::from_msgpack(v.value()).ok())
                 .unwrap_or_default();
 
-            existing.retain(|p| p.doc_id != scoped_doc_id);
+            existing.retain(|p| p.doc_id != doc_id);
             existing.push(posting);
 
             let bytes = zerompk::to_msgpack_vec(&existing)
                 .map_err(|e| inverted_err("serialize postings", e))?;
             postings_table
-                .insert(term_key.as_str(), bytes.as_slice())
+                .insert((t, collection, *term), bytes.as_slice())
                 .map_err(|e| inverted_err("insert posting", e))?;
         }
         drop(postings_table);
@@ -167,30 +145,29 @@ impl InvertedIndex {
         let len_bytes =
             zerompk::to_msgpack_vec(&doc_len).map_err(|e| inverted_err("serialize doc_len", e))?;
         lengths
-            .insert(scoped_doc_id.as_str(), len_bytes.as_slice())
+            .insert((t, collection, doc_id), len_bytes.as_slice())
             .map_err(|e| inverted_err("insert doc_len", e))?;
-
-        // Update incremental stats in the same transaction.
         drop(lengths);
-        Self::update_stats_in_txn(txn, collection, doc_len as i64)?;
 
-        debug!(%collection, %doc_id, tokens = tokens.len(), terms = term_postings.len(), "indexed document");
+        Self::update_stats_in_txn(txn, tid, collection, doc_len as i64)?;
+
+        debug!(tid = t, %collection, %doc_id, tokens = tokens.len(), terms = term_postings.len(), "indexed document");
         Ok(())
     }
 
-    /// Atomically update `(doc_count, total_token_sum)` in INDEX_META within a transaction.
-    /// `delta` is positive for insert, negative for remove.
+    /// Atomically update `(doc_count, total_token_sum)` in STATS.
     fn update_stats_in_txn(
         txn: &WriteTransaction,
+        tid: TenantId,
         collection: &str,
         delta: i64,
     ) -> crate::Result<()> {
-        let meta_key = format!("stats:{collection}");
-        let mut meta = txn
-            .open_table(INDEX_META)
-            .map_err(|e| inverted_err("open index_meta", e))?;
-        let (mut count, mut total) = meta
-            .get(meta_key.as_str())
+        let t = tid.as_u32();
+        let mut stats = txn
+            .open_table(STATS)
+            .map_err(|e| inverted_err("open stats", e))?;
+        let (mut count, mut total) = stats
+            .get((t, collection))
             .ok()
             .flatten()
             .and_then(|v| zerompk::from_msgpack::<(u32, u64)>(v.value()).ok())
@@ -206,14 +183,20 @@ impl InvertedIndex {
 
         let bytes = zerompk::to_msgpack_vec(&(count, total))
             .map_err(|e| inverted_err("serialize stats", e))?;
-        meta.insert(meta_key.as_str(), bytes.as_slice())
+        stats
+            .insert((t, collection), bytes.as_slice())
             .map_err(|e| inverted_err("insert stats", e))?;
         Ok(())
     }
 
     /// Remove a document from the inverted index.
-    pub fn remove_document(&self, collection: &str, doc_id: &str) -> crate::Result<()> {
-        let scoped_doc_id = format!("{collection}:{doc_id}");
+    pub fn remove_document(
+        &self,
+        tid: TenantId,
+        collection: &str,
+        doc_id: &str,
+    ) -> crate::Result<()> {
+        let t = tid.as_u32();
 
         let db = self.inner.backend().db();
         let write_txn = db.begin_write().map_err(|e| inverted_err("write txn", e))?;
@@ -222,39 +205,38 @@ impl InvertedIndex {
                 .open_table(POSTINGS)
                 .map_err(|e| inverted_err("open postings", e))?;
 
-            let prefix = format!("{collection}:");
-            let end = format!("{collection}:\u{ffff}");
-            let keys: Vec<String> = postings_table
-                .range(prefix.as_str()..end.as_str())
+            let terms: Vec<String> = postings_table
+                .range((t, collection, "")..=(t, collection, "\u{10ffff}"))
                 .map_err(|e| inverted_err("range", e))?
-                .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
+                .filter_map(|r| r.ok().map(|(k, _)| k.value().2.to_string()))
                 .collect();
 
             let mut updates: Vec<(String, Option<Vec<u8>>)> = Vec::new();
-            for key in &keys {
-                if let Ok(Some(val)) = postings_table.get(key.as_str()) {
+            for term in &terms {
+                if let Ok(Some(val)) = postings_table.get((t, collection, term.as_str())) {
                     let mut list: Vec<Posting> =
                         zerompk::from_msgpack(val.value()).unwrap_or_default();
                     let before = list.len();
-                    list.retain(|p| p.doc_id != scoped_doc_id);
+                    list.retain(|p| p.doc_id != doc_id);
                     if list.len() != before {
                         if list.is_empty() {
-                            updates.push((key.clone(), None));
+                            updates.push((term.clone(), None));
                         } else {
                             let bytes = zerompk::to_msgpack_vec(&list).unwrap_or_default();
-                            updates.push((key.clone(), Some(bytes)));
+                            updates.push((term.clone(), Some(bytes)));
                         }
                     }
                 }
             }
 
-            for (key, new_val) in &updates {
+            for (term, new_val) in &updates {
                 match new_val {
                     None => {
-                        let _ = postings_table.remove(key.as_str());
+                        let _ = postings_table.remove((t, collection, term.as_str()));
                     }
                     Some(bytes) => {
-                        let _ = postings_table.insert(key.as_str(), bytes.as_slice());
+                        let _ =
+                            postings_table.insert((t, collection, term.as_str()), bytes.as_slice());
                     }
                 }
             }
@@ -263,20 +245,34 @@ impl InvertedIndex {
                 .open_table(DOC_LENGTHS)
                 .map_err(|e| inverted_err("open doc_lengths", e))?;
 
-            // Read doc length before removing (for stats decrement).
             let old_len = lengths
-                .get(scoped_doc_id.as_str())
+                .get((t, collection, doc_id))
                 .ok()
                 .flatten()
                 .and_then(|v| zerompk::from_msgpack::<u32>(v.value()).ok())
                 .unwrap_or(0);
 
-            let _ = lengths.remove(scoped_doc_id.as_str());
+            let _ = lengths.remove((t, collection, doc_id));
             drop(lengths);
 
-            // Decrement stats in the same transaction.
             if old_len > 0 {
-                Self::update_stats_in_txn(&write_txn, collection, -(old_len as i64))?;
+                Self::update_stats_in_txn(&write_txn, tid, collection, -(old_len as i64))?;
+            }
+
+            // Tombstone in docmap so future searches don't surface the removed doc.
+            let mut meta = write_txn
+                .open_table(INDEX_META)
+                .map_err(|e| inverted_err("open index_meta", e))?;
+            let docmap_bytes = meta
+                .get((t, collection, "docmap"))
+                .ok()
+                .flatten()
+                .map(|v| v.value().to_vec());
+            if let Some(bytes) = docmap_bytes
+                && let Some(mut map) = nodedb_fts::DocIdMap::from_bytes(&bytes)
+            {
+                map.remove(doc_id);
+                let _ = meta.insert((t, collection, "docmap"), map.to_bytes().as_slice());
             }
         }
         write_txn
@@ -289,17 +285,20 @@ impl InvertedIndex {
     /// Search the inverted index using BM25 scoring.
     pub fn search(
         &self,
+        tid: TenantId,
         collection: &str,
         query: &str,
         top_k: usize,
         fuzzy_enabled: bool,
     ) -> crate::Result<Vec<TextSearchResult>> {
-        self.inner.search(collection, query, top_k, fuzzy_enabled)
+        self.inner
+            .search(tid.as_u32(), collection, query, top_k, fuzzy_enabled)
     }
 
     /// Search with explicit boolean mode (AND or OR).
     pub fn search_with_mode(
         &self,
+        tid: TenantId,
         collection: &str,
         query: &str,
         top_k: usize,
@@ -307,7 +306,7 @@ impl InvertedIndex {
         mode: QueryMode,
     ) -> crate::Result<Vec<TextSearchResult>> {
         self.inner
-            .search_with_mode(collection, query, top_k, fuzzy_enabled, mode)
+            .search_with_mode(tid.as_u32(), collection, query, top_k, fuzzy_enabled, mode)
     }
 
     /// Generate highlighted text with matched query terms wrapped in tags.
@@ -328,9 +327,15 @@ fn inverted_err(ctx: &str, e: impl std::fmt::Display) -> crate::Error {
     }
 }
 
+fn into_result_err(e: crate::Error) -> crate::Error {
+    e
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const T: TenantId = TenantId::new(1);
 
     fn open_temp() -> (InvertedIndex, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
@@ -343,40 +348,45 @@ mod tests {
     #[test]
     fn index_and_search() {
         let (idx, _dir) = open_temp();
-        idx.index_document("docs", "d1", "The quick brown fox jumps over the lazy dog")
+        idx.index_document(
+            T,
+            "docs",
+            "d1",
+            "The quick brown fox jumps over the lazy dog",
+        )
+        .unwrap();
+        idx.index_document(T, "docs", "d2", "A fast brown dog runs across the field")
             .unwrap();
-        idx.index_document("docs", "d2", "A fast brown dog runs across the field")
-            .unwrap();
-        idx.index_document("docs", "d3", "Rust programming language for systems")
+        idx.index_document(T, "docs", "d3", "Rust programming language for systems")
             .unwrap();
 
-        let results = idx.search("docs", "brown fox", 10, false).unwrap();
+        let results = idx.search(T, "docs", "brown fox", 10, false).unwrap();
         assert!(!results.is_empty());
-        assert_eq!(results[0].doc_id, "docs:d1");
+        assert_eq!(results[0].doc_id, "d1");
     }
 
     #[test]
     fn search_with_stemming() {
         let (idx, _dir) = open_temp();
-        idx.index_document("docs", "d1", "running distributed databases")
+        idx.index_document(T, "docs", "d1", "running distributed databases")
             .unwrap();
-        idx.index_document("docs", "d2", "the cat sat on a mat")
+        idx.index_document(T, "docs", "d2", "the cat sat on a mat")
             .unwrap();
 
         let results = idx
-            .search("docs", "database distribution", 10, false)
+            .search(T, "docs", "database distribution", 10, false)
             .unwrap();
         assert!(!results.is_empty());
-        assert_eq!(results[0].doc_id, "docs:d1");
+        assert_eq!(results[0].doc_id, "d1");
     }
 
     #[test]
     fn fuzzy_search() {
         let (idx, _dir) = open_temp();
-        idx.index_document("docs", "d1", "distributed database systems")
+        idx.index_document(T, "docs", "d1", "distributed database systems")
             .unwrap();
 
-        let results = idx.search("docs", "databse", 10, true).unwrap();
+        let results = idx.search(T, "docs", "databse", 10, true).unwrap();
         assert!(!results.is_empty());
         assert!(results[0].fuzzy);
     }
@@ -384,37 +394,60 @@ mod tests {
     #[test]
     fn remove_document() {
         let (idx, _dir) = open_temp();
-        idx.index_document("docs", "d1", "hello world").unwrap();
-        idx.index_document("docs", "d2", "hello rust").unwrap();
+        idx.index_document(T, "docs", "d1", "hello world").unwrap();
+        idx.index_document(T, "docs", "d2", "hello rust").unwrap();
 
-        idx.remove_document("docs", "d1").unwrap();
+        idx.remove_document(T, "docs", "d1").unwrap();
 
-        let results = idx.search("docs", "hello", 10, false).unwrap();
+        let results = idx.search(T, "docs", "hello", 10, false).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].doc_id, "docs:d2");
+        assert_eq!(results[0].doc_id, "d2");
     }
 
     #[test]
     fn empty_query() {
         let (idx, _dir) = open_temp();
-        idx.index_document("docs", "d1", "some text here").unwrap();
+        idx.index_document(T, "docs", "d1", "some text here")
+            .unwrap();
 
-        let results = idx.search("docs", "the a is", 10, false).unwrap();
+        let results = idx.search(T, "docs", "the a is", 10, false).unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn collections_isolated() {
         let (idx, _dir) = open_temp();
-        idx.index_document("col_a", "d1", "alpha bravo charlie")
+        idx.index_document(T, "col_a", "d1", "alpha bravo charlie")
             .unwrap();
-        idx.index_document("col_b", "d1", "delta echo foxtrot")
+        idx.index_document(T, "col_b", "d1", "delta echo foxtrot")
             .unwrap();
 
-        let results = idx.search("col_a", "alpha", 10, false).unwrap();
+        let results = idx.search(T, "col_a", "alpha", 10, false).unwrap();
         assert_eq!(results.len(), 1);
 
-        let results = idx.search("col_b", "alpha", 10, false).unwrap();
+        let results = idx.search(T, "col_b", "alpha", 10, false).unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn purge_tenant_structurally_drops_data() {
+        let (idx, _dir) = open_temp();
+        let t1 = TenantId::new(1);
+        let t2 = TenantId::new(2);
+        idx.index_document(t1, "docs", "d1", "alpha bravo").unwrap();
+        idx.index_document(t2, "docs", "d1", "alpha bravo").unwrap();
+
+        idx.purge_tenant(t1).unwrap();
+
+        assert!(
+            idx.search(t1, "docs", "alpha", 10, false)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            !idx.search(t2, "docs", "alpha", 10, false)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

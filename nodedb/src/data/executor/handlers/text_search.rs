@@ -5,8 +5,8 @@ use tracing::debug;
 use crate::bridge::envelope::{ErrorCode, Response};
 
 use crate::data::executor::core_loop::CoreLoop;
-use crate::data::executor::scoping::scoped_collection;
 use crate::data::executor::task::ExecutionTask;
+use crate::types::TenantId;
 
 /// Default hybrid search weight: 0.5 = equal vector + text.
 const DEFAULT_VECTOR_WEIGHT: f32 = 0.5;
@@ -24,8 +24,8 @@ impl CoreLoop {
         fuzzy: bool,
         rls_filters: &[u8],
     ) -> Response {
-        let scoped_coll = scoped_collection(tid, collection);
-        debug!(core = self.core_id, %scoped_coll, %query, top_k, fuzzy, "text search");
+        let tenant_id = TenantId::new(tid);
+        debug!(core = self.core_id, tid, %collection, %query, top_k, fuzzy, "text search");
 
         // Fetch extra candidates when RLS is active.
         let fetch_k = if rls_filters.is_empty() {
@@ -34,7 +34,10 @@ impl CoreLoop {
             top_k.saturating_mul(2).max(20)
         };
 
-        match self.inverted.search(&scoped_coll, query, fetch_k, fuzzy) {
+        match self
+            .inverted
+            .search(tenant_id, collection, query, fetch_k, fuzzy)
+        {
             Ok(results) => {
                 // RLS post-score filtering: look up each candidate's document.
                 let hits: Vec<_> = results
@@ -95,10 +98,11 @@ impl CoreLoop {
         filter_bitmap: Option<&[u8]>,
         rls_filters: &[u8],
     ) -> Response {
-        let scoped_coll = scoped_collection(tid, collection);
+        let tenant_id = TenantId::new(tid);
         debug!(
             core = self.core_id,
-            %scoped_coll,
+            tid,
+            %collection,
             %query_text,
             top_k,
             vector_weight,
@@ -136,10 +140,10 @@ impl CoreLoop {
             Vec::new()
         };
 
-        // 2. Text search (tenant-scoped collection key).
+        // 2. Text search.
         let text_results = self
             .inverted
-            .search(&scoped_coll, query_text, fetch_k, fuzzy)
+            .search(tenant_id, collection, query_text, fetch_k, fuzzy)
             .unwrap_or_default();
 
         // 3. Build ranked lists for weighted RRF.

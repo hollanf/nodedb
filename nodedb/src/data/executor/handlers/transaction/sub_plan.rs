@@ -313,10 +313,12 @@ impl CoreLoop {
                 if let Some(doc) = super::super::super::doc_format::decode_document(value) {
                     let text_content = super::super::document::extract_indexable_text(&doc);
                     if !text_content.is_empty() {
-                        let scoped = format!("{tid}:{collection}");
-                        let _ = self
-                            .inverted
-                            .index_document(&scoped, document_id, &text_content);
+                        let _ = self.inverted.index_document(
+                            crate::types::TenantId::new(tid),
+                            collection,
+                            document_id,
+                            &text_content,
+                        );
                     }
                 }
 
@@ -401,8 +403,11 @@ impl CoreLoop {
         match self.sparse.delete(tid, collection, document_id) {
             Ok(_) => {
                 // Cascade: inverted index, secondary indexes, graph edges.
-                let scoped = format!("{tid}:{collection}");
-                let _ = self.inverted.remove_document(&scoped, document_id);
+                let _ = self.inverted.remove_document(
+                    crate::types::TenantId::new(tid),
+                    collection,
+                    document_id,
+                );
                 let _ = self
                     .sparse
                     .delete_indexes_for_document(tid, collection, document_id);

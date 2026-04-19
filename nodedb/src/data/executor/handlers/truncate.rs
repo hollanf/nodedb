@@ -38,8 +38,11 @@ impl CoreLoop {
         let mut truncated = 0u64;
         for doc_id in &all_ids {
             if self.sparse.delete(tid, collection, doc_id).unwrap_or(false) {
-                let scoped_coll = format!("{tid}:{collection}");
-                if let Err(e) = self.inverted.remove_document(&scoped_coll, doc_id) {
+                if let Err(e) = self.inverted.remove_document(
+                    crate::types::TenantId::new(tid),
+                    collection,
+                    doc_id,
+                ) {
                     warn!(core = self.core_id, %collection, %doc_id, error = %e, "truncate: inverted removal failed");
                 }
                 if let Err(e) = self

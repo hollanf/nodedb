@@ -323,9 +323,12 @@ impl CoreLoop {
         let mut affected = 0u64;
         for doc_id in &matching_ids {
             if self.sparse.delete(tid, collection, doc_id).unwrap_or(false) {
-                // Cascade: inverted index (tenant-scoped).
-                let scoped_coll = format!("{tid}:{collection}");
-                if let Err(e) = self.inverted.remove_document(&scoped_coll, doc_id) {
+                // Cascade: inverted index.
+                if let Err(e) = self.inverted.remove_document(
+                    crate::types::TenantId::new(tid),
+                    collection,
+                    doc_id,
+                ) {
                     warn!(core = self.core_id, %collection, %doc_id, error = %e, "bulk delete: inverted index removal failed");
                 }
                 // Cascade: secondary indexes.

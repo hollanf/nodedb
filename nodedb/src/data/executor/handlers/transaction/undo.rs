@@ -57,9 +57,12 @@ impl CoreLoop {
                         // Document was newly inserted — delete it.
                         let _ = self.sparse.delete(tid, &collection, &document_id);
                     }
-                    // Also revert inverted index (tenant-scoped).
-                    let undo_scoped = format!("{tid}:{collection}");
-                    let _ = self.inverted.remove_document(&undo_scoped, &document_id);
+                    // Also revert inverted index.
+                    let _ = self.inverted.remove_document(
+                        crate::types::TenantId::new(tid),
+                        &collection,
+                        &document_id,
+                    );
                 }
                 UndoEntry::DeleteDocument {
                     collection,

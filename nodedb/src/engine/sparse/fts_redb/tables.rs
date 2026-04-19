@@ -1,15 +1,31 @@
 //! Redb table definitions for the full-text search backend.
+//!
+//! Every table is keyed by a structural `(tenant_id, collection, …)` tuple —
+//! matching the EdgeStore pattern. Per-tenant drops become range scans
+//! `(tid, ..)..(tid+1, ..)` instead of fragile lexical-prefix scans.
 
 use redb::TableDefinition;
 
-/// Inverted index table: key = "{collection}:{term}", value = MessagePack-encoded Vec<Posting>.
-pub const POSTINGS: TableDefinition<&str, &[u8]> = TableDefinition::new("text.postings");
+/// Inverted index: key = `(tenant_id, collection, term)`,
+/// value = MessagePack-encoded `Vec<Posting>`.
+pub const POSTINGS: TableDefinition<(u32, &str, &str), &[u8]> =
+    TableDefinition::new("text.postings");
 
-/// Document length table: key = "{collection}:{doc_id}", value = MessagePack-encoded u32.
-pub const DOC_LENGTHS: TableDefinition<&str, &[u8]> = TableDefinition::new("text.doc_lengths");
+/// Document lengths: key = `(tenant_id, collection, doc_id)`,
+/// value = MessagePack-encoded `u32` token count.
+pub const DOC_LENGTHS: TableDefinition<(u32, &str, &str), &[u8]> =
+    TableDefinition::new("text.doc_lengths");
 
-/// Index metadata: key = name, value = MessagePack bytes.
-pub const INDEX_META: TableDefinition<&str, &[u8]> = TableDefinition::new("text.meta");
+/// Index metadata blobs: key = `(tenant_id, collection, sub_key)`,
+/// value = opaque blob. Sub-keys: `"docmap"`, `"fieldnorms"`, `"analyzer"`,
+/// `"language"`.
+pub const INDEX_META: TableDefinition<(u32, &str, &str), &[u8]> = TableDefinition::new("text.meta");
 
-/// Segment blobs: key = "{collection}:seg:{id}", value = compressed segment bytes.
-pub const SEGMENTS: TableDefinition<&str, &[u8]> = TableDefinition::new("text.segments");
+/// Corpus stats: key = `(tenant_id, collection)`,
+/// value = MessagePack-encoded `(doc_count, total_token_sum)`.
+pub const STATS: TableDefinition<(u32, &str), &[u8]> = TableDefinition::new("text.stats");
+
+/// Segment blobs: key = `(tenant_id, collection, segment_id)`,
+/// value = compressed segment bytes. `segment_id` format `"L{level}:{id:016x}"`.
+pub const SEGMENTS: TableDefinition<(u32, &str, &str), &[u8]> =
+    TableDefinition::new("text.segments");

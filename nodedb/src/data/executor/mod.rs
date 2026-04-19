@@ -6,7 +6,6 @@ pub mod handlers;
 pub(super) mod msgpack_utils;
 pub mod response_codec;
 mod scan_normalize;
-pub(crate) mod scoping;
 mod snapshot;
 mod sparse_vector_checkpoint;
 mod spatial_checkpoint;

@@ -44,9 +44,12 @@ impl CoreLoop {
                         // Full-text inverted index (includes nested block content).
                         let text_content = super::text_extract::extract_indexable_text(&doc);
                         if !text_content.is_empty() {
-                            let _ = self
-                                .inverted
-                                .index_document(collection, doc_id, &text_content);
+                            let _ = self.inverted.index_document(
+                                crate::types::TenantId::new(tid),
+                                collection,
+                                doc_id,
+                                &text_content,
+                            );
                         }
 
                         // Secondary index extraction.
