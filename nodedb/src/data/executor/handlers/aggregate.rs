@@ -29,10 +29,10 @@ fn aggregate_cache_key(
     aggregates: &[AggregateSpec],
     sub_group_by: &[String],
     sub_aggregates: &[AggregateSpec],
-) -> String {
+) -> (crate::types::TenantId, String) {
     use std::fmt::Write;
-    let mut key = format!(
-        "{tid}:{collection}\0{}\0{}",
+    let mut rest = format!(
+        "{collection}\0{}\0{}",
         group_by.join(","),
         aggregates
             .iter()
@@ -48,7 +48,7 @@ fn aggregate_cache_key(
     );
     if !sub_group_by.is_empty() || !sub_aggregates.is_empty() {
         let _ = write!(
-            key,
+            rest,
             "\0sub:{}\0{}",
             sub_group_by.join(","),
             sub_aggregates
@@ -64,7 +64,7 @@ fn aggregate_cache_key(
                 .join(",")
         );
     }
-    key
+    (crate::types::TenantId::new(tid), rest)
 }
 
 fn legacy_aggregate_pairs(aggregates: &[AggregateSpec]) -> Option<Vec<(String, String)>> {
@@ -179,9 +179,10 @@ impl CoreLoop {
 
         let scan_limit = self.query_tuning.aggregate_scan_cap;
 
+        let mt_key = (crate::types::TenantId::new(tid), collection.to_string());
         let columnar_mt = self
             .columnar_memtables
-            .get(collection)
+            .get(&mt_key)
             .filter(|mt| !mt.is_empty());
 
         // Fast path: native columnar aggregation.

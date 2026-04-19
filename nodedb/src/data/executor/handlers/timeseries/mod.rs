@@ -15,6 +15,7 @@ use nodedb_query::agg_key::canonical_agg_key;
 /// Parameters for a timeseries scan operation.
 pub(in crate::data::executor) struct TimeseriesScanParams<'a> {
     pub task: &'a ExecutionTask,
+    pub tid: crate::types::TenantId,
     pub collection: &'a str,
     pub time_range: (i64, i64),
     pub limit: usize,
@@ -41,6 +42,7 @@ impl CoreLoop {
     ) -> Response {
         let TimeseriesScanParams {
             task,
+            tid,
             collection,
             time_range,
             limit,
@@ -53,7 +55,7 @@ impl CoreLoop {
         } = params;
 
         // Lazy-load partition registry from disk if not yet loaded.
-        self.ensure_ts_registry(collection);
+        self.ensure_ts_registry(tid, collection);
 
         let filter_predicates: Vec<crate::bridge::scan_filter::ScanFilter> = if filters.is_empty() {
             Vec::new()
@@ -74,7 +76,7 @@ impl CoreLoop {
             && aggregates[0].0 == "count"
             && aggregates[0].1 == "*"
         {
-            return self.execute_ts_count_star(task, collection, time_range);
+            return self.execute_ts_count_star(task, tid, collection, time_range);
         }
 
         // Determine needed columns (projection pushdown).
@@ -104,6 +106,7 @@ impl CoreLoop {
         if is_aggregate || bucket_interval_ms > 0 {
             self.execute_ts_aggregate(
                 task,
+                tid,
                 collection,
                 time_range,
                 limit,
@@ -117,6 +120,7 @@ impl CoreLoop {
         } else {
             self.execute_ts_raw_scan(raw_scan::RawScanParams {
                 task,
+                tid,
                 collection,
                 time_range,
                 limit,
@@ -131,14 +135,16 @@ impl CoreLoop {
     fn execute_ts_count_star(
         &self,
         task: &ExecutionTask,
+        tid: crate::types::TenantId,
         collection: &str,
         time_range: (i64, i64),
     ) -> Response {
+        let key = (tid, collection.to_string());
         let mut total: u64 = 0;
-        if let Some(mt) = self.columnar_memtables.get(collection) {
+        if let Some(mt) = self.columnar_memtables.get(&key) {
             total += mt.row_count();
         }
-        if let Some(registry) = self.ts_registries.get(collection) {
+        if let Some(registry) = self.ts_registries.get(&key) {
             let query_range = nodedb_types::timeseries::TimeRange::new(time_range.0, time_range.1);
             for entry in registry.query_partitions(&query_range) {
                 total += entry.meta.row_count;

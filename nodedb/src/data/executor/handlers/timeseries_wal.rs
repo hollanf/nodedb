@@ -21,13 +21,14 @@ fn default_ts_config() -> ColumnarMemtableConfig {
 
 impl CoreLoop {
     /// Ensure a timeseries memtable exists for the given collection, creating if needed.
-    fn ensure_columnar_memtable(&mut self, collection: &str, schema: ColumnarSchema) {
-        if !self.columnar_memtables.contains_key(collection) {
-            self.columnar_memtables.insert(
-                collection.to_string(),
-                ColumnarMemtable::new(schema, default_ts_config()),
-            );
-        }
+    fn ensure_columnar_memtable(
+        &mut self,
+        key: (crate::types::TenantId, String),
+        schema: ColumnarSchema,
+    ) {
+        self.columnar_memtables
+            .entry(key)
+            .or_insert_with(|| ColumnarMemtable::new(schema, default_ts_config()));
     }
 
     /// Replay WAL timeseries records to rebuild in-memory memtable state after crash.
@@ -74,15 +75,15 @@ impl CoreLoop {
                 continue;
             };
 
-            // Scope collection name with tenant ID to match the query path
-            // (dispatch.rs scopes scan queries as "{tenant_id}:{collection}").
             let tenant_id = record.header.tenant_id;
-            let collection = format!("{tenant_id}:{raw_collection}");
+            let tid_id = crate::types::TenantId::new(tenant_id);
+            let collection = raw_collection.as_str();
+            let key = (tid_id, raw_collection.clone());
 
             let record_lsn = record.header.lsn;
 
             // Check if this record was already flushed (LSN-based skip).
-            if let Some(registry) = self.ts_registries.get(&collection) {
+            if let Some(registry) = self.ts_registries.get(&key) {
                 // Find the max flushed LSN across all partitions.
                 let max_flushed_lsn = registry
                     .iter()
@@ -96,11 +97,10 @@ impl CoreLoop {
             }
 
             // Track the max WAL LSN ingested per collection for flush metadata.
-            if let Some(entry) = self.ts_max_ingested_lsn.get_mut(&collection) {
+            if let Some(entry) = self.ts_max_ingested_lsn.get_mut(&key) {
                 *entry = (*entry).max(record_lsn);
             } else {
-                self.ts_max_ingested_lsn
-                    .insert(collection.clone(), record_lsn);
+                self.ts_max_ingested_lsn.insert(key.clone(), record_lsn);
             }
 
             // Re-ingest the ILP payload into the memtable.
@@ -117,17 +117,17 @@ impl CoreLoop {
                 // Flush memtable if it's at the soft limit BEFORE ingesting.
                 // Without this, the memtable overflows during large WAL replays
                 // and excess rows are silently rejected.
-                if let Some(mt) = self.columnar_memtables.get(&collection)
+                if let Some(mt) = self.columnar_memtables.get(&key)
                     && mt.memory_bytes() >= 64 * 1024 * 1024
                 {
-                    self.flush_ts_collection(&collection, 0);
+                    self.flush_ts_collection(tid_id, collection, 0);
                 }
 
                 // Ensure memtable exists.
                 let schema = crate::engine::timeseries::ilp_ingest::infer_schema(&lines);
-                self.ensure_columnar_memtable(&collection, schema);
+                self.ensure_columnar_memtable(key.clone(), schema);
 
-                let Some(mt) = self.columnar_memtables.get_mut(&collection) else {
+                let Some(mt) = self.columnar_memtables.get_mut(&key) else {
                     continue;
                 };
                 let mut series_keys = std::collections::HashMap::new();
@@ -153,9 +153,9 @@ impl CoreLoop {
                 if let Ok(batch) =
                     zerompk::from_msgpack::<nodedb_types::timeseries::TimeseriesWalBatch>(&payload)
                 {
-                    self.ensure_columnar_memtable(&collection, ColumnarSchema::metric_default());
+                    self.ensure_columnar_memtable(key.clone(), ColumnarSchema::metric_default());
 
-                    let Some(mt) = self.columnar_memtables.get_mut(&collection) else {
+                    let Some(mt) = self.columnar_memtables.get_mut(&key) else {
                         continue;
                     };
                     for (series_id, timestamp_ms, value) in &batch.samples {

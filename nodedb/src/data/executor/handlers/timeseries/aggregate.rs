@@ -18,6 +18,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_ts_aggregate(
         &mut self,
         task: &ExecutionTask,
+        tid: crate::types::TenantId,
         collection: &str,
         time_range: (i64, i64),
         limit: usize,
@@ -28,10 +29,11 @@ impl CoreLoop {
         gap_fill: &str,
         needed_columns: &[String],
     ) -> Response {
+        let key = (tid, collection.to_string());
         let num_aggs = aggregates.len();
 
         // Phase 1: Aggregate memtable (on TPC core).
-        let mut merged = if let Some(mt) = self.columnar_memtables.get(collection)
+        let mut merged = if let Some(mt) = self.columnar_memtables.get(&key)
             && !mt.is_empty()
         {
             aggregate_memtable(
@@ -48,7 +50,7 @@ impl CoreLoop {
         };
 
         // Phase 2: Aggregate disk partitions (parallel).
-        if let Some(registry) = self.ts_registries.get(collection) {
+        if let Some(registry) = self.ts_registries.get(&key) {
             let query_range = nodedb_types::timeseries::TimeRange::new(time_range.0, time_range.1);
             let entries: Vec<_> = registry.query_partitions(&query_range);
 

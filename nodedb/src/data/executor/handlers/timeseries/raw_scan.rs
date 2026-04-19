@@ -16,6 +16,7 @@ use super::super::columnar_filter;
 /// Parameters for a timeseries raw scan (no aggregation).
 pub(in crate::data::executor) struct RawScanParams<'a> {
     pub task: &'a ExecutionTask,
+    pub tid: crate::types::TenantId,
     pub collection: &'a str,
     pub time_range: (i64, i64),
     pub limit: usize,
@@ -32,6 +33,7 @@ impl CoreLoop {
     ) -> Response {
         let RawScanParams {
             task,
+            tid,
             collection,
             time_range,
             limit,
@@ -39,10 +41,11 @@ impl CoreLoop {
             has_filters,
             computed_columns: computed_columns_bytes,
         } = params;
+        let key = (tid, collection.to_string());
         let mut results: Vec<rmpv::Value> = Vec::new();
 
         // 1. Read from memtable.
-        if let Some(mt) = self.columnar_memtables.get(collection)
+        if let Some(mt) = self.columnar_memtables.get(&key)
             && !mt.is_empty()
         {
             let schema = mt.schema();
@@ -90,7 +93,7 @@ impl CoreLoop {
         }
 
         // 2. Read from disk partitions.
-        if let Some(registry) = self.ts_registries.get(collection) {
+        if let Some(registry) = self.ts_registries.get(&key) {
             let query_range = nodedb_types::timeseries::TimeRange::new(time_range.0, time_range.1);
             let entries: Vec<_> = registry.query_partitions(&query_range);
 

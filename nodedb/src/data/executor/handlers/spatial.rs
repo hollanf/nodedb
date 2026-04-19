@@ -81,8 +81,9 @@ impl CoreLoop {
             query_bbox
         };
 
-        let index_key = format!("{tid}:{collection}:{field}");
-        let has_index = self.spatial_indexes.contains_key(&index_key);
+        let tid_id = crate::types::TenantId::new(tid);
+        let spatial_key = (tid_id, collection.to_string(), field.to_string());
+        let has_index = self.spatial_indexes.contains_key(&spatial_key);
         let limit = if limit == 0 { 1000 } else { limit };
 
         // No R-tree: full scan with predicate post-filter.
@@ -102,7 +103,7 @@ impl CoreLoop {
             );
         }
 
-        let rtree = match self.spatial_indexes.get(&index_key) {
+        let rtree = match self.spatial_indexes.get(&spatial_key) {
             Some(rt) => rt,
             None => {
                 return match response_codec::encode_value_vec(&[]) {
@@ -140,7 +141,12 @@ impl CoreLoop {
                 break;
             }
 
-            let doc_id = match self.spatial_doc_map.get(&(index_key.clone(), entry.id)) {
+            let doc_id = match self.spatial_doc_map.get(&(
+                tid_id,
+                collection.to_string(),
+                field.to_string(),
+                entry.id,
+            )) {
                 Some(id) => id.clone(),
                 None => continue,
             };

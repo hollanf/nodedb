@@ -24,15 +24,17 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_timeseries_ingest(
         &mut self,
         task: &ExecutionTask,
+        tid: crate::types::TenantId,
         collection: &str,
         payload: &[u8],
         format: &str,
         wal_lsn: Option<u64>,
     ) -> Response {
+        let key = (tid, collection.to_string());
         // LSN-based deduplication: only skip records that are provably
         // already flushed to sealed disk partitions.
         if let Some(lsn) = wal_lsn
-            && let Some(registry) = self.ts_registries.get(collection)
+            && let Some(registry) = self.ts_registries.get(&key)
         {
             let max_flushed = registry
                 .iter()
@@ -75,9 +77,11 @@ impl CoreLoop {
             .unwrap_or(0);
 
         match format {
-            "ilp" => self.execute_ilp_ingest(task, collection, payload, wal_lsn, now_ms),
-            "json" => self.execute_json_ingest(task, collection, payload, wal_lsn, now_ms),
-            "msgpack" => self.execute_msgpack_ingest(task, collection, payload, wal_lsn, now_ms),
+            "ilp" => self.execute_ilp_ingest(task, tid, collection, payload, wal_lsn, now_ms),
+            "json" => self.execute_json_ingest(task, tid, collection, payload, wal_lsn, now_ms),
+            "msgpack" => {
+                self.execute_msgpack_ingest(task, tid, collection, payload, wal_lsn, now_ms)
+            }
             _ => self.response_error(
                 task,
                 ErrorCode::Internal {
@@ -90,11 +94,13 @@ impl CoreLoop {
     fn execute_ilp_ingest(
         &mut self,
         task: &ExecutionTask,
+        tid: crate::types::TenantId,
         collection: &str,
         payload: &[u8],
         wal_lsn: Option<u64>,
         now_ms: i64,
     ) -> Response {
+        let key = (tid, collection.to_string());
         let input = match std::str::from_utf8(payload) {
             Ok(s) => s,
             Err(e) => {
@@ -122,7 +128,7 @@ impl CoreLoop {
         }
 
         // Ensure memtable exists (auto-create on first write).
-        let is_new_memtable = !self.columnar_memtables.contains_key(collection);
+        let is_new_memtable = !self.columnar_memtables.contains_key(&key);
         if is_new_memtable {
             let schema = ilp_ingest::infer_schema(&lines);
             let config = ColumnarMemtableConfig {
@@ -131,25 +137,25 @@ impl CoreLoop {
                 max_tag_cardinality: 100_000,
             };
             let mt = ColumnarMemtable::new(schema, config);
-            self.columnar_memtables.insert(collection.to_string(), mt);
+            self.columnar_memtables.insert(key.clone(), mt);
         }
 
         // Schema evolution: detect new fields and expand memtable schema.
         let cols_before = if !is_new_memtable {
             self.columnar_memtables
-                .get(collection)
+                .get(&key)
                 .map(|mt| mt.schema().columns.len())
                 .unwrap_or(0)
         } else {
             0
         };
-        if !is_new_memtable && let Some(mt) = self.columnar_memtables.get_mut(collection) {
+        if !is_new_memtable && let Some(mt) = self.columnar_memtables.get_mut(&key) {
             ilp_ingest::evolve_schema(mt, &lines);
         }
         let schema_changed = !is_new_memtable
             && self
                 .columnar_memtables
-                .get(collection)
+                .get(&key)
                 .is_some_and(|mt| mt.schema().columns.len() != cols_before);
 
         // Pre-flush: flush BEFORE ingesting if memtable is at the soft limit
@@ -158,13 +164,13 @@ impl CoreLoop {
             .governor
             .as_ref()
             .is_some_and(|g| g.try_reserve(nodedb_mem::EngineId::Timeseries, 0).is_err());
-        if let Some(mt) = self.columnar_memtables.get(collection)
+        if let Some(mt) = self.columnar_memtables.get(&key)
             && (mt.memory_bytes() >= 64 * 1024 * 1024 || governor_pressure)
         {
-            self.flush_ts_collection(collection, now_ms);
+            self.flush_ts_collection(tid, collection, now_ms);
         }
 
-        let Some(mt) = self.columnar_memtables.get_mut(collection) else {
+        let Some(mt) = self.columnar_memtables.get_mut(&key) else {
             return self.response_error(
                 task,
                 ErrorCode::Internal {
@@ -178,7 +184,7 @@ impl CoreLoop {
             let _ = gov.try_reserve(nodedb_mem::EngineId::Timeseries, batch_estimate);
         }
 
-        let lvc = self.ts_last_value_caches.get_mut(collection);
+        let lvc = self.ts_last_value_caches.get_mut(&key);
         let mut series_keys = HashMap::new();
         let (mut accepted, rejected) =
             ilp_ingest::ingest_batch_with_lvc(mt, &lines, &mut series_keys, now_ms, lvc);
@@ -191,11 +197,11 @@ impl CoreLoop {
                 rejected,
                 "ILP batch rows rejected by hard limit, flushing and retrying"
             );
-            self.flush_ts_collection(collection, now_ms);
-            if let Some(mt) = self.columnar_memtables.get_mut(collection) {
+            self.flush_ts_collection(tid, collection, now_ms);
+            if let Some(mt) = self.columnar_memtables.get_mut(&key) {
                 let mut retry_keys = HashMap::new();
                 let retry_lines = &lines[accepted..];
-                let retry_lvc = self.ts_last_value_caches.get_mut(collection);
+                let retry_lvc = self.ts_last_value_caches.get_mut(&key);
                 let (retry_accepted, _) = ilp_ingest::ingest_batch_with_lvc(
                     mt,
                     retry_lines,
@@ -208,7 +214,7 @@ impl CoreLoop {
         }
 
         // Post-flush: standard 64MB threshold check.
-        let Some(mt) = self.columnar_memtables.get(collection) else {
+        let Some(mt) = self.columnar_memtables.get(&key) else {
             return self.response_error(
                 task,
                 ErrorCode::Internal {
@@ -217,16 +223,13 @@ impl CoreLoop {
             );
         };
         if mt.memory_bytes() >= 64 * 1024 * 1024 {
-            self.flush_ts_collection(collection, now_ms);
+            self.flush_ts_collection(tid, collection, now_ms);
         }
 
         // Track WAL LSN and last ingest time for dedup + idle flush.
         if accepted > 0 {
             if let Some(lsn) = wal_lsn {
-                let entry = self
-                    .ts_max_ingested_lsn
-                    .entry(collection.to_string())
-                    .or_insert(0);
+                let entry = self.ts_max_ingested_lsn.entry(key.clone()).or_insert(0);
                 *entry = (*entry).max(lsn);
             }
             self.last_ts_ingest = Some(std::time::Instant::now());
@@ -237,7 +240,7 @@ impl CoreLoop {
 
         // Include schema_columns when schema is new OR evolved.
         let include_schema = is_new_memtable || schema_changed;
-        let result = if include_schema && let Some(mt) = self.columnar_memtables.get(collection) {
+        let result = if include_schema && let Some(mt) = self.columnar_memtables.get(&key) {
             let schema_columns: Vec<serde_json::Value> = mt
                 .schema()
                 .columns
@@ -294,6 +297,7 @@ impl CoreLoop {
     fn execute_msgpack_ingest(
         &mut self,
         task: &ExecutionTask,
+        tid: crate::types::TenantId,
         collection: &str,
         payload: &[u8],
         wal_lsn: Option<u64>,
@@ -396,7 +400,7 @@ impl CoreLoop {
             );
         }
 
-        self.execute_ilp_ingest(task, collection, ilp_buf.as_bytes(), wal_lsn, now_ms)
+        self.execute_ilp_ingest(task, tid, collection, ilp_buf.as_bytes(), wal_lsn, now_ms)
     }
 
     /// Payload is a JSON array like: `[{"id":"e1","ts":"2024-01-01T00:00:00Z","value":42.0}]`.
@@ -404,6 +408,7 @@ impl CoreLoop {
     fn execute_json_ingest(
         &mut self,
         task: &ExecutionTask,
+        tid: crate::types::TenantId,
         collection: &str,
         payload: &[u8],
         wal_lsn: Option<u64>,
@@ -513,7 +518,7 @@ impl CoreLoop {
         }
 
         // Delegate to the ILP ingest path.
-        self.execute_ilp_ingest(task, collection, ilp_buf.as_bytes(), wal_lsn, now_ms)
+        self.execute_ilp_ingest(task, tid, collection, ilp_buf.as_bytes(), wal_lsn, now_ms)
     }
 }
 

@@ -3,14 +3,20 @@
 use crate::data::executor::core_loop::CoreLoop;
 use crate::engine::timeseries::columnar_segment::ColumnarSegmentWriter;
 use crate::engine::timeseries::partition_registry::PartitionRegistry;
+use crate::types::TenantId;
 
 impl CoreLoop {
     /// Ensure the partition registry is loaded for a timeseries collection.
     ///
     /// On first access, scans the `ts/{collection}/` directory for existing
     /// partition directories and populates the registry from partition metadata.
-    pub(in crate::data::executor) fn ensure_ts_registry(&mut self, collection: &str) {
-        if self.ts_registries.contains_key(collection) {
+    pub(in crate::data::executor) fn ensure_ts_registry(
+        &mut self,
+        tid: TenantId,
+        collection: &str,
+    ) {
+        let key = (tid, collection.to_string());
+        if self.ts_registries.contains_key(&key) {
             return;
         }
         let ts_dir = self.data_dir.join("ts").join(collection);
@@ -53,7 +59,7 @@ impl CoreLoop {
                 "loaded partition registry from disk"
             );
         }
-        self.ts_registries.insert(collection.to_string(), registry);
+        self.ts_registries.insert(key, registry);
     }
 
     /// Flush a timeseries collection's memtable to L1 segments.
@@ -61,8 +67,14 @@ impl CoreLoop {
     /// Drains the columnar memtable, writes segments via `ColumnarSegmentWriter`,
     /// registers the new partition in `ts_registries`, and fires the continuous
     /// aggregate hook.
-    pub(in crate::data::executor) fn flush_ts_collection(&mut self, collection: &str, now_ms: i64) {
-        let Some(mt) = self.columnar_memtables.get_mut(collection) else {
+    pub(in crate::data::executor) fn flush_ts_collection(
+        &mut self,
+        tid: TenantId,
+        collection: &str,
+        now_ms: i64,
+    ) {
+        let key = (tid, collection.to_string());
+        let Some(mt) = self.columnar_memtables.get_mut(&key) else {
             return;
         };
         if mt.is_empty() {
@@ -86,11 +98,7 @@ impl CoreLoop {
 
         // Use the max ingested WAL LSN for this collection so the partition
         // records which WAL records have been flushed.
-        let flush_wal_lsn = self
-            .ts_max_ingested_lsn
-            .get(collection)
-            .copied()
-            .unwrap_or(0);
+        let flush_wal_lsn = self.ts_max_ingested_lsn.get(&key).copied().unwrap_or(0);
         match writer.write_partition(&partition_name, &drain, 0, flush_wal_lsn) {
             Ok(meta) => {
                 tracing::info!(
@@ -99,14 +107,11 @@ impl CoreLoop {
                     "timeseries columnar flush complete"
                 );
 
-                let registry = self
-                    .ts_registries
-                    .entry(collection.to_string())
-                    .or_insert_with(|| {
-                        PartitionRegistry::new(
-                            nodedb_types::timeseries::TieredPartitionConfig::origin_defaults(),
-                        )
-                    });
+                let registry = self.ts_registries.entry(key).or_insert_with(|| {
+                    PartitionRegistry::new(
+                        nodedb_types::timeseries::TieredPartitionConfig::origin_defaults(),
+                    )
+                });
                 let mut reg_meta = meta;
                 reg_meta.min_ts = drain.min_ts;
                 reg_meta.max_ts = drain.max_ts;
