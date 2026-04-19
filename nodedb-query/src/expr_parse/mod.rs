@@ -393,7 +393,10 @@ fn validate_deterministic(expr: &SqlExpr) -> Result<(), String> {
             validate_deterministic(b)
         }
         SqlExpr::IsNull { expr, .. } => validate_deterministic(expr),
-        SqlExpr::Column(_) | SqlExpr::Literal(_) | SqlExpr::OldColumn(_) => Ok(()),
+        SqlExpr::Column(_)
+        | SqlExpr::Literal(_)
+        | SqlExpr::OldColumn(_)
+        | SqlExpr::ExcludedColumn(_) => Ok(()),
     }
 }
 
@@ -437,7 +440,7 @@ fn collect_columns(expr: &SqlExpr, deps: &mut Vec<String>) {
             collect_columns(b, deps);
         }
         SqlExpr::IsNull { expr, .. } => collect_columns(expr, deps),
-        SqlExpr::Literal(_) | SqlExpr::OldColumn(_) => {}
+        SqlExpr::Literal(_) | SqlExpr::OldColumn(_) | SqlExpr::ExcludedColumn(_) => {}
     }
 }
 

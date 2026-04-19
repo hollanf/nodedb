@@ -40,6 +40,12 @@ pub enum SqlExpr {
     /// Used in TRANSITION CHECK predicates. Resolves against the OLD row
     /// when evaluated via `eval_with_old()`. Returns NULL in normal `eval()`.
     OldColumn(String),
+    /// `EXCLUDED.col` reference from `INSERT ... ON CONFLICT DO UPDATE`:
+    /// the column value from the row proposed for insertion that
+    /// triggered the conflict. Resolves against the incoming row when
+    /// evaluated via `eval_with_excluded()`. Returns NULL in plain
+    /// `eval()` / `eval_with_old()`.
+    ExcludedColumn(String),
 }
 
 /// Binary operators.

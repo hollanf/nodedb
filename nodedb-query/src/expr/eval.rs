@@ -21,6 +21,10 @@ struct RowScope<'a> {
     /// Pre-update row, if this is an old/new evaluation (TRANSITION CHECK).
     /// `None` means `OldColumn(..)` resolves to `Null`, matching plain `eval`.
     old_doc: Option<&'a Value>,
+    /// Incoming `EXCLUDED.*` row for
+    /// `INSERT ... ON CONFLICT DO UPDATE SET col = EXCLUDED.col`. `None`
+    /// means `ExcludedColumn(..)` resolves to `Null`, matching plain `eval`.
+    excluded_doc: Option<&'a Value>,
 }
 
 impl<'a> RowScope<'a> {
@@ -31,6 +35,13 @@ impl<'a> RowScope<'a> {
     fn old_column(&self, name: &str) -> Value {
         match self.old_doc {
             Some(old) => old.get(name).cloned().unwrap_or(Value::Null),
+            None => Value::Null,
+        }
+    }
+
+    fn excluded_column(&self, name: &str) -> Value {
+        match self.excluded_doc {
+            Some(excluded) => excluded.get(name).cloned().unwrap_or(Value::Null),
             None => Value::Null,
         }
     }
@@ -47,6 +58,7 @@ impl SqlExpr {
         self.eval_scope(&RowScope {
             new_doc: doc,
             old_doc: None,
+            excluded_doc: None,
         })
     }
 
@@ -57,6 +69,19 @@ impl SqlExpr {
         self.eval_scope(&RowScope {
             new_doc,
             old_doc: Some(old_doc),
+            excluded_doc: None,
+        })
+    }
+
+    /// Evaluate with access to the incoming `EXCLUDED.*` row, used by
+    /// `INSERT ... ON CONFLICT DO UPDATE`. `Column(name)` resolves
+    /// against the existing (current) row `doc`; `ExcludedColumn(name)`
+    /// resolves against `excluded`.
+    pub fn eval_with_excluded(&self, doc: &Value, excluded: &Value) -> Value {
+        self.eval_scope(&RowScope {
+            new_doc: doc,
+            old_doc: None,
+            excluded_doc: Some(excluded),
         })
     }
 
@@ -66,6 +91,7 @@ impl SqlExpr {
         match self {
             SqlExpr::Column(name) => scope.column(name),
             SqlExpr::OldColumn(name) => scope.old_column(name),
+            SqlExpr::ExcludedColumn(name) => scope.excluded_column(name),
 
             SqlExpr::Literal(v) => v.clone(),
 

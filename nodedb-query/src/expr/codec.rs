@@ -6,7 +6,8 @@
 //! zerompk natively so they nest transparently.
 //!
 //! Tags: Column=0, Literal=1, BinaryOp=2, Negate=3, Function=4, Cast=5,
-//!       Case=6, Coalesce=7, NullIf=8, IsNull=9, OldColumn=10.
+//!       Case=6, Coalesce=7, NullIf=8, IsNull=9, OldColumn=10,
+//!       ExcludedColumn=11.
 
 use nodedb_types::Value;
 
@@ -85,6 +86,11 @@ impl zerompk::ToMessagePack for SqlExpr {
             SqlExpr::OldColumn(s) => {
                 writer.write_array_len(2)?;
                 writer.write_u8(10)?;
+                writer.write_string(s)
+            }
+            SqlExpr::ExcludedColumn(s) => {
+                writer.write_array_len(2)?;
+                writer.write_u8(11)?;
                 writer.write_string(s)
             }
         }
@@ -175,6 +181,7 @@ impl<'a> zerompk::FromMessagePack<'a> for SqlExpr {
                 })
             }
             10 => Ok(SqlExpr::OldColumn(reader.read_string()?.into_owned())),
+            11 => Ok(SqlExpr::ExcludedColumn(reader.read_string()?.into_owned())),
             _ => Err(zerompk::Error::InvalidMarker(tag)),
         }
     }
