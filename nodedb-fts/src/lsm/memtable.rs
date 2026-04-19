@@ -164,14 +164,14 @@ impl Memtable {
         std::mem::take(&mut *map)
     }
 
-    /// Drain only postings matching a collection prefix.
-    /// Removes scoped terms like "{collection}:*" and resets stats/fieldnorms.
-    pub fn drain_collection(&self, collection: &str) {
-        let prefix = format!("{collection}:");
+    /// Drain only postings matching a key prefix.
+    /// The caller is responsible for providing the full prefix (including
+    /// any trailing separator). Resets stats/fieldnorms.
+    pub fn drain_collection(&self, prefix: &str) {
         let mut map = self.postings.borrow_mut();
         let mut removed = 0usize;
         map.retain(|k, v| {
-            if k.starts_with(&prefix) {
+            if k.starts_with(prefix) {
                 removed += v.len();
                 false
             } else {
@@ -267,7 +267,7 @@ mod tests {
         mt.insert("col_a:world", make_posting(1, 1));
         mt.insert("col_b:rust", make_posting(2, 1));
 
-        mt.drain_collection("col_a");
+        mt.drain_collection("col_a:");
 
         assert!(mt.get_postings("col_a:hello").is_empty());
         assert!(mt.get_postings("col_a:world").is_empty());

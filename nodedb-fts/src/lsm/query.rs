@@ -3,6 +3,7 @@
 
 use crate::backend::FtsBackend;
 use crate::block::{CompactPosting, into_blocks};
+use crate::index::writer::{memtable_collection_prefix, memtable_key};
 use crate::search::bmw::skip_index::TermBlocks;
 
 use super::memtable::Memtable;
@@ -15,15 +16,15 @@ use super::segment::reader::SegmentReader;
 /// Returns per-term `TermBlocks` ready for BMW scoring.
 pub fn collect_merged_term_blocks<B: FtsBackend>(
     backend: &B,
+    tid: u32,
     collection: &str,
     memtable: &Memtable,
     query_tokens: &[String],
 ) -> Result<Vec<TermBlocks>, B::Error> {
-    // Load all segments for this collection.
-    let seg_keys = backend.list_segments(collection)?;
+    let seg_ids = backend.list_segments(tid, collection)?;
     let mut readers: Vec<SegmentReader> = Vec::new();
-    for key in &seg_keys {
-        if let Some(data) = backend.read_segment(key)?
+    for id in &seg_ids {
+        if let Some(data) = backend.read_segment(tid, collection, id)?
             && let Some(reader) = SegmentReader::open(data)
         {
             readers.push(reader);
@@ -33,16 +34,13 @@ pub fn collect_merged_term_blocks<B: FtsBackend>(
     let mut term_blocks_list = Vec::with_capacity(query_tokens.len());
 
     for token in query_tokens {
-        // Get memtable postings for this term (scoped by collection).
-        let scoped_term = format!("{collection}:{token}");
+        let scoped_term = memtable_key(tid, collection, token);
         let mt_postings = memtable.get_postings(&scoped_term);
 
-        // Get segment postings for this term.
         let seg_postings: Vec<Vec<CompactPosting>> = readers
             .iter()
             .map(|reader| {
                 let blocks = reader.read_postings(token);
-                // Decompress blocks back to CompactPostings.
                 let mut postings = Vec::new();
                 for block in blocks {
                     for i in 0..block.doc_ids.len() {
@@ -58,7 +56,6 @@ pub fn collect_merged_term_blocks<B: FtsBackend>(
             })
             .collect();
 
-        // Merge memtable + segments.
         let merged = merge_term_postings(&mt_postings, &seg_postings);
         if merged.is_empty() {
             term_blocks_list.push(TermBlocks::from_blocks(Vec::new()));
@@ -77,23 +74,22 @@ pub fn collect_merged_term_blocks<B: FtsBackend>(
 /// Used by fuzzy matching to scan available terms.
 pub fn collect_all_terms<B: FtsBackend>(
     backend: &B,
+    tid: u32,
     collection: &str,
     memtable: &Memtable,
 ) -> Result<Vec<String>, B::Error> {
-    let prefix = format!("{collection}:");
+    let prefix = memtable_collection_prefix(tid, collection);
     let mut terms: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    // Memtable terms (scoped as "{collection}:{term}").
     for key in memtable.terms() {
         if let Some(term) = key.strip_prefix(&prefix) {
             terms.insert(term.to_string());
         }
     }
 
-    // Segment terms.
-    let seg_keys = backend.list_segments(collection)?;
-    for key in &seg_keys {
-        if let Some(data) = backend.read_segment(key)?
+    let seg_ids = backend.list_segments(tid, collection)?;
+    for id in &seg_ids {
+        if let Some(data) = backend.read_segment(tid, collection, id)?
             && let Some(reader) = SegmentReader::open(data)
         {
             for term in reader.terms() {
@@ -106,15 +102,12 @@ pub fn collect_all_terms<B: FtsBackend>(
 }
 
 /// Compute merged corpus stats from memtable + all segments.
-///
-/// For now, uses the backend's incremental stats (which track all indexed docs).
-/// The memtable stats are a subset of the backend stats (memtable docs were
-/// also recorded in the backend).
 pub fn merged_collection_stats<B: FtsBackend>(
     backend: &B,
+    tid: u32,
     collection: &str,
 ) -> Result<(u32, f32), B::Error> {
-    let (count, total) = backend.collection_stats(collection)?;
+    let (count, total) = backend.collection_stats(tid, collection)?;
     let avg = if count > 0 {
         total as f32 / count as f32
     } else {
@@ -132,6 +125,8 @@ mod tests {
     use crate::lsm::segment::writer;
     use std::collections::HashMap;
 
+    const T: u32 = 1;
+
     fn cp(doc_id: u32, tf: u32) -> CompactPosting {
         CompactPosting {
             doc_id,
@@ -145,12 +140,11 @@ mod tests {
     fn memtable_only() {
         let backend = MemoryBackend::new();
         let mt = Memtable::new(MemtableConfig::default());
-        // Use scoped terms: "{collection}:{term}" as FtsIndex does.
-        mt.insert("col:hello", cp(0, 2));
-        mt.insert("col:hello", cp(1, 1));
+        mt.insert(&memtable_key(T, "col", "hello"), cp(0, 2));
+        mt.insert(&memtable_key(T, "col", "hello"), cp(1, 1));
 
         let tokens = vec!["hello".to_string()];
-        let term_blocks = collect_merged_term_blocks(&backend, "col", &mt, &tokens).unwrap();
+        let term_blocks = collect_merged_term_blocks(&backend, T, "col", &mt, &tokens).unwrap();
 
         assert_eq!(term_blocks.len(), 1);
         assert_eq!(term_blocks[0].df, 2);
@@ -159,17 +153,16 @@ mod tests {
     #[test]
     fn segment_only() {
         let backend = MemoryBackend::new();
-        // Write a segment to the backend.
         let mut postings = HashMap::new();
         postings.insert("hello".to_string(), vec![cp(0, 1), cp(5, 2)]);
         let seg_bytes = writer::flush_to_segment(postings);
         backend
-            .write_segment("col:seg:L0:0000000000000001", &seg_bytes)
+            .write_segment(T, "col", "L0:0000000000000001", &seg_bytes)
             .unwrap();
 
         let mt = Memtable::new(MemtableConfig::default());
         let tokens = vec!["hello".to_string()];
-        let term_blocks = collect_merged_term_blocks(&backend, "col", &mt, &tokens).unwrap();
+        let term_blocks = collect_merged_term_blocks(&backend, T, "col", &mt, &tokens).unwrap();
 
         assert_eq!(term_blocks.len(), 1);
         assert_eq!(term_blocks[0].df, 2);
@@ -179,24 +172,21 @@ mod tests {
     fn memtable_plus_segment_merge() {
         let backend = MemoryBackend::new();
 
-        // Segment has docs 0, 5.
         let mut seg_postings = HashMap::new();
         seg_postings.insert("hello".to_string(), vec![cp(0, 1), cp(5, 2)]);
         let seg_bytes = writer::flush_to_segment(seg_postings);
         backend
-            .write_segment("col:seg:L0:0000000000000001", &seg_bytes)
+            .write_segment(T, "col", "L0:0000000000000001", &seg_bytes)
             .unwrap();
 
-        // Memtable has docs 0 (updated tf=10) and 3 (new). Scoped terms.
         let mt = Memtable::new(MemtableConfig::default());
-        mt.insert("col:hello", cp(0, 10)); // Updated from segment's tf=1.
-        mt.insert("col:hello", cp(3, 1)); // New doc.
+        mt.insert(&memtable_key(T, "col", "hello"), cp(0, 10));
+        mt.insert(&memtable_key(T, "col", "hello"), cp(3, 1));
 
         let tokens = vec!["hello".to_string()];
-        let term_blocks = collect_merged_term_blocks(&backend, "col", &mt, &tokens).unwrap();
+        let term_blocks = collect_merged_term_blocks(&backend, T, "col", &mt, &tokens).unwrap();
 
         assert_eq!(term_blocks.len(), 1);
-        // Should have 3 unique docs: 0 (memtable version), 3, 5.
         assert_eq!(term_blocks[0].df, 3);
     }
 
@@ -206,7 +196,7 @@ mod tests {
         let mt = Memtable::new(MemtableConfig::default());
 
         let tokens = vec!["nonexistent".to_string()];
-        let term_blocks = collect_merged_term_blocks(&backend, "col", &mt, &tokens).unwrap();
+        let term_blocks = collect_merged_term_blocks(&backend, T, "col", &mt, &tokens).unwrap();
 
         assert_eq!(term_blocks.len(), 1);
         assert_eq!(term_blocks[0].df, 0);

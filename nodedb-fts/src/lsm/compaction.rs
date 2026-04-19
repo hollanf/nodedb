@@ -30,8 +30,8 @@ impl Default for CompactionConfig {
 /// Segment metadata for level tracking.
 #[derive(Debug, Clone)]
 pub struct SegmentMeta {
-    /// Storage key for this segment.
-    pub key: String,
+    /// Segment id (unscoped, e.g. `"L{level}:{id:016x}"`).
+    pub segment_id: String,
     /// Compaction level (0 = freshly flushed from memtable).
     pub level: u32,
     /// Byte size of the segment.
@@ -40,7 +40,6 @@ pub struct SegmentMeta {
 
 /// Check which level needs compaction and return the level number, or None.
 pub fn needs_compaction(segments: &[SegmentMeta], config: &CompactionConfig) -> Option<u32> {
-    // Count segments per level.
     let mut counts = vec![0usize; config.max_levels];
     for seg in segments {
         let level = seg.level as usize;
@@ -49,7 +48,6 @@ pub fn needs_compaction(segments: &[SegmentMeta], config: &CompactionConfig) -> 
         }
     }
 
-    // Find the lowest level that exceeds the threshold.
     for (level, &count) in counts.iter().enumerate() {
         if count >= config.max_segments_per_level && level + 1 < config.max_levels {
             return Some(level as u32);
@@ -58,16 +56,17 @@ pub fn needs_compaction(segments: &[SegmentMeta], config: &CompactionConfig) -> 
     None
 }
 
-/// Result of a compaction: new segment bytes and keys of merged (to-remove) segments.
+/// Result of a compaction: new segment bytes and ids of merged (to-remove) segments.
 pub type CompactionResult = (Vec<u8>, Vec<String>);
 
 /// Perform compaction: merge all segments at `level` into one segment at `level + 1`.
 ///
-/// Returns the merged segment bytes and the keys of segments that were merged
+/// Returns the merged segment bytes and the ids of segments that were merged
 /// (which should be removed from storage after the new segment is written).
 pub fn compact_level<B: FtsBackend>(
     backend: &B,
-    _collection: &str,
+    tid: u32,
+    collection: &str,
     segments: &[SegmentMeta],
     level: u32,
 ) -> Result<Option<CompactionResult>, B::Error> {
@@ -76,16 +75,15 @@ pub fn compact_level<B: FtsBackend>(
         return Ok(None);
     }
 
-    // Load segment data and open readers.
     let mut readers = Vec::with_capacity(to_merge.len());
-    let mut merged_keys = Vec::with_capacity(to_merge.len());
+    let mut merged_ids = Vec::with_capacity(to_merge.len());
 
     for meta in &to_merge {
-        if let Some(data) = backend.read_segment(&meta.key)?
+        if let Some(data) = backend.read_segment(tid, collection, &meta.segment_id)?
             && let Some(reader) = SegmentReader::open(data)
         {
             readers.push(reader);
-            merged_keys.push(meta.key.clone());
+            merged_ids.push(meta.segment_id.clone());
         }
     }
 
@@ -93,31 +91,29 @@ pub fn compact_level<B: FtsBackend>(
         return Ok(None);
     }
 
-    // N-way merge.
     let merged_term_blocks = merge::merge_segments(&readers);
     let new_segment = writer::build_from_blocks(&merged_term_blocks);
 
-    Ok(Some((new_segment, merged_keys)))
+    Ok(Some((new_segment, merged_ids)))
 }
 
-/// Generate a segment storage key.
-pub fn segment_key(collection: &str, segment_id: u64, level: u32) -> String {
-    format!("{collection}:seg:L{level}:{segment_id:016x}")
+/// Generate a segment id (unscoped).
+pub fn segment_id(segment_id: u64, level: u32) -> String {
+    format!("L{level}:{segment_id:016x}")
 }
 
-/// Parse the level from a segment key. Returns 0 if unparseable.
-pub fn parse_level(key: &str) -> u32 {
-    // Format: "{collection}:seg:L{level}:{id}"
-    key.split(":seg:L")
-        .nth(1)
+/// Parse the level from a segment id. Returns 0 if unparseable.
+pub fn parse_level(id: &str) -> u32 {
+    // Format: "L{level}:{id}"
+    id.strip_prefix('L')
         .and_then(|s| s.split(':').next())
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
 }
 
-/// Parse the segment ID from a segment key.
-pub fn parse_segment_id(key: &str) -> u64 {
-    key.rsplit(':')
+/// Parse the segment number from a segment id.
+pub fn parse_segment_number(id: &str) -> u64 {
+    id.rsplit(':')
         .next()
         .and_then(|s| u64::from_str_radix(s, 16).ok())
         .unwrap_or(0)
@@ -127,9 +123,9 @@ pub fn parse_segment_id(key: &str) -> u64 {
 mod tests {
     use super::*;
 
-    fn make_meta(key: &str, level: u32) -> SegmentMeta {
+    fn make_meta(id: &str, level: u32) -> SegmentMeta {
         SegmentMeta {
-            key: key.to_string(),
+            segment_id: id.to_string(),
             level,
             size: 1000,
         }
@@ -142,11 +138,7 @@ mod tests {
             max_segments_per_level: 3,
         };
 
-        let segments = vec![
-            make_meta("s1", 0),
-            make_meta("s2", 0),
-            make_meta("s3", 0), // 3 at level 0 → trigger
-        ];
+        let segments = vec![make_meta("s1", 0), make_meta("s2", 0), make_meta("s3", 0)];
         assert_eq!(needs_compaction(&segments, &config), Some(0));
     }
 
@@ -166,25 +158,21 @@ mod tests {
             max_levels: 4,
             max_segments_per_level: 2,
         };
-        let segments = vec![
-            make_meta("s1", 0),
-            make_meta("s2", 1),
-            make_meta("s3", 1), // 2 at level 1 → trigger
-        ];
+        let segments = vec![make_meta("s1", 0), make_meta("s2", 1), make_meta("s3", 1)];
         assert_eq!(needs_compaction(&segments, &config), Some(1));
     }
 
     #[test]
-    fn segment_key_format() {
-        let key = segment_key("docs", 42, 0);
-        assert!(key.starts_with("docs:seg:L0:"));
-        assert_eq!(parse_level(&key), 0);
-        assert_eq!(parse_segment_id(&key), 42);
+    fn segment_id_format() {
+        let id = segment_id(42, 0);
+        assert!(id.starts_with("L0:"));
+        assert_eq!(parse_level(&id), 0);
+        assert_eq!(parse_segment_number(&id), 42);
     }
 
     #[test]
     fn parse_level_and_id() {
-        assert_eq!(parse_level("col:seg:L2:000000000000002a"), 2);
-        assert_eq!(parse_segment_id("col:seg:L2:000000000000002a"), 42);
+        assert_eq!(parse_level("L2:000000000000002a"), 2);
+        assert_eq!(parse_segment_number("L2:000000000000002a"), 42);
     }
 }

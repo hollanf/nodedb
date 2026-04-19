@@ -10,55 +10,44 @@ use crate::search::phrase;
 
 impl<B: FtsBackend> FtsIndex<B> {
     /// Search the index using BM25 scoring.
-    ///
-    /// Uses AND-first with automatic OR-fallback: if AND yields zero results
-    /// for a multi-term query, retries with OR and applies a coverage penalty
-    /// of `matched_terms / total_terms` to each document's score.
     pub fn search(
         &self,
+        tid: u32,
         collection: &str,
         query: &str,
         top_k: usize,
         fuzzy_enabled: bool,
     ) -> Result<Vec<TextSearchResult>, B::Error> {
-        self.search_with_mode(collection, query, top_k, fuzzy_enabled, QueryMode::And)
+        self.search_with_mode(tid, collection, query, top_k, fuzzy_enabled, QueryMode::And)
     }
 
     /// Search with explicit boolean mode (AND or OR).
-    ///
-    /// When `mode` is AND and a multi-term query returns zero results,
-    /// automatically falls back to OR with a coverage penalty.
-    ///
-    /// Dispatches to Block-Max WAND (BMW) for OR-mode queries when a DocIdMap
-    /// is available. Falls back to exhaustive BM25 scoring otherwise.
     pub fn search_with_mode(
         &self,
+        tid: u32,
         collection: &str,
         query: &str,
         top_k: usize,
         fuzzy_enabled: bool,
         mode: QueryMode,
     ) -> Result<Vec<TextSearchResult>, B::Error> {
-        let query_tokens = self.analyze_for_collection(collection, query)?;
+        let query_tokens = self.analyze_for_collection(tid, collection, query)?;
         if query_tokens.is_empty() {
             return Ok(Vec::new());
         }
         let num_query_terms = query_tokens.len();
 
-        // Raw (unstemmed) tokens for fuzzy matching — edit distance should be
-        // computed on original word forms, not after stemming distorts them.
         let raw_tokens = if fuzzy_enabled {
-            self.tokenize_raw_for_collection(collection, query)?
+            self.tokenize_raw_for_collection(tid, collection, query)?
         } else {
             Vec::new()
         };
 
-        let (total_docs, avg_doc_len) = self.index_stats(collection)?;
+        let (total_docs, avg_doc_len) = self.index_stats(tid, collection)?;
         if total_docs == 0 {
             return Ok(Vec::new());
         }
 
-        // Try BMW for OR-mode or as the first pass of AND-with-fallback.
         let bmw_params = super::bmw::query::BmwParams {
             query_tokens: &query_tokens,
             raw_tokens: &raw_tokens,
@@ -72,26 +61,30 @@ impl<B: FtsBackend> FtsIndex<B> {
             avg_doc_len,
             bm25: &self.bm25_params,
         };
-        if let Ok(Some(bmw_results)) = super::bmw::query::bmw_search(self, collection, &bmw_params)
+        if let Ok(Some(bmw_results)) =
+            super::bmw::query::bmw_search(self, tid, collection, &bmw_params)
         {
             if mode == QueryMode::Or || num_query_terms == 1 {
                 return Ok(bmw_results.into_iter().take(top_k).collect());
             }
 
-            // AND mode: filter BMW results to docs matching all terms.
-            // Re-check term coverage for top candidates.
-            let and_results =
-                self.filter_and_mode(collection, &query_tokens, &bmw_results, num_query_terms)?;
+            let and_results = self.filter_and_mode(
+                tid,
+                collection,
+                &query_tokens,
+                &bmw_results,
+                num_query_terms,
+            )?;
 
             if !and_results.is_empty() {
                 return Ok(and_results.into_iter().take(top_k).collect());
             }
 
-            // AND returned nothing — apply coverage penalty to BMW OR results.
             let penalized: Vec<TextSearchResult> = bmw_results
                 .into_iter()
                 .map(|mut r| {
-                    let matched = self.count_term_matches(collection, &query_tokens, &r.doc_id);
+                    let matched =
+                        self.count_term_matches(tid, collection, &query_tokens, &r.doc_id);
                     let coverage = matched as f32 / num_query_terms as f32;
                     r.score *= coverage;
                     r
@@ -107,29 +100,24 @@ impl<B: FtsBackend> FtsIndex<B> {
             return Ok(sorted);
         }
 
-        // Fallback: exhaustive BM25 scoring.
-        // Read directly from backend posting store (handles Origin's transaction-based writes
-        // which bypass the LSM memtable/segment path).
+        // Fallback: exhaustive BM25 scoring reading directly from the backend.
         let mut term_postings: Vec<(Vec<Posting>, bool)> = Vec::with_capacity(num_query_terms);
         for (i, token) in query_tokens.iter().enumerate() {
-            let postings = self.backend.read_postings(collection, token)?;
+            let postings = self.backend.read_postings(tid, collection, token)?;
             if !postings.is_empty() {
                 term_postings.push((postings, false));
             } else if fuzzy_enabled {
-                // Use raw (unstemmed) token for fuzzy matching — stemming distorts edit distance.
                 let raw = raw_tokens
                     .get(i)
                     .map(String::as_str)
                     .unwrap_or(token.as_str());
-                let (fuzzy_posts, is_fuzzy) = self.fuzzy_lookup(collection, raw)?;
+                let (fuzzy_posts, is_fuzzy) = self.fuzzy_lookup(tid, collection, raw)?;
                 term_postings.push((fuzzy_posts, is_fuzzy));
             } else {
                 term_postings.push((Vec::new(), false));
             }
         }
 
-        // Score all documents.
-        // (score, fuzzy_flag, term_match_count)
         let mut doc_scores: HashMap<String, (f32, bool, usize)> = HashMap::new();
 
         for (token_idx, (postings, is_fuzzy)) in term_postings.iter().enumerate() {
@@ -141,7 +129,7 @@ impl<B: FtsBackend> FtsIndex<B> {
             for posting in postings {
                 let doc_len = self
                     .backend
-                    .read_doc_length(collection, &posting.doc_id)?
+                    .read_doc_length(tid, collection, &posting.doc_id)?
                     .unwrap_or(1);
 
                 let mut score = bm25_score(
@@ -166,13 +154,11 @@ impl<B: FtsBackend> FtsIndex<B> {
                 }
                 entry.2 += 1;
             }
-            let _ = token_idx; // used by phrase boost below
+            let _ = token_idx;
         }
 
-        // Apply phrase proximity boost.
         if num_query_terms >= 2 {
-            let doc_postings_map =
-                phrase::collect_doc_postings(&query_tokens, &term_postings, &self.backend);
+            let doc_postings_map = phrase::collect_doc_postings(&query_tokens, &term_postings);
             for (doc_id, token_postings) in &doc_postings_map {
                 if let Some(entry) = doc_scores.get_mut(doc_id.as_str()) {
                     let boost = phrase::phrase_boost(&query_tokens, token_postings);
@@ -181,7 +167,6 @@ impl<B: FtsBackend> FtsIndex<B> {
             }
         }
 
-        // AND mode with OR fallback.
         if mode == QueryMode::And && num_query_terms > 1 {
             let and_results: HashMap<String, (f32, bool, usize)> = doc_scores
                 .iter()
@@ -193,7 +178,6 @@ impl<B: FtsBackend> FtsIndex<B> {
                 return Ok(Self::to_sorted_results(and_results, top_k));
             }
 
-            // AND returned nothing — fall back to OR with coverage penalty.
             for (score, _, match_count) in doc_scores.values_mut() {
                 let coverage = *match_count as f32 / num_query_terms as f32;
                 *score *= coverage;
@@ -203,17 +187,18 @@ impl<B: FtsBackend> FtsIndex<B> {
         Ok(Self::to_sorted_results(doc_scores, top_k))
     }
 
-    /// Filter BMW results to only docs matching ALL query terms (AND mode).
     fn filter_and_mode(
         &self,
+        tid: u32,
         collection: &str,
         query_tokens: &[String],
         candidates: &[TextSearchResult],
         num_terms: usize,
     ) -> Result<Vec<TextSearchResult>, B::Error> {
-        let doc_map = self.load_doc_id_map(collection)?;
+        let doc_map = self.load_doc_id_map(tid, collection)?;
         let term_blocks = crate::lsm::query::collect_merged_term_blocks(
             &self.backend,
+            tid,
             collection,
             self.memtable(),
             query_tokens,
@@ -235,9 +220,14 @@ impl<B: FtsBackend> FtsIndex<B> {
         Ok(results)
     }
 
-    /// Count how many query terms appear in a document's posting lists (via LSM).
-    fn count_term_matches(&self, collection: &str, query_tokens: &[String], doc_id: &str) -> usize {
-        let doc_map = match self.load_doc_id_map(collection) {
+    fn count_term_matches(
+        &self,
+        tid: u32,
+        collection: &str,
+        query_tokens: &[String],
+        doc_id: &str,
+    ) -> usize {
+        let doc_map = match self.load_doc_id_map(tid, collection) {
             Ok(m) => m,
             Err(_) => return 0,
         };
@@ -246,6 +236,7 @@ impl<B: FtsBackend> FtsIndex<B> {
         };
         let term_blocks = match crate::lsm::query::collect_merged_term_blocks(
             &self.backend,
+            tid,
             collection,
             self.memtable(),
             query_tokens,
@@ -259,7 +250,6 @@ impl<B: FtsBackend> FtsIndex<B> {
             .count()
     }
 
-    /// Convert score map to sorted, truncated results.
     fn to_sorted_results(
         doc_scores: HashMap<String, (f32, bool, usize)>,
         top_k: usize,
@@ -288,13 +278,20 @@ mod tests {
     use crate::index::FtsIndex;
     use crate::posting::QueryMode;
 
+    const T: u32 = 1;
+
     fn make_index() -> FtsIndex<MemoryBackend> {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document("docs", "d1", "The quick brown fox jumps over the lazy dog")
+        idx.index_document(
+            T,
+            "docs",
+            "d1",
+            "The quick brown fox jumps over the lazy dog",
+        )
+        .unwrap();
+        idx.index_document(T, "docs", "d2", "A fast brown dog runs across the field")
             .unwrap();
-        idx.index_document("docs", "d2", "A fast brown dog runs across the field")
-            .unwrap();
-        idx.index_document("docs", "d3", "Rust programming language for systems")
+        idx.index_document(T, "docs", "d3", "Rust programming language for systems")
             .unwrap();
         idx
     }
@@ -302,7 +299,7 @@ mod tests {
     #[test]
     fn basic_search() {
         let idx = make_index();
-        let results = idx.search("docs", "brown fox", 10, false).unwrap();
+        let results = idx.search(T, "docs", "brown fox", 10, false).unwrap();
         assert!(!results.is_empty());
         assert_eq!(results[0].doc_id, "d1");
     }
@@ -310,13 +307,13 @@ mod tests {
     #[test]
     fn search_with_stemming() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document("docs", "d1", "running distributed databases")
+        idx.index_document(T, "docs", "d1", "running distributed databases")
             .unwrap();
-        idx.index_document("docs", "d2", "the cat sat on a mat")
+        idx.index_document(T, "docs", "d2", "the cat sat on a mat")
             .unwrap();
 
         let results = idx
-            .search("docs", "database distribution", 10, false)
+            .search(T, "docs", "database distribution", 10, false)
             .unwrap();
         assert!(!results.is_empty());
         assert_eq!(results[0].doc_id, "d1");
@@ -326,7 +323,7 @@ mod tests {
     fn or_mode() {
         let idx = make_index();
         let results = idx
-            .search_with_mode("docs", "brown fox", 10, false, QueryMode::Or)
+            .search_with_mode(T, "docs", "brown fox", 10, false, QueryMode::Or)
             .unwrap();
         assert!(results.len() >= 2);
     }
@@ -334,13 +331,13 @@ mod tests {
     #[test]
     fn and_mode_filters() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document("docs", "d1", "Rust programming language")
+        idx.index_document(T, "docs", "d1", "Rust programming language")
             .unwrap();
-        idx.index_document("docs", "d2", "Python programming language")
+        idx.index_document(T, "docs", "d2", "Python programming language")
             .unwrap();
 
         let results = idx
-            .search_with_mode("docs", "rust programming", 10, false, QueryMode::And)
+            .search_with_mode(T, "docs", "rust programming", 10, false, QueryMode::And)
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].doc_id, "d1");
@@ -349,15 +346,13 @@ mod tests {
     #[test]
     fn and_fallback_to_or() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document("docs", "d1", "rust programming language")
+        idx.index_document(T, "docs", "d1", "rust programming language")
             .unwrap();
-        idx.index_document("docs", "d2", "python programming language")
+        idx.index_document(T, "docs", "d2", "python programming language")
             .unwrap();
 
-        // "rust python" — no doc has BOTH, AND yields nothing, falls back to OR.
-        let results = idx.search("docs", "rust python", 10, false).unwrap();
+        let results = idx.search(T, "docs", "rust python", 10, false).unwrap();
         assert_eq!(results.len(), 2);
-        // Coverage penalty: each doc matches 1/2 terms → scores penalized by 0.5.
         for r in &results {
             assert!(r.score > 0.0);
         }
@@ -366,13 +361,14 @@ mod tests {
     #[test]
     fn and_no_fallback_when_results_exist() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document("docs", "d1", "rust programming language")
+        idx.index_document(T, "docs", "d1", "rust programming language")
             .unwrap();
-        idx.index_document("docs", "d2", "python programming language")
+        idx.index_document(T, "docs", "d2", "python programming language")
             .unwrap();
 
-        // "rust programming" — d1 has both, AND succeeds, no fallback.
-        let results = idx.search("docs", "rust programming", 10, false).unwrap();
+        let results = idx
+            .search(T, "docs", "rust programming", 10, false)
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].doc_id, "d1");
     }
@@ -380,31 +376,33 @@ mod tests {
     #[test]
     fn empty_query() {
         let idx = make_index();
-        let results = idx.search("docs", "the a is", 10, false).unwrap();
+        let results = idx.search(T, "docs", "the a is", 10, false).unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn collections_isolated() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document("col_a", "d1", "alpha bravo charlie")
+        idx.index_document(T, "col_a", "d1", "alpha bravo charlie")
             .unwrap();
-        idx.index_document("col_b", "d1", "delta echo foxtrot")
+        idx.index_document(T, "col_b", "d1", "delta echo foxtrot")
             .unwrap();
 
-        assert_eq!(idx.search("col_a", "alpha", 10, false).unwrap().len(), 1);
-        assert!(idx.search("col_b", "alpha", 10, false).unwrap().is_empty());
+        assert_eq!(idx.search(T, "col_a", "alpha", 10, false).unwrap().len(), 1);
+        assert!(
+            idx.search(T, "col_b", "alpha", 10, false)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
     fn fuzzy_search() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document("docs", "d1", "distributed database systems")
+        idx.index_document(T, "docs", "d1", "distributed database systems")
             .unwrap();
 
-        // "databse" (7 chars raw) fuzzy-matches "databas" (stemmed from "database").
-        // Fuzzy uses raw tokens: levenshtein("databse", "databas") = 2, max_dist(7) = 2 → match.
-        let results = idx.search("docs", "databse", 10, true).unwrap();
+        let results = idx.search(T, "docs", "databse", 10, true).unwrap();
         assert!(!results.is_empty());
         assert!(results[0].fuzzy);
     }
@@ -412,27 +410,37 @@ mod tests {
     #[test]
     fn phrase_boost_consecutive() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        // d1 has "brown fox" as consecutive tokens.
-        idx.index_document("docs", "d1", "the quick brown fox jumped")
+        idx.index_document(T, "docs", "d1", "the quick brown fox jumped")
             .unwrap();
-        // d2 has "brown" and "fox" but separated.
-        idx.index_document("docs", "d2", "a brown dog chased a fox")
+        idx.index_document(T, "docs", "d2", "a brown dog chased a fox")
             .unwrap();
 
         let results = idx
-            .search_with_mode("docs", "brown fox", 10, false, QueryMode::Or)
+            .search_with_mode(T, "docs", "brown fox", 10, false, QueryMode::Or)
             .unwrap();
         assert!(results.len() >= 2);
-        // d1 should rank higher due to phrase boost.
         assert_eq!(results[0].doc_id, "d1");
     }
 
     #[test]
     fn phrase_boost_no_effect_single_term() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document("docs", "d1", "hello world").unwrap();
+        idx.index_document(T, "docs", "d1", "hello world").unwrap();
 
-        let results = idx.search("docs", "hello", 10, false).unwrap();
+        let results = idx.search(T, "docs", "hello", 10, false).unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn tenants_isolated() {
+        let idx = FtsIndex::new(MemoryBackend::new());
+        idx.index_document(1, "docs", "d1", "alpha bravo").unwrap();
+        idx.index_document(2, "docs", "d1", "charlie delta")
+            .unwrap();
+
+        let r1 = idx.search(1, "docs", "alpha", 10, false).unwrap();
+        let r2 = idx.search(2, "docs", "alpha", 10, false).unwrap();
+        assert_eq!(r1.len(), 1);
+        assert!(r2.is_empty());
     }
 }

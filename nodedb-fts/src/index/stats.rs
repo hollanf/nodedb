@@ -8,8 +8,8 @@ impl<B: FtsBackend> FtsIndex<B> {
     ///
     /// Returns `(total_docs, avg_doc_len)`. If the collection is empty,
     /// returns `(0, 1.0)` to avoid division by zero.
-    pub fn index_stats(&self, collection: &str) -> Result<(u32, f32), B::Error> {
-        let (count, total_len) = self.backend.collection_stats(collection)?;
+    pub fn index_stats(&self, tid: u32, collection: &str) -> Result<(u32, f32), B::Error> {
+        let (count, total_len) = self.backend.collection_stats(tid, collection)?;
         let avg = if count > 0 {
             total_len as f32 / count as f32
         } else {
@@ -24,10 +24,12 @@ mod tests {
     use crate::backend::memory::MemoryBackend;
     use crate::index::FtsIndex;
 
+    const T: u32 = 1;
+
     #[test]
     fn empty_collection_stats() {
         let idx: FtsIndex<MemoryBackend> = FtsIndex::new(MemoryBackend::new());
-        let (count, avg) = idx.index_stats("empty").unwrap();
+        let (count, avg) = idx.index_stats(T, "empty").unwrap();
         assert_eq!(count, 0);
         assert!((avg - 1.0).abs() < f32::EPSILON);
     }
@@ -35,11 +37,11 @@ mod tests {
     #[test]
     fn stats_after_indexing() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document("docs", "d1", "hello world greeting")
+        idx.index_document(T, "docs", "d1", "hello world greeting")
             .unwrap();
-        idx.index_document("docs", "d2", "hello rust").unwrap();
+        idx.index_document(T, "docs", "d2", "hello rust").unwrap();
 
-        let (count, avg) = idx.index_stats("docs").unwrap();
+        let (count, avg) = idx.index_stats(T, "docs").unwrap();
         assert_eq!(count, 2);
         assert!(avg > 0.0);
     }

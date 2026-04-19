@@ -9,7 +9,6 @@
 
 use std::collections::HashMap;
 
-use crate::backend::FtsBackend;
 use crate::posting::Posting;
 
 /// Maximum phrase boost multiplier for a full consecutive phrase match.
@@ -76,10 +75,9 @@ fn has_consecutive_positions(a: &[u32], b: &[u32]) -> bool {
 ///
 /// Given the query tokens and the posting lists retrieved during BM25 scoring,
 /// returns a map from `doc_id` → (token_index → posting).
-pub(crate) fn collect_doc_postings<'a, B: FtsBackend>(
+pub(crate) fn collect_doc_postings<'a>(
     query_tokens: &[String],
     term_postings: &'a [(Vec<Posting>, bool)],
-    _backend: &B,
 ) -> HashMap<String, HashMap<usize, &'a Posting>> {
     let mut doc_map: HashMap<String, HashMap<usize, &Posting>> = HashMap::new();
 
