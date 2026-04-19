@@ -135,6 +135,40 @@ async fn match_does_not_leak_tenant_scoped_node_ids() {
     assert_eq!(row_count, 1, "expected exactly one matched row");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn match_preserves_digit_prefixed_user_id() {
+    // The exit-boundary unscoper must strip the exact `<tid>:` prefix,
+    // not any leading `\d+:` run. A user id like `'99:event'` — a
+    // composite stringified key — must round-trip through MATCH
+    // unchanged. A heuristic stripper silently drops the `99:`.
+    let server = TestServer::start().await;
+    server.exec("CREATE COLLECTION mdp_docs").await.unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM '99:event' TO 'bob' TYPE 'l'")
+        .await
+        .unwrap();
+
+    let msgs = server
+        .client
+        .simple_query("MATCH (x)-[:l]->(y) RETURN x, y")
+        .await
+        .expect("MATCH should succeed");
+    let mut saw = false;
+    for msg in msgs {
+        if let SimpleQueryMessage::Row(row) = msg {
+            let x = row.get(0).unwrap_or("").to_string();
+            if x == "99:event" {
+                saw = true;
+            }
+            assert_ne!(
+                x, "event",
+                "MATCH must not corrupt '99:event' into 'event' via heuristic strip"
+            );
+        }
+    }
+    assert!(saw, "MATCH must return the full user id '99:event'");
+}
+
 // ── 3. Numeric DSL parameters are clamped / rejected ──────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -189,6 +223,89 @@ async fn graph_algo_rejects_absurd_iterations() {
             "22023",
         )
         .await;
+}
+
+// ── Exit-boundary unscoping must be exact, not heuristic ─────────────
+//
+// TRAVERSE / NEIGHBORS / PATH return user-visible node ids. The
+// unscoper at the handler boundary must strip the exact `<tid>:`
+// prefix the Data Plane prepended, not "everything up to the first
+// colon" — the latter corrupts any colon-containing user id.
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_traverse_preserves_colon_containing_user_id() {
+    let server = TestServer::start().await;
+    server.exec("CREATE COLLECTION trv_docs").await.unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM 'foo:bar' TO 'z' TYPE 'l'")
+        .await
+        .unwrap();
+
+    let rows = server
+        .query_text("GRAPH TRAVERSE FROM 'foo:bar' DEPTH 2 LABEL 'l'")
+        .await
+        .expect("TRAVERSE must succeed");
+    let blob = rows.join("");
+    assert!(
+        blob.contains("\"foo:bar\"") || blob.contains("foo:bar"),
+        "TRAVERSE must preserve 'foo:bar' exactly; got: {blob}"
+    );
+    assert!(
+        !blob.contains("\"bar\""),
+        "TRAVERSE must not corrupt 'foo:bar' into 'bar' via first-colon strip; got: {blob}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_neighbors_preserves_colon_containing_user_id() {
+    let server = TestServer::start().await;
+    server.exec("CREATE COLLECTION nbr_docs").await.unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM 'src' TO 'ns:dst' TYPE 'l'")
+        .await
+        .unwrap();
+
+    let rows = server
+        .query_text("GRAPH NEIGHBORS OF 'src' LABEL 'l' DIRECTION out")
+        .await
+        .expect("NEIGHBORS must succeed");
+    let blob = rows.join("");
+    assert!(
+        blob.contains("ns:dst"),
+        "NEIGHBORS must preserve 'ns:dst' exactly; got: {blob}"
+    );
+    assert!(
+        !blob.contains("\"dst\""),
+        "NEIGHBORS must not corrupt 'ns:dst' into 'dst' via first-colon strip; got: {blob}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_path_preserves_colon_containing_user_id() {
+    let server = TestServer::start().await;
+    server.exec("CREATE COLLECTION pp_docs").await.unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM 'src' TO 'ns:mid' TYPE 'l'")
+        .await
+        .unwrap();
+    server
+        .exec("GRAPH INSERT EDGE FROM 'ns:mid' TO 'dst' TYPE 'l'")
+        .await
+        .unwrap();
+
+    let rows = server
+        .query_text("GRAPH PATH FROM 'src' TO 'dst' MAX_DEPTH 5 LABEL 'l'")
+        .await
+        .expect("PATH must succeed");
+    let blob = rows.join("");
+    assert!(
+        blob.contains("ns:mid"),
+        "PATH must preserve intermediate 'ns:mid' exactly; got: {blob}"
+    );
+    assert!(
+        !blob.contains("\"mid\""),
+        "PATH must not corrupt 'ns:mid' into 'mid' via first-colon strip; got: {blob}"
+    );
 }
 
 // ── 4. extract_*_after must parse statement structure, not user data ─
