@@ -352,30 +352,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="v${VERSION}"
-          PREV_TAG=$(python3 - "$TAG" <<'PY'
-import re, subprocess, sys
-cur = sys.argv[1]
-m_cur = re.match(r'^v(\d+)\.(\d+)\.(\d+)(?:-(.+))?$', cur)
-if not m_cur:
-    print(""); sys.exit(0)
-cur_is_release = m_cur.group(4) is None
-tags = subprocess.check_output(['git','tag','--list','v*']).decode().split()
-def parse(t):
-    m = re.match(r'^v(\d+)\.(\d+)\.(\d+)(?:-(.+))?$', t)
-    if not m: return None
-    return (int(m[1]), int(m[2]), int(m[3]), 1 if m[4] is None else 0, m[4] or "")
-parsed = [(t, parse(t)) for t in tags]
-parsed = [(t, k) for t, k in parsed if k is not None]
-# For full releases, ignore prereleases so changelog spans stable->stable.
-if cur_is_release:
-    parsed = [(t, k) for t, k in parsed if k[3] == 1]
-parsed.sort(key=lambda x: x[1], reverse=True)
-ordered = [t for t, _ in parsed]
-if cur in ordered:
-    i = ordered.index(cur)
-    print(ordered[i+1] if i+1 < len(ordered) else "")
-PY
-)
+          PREV_TAG=$(python3 .github/scripts/prev_tag.py "$TAG")
 
           if [[ -n "$PREV_TAG" ]]; then
             RANGE="${PREV_TAG}..${TAG}"
@@ -409,4 +386,4 @@ PY
             '{embeds:[{title:$title,url:$url,description:$desc,color:$color}]}')
 
           curl -fsS -H "Content-Type: application/json" \
-            -X POST -d "$PAYLOAD" "$DISCORD_RELEASE_WEBHOOK_URL"
+            -X POST -d "$PAYLOAD" "$DISCORD_RELEASE_WEBHOOK_URL" 
