@@ -37,7 +37,11 @@ impl WalReader {
         let file = File::open(path)?;
         let dwb_path = path.with_extension("dwb");
         let double_write = if dwb_path.exists() {
-            crate::double_write::DoubleWriteBuffer::open(&dwb_path).ok()
+            crate::double_write::DoubleWriteBuffer::open(
+                &dwb_path,
+                crate::double_write::DwbMode::Buffered,
+            )
+            .ok()
         } else {
             None
         };

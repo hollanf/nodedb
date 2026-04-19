@@ -53,6 +53,11 @@ pub enum WalError {
     /// Encryption or decryption failed.
     #[error("WAL encryption error: {detail}")]
     EncryptionError { detail: String },
+
+    /// `DoubleWriteBuffer::open` was called with `DwbMode::Off`. Callers
+    /// that want the DWB disabled must not call `open` at all.
+    #[error("DoubleWriteBuffer::open called with DwbMode::Off")]
+    DwbOffNotOpenable,
 }
 
 pub type Result<T> = std::result::Result<T, WalError>;

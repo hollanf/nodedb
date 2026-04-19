@@ -24,6 +24,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::align::{AlignedBuf, DEFAULT_ALIGNMENT};
+use crate::double_write::DwbMode;
 use crate::error::{Result, WalError};
 use crate::record::{HEADER_SIZE, WalRecord};
 
@@ -48,6 +49,11 @@ pub struct WalWriterConfig {
     /// Whether to use O_DIRECT. Set to `false` for testing on filesystems
     /// that don't support it (e.g., tmpfs).
     pub use_direct_io: bool,
+
+    /// Double-write buffer I/O mode. `None` means "mirror the parent" —
+    /// `Direct` when `use_direct_io` is true, `Buffered` otherwise.
+    /// `Some(DwbMode::Off)` disables the DWB entirely.
+    pub dwb_mode: Option<DwbMode>,
 }
 
 impl Default for WalWriterConfig {
@@ -56,6 +62,36 @@ impl Default for WalWriterConfig {
             write_buffer_size: DEFAULT_WRITE_BUFFER_SIZE,
             alignment: DEFAULT_ALIGNMENT,
             use_direct_io: true,
+            dwb_mode: None,
+        }
+    }
+}
+
+fn resolve_dwb_mode(config: &WalWriterConfig) -> DwbMode {
+    config
+        .dwb_mode
+        .unwrap_or_else(|| DwbMode::default_for_parent(config.use_direct_io))
+}
+
+fn open_dwb_for(
+    config: &WalWriterConfig,
+    path: &Path,
+) -> Option<crate::double_write::DoubleWriteBuffer> {
+    let mode = resolve_dwb_mode(config);
+    if mode == DwbMode::Off {
+        return None;
+    }
+    let dwb_path = path.with_extension("dwb");
+    match crate::double_write::DoubleWriteBuffer::open(&dwb_path, mode) {
+        Ok(d) => Some(d),
+        Err(e) => {
+            tracing::warn!(
+                path = %dwb_path.display(),
+                error = %e,
+                mode = ?mode,
+                "failed to open DWB — torn-write protection disabled for this writer"
+            );
+            None
         }
     }
 }
@@ -111,9 +147,7 @@ impl WalWriter {
             (0, 1)
         };
 
-        // Open double-write buffer alongside the WAL file.
-        let dwb_path = path.with_extension("dwb");
-        let double_write = crate::double_write::DoubleWriteBuffer::open(&dwb_path).ok();
+        let double_write = open_dwb_for(&config, path);
 
         Ok(Self {
             file,
@@ -163,8 +197,7 @@ impl WalWriter {
         let file = opts.open(path)?;
         let buffer = AlignedBuf::new(config.write_buffer_size, config.alignment)?;
 
-        let dwb_path = path.with_extension("dwb");
-        let double_write = crate::double_write::DoubleWriteBuffer::open(&dwb_path).ok();
+        let double_write = open_dwb_for(&config, path);
 
         Ok(Self {
             file,
