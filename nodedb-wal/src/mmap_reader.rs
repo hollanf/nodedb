@@ -14,12 +14,60 @@
 //! This reader is used in tier 2: when the Event Plane enters WAL Catchup
 //! Mode, it mmap's the relevant sealed segments and iterates records.
 
+use std::os::fd::AsRawFd;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use memmap2::Mmap;
 
 use crate::error::{Result, WalError};
 use crate::record::{HEADER_SIZE, RecordHeader, RecordType, WAL_MAGIC, WalRecord};
+
+/// Module-scoped counters for observing mmap/fadvise behaviour.
+pub mod test_hooks {
+    use super::{AtomicU64, Ordering};
+    pub(super) static SEGMENTS_OPENED: AtomicU64 = AtomicU64::new(0);
+    pub(super) static FADV_DONTNEED_COUNT: AtomicU64 = AtomicU64::new(0);
+    pub(super) static MADV_SEQUENTIAL_COUNT: AtomicU64 = AtomicU64::new(0);
+
+    pub fn segments_opened() -> u64 {
+        SEGMENTS_OPENED.load(Ordering::Relaxed)
+    }
+    pub fn fadv_dontneed_count() -> u64 {
+        FADV_DONTNEED_COUNT.load(Ordering::Relaxed)
+    }
+    pub fn madv_sequential_count() -> u64 {
+        MADV_SEQUENTIAL_COUNT.load(Ordering::Relaxed)
+    }
+}
+
+/// Call `posix_fadvise(POSIX_FADV_DONTNEED)` on an open WAL segment fd.
+///
+/// Once a segment has been iterated end-to-end during catchup, we don't
+/// need its pages in cache any longer. Release them back to the kernel so
+/// replay doesn't pin GiBs of page cache.
+fn fadv_dontneed(fd: &std::fs::File, len: usize, path: &Path) {
+    if len == 0 {
+        return;
+    }
+    let rc = unsafe {
+        libc::posix_fadvise(
+            fd.as_raw_fd(),
+            0,
+            len as libc::off_t,
+            libc::POSIX_FADV_DONTNEED,
+        )
+    };
+    if rc == 0 {
+        test_hooks::FADV_DONTNEED_COUNT.fetch_add(1, Ordering::Relaxed);
+    } else {
+        tracing::warn!(
+            path = %path.display(),
+            errno = rc,
+            "posix_fadvise(DONTNEED) failed on exhausted WAL segment",
+        );
+    }
+}
 
 /// Memory-mapped WAL segment reader.
 ///
@@ -29,17 +77,63 @@ use crate::record::{HEADER_SIZE, RecordHeader, RecordType, WAL_MAGIC, WalRecord}
 pub struct MmapWalReader {
     mmap: Mmap,
     offset: usize,
+    file: std::fs::File,
+    path: std::path::PathBuf,
+    madvise_state: Option<libc::c_int>,
 }
 
 impl MmapWalReader {
     /// Open a WAL segment file for mmap'd reading.
     pub fn open(path: &Path) -> Result<Self> {
+        test_hooks::SEGMENTS_OPENED.fetch_add(1, Ordering::Relaxed);
         let file = std::fs::File::open(path)?;
         // SAFETY: The file is a sealed WAL segment (not being written to).
         // The Data Plane writes to the ACTIVE segment via O_DIRECT; sealed
         // segments are immutable after rollover.
         let mmap = unsafe { Mmap::map(&file)? };
-        Ok(Self { mmap, offset: 0 })
+
+        // Catchup iterates forward through a segment. MADV_SEQUENTIAL
+        // doubles readahead and drops already-consumed pages eagerly so
+        // replay doesn't grow buff/cache by the full WAL size.
+        let mut madvise_state = None;
+        if !mmap.is_empty() {
+            let rc = unsafe {
+                libc::madvise(
+                    mmap.as_ptr() as *mut libc::c_void,
+                    mmap.len(),
+                    libc::MADV_SEQUENTIAL,
+                )
+            };
+            if rc == 0 {
+                madvise_state = Some(libc::MADV_SEQUENTIAL);
+                test_hooks::MADV_SEQUENTIAL_COUNT.fetch_add(1, Ordering::Relaxed);
+            } else {
+                tracing::warn!(
+                    path = %path.display(),
+                    errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0),
+                    "madvise(MADV_SEQUENTIAL) failed on WAL segment; continuing",
+                );
+            }
+        }
+
+        Ok(Self {
+            mmap,
+            offset: 0,
+            file,
+            path: path.to_path_buf(),
+            madvise_state,
+        })
+    }
+
+    /// The madvise hint applied to the mapped segment (if any).
+    pub fn madvise_state(&self) -> Option<libc::c_int> {
+        self.madvise_state
+    }
+
+    /// Hint to the kernel that pages for this segment can be dropped from
+    /// cache. Call this after a segment has been iterated end-to-end.
+    pub fn release_pages(&self) {
+        fadv_dontneed(&self.file, self.mmap.len(), &self.path);
     }
 
     /// Read the next record from the mmap'd region.
@@ -164,12 +258,43 @@ const PARALLEL_SEGMENT_THRESHOLD: usize = 4;
 /// segment order (already LSN-sorted since segments are monotonic).
 pub fn replay_segments_mmap(wal_dir: &Path, from_lsn: u64) -> Result<Vec<WalRecord>> {
     let segments = crate::segment::discover_segments(wal_dir)?;
+    let live = filter_segments_by_lsn(&segments, from_lsn);
 
-    if segments.len() < PARALLEL_SEGMENT_THRESHOLD {
-        return replay_segments_sequential(&segments, from_lsn);
+    if live.len() < PARALLEL_SEGMENT_THRESHOLD {
+        return replay_segments_sequential(live, from_lsn);
     }
 
-    replay_segments_parallel(&segments, from_lsn)
+    replay_segments_parallel(live, from_lsn)
+}
+
+/// Return the slice of `segments` whose LSN range may contain records with
+/// lsn >= `from_lsn`. A segment at index `i` is skippable iff the next
+/// segment's `first_lsn` is `<= from_lsn` — meaning segment `i`'s entire
+/// range is strictly below the cutoff. The last segment is never skipped
+/// on this criterion because its upper bound is unknown.
+fn filter_segments_by_lsn(
+    segments: &[crate::segment::SegmentMeta],
+    from_lsn: u64,
+) -> &[crate::segment::SegmentMeta] {
+    // Find the first segment whose next-segment first_lsn > from_lsn, OR
+    // the last segment (always live). Since segments are LSN-sorted, the
+    // live tail starts at the largest i such that segments[i].first_lsn
+    // <= from_lsn.
+    let mut start = 0;
+    for i in 0..segments.len() {
+        // Segment i covers [first_lsn_i, first_lsn_{i+1}).
+        let upper = segments.get(i + 1).map(|s| s.first_lsn).unwrap_or(u64::MAX);
+        if upper > from_lsn {
+            start = i;
+            break;
+        }
+        start = i + 1;
+    }
+    if start >= segments.len() {
+        // All segments strictly below from_lsn; nothing to replay.
+        return &[];
+    }
+    &segments[start..]
 }
 
 /// Sequential segment replay (used for small segment counts).
@@ -179,13 +304,13 @@ fn replay_segments_sequential(
 ) -> Result<Vec<WalRecord>> {
     let mut records = Vec::new();
     for seg in segments {
-        let reader = MmapWalReader::open(&seg.path)?;
-        for record_result in reader.records() {
-            let record = record_result?;
+        let mut reader = MmapWalReader::open(&seg.path)?;
+        while let Some(record) = reader.next_record()? {
             if record.header.lsn >= from_lsn {
                 records.push(record);
             }
         }
+        reader.release_pages();
     }
     Ok(records)
 }
@@ -207,14 +332,14 @@ fn replay_segments_parallel(
             .iter()
             .map(|seg| {
                 scope.spawn(move || -> Result<Vec<WalRecord>> {
-                    let reader = MmapWalReader::open(&seg.path)?;
+                    let mut reader = MmapWalReader::open(&seg.path)?;
                     let mut seg_records = Vec::new();
-                    for record_result in reader.records() {
-                        let record = record_result?;
+                    while let Some(record) = reader.next_record()? {
                         if record.header.lsn >= from_lsn {
                             seg_records.push(record);
                         }
                     }
+                    reader.release_pages();
                     Ok(seg_records)
                 })
             })
@@ -256,23 +381,22 @@ pub fn replay_segments_mmap_limit(
     max_records: usize,
 ) -> Result<(Vec<WalRecord>, bool)> {
     let segments = crate::segment::discover_segments(wal_dir)?;
+    let live = filter_segments_by_lsn(&segments, from_lsn);
     let mut records = Vec::with_capacity(max_records.min(4096));
 
-    for seg in &segments {
-        // Skip segments that end before from_lsn. A segment's max LSN
-        // is at least its first_lsn, so if first_lsn of the NEXT segment
-        // is <= from_lsn we can skip this one. Conservative: always read
-        // the last segment since we don't know its max LSN cheaply.
-        let reader = MmapWalReader::open(&seg.path)?;
-        for record_result in reader.records() {
-            let record = record_result?;
+    for seg in live {
+        let mut reader = MmapWalReader::open(&seg.path)?;
+        while let Some(record) = reader.next_record()? {
             if record.header.lsn >= from_lsn {
                 records.push(record);
                 if records.len() >= max_records {
+                    // Partial scan — don't release pages for a segment
+                    // we'll likely re-open on the next catchup cycle.
                     return Ok((records, true));
                 }
             }
         }
+        reader.release_pages();
     }
 
     Ok((records, false))
