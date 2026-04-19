@@ -205,7 +205,7 @@ async fn extended_query_count_aggregate_returns_count_column() {
 
     assert_eq!(rows.len(), 1);
     assert!(
-        rows[0].len() >= 1,
+        !rows[0].is_empty(),
         "expected ≥1 column, got {}",
         rows[0].len()
     );
@@ -277,7 +277,7 @@ async fn extended_query_pg_type_catalog_is_reachable() {
         "pg_type must expose at least one built-in type row"
     );
     for row in &rows {
-        assert!(row.len() >= 1, "pg_type row must have ≥1 decoded column");
+        assert!(!row.is_empty(), "pg_type row must have ≥1 decoded column");
         let _name: &str = row.get("typname");
     }
 }
@@ -302,7 +302,7 @@ async fn extended_query_pg_type_with_parameter() {
         "pg_type parameterised query must return at least one row"
     );
     for row in &rows {
-        assert!(row.len() >= 1);
+        assert!(!row.is_empty());
         let _name: &str = row.get("typname");
     }
 }
