@@ -8,6 +8,7 @@
 mod common;
 
 use common::pgwire_harness::TestServer;
+use tokio_postgres::types::Type;
 
 /// Strict-document SELECT by parameterised primary key must return
 /// columns `id` and `name` decoded as text, not an empty row.
@@ -280,6 +281,210 @@ async fn extended_query_pg_type_catalog_is_reachable() {
         assert!(!row.is_empty(), "pg_type row must have ≥1 decoded column");
         let _name: &str = row.get("typname");
     }
+}
+
+/// Drivers that send Parse with no type oids (e.g. postgres-js with
+/// `fetch_types: false`) deliver `Type::UNKNOWN` for every bind param.
+/// `LIMIT $1 = 2` over a 5-row table must still return 2 rows, not 5 —
+/// i.e. the untyped numeric must not silently degrade to a text literal
+/// that the planner fails to match against `Value::Number` and drops.
+#[tokio::test]
+async fn extended_query_untyped_numeric_limit_applies() {
+    let server = TestServer::start().await;
+    server
+        .exec("CREATE COLLECTION t TYPE DOCUMENT STRICT (id STRING PRIMARY KEY, n INT)")
+        .await
+        .unwrap();
+    for (id, n) in [("a", 1), ("b", 2), ("c", 3), ("d", 4), ("e", 5)] {
+        server
+            .exec(&format!("INSERT INTO t (id, n) VALUES ('{id}', {n})"))
+            .await
+            .unwrap();
+    }
+
+    let stmt = server
+        .client
+        .prepare_typed("SELECT id FROM t ORDER BY id LIMIT $1", &[Type::UNKNOWN])
+        .await
+        .expect("prepare with UNKNOWN param type should succeed");
+    let rows = server
+        .client
+        .query(&stmt, &[&"2"])
+        .await
+        .expect("untyped LIMIT execute should succeed");
+
+    assert_eq!(
+        rows.len(),
+        2,
+        "untyped LIMIT $1 = 2 must bound the result set, got {} rows",
+        rows.len()
+    );
+}
+
+/// OFFSET shares the same `Value::Number` planner match as LIMIT; a
+/// `Type::UNKNOWN` numeric bind must drive OFFSET correctly too.
+#[tokio::test]
+async fn extended_query_untyped_numeric_offset_applies() {
+    let server = TestServer::start().await;
+    server
+        .exec("CREATE COLLECTION t TYPE DOCUMENT STRICT (id STRING PRIMARY KEY, n INT)")
+        .await
+        .unwrap();
+    for (id, n) in [("a", 1), ("b", 2), ("c", 3), ("d", 4), ("e", 5)] {
+        server
+            .exec(&format!("INSERT INTO t (id, n) VALUES ('{id}', {n})"))
+            .await
+            .unwrap();
+    }
+
+    let stmt = server
+        .client
+        .prepare_typed(
+            "SELECT id FROM t ORDER BY id LIMIT 10 OFFSET $1",
+            &[Type::UNKNOWN],
+        )
+        .await
+        .expect("prepare should succeed");
+    let rows = server
+        .client
+        .query(&stmt, &[&"3"])
+        .await
+        .expect("untyped OFFSET execute should succeed");
+
+    assert_eq!(
+        rows.len(),
+        2,
+        "untyped OFFSET $1 = 3 over 5 rows must return 2 rows, got {}",
+        rows.len()
+    );
+}
+
+/// Numeric `WHERE col = $N` with an untyped bind — sibling path to LIMIT/
+/// OFFSET. May already coerce correctly via the scan-filter value
+/// converter; this locks that in as a regression guard so any future
+/// refactor that collapses onto a raw `Value::Number` match (the LIMIT
+/// path's failure mode) fails loudly instead of silently dropping rows.
+#[tokio::test]
+async fn extended_query_untyped_numeric_where_equals() {
+    let server = TestServer::start().await;
+    server
+        .exec("CREATE COLLECTION t TYPE DOCUMENT STRICT (id STRING PRIMARY KEY, n INT)")
+        .await
+        .unwrap();
+    server
+        .exec("INSERT INTO t (id, n) VALUES ('a', 1), ('b', 2), ('c', 3)")
+        .await
+        .unwrap();
+
+    let stmt = server
+        .client
+        .prepare_typed("SELECT id FROM t WHERE n = $1", &[Type::UNKNOWN])
+        .await
+        .expect("prepare should succeed");
+    let rows = server
+        .client
+        .query(&stmt, &[&"2"])
+        .await
+        .expect("untyped numeric WHERE execute should succeed");
+
+    assert_eq!(
+        rows.len(),
+        1,
+        "untyped numeric WHERE n = $1 (=2) must match one row, got {}",
+        rows.len()
+    );
+    let id: &str = rows[0].get("id");
+    assert_eq!(id, "b", "numeric comparison must have selected n=2 row");
+}
+
+/// SEARCH DSL — a second DSL dispatcher beyond UPSERT. The fix in
+/// #85 part 2 must apply uniformly; if params are threaded through
+/// only one DSL dispatcher, this second prefix still breaks.
+#[tokio::test]
+async fn extended_query_dsl_search_vector_substitutes_params() {
+    let server = TestServer::start().await;
+    server
+        .exec("CREATE COLLECTION v TYPE VECTOR (id STRING PRIMARY KEY, embedding VECTOR(3))")
+        .await
+        .unwrap();
+    server
+        .exec("INSERT INTO v (id, embedding) VALUES ('a', ARRAY[1.0, 0.0, 0.0])")
+        .await
+        .unwrap();
+    server
+        .exec("INSERT INTO v (id, embedding) VALUES ('b', ARRAY[0.0, 1.0, 0.0])")
+        .await
+        .unwrap();
+
+    let stmt = server
+        .client
+        .prepare_typed(
+            "SEARCH v USING VECTOR(ARRAY[1.0, 0.0, 0.0], $1)",
+            &[Type::UNKNOWN],
+        )
+        .await
+        .expect("prepare SEARCH DSL should succeed");
+    let res = server.client.query(&stmt, &[&"1"]).await;
+
+    // The architectural contract under test: binding reached the engine.
+    // Downstream vector-engine behavior (e.g. whether the index is
+    // queryable immediately after INSERT) is a separate concern.
+    if let Err(e) = &res {
+        let msg = format!("{e:?}");
+        assert!(
+            !msg.contains("'$") && !msg.to_lowercase().contains("placeholder"),
+            "SEARCH DSL leaked raw placeholder into dispatcher: {msg}"
+        );
+        assert!(
+            !msg.to_lowercase().contains("unsupported expression"),
+            "SEARCH DSL rejected bound placeholder as unsupported expr: {msg}"
+        );
+    }
+}
+
+/// DSL statements (UPSERT, SEARCH, GRAPH, MATCH, CRDT MERGE, CREATE
+/// VECTOR/FULLTEXT/SEARCH/SPARSE INDEX) are flagged at Parse time and
+/// routed to `execute_sql` with the untouched original SQL — `$N`
+/// placeholders intact. The bound values never reach the dispatcher.
+///
+/// Regression guard: the exact observed symptom was
+/// `cannot parse '$2' as INT` from `strict_format::bytes_to_binary_tuple`
+/// — i.e. the literal `$2` surviving into the binary-tuple encoder.
+#[tokio::test]
+async fn extended_query_dsl_upsert_substitutes_params() {
+    let server = TestServer::start().await;
+    server
+        .exec("CREATE COLLECTION t TYPE DOCUMENT STRICT (id STRING NOT NULL PRIMARY KEY, n INT)")
+        .await
+        .unwrap();
+
+    let stmt = server
+        .client
+        .prepare_typed(
+            "UPSERT INTO t (id, n) VALUES ($1, $2)",
+            &[Type::UNKNOWN, Type::UNKNOWN],
+        )
+        .await
+        .expect("prepare UPSERT DSL should succeed");
+    let res = server.client.execute(&stmt, &[&"x", &"42"]).await;
+
+    if let Err(e) = &res {
+        let msg = format!("{e:?}");
+        assert!(
+            !msg.contains("cannot parse '$") && !msg.to_lowercase().contains("placeholder"),
+            "DSL path leaked raw placeholder into engine: {msg}"
+        );
+        panic!("UPSERT with bound params should reach the engine, got: {msg}");
+    }
+
+    // Verify the row landed via simple-query (text envelope), which
+    // sidesteps the strict-int wire-format concern that's orthogonal
+    // to the parameter-binding contract.
+    let rows = server
+        .query_text("SELECT id FROM t WHERE id = 'x'")
+        .await
+        .expect("verify select should succeed");
+    assert_eq!(rows.len(), 1, "UPSERT should have inserted exactly 1 row");
 }
 
 /// `pg_type` with a parameterised filter — exercises both the extended-

@@ -78,17 +78,29 @@ impl NodeDbPgHandler {
             }
         }
 
+        // Convert pgwire binary parameters to typed ParamValues for AST/DSL
+        // binding. Done once, used by both the DSL path and the planned-SQL
+        // path below.
+        let params = convert_portal_params(&portal.parameters, &stmt.param_types)?;
+
         // DSL passthroughs (SEARCH, GRAPH, MATCH, UPSERT INTO, etc.) cannot be
-        // handled by the planned-SQL path. Route them through the same full DSL
-        // dispatcher used by the simple-query handler. DSL statements do not use
-        // SQL parameter placeholders, so bound parameters are intentionally ignored.
+        // handled by the planned-SQL path because sqlparser doesn't parse the
+        // DSL grammar. Before dispatching, substitute `$N` placeholders in the
+        // SQL text via sqlparser's tokenizer (string/identifier/comment-aware).
+        // `BoundDslSql` is a newtype — the compiler refuses to pass a raw
+        // `&str` to a DSL execution path, so forgetting binding on a future
+        // DSL is a compile error, not a runtime silent-drop.
         if stmt.is_dsl {
-            let mut results = self.execute_sql(&identity, &addr, &stmt.sql).await?;
+            let bound = nodedb_sql::dsl_bind::bind_dsl(&stmt.sql, &params).map_err(|e| {
+                PgWireError::UserError(Box::new(ErrorInfo::new(
+                    "ERROR".into(),
+                    "42601".into(),
+                    format!("DSL parameter bind: {e}"),
+                )))
+            })?;
+            let mut results = self.execute_sql(&identity, &addr, bound.as_str()).await?;
             return Ok(results.pop().unwrap_or(Response::EmptyQuery));
         }
-
-        // Convert pgwire binary parameters to typed ParamValues for AST binding.
-        let params = convert_portal_params(&portal.parameters, &stmt.param_types)?;
 
         // Execute through the planned SQL path with AST-level parameter binding.
         let mut results = self
@@ -296,7 +308,40 @@ fn convert_portal_params(
     Ok(result)
 }
 
-/// Convert a pgwire text parameter + type to a typed `ParamValue`.
+/// Convert a pgwire text parameter + declared type to a typed
+/// `ParamValue` for AST/DSL binding.
+///
+/// # Type coverage
+///
+/// Natively decoded: `BOOL`, `INT2`/`INT4`/`INT8`, `FLOAT4`/`FLOAT8`/
+/// `NUMERIC`, `TEXT`/`VARCHAR` (implicit via fall-through), and
+/// `UNKNOWN` (the untyped-driver path — see issue #85).
+///
+/// # Fallback policy (catch-all arm)
+///
+/// Types the bind layer does not yet decode natively — `DATE`,
+/// `TIMESTAMP`, `TIMESTAMPTZ`, `TIME`, `BYTEA`, `UUID`, `JSON`,
+/// `JSONB`, `INTERVAL`, array types, and user-defined types — fall
+/// through to `ParamValue::Text(text)`. This is **deliberate, not
+/// silent**: the pgwire text representation of these types is
+/// well-defined (`DATE` → `YYYY-MM-DD`, `BYTEA` → `\xDEADBEEF` hex,
+/// `JSONB` → the JSON text, etc.), and the AST bind emits it as a
+/// `SingleQuotedString`. Downstream, the planner/engine type-coerces
+/// that text to the column type via the same path used for literal
+/// strings in simple-query SQL — so `INSERT INTO t (d) VALUES ($1)`
+/// with `$1 = '2026-04-19'` behaves the same as
+/// `INSERT INTO t (d) VALUES ('2026-04-19')`.
+///
+/// Binary-format parameters are handled at a layer above this function
+/// (see `convert_portal_params`); they never reach the catch-all.
+/// Unknown binary formats error explicitly rather than falling through.
+///
+/// # Why not error on unknown types
+///
+/// Postgres itself accepts text representations of every built-in
+/// type through the extended-query protocol; refusing here would
+/// break drivers that legitimately send dates/UUIDs/etc. as text.
+/// The per-type tests below lock the text contract.
 fn pgwire_text_to_param(text: &str, pg_type: &Type) -> nodedb_sql::ParamValue {
     match *pg_type {
         Type::BOOL => {
@@ -321,6 +366,8 @@ fn pgwire_text_to_param(text: &str, pg_type: &Type) -> nodedb_sql::ParamValue {
             }
             nodedb_sql::ParamValue::Text(text.to_string())
         }
+        // Text-passthrough types: wire-format text is already the
+        // canonical representation. Engine performs type coercion.
         _ => nodedb_sql::ParamValue::Text(text.to_string()),
     }
 }
@@ -370,6 +417,61 @@ mod tests {
             let result = convert_portal_params(&params, &types).unwrap();
             assert!(matches!(result[0], nodedb_sql::ParamValue::Bool(v) if v == expected));
         }
+    }
+
+    /// DATE params arrive as text per pgwire spec. The bind layer
+    /// preserves the text so the engine's literal-coercion path can
+    /// convert it to the target column type.
+    #[test]
+    fn passthrough_date_text() {
+        let out = pgwire_text_to_param("2026-04-19", &Type::DATE);
+        assert!(matches!(&out, nodedb_sql::ParamValue::Text(s) if s == "2026-04-19"));
+    }
+
+    #[test]
+    fn passthrough_timestamp_text() {
+        let out = pgwire_text_to_param("2026-04-19 12:00:00", &Type::TIMESTAMP);
+        assert!(matches!(&out, nodedb_sql::ParamValue::Text(s) if s == "2026-04-19 12:00:00"));
+    }
+
+    #[test]
+    fn passthrough_uuid_text() {
+        let uuid = "550e8400-e29b-41d4-a716-446655440000";
+        let out = pgwire_text_to_param(uuid, &Type::UUID);
+        assert!(matches!(&out, nodedb_sql::ParamValue::Text(s) if s == uuid));
+    }
+
+    #[test]
+    fn passthrough_jsonb_text() {
+        let json = r#"{"a":1}"#;
+        let out = pgwire_text_to_param(json, &Type::JSONB);
+        assert!(matches!(&out, nodedb_sql::ParamValue::Text(s) if s == json));
+    }
+
+    /// BYTEA text form per pgwire is `\x<hex>` — passed through as-is
+    /// so the engine's BYTEA parser (which already handles both escape
+    /// and hex forms) converts it.
+    #[test]
+    fn passthrough_bytea_hex_text() {
+        let out = pgwire_text_to_param("\\xDEADBEEF", &Type::BYTEA);
+        assert!(matches!(&out, nodedb_sql::ParamValue::Text(s) if s == "\\xDEADBEEF"));
+    }
+
+    #[test]
+    fn int_parse_failure_falls_back_to_text() {
+        // `abc` isn't a valid INT8 text representation. The function
+        // preserves the text rather than dropping the binding.
+        let out = pgwire_text_to_param("abc", &Type::INT8);
+        assert!(matches!(&out, nodedb_sql::ParamValue::Text(s) if s == "abc"));
+    }
+
+    #[test]
+    fn unknown_type_routes_to_text() {
+        // `Type::UNKNOWN` — the postgres-js fetch_types:false path.
+        // Text is the correct output: the planner's use-site coercion
+        // (`coerce::as_usize_literal`, etc.) handles numeric contexts.
+        let out = pgwire_text_to_param("42", &Type::UNKNOWN);
+        assert!(matches!(&out, nodedb_sql::ParamValue::Text(s) if s == "42"));
     }
 
     #[test]
