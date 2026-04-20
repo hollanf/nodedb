@@ -181,6 +181,9 @@ impl SharedState {
             connections_rejected: AtomicU64::new(0),
             connections_accepted: AtomicU64::new(0),
             system_metrics: Some(Arc::new(crate::control::metrics::SystemMetrics::new())),
+            retention_settings: Arc::new(std::sync::RwLock::new(
+                crate::config::server::RetentionSettings::default(),
+            )),
             governor: None,
             epoch_tracker: Mutex::new(std::collections::HashMap::new()),
             ts_partition_registries: Some(Mutex::new(std::collections::HashMap::new())),
@@ -441,6 +444,9 @@ impl SharedState {
             connections_rejected: AtomicU64::new(0),
             connections_accepted: AtomicU64::new(0),
             system_metrics: Some(Arc::new(crate::control::metrics::SystemMetrics::new())),
+            retention_settings: Arc::new(std::sync::RwLock::new(
+                crate::config::server::RetentionSettings::default(),
+            )),
             governor: None,
             epoch_tracker: Mutex::new(std::collections::HashMap::new()),
             ts_partition_registries: Some(Mutex::new(std::collections::HashMap::new())),

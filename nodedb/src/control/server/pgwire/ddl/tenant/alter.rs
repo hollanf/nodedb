@@ -72,11 +72,14 @@ pub fn alter_tenant(
         "max_qps" => quota.max_qps = value as u32,
         "max_vector_dim" => quota.max_vector_dim = value as u32,
         "max_graph_depth" => quota.max_graph_depth = value as u32,
+        "deactivated_collection_retention_days" => {
+            quota.deactivated_collection_retention_days = Some(value as u32);
+        }
         other => {
             return Err(sqlstate_error(
                 "42601",
                 &format!(
-                    "unknown quota field: {other}. Valid: max_memory_bytes, max_storage_bytes, max_concurrent_requests, max_qps, max_vector_dim, max_graph_depth"
+                    "unknown quota field: {other}. Valid: max_memory_bytes, max_storage_bytes, max_concurrent_requests, max_qps, max_vector_dim, max_graph_depth, deactivated_collection_retention_days"
                 ),
             ));
         }

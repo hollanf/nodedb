@@ -614,10 +614,13 @@ async fn main() -> anyhow::Result<()> {
     // collections against the per-tenant / system retention window
     // each tick and proposes `PurgeCollection` for expired entries.
     // Kept alive for process lifetime.
-    let _collection_gc = nodedb::event::collection_gc::spawn_collection_gc(
-        Arc::clone(&shared),
-        config.retention.clone(),
-    );
+    // Install the file-configured retention into the live settings
+    // cell so the sweeper and ALTER SYSTEM handler share one source
+    // of truth.
+    if let Ok(mut w) = shared.retention_settings.write() {
+        *w = config.retention.clone();
+    }
+    let _collection_gc = nodedb::event::collection_gc::spawn_collection_gc(Arc::clone(&shared));
     info!(
         retention_days = config.retention.deactivated_collection_retention_days,
         sweep_interval_secs = config.retention.gc_sweep_interval_secs,

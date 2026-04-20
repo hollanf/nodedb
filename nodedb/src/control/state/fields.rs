@@ -336,6 +336,12 @@ pub struct SharedState {
     /// System-wide metrics (Prometheus format).
     pub system_metrics: Option<Arc<crate::control::metrics::SystemMetrics>>,
 
+    /// Live retention settings. Wrapped in a `RwLock` so the
+    /// `ALTER SYSTEM SET deactivated_collection_retention_days` handler
+    /// can mutate it at runtime and the collection-GC sweeper picks up
+    /// the new window on its next tick without a restart.
+    pub retention_settings: Arc<std::sync::RwLock<crate::config::server::RetentionSettings>>,
+
     /// Memory governor for per-engine budget enforcement.
     pub governor: Option<Arc<nodedb_mem::MemoryGovernor>>,
 

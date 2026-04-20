@@ -10,13 +10,13 @@
 //! Runs everywhere — proposing is idempotent (the leader accepts,
 //! followers' proposals forward or race-lose with no harm).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
-use crate::config::server::RetentionSettings;
 use crate::control::catalog_entry::CatalogEntry;
 use crate::control::state::SharedState;
 
@@ -31,33 +31,72 @@ pub struct CollectionGcSweeper {
 }
 
 /// Spawn the sweeper on the Tokio runtime.
-pub fn spawn_collection_gc(
-    shared: Arc<SharedState>,
-    settings: RetentionSettings,
-) -> CollectionGcSweeper {
-    let handle = tokio::spawn(async move { run_loop(shared, settings).await });
+///
+/// Reads retention + sweep-interval from `shared.retention_settings`
+/// on every tick so `ALTER SYSTEM SET deactivated_collection_retention_days`
+/// takes effect without a restart.
+pub fn spawn_collection_gc(shared: Arc<SharedState>) -> CollectionGcSweeper {
+    let handle = tokio::spawn(async move { run_loop(shared).await });
     CollectionGcSweeper { handle }
 }
 
-async fn run_loop(shared: Arc<SharedState>, settings: RetentionSettings) {
-    let interval = settings.sweep_interval();
-    let retention = settings.retention_window();
+fn load_settings(shared: &SharedState) -> (Duration, Duration, u32) {
+    let guard = shared
+        .retention_settings
+        .read()
+        .unwrap_or_else(|p| p.into_inner());
+    (
+        guard.sweep_interval(),
+        guard.retention_window(),
+        guard.deactivated_collection_retention_days,
+    )
+}
+
+async fn run_loop(shared: Arc<SharedState>) {
+    let (initial_interval, _, initial_days) = load_settings(&shared);
     info!(
-        sweep_interval_secs = interval.as_secs(),
-        retention_days = settings.deactivated_collection_retention_days,
+        sweep_interval_secs = initial_interval.as_secs(),
+        retention_days = initial_days,
         "collection-gc sweeper started"
     );
 
-    // One-tick delay before the first sweep so the node has a chance
-    // to finish applying startup catalog entries before we evaluate
-    // them. No effect on correctness, just avoids a noisy first pass.
-    tokio::time::sleep(interval).await;
+    tokio::time::sleep(initial_interval).await;
 
     loop {
+        // Reload every tick so `ALTER SYSTEM SET ...` propagates
+        // without a restart. `retention` is the *system-wide default*;
+        // per-tenant overrides are resolved inside `sweep_once` via
+        // `effective_retention_for_tenant`.
+        let (interval, retention, _) = load_settings(&shared);
         if let Err(e) = sweep_once(&shared, retention) {
             warn!(error = %e, "collection-gc sweep failed; will retry next tick");
         }
         tokio::time::sleep(interval).await;
+    }
+}
+
+/// Resolve the effective retention window for a single tenant.
+///
+/// Precedence:
+/// 1. Per-tenant override on the tenant's `TenantQuota`
+///    (`deactivated_collection_retention_days = Some(n)`) — set via
+///    `ALTER TENANT <id> SET QUOTA deactivated_collection_retention_days = <n>`.
+/// 2. System-wide default (`fallback`).
+///
+/// `None` on the quota field means "inherit the system default".
+fn effective_retention_for_tenant(
+    shared: &SharedState,
+    tenant_id: u32,
+    fallback: Duration,
+) -> Duration {
+    let tenants = match shared.tenants.lock() {
+        Ok(t) => t,
+        Err(p) => p.into_inner(),
+    };
+    let quota = tenants.quota(crate::types::TenantId::new(tenant_id));
+    match quota.deactivated_collection_retention_days {
+        Some(days) => Duration::from_secs(u64::from(days) * 24 * 60 * 60),
+        None => fallback,
     }
 }
 
@@ -75,6 +114,18 @@ pub fn sweep_once(shared: &SharedState, retention: Duration) -> crate::Result<()
         .unwrap_or(0);
 
     let dropped = catalog.load_dropped_collections()?;
+
+    // Refresh the pending-purge gauge every pass, even when empty —
+    // tenants whose pending count just went to zero need the gauge
+    // to zero out, not stay pinned at the previous value.
+    if let Some(metrics) = shared.system_metrics.as_ref() {
+        let mut pending: HashMap<u32, u64> = HashMap::new();
+        for coll in &dropped {
+            *pending.entry(coll.tenant_id).or_insert(0) += 1;
+        }
+        metrics.purge.set_pending_by_tenant(pending);
+    }
+
     if dropped.is_empty() {
         return Ok(());
     }
@@ -82,7 +133,8 @@ pub fn sweep_once(shared: &SharedState, retention: Duration) -> crate::Result<()
     let mut proposed = 0usize;
     let mut waiting = 0usize;
     for coll in &dropped {
-        match resolve_retention(coll, now_ns, retention) {
+        let effective = effective_retention_for_tenant(shared, coll.tenant_id, retention);
+        match resolve_retention(coll, now_ns, effective) {
             PurgeDecision::Purge => {
                 let entry = CatalogEntry::PurgeCollection {
                     tenant_id: coll.tenant_id,

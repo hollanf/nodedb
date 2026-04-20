@@ -26,6 +26,13 @@ pub struct TenantQuota {
     /// Maximum active connections per tenant (0 = unlimited).
     #[serde(default)]
     pub max_connections: u32,
+    /// Per-tenant override for the dropped-collection retention window,
+    /// in days. `None` means "inherit the system-wide default set in
+    /// `server.retention.deactivated_collection_retention_days`".
+    /// Set via
+    /// `ALTER TENANT <id> SET QUOTA deactivated_collection_retention_days = <n>`.
+    #[serde(default)]
+    pub deactivated_collection_retention_days: Option<u32>,
 }
 
 impl Default for TenantQuota {
@@ -38,6 +45,7 @@ impl Default for TenantQuota {
             max_vector_dim: 4096,
             max_graph_depth: 10,
             max_connections: 0, // Unlimited by default.
+            deactivated_collection_retention_days: None,
         }
     }
 }
