@@ -637,6 +637,11 @@ async fn main() -> anyhow::Result<()> {
         "collection-gc sweeper running"
     );
 
+    // L2 cleanup worker: drains `_system.l2_cleanup_queue` — one entry
+    // per hard-deleted collection whose object-store bytes are still
+    // owed. No-op exit if cold storage isn't configured.
+    let _l2_cleanup = nodedb::event::collection_gc::spawn_l2_cleanup(Arc::clone(&shared));
+
     // Tenant rate counter reset (1-second timer).
     let shared_rate = Arc::clone(&shared);
     nodedb::control::shutdown::spawn_loop(

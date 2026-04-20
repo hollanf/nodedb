@@ -9,8 +9,10 @@
 //! fans out through the existing apply + post_apply pipeline
 //! (including the per-node Data Plane reclaim dispatch).
 
+pub mod l2_cleanup;
 pub mod policy;
 pub mod sweeper;
 
+pub use l2_cleanup::{L2CleanupWorker, spawn_l2_cleanup};
 pub use policy::{PurgeDecision, resolve_retention};
 pub use sweeper::{CollectionGcSweeper, spawn_collection_gc};

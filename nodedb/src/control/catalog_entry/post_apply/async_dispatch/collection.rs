@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tracing::{debug, warn};
 
 use crate::control::catalog_entry::post_apply::collection;
-use crate::control::security::catalog::StoredCollection;
+use crate::control::security::catalog::{StoredCollection, StoredL2CleanupEntry};
 use crate::control::state::SharedState;
 use crate::types::TenantId;
 
@@ -64,6 +64,41 @@ pub async fn purge_async(tenant_id: u32, name: String, purge_lsn: u64, shared: A
         );
     }
 
+    // 2b. Enqueue an L2 cleanup entry if cold storage is configured.
+    // Recorded even when `bytes_pending` is unknown (0) — the worker
+    // discovers actual byte count at delete time. Doing this BEFORE
+    // the Data Plane dispatch means we ack even when the worker is
+    // backed up or transiently offline, and `_system.l2_cleanup_queue`
+    // surfaces the backlog for operators. Idempotent: re-enqueuing
+    // the same `(tenant, name)` replaces the prior entry.
+    if shared.cold_storage.is_some()
+        && let Some(catalog) = shared.credentials.catalog()
+    {
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let entry = StoredL2CleanupEntry {
+            tenant_id,
+            name: name.clone(),
+            purge_lsn,
+            enqueued_at_ns: now_ns,
+            bytes_pending: 0,
+            last_error: String::new(),
+            attempts: 0,
+        };
+        if let Err(e) = catalog.enqueue_l2_cleanup(&entry) {
+            warn!(
+                collection = %name,
+                tenant = tenant_id,
+                purge_lsn,
+                error = %e,
+                "failed to enqueue _system.l2_cleanup_queue entry — \
+                 L2 bytes will not be reaped until next purge attempt"
+            );
+        }
+    }
+
     // 3. Quiesce drain: stop accepting new scans for this collection
     //    and wait for in-flight scans to release. Unlinking segment
     //    files while a scan is touching an mmap page faults the
@@ -77,6 +112,15 @@ pub async fn purge_async(tenant_id: u32, name: String, purge_lsn: u64, shared: A
         &shared, tenant_id, &name, purge_lsn,
     )
     .await;
+
+    // 4b. Broadcast `CollectionPurged` to every connected Lite
+    //     session subscribed to this collection. Fire-and-forget;
+    //     each session's control-frame channel is bounded to 32 and
+    //     any saturated channel drops the notification (the client
+    //     picks it up on reconnect via the offline-replay path).
+    shared
+        .crdt_sync_delivery
+        .broadcast_collection_purged(tenant_id, &name, purge_lsn);
 
     // 5. Drop the quiesce entry. From here on, the catalog has no
     //    record of the collection; queries return `collection_not_found`.
