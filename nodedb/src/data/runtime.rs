@@ -167,6 +167,7 @@ pub fn spawn_core(
     response_tx: Producer<BridgeResponse>,
     data_dir: &Path,
     wal_records: Arc<[nodedb_wal::WalRecord]>,
+    tombstones: nodedb_wal::TombstoneSet,
     num_cores: usize,
     compaction_config: CoreCompactionConfig,
     system_metrics: Option<Arc<crate::control::metrics::SystemMetrics>>,
@@ -221,12 +222,15 @@ pub fn spawn_core(
 
             // 4. Replay WAL records for crash recovery.
             //
-            // Build the collection-tombstone set once from the whole record
-            // stream. Every per-engine replay method consults it to skip
-            // any record whose `(tenant_id, collection)` pair was later
-            // hard-deleted — otherwise purged data would resurrect.
+            // Tombstones are pre-built by the caller from
+            // (persisted `_system.wal_tombstones` ∪
+            // `extract_tombstones(&wal_records)`). The persisted half
+            // is load-bearing once segment-truncation advances past a
+            // tombstone record: the tombstone falls out of the live
+            // WAL, but shadowed writes in un-truncated older segments
+            // must still be skipped. Every per-engine replay method
+            // consults the merged set.
             if !wal_records.is_empty() {
-                let tombstones = nodedb_wal::extract_tombstones(&wal_records);
                 core.replay_vector_wal(&wal_records, num_cores, &tombstones);
                 core.replay_kv_wal(&wal_records, num_cores, &tombstones);
                 core.replay_timeseries_wal(&wal_records, num_cores, &tombstones);

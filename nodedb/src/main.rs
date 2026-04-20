@@ -206,6 +206,55 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Build the collection-tombstone set once for all cores. Two
+    // sources: the persistent `_system.wal_tombstones` redb table
+    // (survives WAL segment truncation) and live `CollectionTombstoned`
+    // records in the current WAL (covers tombstones not yet checkpointed).
+    // Both halves are merged with `extend`, which keeps the highest
+    // `purge_lsn` per `(tenant, collection)`.
+    //
+    // A short-lived SystemCatalog handle is opened here just to load
+    // the persisted set; it is dropped before `SharedState::open` below
+    // acquires its own long-lived handle — redb's single-writer lock
+    // is released on drop.
+    let replay_tombstones: nodedb_wal::TombstoneSet = {
+        let catalog_path = config.catalog_path();
+        let mut set = nodedb_wal::extract_tombstones(&wal_records);
+        match nodedb::control::security::catalog::SystemCatalog::open(&catalog_path) {
+            Ok(catalog) => match catalog.load_wal_tombstones() {
+                Ok(persisted) => {
+                    if !persisted.is_empty() {
+                        info!(
+                            persisted = persisted.len(),
+                            in_wal = set.len(),
+                            "merging persisted collection tombstones into replay set"
+                        );
+                    }
+                    set.extend(persisted);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "failed to load _system.wal_tombstones at startup — \
+                         replay will see WAL-extracted tombstones only"
+                    );
+                }
+            },
+            Err(e) => {
+                // Not fatal: the catalog is opened for real by SharedState::open
+                // below. If that fails the process exits there. If it succeeds
+                // here but briefly, we pick up persisted tombstones; if it
+                // fails here, we fall back to WAL-extracted only.
+                tracing::warn!(
+                    error = %e,
+                    "could not open system catalog to load persisted WAL tombstones — \
+                     falling back to WAL-extracted set"
+                );
+            }
+        }
+        set
+    };
+
     // Create SPSC bridge: Dispatcher (Control Plane) + CoreChannelDataSide (Data Plane).
     let num_cores = config.data_plane_cores;
     let (mut dispatcher, data_sides) = Dispatcher::new(num_cores, 1024);
@@ -232,6 +281,7 @@ async fn main() -> anyhow::Result<()> {
             data_side.response_tx,
             &config.data_dir,
             Arc::clone(&wal_records),
+            replay_tombstones.clone(),
             num_cores,
             compaction_cfg.clone(),
             Some(Arc::clone(&system_metrics)),
