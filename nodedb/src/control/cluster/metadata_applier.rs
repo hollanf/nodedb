@@ -245,7 +245,9 @@ impl MetadataCommitApplier {
             // and we still record the DDL — the user fields are empty.
             emit_ddl_audit(&shared, raft_index, &stamped, audit.as_ref());
 
-            catalog_entry::post_apply::spawn_post_apply_async_side_effects(stamped, shared);
+            catalog_entry::post_apply::spawn_post_apply_async_side_effects(
+                stamped, shared, raft_index,
+            );
         }
     }
 }
@@ -385,6 +387,7 @@ fn describe_entry(e: &catalog_entry::CatalogEntry) -> (String, u64, String) {
             format!("{:?}", c.modification_hlc),
         ),
         E::DeactivateCollection { name, .. } => (name.clone(), 0, String::new()),
+        E::PurgeCollection { name, .. } => (name.clone(), 0, String::new()),
         E::PutSequence(s) => (
             s.name.clone(),
             s.descriptor_version,

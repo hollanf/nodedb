@@ -119,6 +119,7 @@ pub fn stamp(entry: CatalogEntry, clock: &HlcClock, catalog: &SystemCatalog) -> 
         // unchanged. Exhaustive match forces explicit handling of
         // any future variant added to `CatalogEntry`.
         entry @ (CatalogEntry::DeactivateCollection { .. }
+        | CatalogEntry::PurgeCollection { .. }
         | CatalogEntry::DeleteFunction { .. }
         | CatalogEntry::DeleteProcedure { .. }
         | CatalogEntry::DeleteTrigger { .. }

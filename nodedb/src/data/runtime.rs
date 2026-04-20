@@ -220,10 +220,16 @@ pub fn spawn_core(
             core.load_sparse_vector_checkpoints();
 
             // 4. Replay WAL records for crash recovery.
+            //
+            // Build the collection-tombstone set once from the whole record
+            // stream. Every per-engine replay method consults it to skip
+            // any record whose `(tenant_id, collection)` pair was later
+            // hard-deleted — otherwise purged data would resurrect.
             if !wal_records.is_empty() {
-                core.replay_vector_wal(&wal_records, num_cores);
-                core.replay_kv_wal(&wal_records, num_cores);
-                core.replay_timeseries_wal(&wal_records, num_cores);
+                let tombstones = nodedb_wal::extract_tombstones(&wal_records);
+                core.replay_vector_wal(&wal_records, num_cores, &tombstones);
+                core.replay_kv_wal(&wal_records, num_cores, &tombstones);
+                core.replay_timeseries_wal(&wal_records, num_cores, &tombstones);
             }
 
             info!(core_id, "data plane core started (eventfd-driven)");

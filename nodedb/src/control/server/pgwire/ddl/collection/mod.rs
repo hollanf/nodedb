@@ -11,6 +11,8 @@ pub mod index;
 pub(super) mod index_fanout;
 pub mod insert;
 pub(super) mod insert_parse;
+pub mod purge;
+pub mod undrop;
 pub mod upsert;
 pub mod vector_metadata;
 
@@ -24,6 +26,7 @@ pub use describe::{describe_collection, show_collections};
 pub use drop::drop_collection;
 pub use index::{create_index, drop_index, show_indexes};
 pub use insert::insert_document;
+pub use undrop::undrop_collection;
 pub use upsert::upsert_document;
 pub use vector_metadata::{
     handle_set_vector_metadata, handle_show_vector_models, handle_vector_metadata_query,

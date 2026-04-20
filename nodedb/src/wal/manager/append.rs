@@ -94,4 +94,28 @@ impl WalManager {
     pub fn append_log_batch(&self, tid: TenantId, vs: VShardId, p: &[u8]) -> crate::Result<Lsn> {
         self.append_record(RecordType::LogBatch, tid, vs, p)
     }
+
+    /// Append a `CollectionTombstoned` record. Any subsequent replay
+    /// that extracts this record will filter prior writes for
+    /// `(tid, collection)` whose LSN is less than `purge_lsn`.
+    ///
+    /// `vshard_id` of `0` is conventional — tombstones are tenant-level
+    /// metadata, not sharded user data. Replay filters on
+    /// `(tenant_id, collection)` pair alone.
+    pub fn append_collection_tombstone(
+        &self,
+        tid: TenantId,
+        collection: &str,
+        purge_lsn: u64,
+    ) -> crate::Result<Lsn> {
+        let payload = nodedb_wal::CollectionTombstonePayload::new(collection, purge_lsn)
+            .to_bytes()
+            .map_err(crate::Error::Wal)?;
+        self.append_record(
+            RecordType::CollectionTombstoned,
+            tid,
+            VShardId::new(0),
+            &payload,
+        )
+    }
 }

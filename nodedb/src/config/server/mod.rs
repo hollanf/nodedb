@@ -3,6 +3,7 @@ mod cluster;
 mod cold_storage;
 mod env;
 mod observability;
+mod retention;
 mod tls;
 
 pub use checkpoint::CheckpointSettings;
@@ -13,6 +14,7 @@ pub use observability::{
     ObservabilityConfig, OtlpConfig, OtlpExportConfig, OtlpReceiverConfig, PromqlConfig,
     apply_observability_env, validate_feature_availability,
 };
+pub use retention::RetentionSettings;
 pub use tls::{EncryptionSettings, TlsSettings};
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -122,6 +124,12 @@ pub struct ServerConfig {
     #[serde(default)]
     pub checkpoint: CheckpointSettings,
 
+    /// Collection-lifecycle retention settings. Drives when the
+    /// Event-Plane collection-GC sweeper hard-deletes a soft-deleted
+    /// collection, and how often it evaluates candidates.
+    #[serde(default)]
+    pub retention: RetentionSettings,
+
     /// Cluster mode settings. When present, the node participates in a
     /// distributed cluster via Multi-Raft consensus over QUIC transport.
     /// When absent, runs in single-node mode (default).
@@ -168,6 +176,7 @@ impl Default for ServerConfig {
             encryption: None,
             log_format: "text".into(),
             checkpoint: CheckpointSettings::default(),
+            retention: RetentionSettings::default(),
             cluster: None,
             cold_storage: None,
             tuning: TuningConfig::default(),

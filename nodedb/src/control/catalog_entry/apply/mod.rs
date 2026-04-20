@@ -71,6 +71,9 @@ fn apply_to_inner(entry: &CatalogEntry, catalog: &SystemCatalog) {
         CatalogEntry::DeactivateCollection { tenant_id, name } => {
             collection::deactivate(*tenant_id, name, catalog)
         }
+        CatalogEntry::PurgeCollection { tenant_id, name } => {
+            collection::purge(*tenant_id, name, catalog)
+        }
         CatalogEntry::PutSequence(stored) => sequence::put(stored, catalog),
         CatalogEntry::DeleteSequence { tenant_id, name } => {
             sequence::delete(*tenant_id, name, catalog)

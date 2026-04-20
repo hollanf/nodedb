@@ -31,6 +31,7 @@ mod timeseries_gap_fill;
 pub mod timeseries_wal;
 pub mod transaction;
 pub mod truncate;
+pub mod unregister_collection;
 pub mod upsert;
 pub mod vector;
 pub mod vector_lifecycle;

@@ -128,6 +128,9 @@ impl SystemCatalog {
             let _ = write_txn
                 .open_table(CHECKPOINTS)
                 .map_err(|e| catalog_err("init checkpoints table", e))?;
+            let _ = write_txn
+                .open_table(WAL_TOMBSTONES)
+                .map_err(|e| catalog_err("init wal_tombstones table", e))?;
         }
         write_txn
             .commit()

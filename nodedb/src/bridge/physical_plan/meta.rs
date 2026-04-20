@@ -75,6 +75,29 @@ pub enum MetaOp {
     /// Idempotent: safe to re-run after a crash.
     PurgeTenant { tenant_id: u32 },
 
+    /// Purge a single collection across every engine on this core.
+    ///
+    /// Runs the per-collection equivalent of `PurgeTenant`: each
+    /// engine (columnar, vector, FTS, spatial, document/strict/kv,
+    /// graph, CRDT, timeseries) reclaims its L1 segment files,
+    /// memtables, in-flight compactions, and snapshot references
+    /// for this one collection, then a WAL `CollectionTombstoned`
+    /// record is appended so replay after purge does not resurrect
+    /// rows. The quiesce-drain primitive (see `bridge::quiesce`) is
+    /// invoked first so in-flight scans complete before file unlink.
+    ///
+    /// `purge_lsn` is the metadata-raft commit LSN at which the
+    /// `PurgeCollection` entry committed; used by the WAL tombstone
+    /// filter and surfaced in the audit trail.
+    ///
+    /// Idempotent: re-running after partial completion picks up
+    /// where the previous run left off.
+    UnregisterCollection {
+        tenant_id: u32,
+        name: String,
+        purge_lsn: u64,
+    },
+
     /// Enforce retention on a timeseries collection: drop segments older than
     /// the cutoff. Called by the retention policy enforcement loop.
     EnforceTimeseriesRetention { collection: String, max_age_ms: i64 },

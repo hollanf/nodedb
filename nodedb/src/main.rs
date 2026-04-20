@@ -560,6 +560,20 @@ async fn main() -> anyhow::Result<()> {
     );
     info!(num_cores, "event plane running");
 
+    // Collection hard-delete retention GC: evaluates soft-deleted
+    // collections against the per-tenant / system retention window
+    // each tick and proposes `PurgeCollection` for expired entries.
+    // Kept alive for process lifetime.
+    let _collection_gc = nodedb::event::collection_gc::spawn_collection_gc(
+        Arc::clone(&shared),
+        config.retention.clone(),
+    );
+    info!(
+        retention_days = config.retention.deactivated_collection_retention_days,
+        sweep_interval_secs = config.retention.gc_sweep_interval_secs,
+        "collection-gc sweeper running"
+    );
+
     // Tenant rate counter reset (1-second timer).
     let shared_rate = Arc::clone(&shared);
     nodedb::control::shutdown::spawn_loop(

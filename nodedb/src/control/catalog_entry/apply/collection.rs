@@ -23,6 +23,37 @@ pub fn put(stored: &StoredCollection, catalog: &SystemCatalog) {
     );
 }
 
+pub fn purge(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
+    // Hard delete of the primary StoredCollection row. Symmetric
+    // with `apply/function.rs::delete` and the other hard-delete
+    // peers: remove the primary, then remove the owner row.
+    //
+    // The two-step DROP → retention-expiry → PURGE flow means the
+    // record may already be absent when this runs (operator-driven
+    // PURGE on a record the GC sweeper already reclaimed). The
+    // `delete_collection` helper is idempotent and returns `false`
+    // in that case, which is fine — we still call
+    // `delete_parent_owner` because the owner row may linger
+    // independently.
+    match catalog.delete_collection(tenant_id, name) {
+        Ok(removed) => {
+            debug!(
+                collection = %name,
+                tenant = tenant_id,
+                removed,
+                "catalog_entry: purge_collection primary row removed"
+            );
+        }
+        Err(e) => warn!(
+            collection = %name,
+            tenant = tenant_id,
+            error = %e,
+            "catalog_entry: purge_collection delete failed"
+        ),
+    }
+    super::owner::delete_parent_owner(object_type::COLLECTION, tenant_id, name, catalog);
+}
+
 pub fn deactivate(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
     match catalog.get_collection(tenant_id, name) {
         Ok(Some(mut stored)) => {

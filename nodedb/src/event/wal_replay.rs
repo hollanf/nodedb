@@ -72,6 +72,11 @@ fn convert_records_to_events(
     let mut events = Vec::new();
     let mut sequence = base_sequence;
 
+    // Collection tombstones shadow any prior write in the same stream.
+    // Extract once, then drop events whose `(tenant, collection, lsn)`
+    // is covered.
+    let tombstones = nodedb_wal::extract_tombstones(records);
+
     for record in records {
         let vshard_id = record.header.vshard_id as usize;
         let target_core = if num_cores > 0 {
@@ -84,6 +89,13 @@ fn convert_records_to_events(
         }
 
         if let Some(event) = record_to_event(record, &mut sequence) {
+            if tombstones.is_tombstoned(
+                event.tenant_id.as_u32(),
+                &event.collection,
+                event.lsn.as_u64(),
+            ) {
+                continue;
+            }
             events.push(event);
         }
     }
@@ -125,6 +137,7 @@ fn record_to_event(record: &WalRecord, sequence: &mut u64) -> Option<WriteEvent>
         | RecordType::LogBatch
         | RecordType::Transaction
         | RecordType::Checkpoint
+        | RecordType::CollectionTombstoned
         | RecordType::Noop => None,
     }
 }

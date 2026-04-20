@@ -40,6 +40,34 @@ pub async fn put_async(stored: StoredCollection, shared: Arc<SharedState>) {
     );
 }
 
+/// Synchronous half of `PurgeCollection` post-apply: remove the
+/// in-memory owner entry + any permission-cache entries keyed on
+/// the purged collection. The primary `StoredCollection` redb row
+/// is already gone at this point (removed by `apply/collection.rs::purge`).
+/// The Data Plane `UnregisterCollection` dispatch is the async half
+/// and lives in `async_dispatch/collection.rs::purge_async`.
+pub fn purge_sync(tenant_id: u32, name: String, shared: Arc<SharedState>) {
+    let owner_removed =
+        shared
+            .permissions
+            .install_replicated_remove_owner("collection", tenant_id, &name);
+    // Permission grants referencing the purged collection are
+    // evicted from the in-memory grant set — stale cached entries
+    // would otherwise outlive the catalog row they reference.
+    // Grant targets for collections are keyed as
+    // "collection:<tenant_id>:<name>" (see grant_target_for_collection
+    // in the pgwire GRANT handler).
+    let grant_target = format!("collection:{tenant_id}:{name}");
+    let grants_removed = shared.permissions.remove_grants_for_target(&grant_target);
+    debug!(
+        collection = %name,
+        tenant = tenant_id,
+        owner_removed,
+        grants_removed,
+        "catalog_entry: PurgeCollection post-apply sync (owner + grants evicted)"
+    );
+}
+
 pub fn deactivate(tenant_id: u32, name: String, _shared: Arc<SharedState>) {
     // Ownership is intentionally preserved on soft-delete. The
     // primary `StoredCollection` record is kept for audit / undrop

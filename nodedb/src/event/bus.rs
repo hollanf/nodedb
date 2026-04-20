@@ -19,7 +19,6 @@ use nodedb_bridge::buffer::{Consumer, Producer, RingBuffer};
 use super::types::WriteEvent;
 
 /// Default ring buffer capacity per core (must be power of two).
-/// 64K entries as specified in the Event Plane checklist.
 const DEFAULT_EVENT_BUS_CAPACITY: usize = 65_536;
 
 /// The producer half given to a Data Plane core.

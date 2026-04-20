@@ -14,6 +14,7 @@
 //! clients that send `WHERE` clauses filter client-side.
 
 pub mod dispatch;
+pub mod dropped_collections;
 pub mod tables;
 
 pub use dispatch::{extract_pg_catalog_table, pg_catalog_schema, try_pg_catalog};

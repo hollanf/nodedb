@@ -11,7 +11,12 @@ impl CoreLoop {
     ///
     /// Records are replayed in LSN order (WAL guarantees this). For batch
     /// inserts, the payload contains multiple vectors in a single record.
-    pub fn replay_vector_wal(&mut self, records: &[nodedb_wal::WalRecord], num_cores: usize) {
+    pub fn replay_vector_wal(
+        &mut self,
+        records: &[nodedb_wal::WalRecord],
+        num_cores: usize,
+        tombstones: &nodedb_wal::TombstoneSet,
+    ) {
         use crate::engine::vector::collection::VectorCollection;
         use crate::engine::vector::hnsw::HnswParams;
         use nodedb_wal::record::RecordType;
@@ -43,11 +48,16 @@ impl CoreLoop {
             }
 
             let tenant_id = record.header.tenant_id;
+            let record_lsn = record.header.lsn;
 
             if is_vector_params {
                 if let Ok((collection, m, ef_construction, metric)) =
                     zerompk::from_msgpack::<(String, usize, usize, String)>(&record.payload)
                 {
+                    if tombstones.is_tombstoned(tenant_id, &collection, record_lsn) {
+                        skipped += 1;
+                        continue;
+                    }
                     let index_key = CoreLoop::vector_index_key(tenant_id, &collection, "");
                     use crate::engine::vector::distance::DistanceMetric;
                     let metric_enum = match metric.as_str() {
@@ -86,6 +96,10 @@ impl CoreLoop {
                         &record.payload,
                     )
                 {
+                    if tombstones.is_tombstoned(tenant_id, &collection, record_lsn) {
+                        skipped += 1;
+                        continue;
+                    }
                     if vector.len() != dim {
                         tracing::warn!(
                             core = self.core_id,
@@ -132,6 +146,10 @@ impl CoreLoop {
                 } else if let Ok((collection, vector, dim)) =
                     zerompk::from_msgpack::<(String, Vec<f32>, usize)>(&record.payload)
                 {
+                    if tombstones.is_tombstoned(tenant_id, &collection, record_lsn) {
+                        skipped += 1;
+                        continue;
+                    }
                     if vector.len() != dim {
                         tracing::warn!(
                             core = self.core_id,
@@ -174,6 +192,10 @@ impl CoreLoop {
                 } else if let Ok((collection, vectors, dim)) =
                     zerompk::from_msgpack::<(String, Vec<Vec<f32>>, usize)>(&record.payload)
                 {
+                    if tombstones.is_tombstoned(tenant_id, &collection, record_lsn) {
+                        skipped += 1;
+                        continue;
+                    }
                     let index_key = CoreLoop::vector_index_key(tenant_id, &collection, "");
                     let params = self
                         .vector_params
@@ -200,6 +222,10 @@ impl CoreLoop {
                 && let Ok((collection, vector_id)) =
                     zerompk::from_msgpack::<(String, u32)>(&record.payload)
             {
+                if tombstones.is_tombstoned(tenant_id, &collection, record_lsn) {
+                    skipped += 1;
+                    continue;
+                }
                 let index_key = CoreLoop::vector_index_key(tenant_id, &collection, "");
                 if let Some(index) = self.vector_collections.get_mut(&index_key) {
                     index.delete(vector_id);
@@ -228,7 +254,12 @@ impl CoreLoop {
     ///
     /// Called once during startup, after `open()` but before the event loop.
     /// Each core only replays records routed to its vShard.
-    pub fn replay_kv_wal(&mut self, records: &[nodedb_wal::WalRecord], num_cores: usize) {
+    pub fn replay_kv_wal(
+        &mut self,
+        records: &[nodedb_wal::WalRecord],
+        num_cores: usize,
+        tombstones: &nodedb_wal::TombstoneSet,
+    ) {
         use nodedb_wal::record::RecordType;
 
         let mut puts = 0usize;
@@ -257,6 +288,7 @@ impl CoreLoop {
             }
 
             let tenant_id = record.header.tenant_id;
+            let record_lsn = record.header.lsn;
 
             // Try to detect KV records by discriminator prefix in the payload.
             if is_put {
@@ -265,6 +297,9 @@ impl CoreLoop {
                     zerompk::from_msgpack::<(&str, String, Vec<u8>, Vec<u8>, u64)>(&record.payload)
                     && disc == "kv_put"
                 {
+                    if tombstones.is_tombstoned(tenant_id, &collection, record_lsn) {
+                        continue;
+                    }
                     self.kv_engine
                         .put(tenant_id, &collection, &key, &value, ttl_ms, now_ms);
                     puts += 1;
@@ -278,6 +313,9 @@ impl CoreLoop {
                     )
                     && disc == "kv_batch_put"
                 {
+                    if tombstones.is_tombstoned(tenant_id, &collection, record_lsn) {
+                        continue;
+                    }
                     self.kv_engine
                         .batch_put(tenant_id, &collection, &entries, ttl_ms, now_ms);
                     puts += entries.len();
@@ -296,6 +334,9 @@ impl CoreLoop {
                     zerompk::from_msgpack::<(&str, String, Vec<Vec<u8>>)>(&record.payload)
                     && disc == "kv_delete"
                 {
+                    if tombstones.is_tombstoned(tenant_id, &collection, record_lsn) {
+                        continue;
+                    }
                     self.kv_engine.delete(tenant_id, &collection, &keys, now_ms);
                     deletes += keys.len();
                     continue;
@@ -306,6 +347,9 @@ impl CoreLoop {
                     zerompk::from_msgpack::<(&str, String)>(&record.payload)
                     && disc == "kv_truncate"
                 {
+                    if tombstones.is_tombstoned(tenant_id, &collection, record_lsn) {
+                        continue;
+                    }
                     self.kv_engine.truncate(tenant_id, &collection);
                     deletes += 1;
                 }

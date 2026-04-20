@@ -47,6 +47,17 @@ pub(super) const OWNERS: TableDefinition<&str, &[u8]> = TableDefinition::new("_s
 pub(super) const COLLECTIONS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.collections");
 
+/// Table: `(tenant_id, collection_name)` -> `purge_lsn` (u64 LE).
+///
+/// Holds the canonical collection-tombstone set used by WAL replay to
+/// shadow writes that precede a hard-delete. Persisted here (rather
+/// than only on the WAL) so startup replay is O(1) instead of requiring
+/// a full segment scan to rebuild the set. Entries are GC'd by
+/// `delete_wal_tombstones_before_lsn` when all segments referencing
+/// them have been truncated past retention.
+pub(super) const WAL_TOMBSTONES: TableDefinition<(u32, &str), u64> =
+    TableDefinition::new("_system.wal_tombstones");
+
 /// Table: "{tenant_id}:{name}" -> MessagePack-serialized materialized view metadata.
 pub(super) const MATERIALIZED_VIEWS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.materialized_views");

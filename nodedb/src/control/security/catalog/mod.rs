@@ -32,6 +32,7 @@ pub mod triggers;
 pub mod types;
 pub mod users;
 pub mod vector_model;
+pub mod wal_tombstones;
 
 pub use auth_types::{
     StoredApiKey, StoredAuditEntry, StoredAuthUser, StoredBlacklistEntry, StoredOwner,

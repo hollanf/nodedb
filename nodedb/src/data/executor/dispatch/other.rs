@@ -298,6 +298,12 @@ impl CoreLoop {
                 self.execute_purge_tenant(task, *tenant_id)
             }
 
+            PhysicalPlan::Meta(MetaOp::UnregisterCollection {
+                tenant_id,
+                name,
+                purge_lsn,
+            }) => self.execute_unregister_collection(task, *tenant_id, name, *purge_lsn),
+
             PhysicalPlan::Meta(MetaOp::EnforceTimeseriesRetention {
                 collection,
                 max_age_ms,

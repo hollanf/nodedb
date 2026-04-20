@@ -2,6 +2,7 @@ pub mod alert;
 pub mod budget;
 pub mod bus;
 pub mod cdc;
+pub mod collection_gc;
 pub mod consumer;
 pub mod consumer_helpers;
 pub mod crdt_sync;

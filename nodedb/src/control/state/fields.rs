@@ -33,6 +33,15 @@ pub struct SharedState {
     /// Write-ahead log for durability.
     pub wal: Arc<WalManager>,
 
+    /// Collection-scoped scan quiesce registry. Before unlinking on-disk
+    /// files during `PurgeCollection`, `purge_async` calls
+    /// `begin_drain` + `wait_until_drained` against this registry so
+    /// every in-flight scan finishes before the reclaim handler runs.
+    /// Scan handlers bump the refcount via `try_start_scan` — new scans
+    /// against a draining collection are refused with
+    /// `NodeDbError::collection_draining`.
+    pub quiesce: Arc<crate::bridge::quiesce::CollectionQuiesce>,
+
     /// Credential store for user authentication.
     pub credentials: Arc<CredentialStore>,
 

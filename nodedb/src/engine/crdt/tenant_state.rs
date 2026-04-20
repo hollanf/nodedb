@@ -123,6 +123,20 @@ impl TenantCrdtEngine {
         self.validator.dlq().len()
     }
 
+    /// Purge all CRDT state for a single collection.
+    ///
+    /// Clears every row in the loro map for this collection and removes
+    /// the collection's conflict-resolution policy. Returns the number of
+    /// rows that were removed. Idempotent.
+    pub fn purge_collection(&mut self, collection: &str) -> crate::Result<usize> {
+        let removed = self
+            .state
+            .clear_collection(collection)
+            .map_err(crate::Error::Crdt)?;
+        self.validator.policies_mut().remove(collection);
+        Ok(removed)
+    }
+
     /// Check if a row exists in a collection.
     pub fn row_exists(&self, collection: &str, row_id: &str) -> bool {
         self.state.row_exists(collection, row_id)

@@ -69,6 +69,7 @@ impl ErrorCode {
     // Read path (1100–1199)
     pub const COLLECTION_NOT_FOUND: Self = Self(1100);
     pub const DOCUMENT_NOT_FOUND: Self = Self(1101);
+    pub const COLLECTION_DRAINING: Self = Self(1102);
 
     // Query (1200–1299)
     pub const PLAN_ERROR: Self = Self(1200);
@@ -193,6 +194,9 @@ pub enum ErrorDetails {
     DocumentNotFound {
         collection: String,
         document_id: String,
+    },
+    CollectionDraining {
+        collection: String,
     },
 
     // Query
@@ -603,6 +607,22 @@ impl NodeDbError {
             code: ErrorCode::COLLECTION_NOT_FOUND,
             message: format!("collection '{collection}' not found"),
             details: ErrorDetails::CollectionNotFound { collection },
+            cause: None,
+        }
+    }
+
+    /// Collection is mid-purge; new scans are refused until the purge
+    /// ack. Distinct from `collection_not_found` so clients can
+    /// differentiate "try again in a moment" from "does not exist".
+    pub fn collection_draining(collection: impl Into<String>) -> Self {
+        let collection = collection.into();
+        Self {
+            code: ErrorCode::COLLECTION_DRAINING,
+            message: format!(
+                "collection '{collection}' is draining for hard-delete; \
+                 retry after the purge completes"
+            ),
+            details: ErrorDetails::CollectionDraining { collection },
             cause: None,
         }
     }

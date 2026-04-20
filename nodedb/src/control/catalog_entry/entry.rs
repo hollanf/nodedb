@@ -28,10 +28,27 @@ pub enum CatalogEntry {
     /// append_only toggles, materialized_sum bindings).
     PutCollection(Box<StoredCollection>),
     /// Mark a collection as `is_active = false`. Record is
-    /// preserved for audit + undrop. Metadata-only — see
-    /// `resource/collection-hard-delete-checklist.md` for the
-    /// known gap (no storage reclamation, no UNDROP wired).
+    /// preserved for audit + undrop. The soft-delete step in the
+    /// two-step DROP → retention-expiry → PURGE flow.
     DeactivateCollection { tenant_id: u32, name: String },
+    /// Hard-delete a collection: remove the `StoredCollection`
+    /// row + owner row + cascade-dependent catalog entries, and
+    /// dispatch `MetaOp::UnregisterCollection` to every node's Data
+    /// Plane so per-engine storage is reclaimed.
+    ///
+    /// Reached by three paths:
+    ///
+    /// 1. `DROP COLLECTION ... PURGE` (immediate, operator-requested,
+    ///    superuser / tenant_admin only).
+    /// 2. `CollectionGC` sweeper on the Event Plane, after the
+    ///    configured `deactivated_collection_retention_days` window
+    ///    has elapsed since `DeactivateCollection`.
+    /// 3. `SELECT _system.purge_collection(...)` operator function.
+    ///
+    /// Preserves the two-step safety net: soft-deleted collections
+    /// are UNDROP-able until retention expires; after purge the
+    /// record is gone and data is unrecoverable (except from backup).
+    PurgeCollection { tenant_id: u32, name: String },
 
     // ── Sequence ───────────────────────────────────────────────────
     /// Upsert a sequence record. Used by CREATE SEQUENCE and ALTER
@@ -195,6 +212,7 @@ impl CatalogEntry {
         match self {
             Self::PutCollection(_) => "put_collection",
             Self::DeactivateCollection { .. } => "deactivate_collection",
+            Self::PurgeCollection { .. } => "purge_collection",
             Self::PutSequence(_) => "put_sequence",
             Self::DeleteSequence { .. } => "delete_sequence",
             Self::PutSequenceState(_) => "put_sequence_state",
