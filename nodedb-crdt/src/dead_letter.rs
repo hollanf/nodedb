@@ -182,6 +182,17 @@ impl DeadLetterQueue {
         }
     }
 
+    /// Drop every entry for `(tenant_id, collection)`. Returns the
+    /// number of entries removed. Called during collection hard-delete
+    /// so stale rejected deltas don't resurface if a collection of the
+    /// same name is recreated inside the retention window's shadow.
+    pub fn purge_collection(&mut self, tenant_id: u32, collection: &str) -> usize {
+        let before = self.entries.len();
+        self.entries
+            .retain(|e| !(e.tenant_id == tenant_id && e.collection == collection));
+        before - self.entries.len()
+    }
+
     /// Drain all entries for a specific peer.
     pub fn drain_peer(&mut self, peer_id: u64) -> Vec<DeadLetter> {
         let mut drained = Vec::new();
@@ -270,6 +281,56 @@ mod tests {
 
         let err = dlq.enqueue(3, 0, 0, vec![], &c, "r3".into(), hint);
         assert!(matches!(err, Err(CrdtError::DlqFull { .. })));
+    }
+
+    #[test]
+    fn purge_collection_drops_only_matching_entries() {
+        let mut dlq = DeadLetterQueue::new(10);
+        let users_c = Constraint {
+            name: "users_email_unique".into(),
+            collection: "users".into(),
+            field: "email".into(),
+            kind: ConstraintKind::Unique,
+        };
+        let orders_c = Constraint {
+            name: "orders_sku_unique".into(),
+            collection: "orders".into(),
+            field: "sku".into(),
+            kind: ConstraintKind::Unique,
+        };
+        let hint = CompensationHint::ManualIntervention { reason: "t".into() };
+
+        // Two entries for tenant 1 / users, one for tenant 1 / orders,
+        // one for tenant 2 / users — only the first two should be
+        // dropped by `purge_collection(1, "users")`.
+        dlq.enqueue(10, 0, 1, vec![], &users_c, "a".into(), hint.clone())
+            .unwrap();
+        dlq.enqueue(11, 0, 1, vec![], &users_c, "b".into(), hint.clone())
+            .unwrap();
+        dlq.enqueue(12, 0, 1, vec![], &orders_c, "c".into(), hint.clone())
+            .unwrap();
+        dlq.enqueue(13, 0, 2, vec![], &users_c, "d".into(), hint.clone())
+            .unwrap();
+
+        let removed = dlq.purge_collection(1, "users");
+        assert_eq!(removed, 2);
+        assert_eq!(dlq.len(), 2);
+
+        // Idempotent — repeated call is a no-op.
+        assert_eq!(dlq.purge_collection(1, "users"), 0);
+
+        // Remaining entries are the orders row (t1) and users row (t2).
+        let remaining: Vec<_> = (0..dlq.len()).map(|_| dlq.dequeue().unwrap()).collect();
+        assert!(
+            remaining
+                .iter()
+                .any(|d| d.collection == "orders" && d.tenant_id == 1)
+        );
+        assert!(
+            remaining
+                .iter()
+                .any(|d| d.collection == "users" && d.tenant_id == 2)
+        );
     }
 
     #[test]

@@ -125,15 +125,33 @@ impl TenantCrdtEngine {
 
     /// Purge all CRDT state for a single collection.
     ///
-    /// Clears every row in the loro map for this collection and removes
-    /// the collection's conflict-resolution policy. Returns the number of
-    /// rows that were removed. Idempotent.
+    /// Three things happen:
+    /// 1. Every row in the loro map for this collection is cleared.
+    /// 2. The collection's conflict-resolution policy is removed from
+    ///    the policy registry.
+    /// 3. Any dead-letter entries (rejected deltas) scoped to this
+    ///    collection are dropped — otherwise a re-created collection
+    ///    of the same name would inherit unrelated rejected deltas.
+    ///
+    /// Returns the number of CRDT rows removed. Idempotent.
     pub fn purge_collection(&mut self, collection: &str) -> crate::Result<usize> {
         let removed = self
             .state
             .clear_collection(collection)
             .map_err(crate::Error::Crdt)?;
         self.validator.policies_mut().remove(collection);
+        let dlq_dropped = self
+            .validator
+            .dlq_mut()
+            .purge_collection(self.tenant_id.as_u32(), collection);
+        if dlq_dropped > 0 {
+            tracing::debug!(
+                tenant = self.tenant_id.as_u32(),
+                collection,
+                dlq_dropped,
+                "crdt: dropped DLQ entries scoped to purged collection"
+            );
+        }
         Ok(removed)
     }
 
