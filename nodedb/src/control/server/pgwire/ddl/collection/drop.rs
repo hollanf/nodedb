@@ -85,8 +85,19 @@ pub fn drop_collection(
         Vec::new()
     };
 
-    if !dependents.is_empty() && !flags.cascade {
-        let deps_list: Vec<String> = dependents
+    // Implicit SERIAL/BIGSERIAL sequences (`{collection}_{field}_seq`)
+    // are auto-dropped by the post-propose sweep below and therefore
+    // never become orphans — they don't block a bare DROP. Every
+    // other dependent kind (triggers, RLS policies, MVs, change
+    // streams, schedules) CAN be orphaned by a bare DROP, so those
+    // are the ones that gate the rejection.
+    let blocking_dependents: Vec<&crate::control::cascade::Dependent> = dependents
+        .iter()
+        .filter(|d| d.kind != crate::control::cascade::DependentKind::Sequence)
+        .collect();
+
+    if !blocking_dependents.is_empty() && !flags.cascade {
+        let deps_list: Vec<String> = blocking_dependents
             .iter()
             .map(|d| format!("{}:{}", d.kind.as_str(), d.name))
             .collect();
@@ -96,7 +107,7 @@ pub fn drop_collection(
                 "cannot drop collection '{name}': {} dependent object(s) exist ({}); \
                  drop them individually or retry with CASCADE (batched-cascade propose \
                  not yet implemented — CASCADE currently rejected to avoid orphaned rows)",
-                dependents.len(),
+                blocking_dependents.len(),
                 deps_list.join(", ")
             ),
         ));
