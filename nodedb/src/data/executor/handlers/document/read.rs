@@ -156,6 +156,12 @@ impl CoreLoop {
             "document scan"
         );
 
+        // Scan-quiesce gate.
+        let _scan_guard = match self.acquire_scan_guard(task, tid, collection) {
+            Ok(g) => g,
+            Err(resp) => return resp,
+        };
+
         // Parse window function specs.
         let window_specs: Vec<crate::bridge::window_func::WindowFuncSpec> =
             if window_functions_bytes.is_empty() {

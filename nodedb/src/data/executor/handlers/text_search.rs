@@ -27,6 +27,12 @@ impl CoreLoop {
         let tenant_id = TenantId::new(tid);
         debug!(core = self.core_id, tid, %collection, %query, top_k, fuzzy, "text search");
 
+        // Scan-quiesce gate.
+        let _scan_guard = match self.acquire_scan_guard(task, tid, collection) {
+            Ok(g) => g,
+            Err(resp) => return resp,
+        };
+
         // Fetch extra candidates when RLS is active.
         let fetch_k = if rls_filters.is_empty() {
             top_k
@@ -108,6 +114,12 @@ impl CoreLoop {
             vector_weight,
             "hybrid search"
         );
+
+        // Scan-quiesce gate.
+        let _scan_guard = match self.acquire_scan_guard(task, tid, collection) {
+            Ok(g) => g,
+            Err(resp) => return resp,
+        };
 
         let weight = if vector_weight <= 0.0 || vector_weight >= 1.0 {
             DEFAULT_VECTOR_WEIGHT

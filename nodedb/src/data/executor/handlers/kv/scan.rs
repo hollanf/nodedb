@@ -20,6 +20,15 @@ impl CoreLoop {
         filters: &[u8],
     ) -> Response {
         debug!(core = self.core_id, %collection, count, "kv scan");
+
+        // Scan-quiesce gate: refuse new scans against a draining
+        // collection so the purge handler can unlink on-disk files
+        // without racing an in-flight reader.
+        let _scan_guard = match self.acquire_scan_guard(task, tid, collection) {
+            Ok(g) => g,
+            Err(resp) => return resp,
+        };
+
         let now_ms = current_ms();
 
         // Try to extract a single equality filter for index pushdown.

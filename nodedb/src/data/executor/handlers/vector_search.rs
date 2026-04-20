@@ -89,6 +89,13 @@ impl CoreLoop {
             rls_filters,
         } = params;
         debug!(core = self.core_id, %collection, top_k, ef_search, "vector search");
+
+        // Scan-quiesce gate.
+        let _scan_guard = match self.acquire_scan_guard(task, tid, collection) {
+            Ok(g) => g,
+            Err(resp) => return resp,
+        };
+
         let index_key = CoreLoop::vector_index_key(tid, collection, field_name);
 
         // Check for IVF-PQ index first.

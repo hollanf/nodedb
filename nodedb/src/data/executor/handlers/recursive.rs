@@ -35,6 +35,12 @@ impl CoreLoop {
         distinct: bool,
         limit: usize,
     ) -> Response {
+        // Scan-quiesce gate.
+        let _scan_guard = match self.acquire_scan_guard(task, tid, collection) {
+            Ok(g) => g,
+            Err(resp) => return resp,
+        };
+
         let scan_limit = self.query_tuning.aggregate_scan_cap;
 
         // Parse filter predicates.

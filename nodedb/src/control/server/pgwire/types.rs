@@ -164,6 +164,13 @@ pub fn error_code_to_sqlstate(code: &ErrorCode) -> (&'static str, &'static str, 
             "54001",
             format!("rate limit exceeded for {gate}, retry after {retry_after_ms}ms"),
         ),
+        ErrorCode::CollectionDraining { collection } => (
+            "ERROR",
+            "57P03",
+            format!(
+                "collection '{collection}' is draining for hard-delete; retry after purge completes"
+            ),
+        ),
         ErrorCode::Internal { detail } => ("ERROR", "XX000", detail.clone()),
     }
 }

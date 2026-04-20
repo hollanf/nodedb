@@ -41,6 +41,13 @@ impl CoreLoop {
             has_filters,
             computed_columns: computed_columns_bytes,
         } = params;
+
+        // Scan-quiesce gate.
+        let _scan_guard = match self.acquire_scan_guard(task, tid.as_u32(), collection) {
+            Ok(g) => g,
+            Err(resp) => return resp,
+        };
+
         let key = (tid, collection.to_string());
         let mut results: Vec<rmpv::Value> = Vec::new();
 

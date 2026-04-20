@@ -47,6 +47,12 @@ impl CoreLoop {
             "spatial scan"
         );
 
+        // Scan-quiesce gate.
+        let _scan_guard = match self.acquire_scan_guard(task, tid, collection) {
+            Ok(g) => g,
+            Err(resp) => return resp,
+        };
+
         // 1. Parse query geometry.
         let query_geom: nodedb_types::geometry::Geometry =
             match sonic_rs::from_slice(query_geometry_bytes) {

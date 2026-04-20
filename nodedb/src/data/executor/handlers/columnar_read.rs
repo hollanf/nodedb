@@ -22,6 +22,14 @@ impl CoreLoop {
         _rls_filters: &[u8],
     ) -> Response {
         let limit = if limit == 0 { 1000 } else { limit };
+
+        // Scan-quiesce gate.
+        let _scan_guard =
+            match self.acquire_scan_guard(task, task.request.tenant_id.as_u32(), collection) {
+                Ok(g) => g,
+                Err(resp) => return resp,
+            };
+
         let engine_key = (task.request.tenant_id, collection.to_string());
 
         let engine = match self.columnar_engines.get(&engine_key) {
