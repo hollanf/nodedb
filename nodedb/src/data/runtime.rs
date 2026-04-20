@@ -173,6 +173,7 @@ pub fn spawn_core(
     system_metrics: Option<Arc<crate::control::metrics::SystemMetrics>>,
     event_producer: Option<crate::event::bus::EventProducer>,
     governor: Arc<nodedb_mem::MemoryGovernor>,
+    quiesce: Option<Arc<crate::bridge::quiesce::CollectionQuiesce>>,
 ) -> std::io::Result<(JoinHandle<()>, EventFdNotifier)> {
     let data_dir = data_dir.to_path_buf();
 
@@ -204,6 +205,14 @@ pub fn spawn_core(
             // 2b. Wire Event Plane producer (Data Plane → Event Plane).
             if let Some(ep) = event_producer {
                 core.set_event_producer(ep);
+            }
+
+            // 2b. Wire the shared scan-quiesce registry so scan
+            // handlers can refuse new scans against a draining
+            // collection (prerequisite for the safe hard-delete
+            // unlink ordering).
+            if let Some(q) = quiesce {
+                core.set_quiesce(q);
             }
 
             // 2c. Apply compaction config.

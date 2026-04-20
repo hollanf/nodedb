@@ -231,6 +231,11 @@ pub enum ErrorCode {
     InsufficientBalance { collection: String, detail: String },
     /// Rate limit exceeded for a rate gate / cooldown.
     RateExceeded { gate: String, retry_after_ms: u64 },
+    /// The collection is currently draining for hard-delete. New scans
+    /// are refused until the drain resolves (or is cleared). Maps to
+    /// `NodeDbError::collection_draining` (code 1102) at the
+    /// Control-Plane boundary.
+    CollectionDraining { collection: String },
     /// Internal error (io_uring failure, corruption, etc.)
     Internal { detail: String },
 }

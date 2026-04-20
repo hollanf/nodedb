@@ -239,6 +239,7 @@ impl SharedState {
         catalog_path: &std::path::Path,
         auth_config: &crate::config::auth::AuthConfig,
         tuning: TuningConfig,
+        quiesce: Arc<crate::bridge::quiesce::CollectionQuiesce>,
     ) -> crate::Result<Arc<Self>> {
         let mut credentials = CredentialStore::open(catalog_path)?;
         credentials.set_lockout_policy(
@@ -342,7 +343,7 @@ impl SharedState {
             dispatcher: Mutex::new(dispatcher),
             tracker: RequestTracker::new(),
             wal,
-            quiesce: crate::bridge::quiesce::CollectionQuiesce::new(),
+            quiesce,
             http_client: Arc::new(reqwest::Client::new()),
             credentials: Arc::new(credentials),
             audit: Arc::new(Mutex::new(audit_log)),

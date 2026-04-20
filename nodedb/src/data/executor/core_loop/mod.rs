@@ -258,6 +258,22 @@ pub struct CoreLoop {
     /// Monotonic sequence counter for events emitted by this core.
     /// Incremented on every successful event emission.
     pub(in crate::data::executor) event_sequence: u64,
+
+    /// Shared collection-scoped scan-quiesce registry.
+    ///
+    /// When set, every scan handler on this core calls
+    /// `quiesce.try_start_scan(tenant, collection)` at entry and holds
+    /// the resulting `ScanGuard` across the row stream. A concurrent
+    /// `PurgeCollection` post-apply flow calls `begin_drain` +
+    /// `wait_until_drained` on the same registry, so the unlink pass
+    /// only runs once every in-flight scan has released.
+    ///
+    /// `None` in test / no-cluster bringup paths: callers then skip
+    /// the gate and scan unconditionally (matching pre-quiesce
+    /// behavior). In the server bootstrap path `main.rs` wires the
+    /// shared registry via `set_quiesce` after `SharedState::open`.
+    pub(in crate::data::executor) quiesce:
+        Option<std::sync::Arc<crate::bridge::quiesce::CollectionQuiesce>>,
 }
 
 impl CoreLoop {
@@ -350,11 +366,46 @@ impl CoreLoop {
             metrics: None,
             event_producer: None,
             event_sequence: 0,
+            quiesce: None,
         })
     }
 
     pub fn core_id(&self) -> usize {
         self.core_id
+    }
+
+    /// Install the shared scan-quiesce registry. Called once by the
+    /// server bootstrap in `main.rs` after `SharedState::open`.
+    pub fn set_quiesce(
+        &mut self,
+        quiesce: std::sync::Arc<crate::bridge::quiesce::CollectionQuiesce>,
+    ) {
+        self.quiesce = Some(quiesce);
+    }
+
+    /// Acquire a scan guard for `(tid, collection)`. Returns `Ok(None)`
+    /// if no quiesce registry is installed (e.g. in tests) — callers
+    /// treat that as "scan unconditionally". Returns `Err(Response)`
+    /// carrying a `NodeDbError::collection_draining` error code when
+    /// a drain is in progress against the collection.
+    pub(in crate::data::executor) fn acquire_scan_guard(
+        &self,
+        task: &crate::data::executor::task::ExecutionTask,
+        tid: u32,
+        collection: &str,
+    ) -> Result<Option<crate::bridge::quiesce::ScanGuard>, crate::bridge::envelope::Response> {
+        let Some(q) = self.quiesce.as_ref() else {
+            return Ok(None);
+        };
+        match q.try_start_scan(tid, collection) {
+            Ok(g) => Ok(Some(g)),
+            Err(_) => Err(self.response_error(
+                task,
+                crate::bridge::envelope::ErrorCode::CollectionDraining {
+                    collection: collection.to_string(),
+                },
+            )),
+        }
     }
 
     /// Set the last timeseries ingest timestamp (for testing idle flush).

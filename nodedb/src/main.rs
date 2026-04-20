@@ -270,6 +270,14 @@ async fn main() -> anyhow::Result<()> {
         query: config.tuning.query.clone(),
     };
     let system_metrics = Arc::new(nodedb::control::metrics::SystemMetrics::new());
+
+    // Create the shared scan-quiesce registry up front so every Data
+    // Plane core and (below) `SharedState::open` reference the same
+    // instance. The registry is the integration point between Control
+    // Plane purge-time `begin_drain` and per-core scan-time
+    // `try_start_scan` — splitting it would make drain a no-op.
+    let quiesce = nodedb::bridge::quiesce::CollectionQuiesce::new();
+
     let mut core_handles = Vec::with_capacity(num_cores);
     let mut notifiers = Vec::with_capacity(num_cores);
     for (core_id, (data_side, event_producer)) in
@@ -287,6 +295,7 @@ async fn main() -> anyhow::Result<()> {
             Some(Arc::clone(&system_metrics)),
             Some(event_producer),
             Arc::clone(&governor),
+            Some(Arc::clone(&quiesce)),
         )?;
         core_handles.push(handle);
         notifiers.push((core_id, notifier));
@@ -332,6 +341,7 @@ async fn main() -> anyhow::Result<()> {
         &config.catalog_path(),
         &config.auth,
         config.tuning.clone(),
+        Arc::clone(&quiesce),
     )?;
 
     // Install the real startup gate on SharedState so listeners and health
