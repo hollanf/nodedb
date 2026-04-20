@@ -11,19 +11,21 @@ impl CoreLoop {
         let tid = task.request.tenant_id.as_u32();
         match op {
             GraphOp::EdgePut {
+                collection,
                 src_id,
                 label,
                 dst_id,
                 properties,
-            } => self.execute_edge_put(task, tid, src_id, label, dst_id, properties),
+            } => self.execute_edge_put(task, tid, collection, src_id, label, dst_id, properties),
 
             GraphOp::EdgePutBatch { edges } => self.execute_edge_put_batch(task, tid, edges),
 
             GraphOp::EdgeDelete {
+                collection,
                 src_id,
                 label,
                 dst_id,
-            } => self.execute_edge_delete(task, tid, src_id, label, dst_id),
+            } => self.execute_edge_delete(task, tid, collection, src_id, label, dst_id),
 
             GraphOp::EdgeDeleteBatch { edges } => self.execute_edge_delete_batch(task, tid, edges),
 

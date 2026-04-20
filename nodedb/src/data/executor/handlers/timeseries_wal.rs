@@ -36,7 +36,12 @@ impl CoreLoop {
     /// Called once during startup, after `open()` but before the event loop.
     /// Processes `TimeseriesBatch` records, ignoring records for other vShards.
     /// Uses LSN-based skip: only replays records with LSN > last flushed LSN.
-    pub fn replay_timeseries_wal(&mut self, records: &[nodedb_wal::WalRecord], num_cores: usize) {
+    pub fn replay_timeseries_wal(
+        &mut self,
+        records: &[nodedb_wal::WalRecord],
+        num_cores: usize,
+        tombstones: &nodedb_wal::TombstoneSet,
+    ) {
         use nodedb_wal::record::RecordType;
 
         let mut replayed = 0usize;
@@ -81,6 +86,13 @@ impl CoreLoop {
             let key = (tid_id, raw_collection.clone());
 
             let record_lsn = record.header.lsn;
+
+            // Skip records for collections that were hard-deleted after
+            // this write. Otherwise the purged memtable would resurrect.
+            if tombstones.is_tombstoned(tenant_id, collection, record_lsn) {
+                skipped += 1;
+                continue;
+            }
 
             // Check if this record was already flushed (LSN-based skip).
             if let Some(registry) = self.ts_registries.get(&key) {

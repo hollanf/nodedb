@@ -144,6 +144,26 @@ impl DocCache {
         self.hits + self.misses
     }
 
+    /// Evict all cache entries belonging to a single `(tenant_id, collection)`.
+    pub fn evict_collection(&mut self, tenant_id: u32, collection: &str) {
+        self.entries
+            .retain(|k, _| !(k.tenant_id == tenant_id && k.collection == collection));
+        let mut removed = 0usize;
+        self.order.retain(|k| {
+            if k.tenant_id == tenant_id && k.collection == collection {
+                removed += 1;
+                false
+            } else {
+                true
+            }
+        });
+        if removed > 0
+            && let Some(count) = self.tenant_counts.get_mut(&tenant_id)
+        {
+            *count = count.saturating_sub(removed);
+        }
+    }
+
     /// Evict all cache entries belonging to a specific tenant.
     ///
     /// Used during tenant purge to ensure zero residual cached data.

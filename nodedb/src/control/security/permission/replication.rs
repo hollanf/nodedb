@@ -130,6 +130,22 @@ impl PermissionStore {
         owners.insert(key, stored.owner_username.clone());
     }
 
+    /// Remove every grant whose `target` matches the given string
+    /// from the in-memory set on every node. Used by
+    /// `PurgeCollection` post-apply to evict grants keyed on the
+    /// purged collection so stale cache entries cannot outlive the
+    /// catalog row they reference. Returns the number of grants
+    /// evicted.
+    pub fn remove_grants_for_target(&self, target: &str) -> usize {
+        let mut grants = match self.grants.write() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let before = grants.len();
+        grants.retain(|g| g.target != target);
+        before - grants.len()
+    }
+
     /// Remove a replicated owner record from the in-memory map on
     /// every node. Returns `true` if a record was removed.
     pub fn install_replicated_remove_owner(

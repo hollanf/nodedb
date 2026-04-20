@@ -163,6 +163,11 @@ impl PolicyRegistry {
         self.policies.insert(collection.to_string(), policy);
     }
 
+    /// Remove the policy for a collection. Returns `true` if one existed.
+    pub fn remove(&mut self, collection: &str) -> bool {
+        self.policies.remove(collection).is_some()
+    }
+
     /// Set the policy for a specific constraint kind within a collection.
     pub fn set_for_kind(
         &mut self,

@@ -99,6 +99,23 @@ impl KvEngine {
         self.memory_budget_bytes > 0 && self.total_mem_usage() > self.memory_budget_bytes
     }
 
+    /// Remove the hash table and indexes for a single `(tenant_id, collection)`.
+    ///
+    /// Returns `1` if the table existed and was removed, `0` otherwise.
+    /// Idempotent — safe to re-run after partial completion.
+    pub fn purge_collection(&mut self, tenant_id: u32, collection: &str) -> usize {
+        let tkey = super::engine_helpers::table_key(tenant_id, collection);
+        let mut removed = 0;
+        if self.tables.remove(&tkey).is_some() {
+            removed += 1;
+        }
+        self.indexes.remove(&tkey);
+        self.hash_to_tenant.remove(&tkey);
+        self.hash_to_collection.remove(&tkey);
+        self.sorted_indexes.purge_collection(tenant_id, collection);
+        removed
+    }
+
     /// Remove all hash tables and indexes belonging to a specific tenant.
     ///
     /// Uses the `hash_to_tenant` reverse map to identify which tables belong

@@ -156,6 +156,7 @@ pub async fn create_graph_index(
                 }
                 let shard = VShardId::from_key(parent.as_bytes());
                 edges_by_shard.entry(shard).or_default().push(BatchEdge {
+                    collection: collection.to_string(),
                     src_id: parent.to_string(),
                     label: index_name.clone(),
                     dst_id: child.to_string(),

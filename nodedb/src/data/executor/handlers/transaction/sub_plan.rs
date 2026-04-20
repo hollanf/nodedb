@@ -159,6 +159,7 @@ impl CoreLoop {
             }
 
             PhysicalPlan::Graph(GraphOp::EdgePut {
+                collection,
                 src_id,
                 label,
                 dst_id,
@@ -167,12 +168,25 @@ impl CoreLoop {
                 // Capture old properties for rollback before writing.
                 let old_properties = self
                     .edge_store
-                    .get_edge(nodedb_types::TenantId::new(tid), src_id, label, dst_id)
+                    .get_edge(
+                        nodedb_types::TenantId::new(tid),
+                        collection,
+                        src_id,
+                        label,
+                        dst_id,
+                    )
                     .ok()
                     .flatten();
 
-                let resp =
-                    self.execute_edge_put(&dummy_task, tid, src_id, label, dst_id, properties);
+                let resp = self.execute_edge_put(
+                    &dummy_task,
+                    tid,
+                    collection,
+                    src_id,
+                    label,
+                    dst_id,
+                    properties,
+                );
                 if resp.status == Status::Error {
                     return Err(resp.error_code.unwrap_or(ErrorCode::Internal {
                         detail: "edge put failed".into(),
@@ -180,6 +194,7 @@ impl CoreLoop {
                 }
 
                 undo_log.push(UndoEntry::PutEdge {
+                    collection: collection.clone(),
                     src_id: src_id.clone(),
                     label: label.clone(),
                     dst_id: dst_id.clone(),
@@ -189,6 +204,7 @@ impl CoreLoop {
             }
 
             PhysicalPlan::Graph(GraphOp::EdgeDelete {
+                collection,
                 src_id,
                 label,
                 dst_id,
@@ -196,11 +212,18 @@ impl CoreLoop {
                 // Capture old properties for rollback before deleting.
                 let old_properties = self
                     .edge_store
-                    .get_edge(nodedb_types::TenantId::new(tid), src_id, label, dst_id)
+                    .get_edge(
+                        nodedb_types::TenantId::new(tid),
+                        collection,
+                        src_id,
+                        label,
+                        dst_id,
+                    )
                     .ok()
                     .flatten();
 
-                let resp = self.execute_edge_delete(&dummy_task, tid, src_id, label, dst_id);
+                let resp =
+                    self.execute_edge_delete(&dummy_task, tid, collection, src_id, label, dst_id);
                 if resp.status == Status::Error {
                     return Err(resp.error_code.unwrap_or(ErrorCode::Internal {
                         detail: "edge delete failed".into(),
@@ -210,6 +233,7 @@ impl CoreLoop {
                 // Only track undo if the edge actually existed.
                 if let Some(props) = old_properties {
                     undo_log.push(UndoEntry::DeleteEdge {
+                        collection: collection.clone(),
                         src_id: src_id.clone(),
                         label: label.clone(),
                         dst_id: dst_id.clone(),

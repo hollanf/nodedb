@@ -58,7 +58,7 @@ impl LoopMetrics {
     /// Construct a metrics handle for a loop named `name` (e.g.
     /// `"rebalancer_loop"`). The name appears as the prefix of every
     /// emitted metric; use `snake_case` and include the `_loop`
-    /// suffix to match the checklist vocabulary.
+    /// suffix to match the vocabularies.
     pub fn new(name: &'static str) -> Arc<Self> {
         Arc::new(Self {
             name,

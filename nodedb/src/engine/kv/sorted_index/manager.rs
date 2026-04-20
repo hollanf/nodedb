@@ -99,6 +99,20 @@ impl SortedIndexManager {
         backfilled
     }
 
+    /// Drop every sorted index belonging to `(tenant_id, collection)`.
+    /// Returns the number of indexes removed.
+    pub fn purge_collection(&mut self, tenant_id: u32, collection: &str) -> usize {
+        let tbl_key = super::super::engine_helpers::table_key(tenant_id, collection);
+        let idx_keys = self.collection_indexes.remove(&tbl_key).unwrap_or_default();
+        let mut removed = 0;
+        for idx_key in &idx_keys {
+            if self.indexes.remove(idx_key).is_some() {
+                removed += 1;
+            }
+        }
+        removed
+    }
+
     /// Drop a sorted index. Returns `true` if it existed.
     pub fn drop(&mut self, tenant_id: u32, index_name: &str) -> bool {
         let idx_key = index_key(tenant_id, index_name);

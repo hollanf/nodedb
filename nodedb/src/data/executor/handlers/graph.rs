@@ -28,12 +28,13 @@ impl CoreLoop {
         &mut self,
         task: &ExecutionTask,
         tid: u32,
+        collection: &str,
         src_id: &str,
         label: &str,
         dst_id: &str,
         properties: &[u8],
     ) -> Response {
-        debug!(core = self.core_id, tid, %src_id, %label, %dst_id, "edge put");
+        debug!(core = self.core_id, tid, %collection, %src_id, %label, %dst_id, "edge put");
 
         if self.is_node_deleted(tid, src_id) {
             return self.response_error(
@@ -52,10 +53,14 @@ impl CoreLoop {
             );
         }
 
-        match self
-            .edge_store
-            .put_edge(TenantId::new(tid), src_id, label, dst_id, properties)
-        {
+        match self.edge_store.put_edge(
+            TenantId::new(tid),
+            collection,
+            src_id,
+            label,
+            dst_id,
+            properties,
+        ) {
             Ok(()) => {
                 let weight = crate::engine::graph::csr::extract_weight_from_properties(properties);
                 let partition = self.csr_partition_mut(tid);
@@ -113,6 +118,7 @@ impl CoreLoop {
             }
             match self.edge_store.put_edge(
                 TenantId::new(tid),
+                &edge.collection,
                 &edge.src_id,
                 &edge.label,
                 &edge.dst_id,
@@ -161,6 +167,7 @@ impl CoreLoop {
         for edge in edges {
             let _ = self.edge_store.delete_edge(
                 TenantId::new(tid),
+                &edge.collection,
                 &edge.src_id,
                 &edge.label,
                 &edge.dst_id,
@@ -179,14 +186,15 @@ impl CoreLoop {
         &mut self,
         task: &ExecutionTask,
         tid: u32,
+        collection: &str,
         src_id: &str,
         label: &str,
         dst_id: &str,
     ) -> Response {
-        debug!(core = self.core_id, tid, %src_id, %label, %dst_id, "edge delete");
+        debug!(core = self.core_id, tid, %collection, %src_id, %label, %dst_id, "edge delete");
         match self
             .edge_store
-            .delete_edge(TenantId::new(tid), src_id, label, dst_id)
+            .delete_edge(TenantId::new(tid), collection, src_id, label, dst_id)
         {
             Ok(_) => {
                 let partition = self.csr_partition_mut(tid);

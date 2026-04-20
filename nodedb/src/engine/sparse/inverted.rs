@@ -46,6 +46,14 @@ impl InvertedIndex {
             .map_err(into_result_err)
     }
 
+    /// Purge all inverted index entries for a single `(tenant, collection)`.
+    /// Structural drop via tuple ranges on every FTS table.
+    pub fn purge_collection(&self, tid: TenantId, collection: &str) -> crate::Result<usize> {
+        self.inner
+            .purge_collection(tid.as_u32(), collection)
+            .map_err(into_result_err)
+    }
+
     /// Index a document's text content.
     pub fn index_document(
         &self,

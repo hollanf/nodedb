@@ -303,7 +303,8 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
             | MetaOp::Compact
             | MetaOp::Checkpoint
             | MetaOp::CreateTenantSnapshot { .. }
-            | MetaOp::RestoreTenantSnapshot { .. },
+            | MetaOp::RestoreTenantSnapshot { .. }
+            | MetaOp::UnregisterCollection { .. },
         ) => Permission::Admin,
 
         // KV engine: read operations.
