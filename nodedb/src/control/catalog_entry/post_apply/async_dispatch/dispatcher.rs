@@ -15,10 +15,10 @@ use super::collection;
 
 /// Spawn the async post-apply side effects of `entry`. Runs on
 /// **every node** (leader and followers) so each node's local Data
-/// Plane observes catalog mutations symmetrically. Cluster-global
-/// side effects (audit emit, raft re-proposals) gate on
-/// `shared.is_metadata_leader()` inside individual dispatchers, not
-/// on whether the function runs at all.
+/// Plane observes catalog mutations symmetrically. Any cluster-global
+/// side effect that must not double-fire is the responsibility of
+/// the individual dispatcher — this function never gates on
+/// leadership.
 pub fn spawn_post_apply_async_side_effects(
     entry: CatalogEntry,
     shared: Arc<SharedState>,
