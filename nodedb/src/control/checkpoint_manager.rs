@@ -69,6 +69,7 @@ pub async fn run_checkpoint_cycle(
     num_cores: usize,
     timeout: Duration,
     cold_storage: Option<std::sync::Arc<crate::storage::cold::ColdStorage>>,
+    catalog: Option<&crate::control::security::catalog::SystemCatalog>,
 ) -> Option<Lsn> {
     if num_cores == 0 {
         return None;
@@ -221,6 +222,34 @@ pub async fn run_checkpoint_cycle(
                     "checkpoint complete (no segments to truncate)"
                 );
             }
+
+            // 7. GC the redb tombstone set now that no surviving WAL
+            // segment can carry a write older than `checkpoint_lsn`.
+            // Without this, `_system.wal_tombstones` grows forever and
+            // each startup replay pays to load the accumulated rows.
+            // Strict `<` threshold in the catalog primitive — entries
+            // whose `purge_lsn == checkpoint_lsn` are kept for one more
+            // cycle, matching the WAL's own retention semantics.
+            if let Some(cat) = catalog {
+                match cat.delete_wal_tombstones_before_lsn(global_lsn) {
+                    Ok(removed) if removed > 0 => {
+                        info!(
+                            checkpoint_lsn = global_lsn,
+                            removed, "wal_tombstones GC: reaped rows whose segments are truncated"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        // Non-fatal: a stale tombstone row is replay-safe,
+                        // it just wastes redb space until the next pass.
+                        warn!(
+                            error = %e,
+                            checkpoint_lsn = global_lsn,
+                            "wal_tombstones GC failed; will retry next checkpoint"
+                        );
+                    }
+                }
+            }
         }
         Err(e) => {
             warn!(
@@ -263,6 +292,7 @@ pub fn spawn_checkpoint_task(
                             num_cores,
                             config.core_timeout,
                             shared.cold_storage.clone(),
+                            shared.credentials.catalog().as_ref(),
                         ).await;
                         info!("checkpoint manager stopped");
                         return;
@@ -277,6 +307,7 @@ pub fn spawn_checkpoint_task(
                 num_cores,
                 config.core_timeout,
                 shared.cold_storage.clone(),
+                shared.credentials.catalog().as_ref(),
             )
             .await;
         }
