@@ -49,6 +49,38 @@ pub const DEFAULT_MAX_TOTAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 /// Default cap on a single section body: 16 GiB.
 pub const DEFAULT_MAX_SECTION_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 
+/// Sentinel `origin_node_id` values that mark sections carrying
+/// metadata rather than per-node engine data. The envelope format is
+/// backward-compatible: V1 readers that don't know about these
+/// sentinels still decode the envelope (the bytes just aren't applied
+/// at restore time), but the section CRCs still validate. Restore
+/// handlers recognize the sentinel and route the body to the correct
+/// catalog writer.
+pub const SECTION_ORIGIN_CATALOG_ROWS: u64 = 0xFFFF_FFFF_FFFF_FFF0;
+pub const SECTION_ORIGIN_SOURCE_TOMBSTONES: u64 = 0xFFFF_FFFF_FFFF_FFF1;
+
+/// Single catalog-row entry in a catalog-rows section. The outer
+/// container is `Vec<StoredCollectionBlob>` msgpack-encoded into the
+/// section body. Bytes are the zerompk-encoded `StoredCollection`
+/// from the `nodedb` crate — `nodedb-types` intentionally doesn't
+/// depend on the `nodedb` catalog types, so the blob is opaque here.
+#[derive(Debug, Clone, PartialEq, Eq, zerompk::ToMessagePack, zerompk::FromMessagePack)]
+pub struct StoredCollectionBlob {
+    pub name: String,
+    /// zerompk-encoded `StoredCollection`.
+    pub bytes: Vec<u8>,
+}
+
+/// Single source-side tombstone entry. `purge_lsn` is the Origin WAL
+/// LSN at which the hard-delete committed — restore uses it as a
+/// per-collection replay barrier so rows older than the purge don't
+/// resurrect.
+#[derive(Debug, Clone, PartialEq, Eq, zerompk::ToMessagePack, zerompk::FromMessagePack)]
+pub struct SourceTombstoneEntry {
+    pub collection: String,
+    pub purge_lsn: u64,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum EnvelopeError {
     #[error("invalid backup format")]

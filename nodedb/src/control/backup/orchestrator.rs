@@ -75,6 +75,63 @@ pub async fn backup_tenant(state: &Arc<SharedState>, tenant_id: u32) -> Result<B
             })?;
     }
 
+    // Metadata sections: catalog rows + source-side tombstones. These
+    // live in dedicated sections with sentinel origin_node_ids so the
+    // restore path can distinguish them from per-node engine data.
+    // Without these, a backup taken during a collection's retention
+    // window loses its soft-deleted row (UNDROP can't work after
+    // restore), and a restore whose source has already purged a
+    // collection can resurrect rows that were properly reaped.
+    if let Some(catalog) = state.credentials.catalog() {
+        if let Ok(all) = catalog.load_all_collections() {
+            let mut blobs: Vec<nodedb_types::backup_envelope::StoredCollectionBlob> = Vec::new();
+            for coll in all.iter().filter(|c| c.tenant_id == tenant_id) {
+                if let Ok(bytes) = zerompk::to_msgpack_vec(coll) {
+                    blobs.push(nodedb_types::backup_envelope::StoredCollectionBlob {
+                        name: coll.name.clone(),
+                        bytes,
+                    });
+                }
+            }
+            if !blobs.is_empty()
+                && let Ok(body) = zerompk::to_msgpack_vec(&blobs)
+            {
+                writer
+                    .push_section(
+                        nodedb_types::backup_envelope::SECTION_ORIGIN_CATALOG_ROWS,
+                        body,
+                    )
+                    .map_err(|e| Error::Internal {
+                        detail: format!("backup envelope (catalog rows): {e}"),
+                    })?;
+            }
+        }
+
+        if let Ok(tset) = catalog.load_wal_tombstones() {
+            let mut tombs: Vec<nodedb_types::backup_envelope::SourceTombstoneEntry> = Vec::new();
+            for (tid, name, purge_lsn) in tset.iter() {
+                if tid == tenant_id {
+                    tombs.push(nodedb_types::backup_envelope::SourceTombstoneEntry {
+                        collection: name.to_string(),
+                        purge_lsn,
+                    });
+                }
+            }
+            if !tombs.is_empty()
+                && let Ok(body) = zerompk::to_msgpack_vec(&tombs)
+            {
+                writer
+                    .push_section(
+                        nodedb_types::backup_envelope::SECTION_ORIGIN_SOURCE_TOMBSTONES,
+                        body,
+                    )
+                    .map_err(|e| Error::Internal {
+                        detail: format!("backup envelope (source tombstones): {e}"),
+                    })?;
+            }
+        }
+    }
+
     Ok(Bytes::from(writer.finalize()))
 }
 

@@ -117,6 +117,14 @@ pub async fn restore_tenant(
         ..Default::default()
     };
 
+    // Apply catalog-row + source-tombstone metadata sections first
+    // so the destination catalog has the soft-deleted rows (for
+    // post-restore UNDROP) + purge barrier (so a resurrection of
+    // source-side-purged rows is shadowed on replay).
+    if !dry_run {
+        apply_metadata_sections(state, tenant_id, &env);
+    }
+
     // Merge every section into one snapshot.
     let merged = merge_sections(&env.sections)?;
     stats.documents = merged.documents.len();
@@ -262,7 +270,7 @@ fn warn_on_tombstoned_restores(
 /// Parse `{tid}:{collection}(:|\0)...` → `collection`.
 fn collection_from_key(key: &str) -> Option<&str> {
     let tail = key.split_once(':')?.1;
-    tail.split(|c| c == ':' || c == '\0').next()
+    tail.split([':', '\0']).next()
 }
 
 #[cfg(test)]
@@ -297,6 +305,12 @@ fn merge_sections(
 ) -> Result<TenantDataSnapshot, Error> {
     let mut merged = TenantDataSnapshot::default();
     for section in sections {
+        // Metadata sections carry catalog rows + source-side
+        // tombstones, not tenant engine data. Skip them here; they're
+        // applied separately in `apply_metadata_sections`.
+        if is_metadata_section(section) {
+            continue;
+        }
         // Decoder errors must NOT echo deserializer context to the client.
         let snap: TenantDataSnapshot =
             zerompk::from_msgpack(&section.body).map_err(|_| Error::Internal {
@@ -311,6 +325,94 @@ fn merge_sections(
         merged.timeseries.extend(snap.timeseries);
     }
     Ok(merged)
+}
+
+fn is_metadata_section(section: &nodedb_types::backup_envelope::Section) -> bool {
+    matches!(
+        section.origin_node_id,
+        nodedb_types::backup_envelope::SECTION_ORIGIN_CATALOG_ROWS
+            | nodedb_types::backup_envelope::SECTION_ORIGIN_SOURCE_TOMBSTONES
+    )
+}
+
+/// Apply catalog-row and source-tombstone sections to the destination
+/// catalog. Runs BEFORE the data-section restore so the catalog rows
+/// are present when the data dispatch re-hydrates per-engine state,
+/// and the tombstone barrier is in place when replay runs.
+pub(super) fn apply_metadata_sections(
+    state: &Arc<SharedState>,
+    tenant_id: u32,
+    env: &nodedb_types::backup_envelope::Envelope,
+) {
+    use nodedb_types::backup_envelope::{
+        SECTION_ORIGIN_CATALOG_ROWS, SECTION_ORIGIN_SOURCE_TOMBSTONES, SourceTombstoneEntry,
+        StoredCollectionBlob,
+    };
+    let Some(catalog) = state.credentials.catalog() else {
+        return;
+    };
+
+    for section in &env.sections {
+        match section.origin_node_id {
+            SECTION_ORIGIN_CATALOG_ROWS => {
+                let Ok(blobs) = zerompk::from_msgpack::<Vec<StoredCollectionBlob>>(&section.body)
+                else {
+                    tracing::warn!(
+                        tenant_id,
+                        "restore: catalog-rows section failed to decode — skipping"
+                    );
+                    continue;
+                };
+                for blob in blobs {
+                    let Ok(coll) = zerompk::from_msgpack::<
+                        crate::control::security::catalog::StoredCollection,
+                    >(&blob.bytes) else {
+                        tracing::warn!(
+                            tenant_id,
+                            name = %blob.name,
+                            "restore: catalog row failed to decode — skipping"
+                        );
+                        continue;
+                    };
+                    // Only re-insert if the destination doesn't already
+                    // have a newer descriptor — the destination's state
+                    // wins for freshness. Best-effort on error.
+                    if let Err(e) = catalog.put_collection(&coll) {
+                        tracing::warn!(
+                            tenant_id,
+                            name = %blob.name,
+                            error = %e,
+                            "restore: catalog put_collection failed"
+                        );
+                    }
+                }
+            }
+            SECTION_ORIGIN_SOURCE_TOMBSTONES => {
+                let Ok(tombs) = zerompk::from_msgpack::<Vec<SourceTombstoneEntry>>(&section.body)
+                else {
+                    tracing::warn!(
+                        tenant_id,
+                        "restore: source-tombstones section failed to decode — skipping"
+                    );
+                    continue;
+                };
+                for t in tombs {
+                    if let Err(e) =
+                        catalog.record_wal_tombstone(tenant_id, &t.collection, t.purge_lsn)
+                    {
+                        tracing::warn!(
+                            tenant_id,
+                            collection = %t.collection,
+                            purge_lsn = t.purge_lsn,
+                            error = %e,
+                            "restore: record_wal_tombstone failed"
+                        );
+                    }
+                }
+            }
+            _ => {} // Data section — handled elsewhere.
+        }
+    }
 }
 
 /// Bucketed output from `split_by_current_topology`.
