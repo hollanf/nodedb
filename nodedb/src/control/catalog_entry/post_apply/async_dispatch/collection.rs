@@ -36,17 +36,17 @@ pub async fn put_async(stored: StoredCollection, shared: Arc<SharedState>) {
 ///    reclaim engine-local storage.
 pub async fn purge_async(tenant_id: u32, name: String, purge_lsn: u64, shared: Arc<SharedState>) {
     // 1. Persist to redb (every node has its own catalog).
-    if let Some(catalog) = shared.credentials.catalog() {
-        if let Err(e) = catalog.record_wal_tombstone(tenant_id, &name, purge_lsn) {
-            warn!(
-                collection = %name,
-                tenant = tenant_id,
-                purge_lsn,
-                error = %e,
-                "failed to persist WAL tombstone to _system.wal_tombstones — \
-                 replay will fall back to WAL extraction"
-            );
-        }
+    if let Some(catalog) = shared.credentials.catalog()
+        && let Err(e) = catalog.record_wal_tombstone(tenant_id, &name, purge_lsn)
+    {
+        warn!(
+            collection = %name,
+            tenant = tenant_id,
+            purge_lsn,
+            error = %e,
+            "failed to persist WAL tombstone to _system.wal_tombstones — \
+             replay will fall back to WAL extraction"
+        );
     }
 
     // 2. Append to local WAL.

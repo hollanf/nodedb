@@ -24,6 +24,7 @@ use crate::data::executor::task::ExecutionTask;
 use crate::types::TenantId;
 
 impl CoreLoop {
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::data::executor) fn execute_edge_put(
         &mut self,
         task: &ExecutionTask,
