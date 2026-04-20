@@ -50,6 +50,7 @@ pub(super) fn try_dispatch(
         NodedbStatement::DropCollection {
             name,
             if_exists: true,
+            ..
         } => {
             if !collection_exists(state, identity, name) {
                 return Some(Ok(vec![Response::Execution(Tag::new("DROP COLLECTION"))]));

@@ -17,6 +17,7 @@ fn edge_put_and_graph_neighbors() {
             &mut tx,
             &mut rx,
             PhysicalPlan::Graph(GraphOp::EdgePut {
+                collection: "col".into(),
                 src_id: "alice".into(),
                 label: "KNOWS".into(),
                 dst_id: dst.to_string(),
@@ -51,6 +52,7 @@ fn graph_hop_traversal() {
             &mut tx,
             &mut rx,
             PhysicalPlan::Graph(GraphOp::EdgePut {
+                collection: "col".into(),
                 src_id: s.to_string(),
                 label: "NEXT".into(),
                 dst_id: d.to_string(),
@@ -88,6 +90,7 @@ fn graph_path_and_subgraph() {
             &mut tx,
             &mut rx,
             PhysicalPlan::Graph(GraphOp::EdgePut {
+                collection: "col".into(),
                 src_id: s.to_string(),
                 label: "L".into(),
                 dst_id: d.to_string(),
@@ -137,6 +140,7 @@ fn edge_delete_updates_csr() {
         &mut tx,
         &mut rx,
         PhysicalPlan::Graph(GraphOp::EdgePut {
+            collection: "col".into(),
             src_id: "x".into(),
             label: "R".into(),
             dst_id: "y".into(),
@@ -149,6 +153,7 @@ fn edge_delete_updates_csr() {
         &mut tx,
         &mut rx,
         PhysicalPlan::Graph(GraphOp::EdgeDelete {
+            collection: "col".into(),
             src_id: "x".into(),
             label: "R".into(),
             dst_id: "y".into(),
@@ -203,6 +208,7 @@ fn graph_rag_fusion_pipeline() {
             &mut tx,
             &mut rx,
             PhysicalPlan::Graph(GraphOp::EdgePut {
+                collection: "col".into(),
                 src_id: s.to_string(),
                 label: "CITES".into(),
                 dst_id: d.to_string(),

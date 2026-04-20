@@ -91,6 +91,20 @@ impl ShardedCsrIndex {
         self.partitions.remove(&tid).is_some()
     }
 
+    /// Collection-scoped in-memory reclaim.
+    ///
+    /// The CSR is collection-agnostic in memory: a tenant's partition holds
+    /// edges from **all** collections in a single adjacency structure. There
+    /// is no per-collection sub-partition to drop. As a result this method is
+    /// intentionally a no-op — collection-scoped edge removal from persistent
+    /// storage is handled by [`EdgeStore::purge_collection`], and the stale
+    /// in-memory CSR state is eliminated on the next tenant `drop_partition`
+    /// call (triggered by tenant deletion) or on server restart (CSR is
+    /// rebuilt from the now-clean EdgeStore).
+    pub fn drop_collection(&mut self, _tid: TenantId, _collection: &str) {
+        // Intentional no-op. See doc comment above.
+    }
+
     /// Whether a partition exists for the tenant.
     pub fn contains_partition(&self, tid: TenantId) -> bool {
         self.partitions.contains_key(&tid)

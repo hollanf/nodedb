@@ -20,6 +20,7 @@ fn graph_traversal_bounded_under_adversarial_queries() {
             &mut tx,
             &mut rx,
             PhysicalPlan::Graph(GraphOp::EdgePut {
+                collection: "col".into(),
                 src_id: "hub".into(),
                 label: "LINKS".into(),
                 dst_id: format!("n{i}"),
@@ -35,6 +36,7 @@ fn graph_traversal_bounded_under_adversarial_queries() {
             &mut tx,
             &mut rx,
             PhysicalPlan::Graph(GraphOp::EdgePut {
+                collection: "col".into(),
                 src_id: format!("c{i}"),
                 label: "NEXT".into(),
                 dst_id: format!("c{}", i + 1),

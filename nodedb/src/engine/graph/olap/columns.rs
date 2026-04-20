@@ -264,8 +264,8 @@ pub fn extract_edge_properties(
     let n = csr.node_count();
     let mut columns = PropertyColumns::new(n);
 
-    // Scan only the caller's tenant partition. Returned keys are in
-    // unscoped `"src\0label\0dst"` form — tenant routing is structural.
+    // Scan only the caller's tenant partition. Keys are in
+    // `"collection\0src\0label\0dst"` form — parse via parse_edge_key.
     let tenant_edges = edge_store.scan_edges_for_tenant(tid)?;
 
     for (composite_key, properties) in &tenant_edges {
@@ -273,8 +273,9 @@ pub fn extract_edge_properties(
             continue;
         }
 
-        let src_name = match composite_key.split_once('\x00') {
-            Some((s, _)) => s,
+        let src_name = match crate::engine::graph::edge_store::store::parse_edge_key(composite_key)
+        {
+            Some((_coll, src, _label, _dst)) => src,
             None => continue,
         };
         let Some(src_id) = csr.node_id_raw(src_name) else {
@@ -411,6 +412,7 @@ mod tests {
         store
             .put_edge(
                 nodedb_types::TenantId::new(1),
+                "col",
                 "alice",
                 "KNOWS",
                 "bob",
@@ -444,7 +446,7 @@ mod tests {
                 .unwrap();
 
         store
-            .put_edge(nodedb_types::TenantId::new(1), "a", "L", "b", b"")
+            .put_edge(nodedb_types::TenantId::new(1), "col", "a", "L", "b", b"")
             .unwrap();
 
         let csr = crate::engine::graph::csr::rebuild::rebuild_from_store(&store).unwrap();

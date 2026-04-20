@@ -51,8 +51,8 @@ pub(crate) fn build_plan(
         OpCode::GraphNeighbors => graph::build_neighbors(fields),
         OpCode::GraphPath => graph::build_path(fields),
         OpCode::GraphSubgraph => graph::build_subgraph(fields),
-        OpCode::EdgePut => graph::build_edge_put(fields),
-        OpCode::EdgeDelete => graph::build_edge_delete(fields),
+        OpCode::EdgePut => graph::build_edge_put(fields, collection),
+        OpCode::EdgeDelete => graph::build_edge_delete(fields, collection),
         // KV.
         OpCode::KvScan => kv::build_scan(fields, collection),
         OpCode::KvExpire => kv::build_expire(fields, collection),

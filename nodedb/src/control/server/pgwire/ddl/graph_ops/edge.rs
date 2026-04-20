@@ -49,15 +49,22 @@ fn validate_edge_label(label: &str) -> PgWireResult<()> {
     Ok(())
 }
 
-/// `GRAPH INSERT EDGE FROM '<src>' TO '<dst>' TYPE '<label>' [PROPERTIES '<json>' | { ... }]`
+/// `GRAPH INSERT EDGE IN '<collection>' FROM '<src>' TO '<dst>' TYPE '<label>' [PROPERTIES '<json>' | { ... }]`
 pub async fn insert_edge(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
+    collection: String,
     src: String,
     dst: String,
     label: String,
     properties: GraphProperties,
 ) -> PgWireResult<Vec<Response>> {
+    if collection.is_empty() {
+        return Err(sqlstate_error(
+            "42601",
+            "GRAPH INSERT EDGE requires IN <collection>",
+        ));
+    }
     if src.is_empty() || dst.is_empty() {
         return Err(sqlstate_error(
             "42601",
@@ -70,6 +77,7 @@ pub async fn insert_edge(
     let vshard_id = VShardId::from_key(src.as_bytes());
 
     let plan = PhysicalPlan::Graph(GraphOp::EdgePut {
+        collection,
         src_id: src,
         label,
         dst_id: dst,
@@ -85,14 +93,21 @@ pub async fn insert_edge(
     }
 }
 
-/// `GRAPH DELETE EDGE FROM '<src>' TO '<dst>' TYPE '<label>'`
+/// `GRAPH DELETE EDGE IN '<collection>' FROM '<src>' TO '<dst>' TYPE '<label>'`
 pub async fn delete_edge(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
+    collection: String,
     src: String,
     dst: String,
     label: String,
 ) -> PgWireResult<Vec<Response>> {
+    if collection.is_empty() {
+        return Err(sqlstate_error(
+            "42601",
+            "GRAPH DELETE EDGE requires IN <collection>",
+        ));
+    }
     if src.is_empty() || dst.is_empty() {
         return Err(sqlstate_error(
             "42601",
@@ -104,6 +119,7 @@ pub async fn delete_edge(
     let vshard_id = VShardId::from_key(src.as_bytes());
 
     let plan = PhysicalPlan::Graph(GraphOp::EdgeDelete {
+        collection,
         src_id: src,
         label,
         dst_id: dst,

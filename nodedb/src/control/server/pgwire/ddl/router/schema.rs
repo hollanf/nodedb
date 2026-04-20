@@ -62,6 +62,11 @@ pub(super) async fn dispatch(
             state, identity, parts,
         ));
     }
+    if upper.starts_with("UNDROP COLLECTION ") || upper.starts_with("UNDROP TABLE ") {
+        return Some(super::super::collection::undrop_collection(
+            state, identity, parts,
+        ));
+    }
     if upper == "SHOW COLLECTIONS" || upper.starts_with("SHOW COLLECTIONS") {
         return Some(super::super::collection::show_collections(state, identity));
     }

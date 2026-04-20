@@ -100,31 +100,32 @@ pub fn wal_append_if_write_with_creds(
             wal.append_crdt_delta(tenant_id, vshard_id, delta)?;
         }
         PhysicalPlan::Graph(GraphOp::EdgePut {
+            collection,
             src_id,
             label,
             dst_id,
             properties,
         }) => {
-            let entry =
-                zerompk::to_msgpack_vec(&(src_id, label, dst_id, properties)).map_err(|e| {
-                    crate::Error::Serialization {
-                        format: "msgpack".into(),
-                        detail: format!("wal edge put: {e}"),
-                    }
-                })?;
+            let entry = zerompk::to_msgpack_vec(&(collection, src_id, label, dst_id, properties))
+                .map_err(|e| crate::Error::Serialization {
+                format: "msgpack".into(),
+                detail: format!("wal edge put: {e}"),
+            })?;
             wal.append_put(tenant_id, vshard_id, &entry)?;
         }
         PhysicalPlan::Graph(GraphOp::EdgeDelete {
+            collection,
             src_id,
             label,
             dst_id,
         }) => {
-            let entry = zerompk::to_msgpack_vec(&(src_id, label, dst_id)).map_err(|e| {
-                crate::Error::Serialization {
-                    format: "msgpack".into(),
-                    detail: format!("wal edge delete: {e}"),
-                }
-            })?;
+            let entry =
+                zerompk::to_msgpack_vec(&(collection, src_id, label, dst_id)).map_err(|e| {
+                    crate::Error::Serialization {
+                        format: "msgpack".into(),
+                        detail: format!("wal edge delete: {e}"),
+                    }
+                })?;
             wal.append_delete(tenant_id, vshard_id, &entry)?;
         }
         PhysicalPlan::Vector(VectorOp::SetParams {

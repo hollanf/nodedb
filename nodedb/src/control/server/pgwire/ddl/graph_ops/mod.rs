@@ -31,14 +31,20 @@ pub async fn dispatch_typed(
 ) -> Option<PgWireResult<Vec<Response>>> {
     match stmt {
         NodedbStatement::GraphInsertEdge {
+            collection,
             src,
             dst,
             label,
             properties,
-        } => Some(edge::insert_edge(state, identity, src, dst, label, properties).await),
-        NodedbStatement::GraphDeleteEdge { src, dst, label } => {
-            Some(edge::delete_edge(state, identity, src, dst, label).await)
+        } => {
+            Some(edge::insert_edge(state, identity, collection, src, dst, label, properties).await)
         }
+        NodedbStatement::GraphDeleteEdge {
+            collection,
+            src,
+            dst,
+            label,
+        } => Some(edge::delete_edge(state, identity, collection, src, dst, label).await),
         NodedbStatement::GraphSetLabels {
             node_id,
             labels,

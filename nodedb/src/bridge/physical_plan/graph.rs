@@ -15,6 +15,7 @@ use crate::engine::graph::traversal_options::GraphTraversalOptions;
     zerompk::FromMessagePack,
 )]
 pub struct BatchEdge {
+    pub collection: String,
     pub src_id: String,
     pub label: String,
     pub dst_id: String,
@@ -33,19 +34,21 @@ pub struct BatchEdge {
 pub enum GraphOp {
     /// Insert a graph edge with properties.
     EdgePut {
+        collection: String,
         src_id: String,
         label: String,
         dst_id: String,
         properties: Vec<u8>,
     },
 
-    /// Batched edge insert: many `(src, label, dst)` triples with a
-    /// shared set of properties. Used by `CREATE GRAPH INDEX` and other
-    /// bulk-edge writers to avoid O(N) serial RPCs.
+    /// Batched edge insert: many `(collection, src, label, dst)` tuples.
+    /// Every edge in the batch must target the same collection — the
+    /// batch is a unit of work, not a cross-collection scatter.
     EdgePutBatch { edges: Vec<BatchEdge> },
 
     /// Delete a graph edge.
     EdgeDelete {
+        collection: String,
         src_id: String,
         label: String,
         dst_id: String,

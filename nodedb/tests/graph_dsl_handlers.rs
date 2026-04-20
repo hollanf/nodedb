@@ -35,19 +35,19 @@ async fn graph_path_returns_ordered_path_not_bfs_frontier() {
 
     // Chain a → b → c, plus branches off `a` that must not appear in the path.
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'path_nodes' FROM 'a' TO 'b' TYPE 'l'")
         .await
         .unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'b' TO 'c' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'path_nodes' FROM 'b' TO 'c' TYPE 'l'")
         .await
         .unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'x' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'path_nodes' FROM 'a' TO 'x' TYPE 'l'")
         .await
         .unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'y' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'path_nodes' FROM 'a' TO 'y' TYPE 'l'")
         .await
         .unwrap();
 
@@ -80,7 +80,7 @@ async fn graph_path_returns_empty_when_dst_unreachable() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION path_nodes").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'path_nodes' FROM 'a' TO 'b' TYPE 'l'")
         .await
         .unwrap();
 
@@ -102,7 +102,7 @@ async fn match_does_not_leak_tenant_scoped_node_ids() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION match_docs").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'alice' TO 'bob' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'match_docs' FROM 'alice' TO 'bob' TYPE 'l'")
         .await
         .unwrap();
 
@@ -144,7 +144,7 @@ async fn match_preserves_digit_prefixed_user_id() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION mdp_docs").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM '99:event' TO 'bob' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'mdp_docs' FROM '99:event' TO 'bob' TYPE 'l'")
         .await
         .unwrap();
 
@@ -176,7 +176,7 @@ async fn graph_traverse_rejects_absurd_depth() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION tdocs").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'tdocs' FROM 'a' TO 'b' TYPE 'l'")
         .await
         .unwrap();
 
@@ -195,7 +195,7 @@ async fn graph_path_rejects_absurd_max_depth() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION pdocs").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'pdocs' FROM 'a' TO 'b' TYPE 'l'")
         .await
         .unwrap();
 
@@ -212,7 +212,7 @@ async fn graph_algo_rejects_absurd_iterations() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION algodocs").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'algodocs' FROM 'a' TO 'b' TYPE 'l'")
         .await
         .unwrap();
 
@@ -236,7 +236,7 @@ async fn graph_traverse_preserves_colon_containing_user_id() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION trv_docs").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'foo:bar' TO 'z' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'trv_docs' FROM 'foo:bar' TO 'z' TYPE 'l'")
         .await
         .unwrap();
 
@@ -260,7 +260,7 @@ async fn graph_neighbors_preserves_colon_containing_user_id() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION nbr_docs").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'src' TO 'ns:dst' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'nbr_docs' FROM 'src' TO 'ns:dst' TYPE 'l'")
         .await
         .unwrap();
 
@@ -284,11 +284,11 @@ async fn graph_path_preserves_colon_containing_user_id() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION pp_docs").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'src' TO 'ns:mid' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'pp_docs' FROM 'src' TO 'ns:mid' TYPE 'l'")
         .await
         .unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'ns:mid' TO 'dst' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'pp_docs' FROM 'ns:mid' TO 'dst' TYPE 'l'")
         .await
         .unwrap();
 
@@ -319,7 +319,7 @@ async fn graph_insert_edge_with_keyword_shaped_node_ids() {
     // keywords), not match the literal substrings 'TO', 'FROM',
     // 'LABEL', 'TYPE' inside user data.
     server
-        .exec("GRAPH INSERT EDGE FROM 'TO' TO 'FROM' TYPE 'LABEL'")
+        .exec("GRAPH INSERT EDGE IN 'kwnodes' FROM 'TO' TO 'FROM' TYPE 'LABEL'")
         .await
         .expect("keyword-shaped ids must parse");
 
@@ -345,7 +345,9 @@ async fn graph_insert_edge_properties_with_brace_in_string_value() {
     // "everything from `{` to end of statement minus `;`". A `}` or
     // `;` embedded in a string value must not terminate the object.
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l' PROPERTIES { note: '} DEPTH 999' }")
+        .exec(
+            "GRAPH INSERT EDGE IN 'bracedocs' FROM 'a' TO 'b' TYPE 'l' PROPERTIES { note: '} DEPTH 999' }",
+        )
         .await
         .expect("brace-balanced property parsing must accept `}` inside strings");
 
@@ -379,7 +381,7 @@ async fn graph_insert_edge_rejects_empty_label() {
     // Spec: an empty label is never a valid edge type. Current code
     // accepts it and interns it as the 0-length string.
     let res = server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE ''")
+        .exec("GRAPH INSERT EDGE IN 'lblchk' FROM 'a' TO 'b' TYPE ''")
         .await;
     assert!(
         res.is_err(),
@@ -396,7 +398,7 @@ async fn graph_insert_edge_rejects_control_chars_in_label() {
     // rejected at ingress. Inject a literal control byte into the TYPE
     // value to bypass any E-string unescaping differences.
     let sql = format!(
-        "GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'bad{}label'",
+        "GRAPH INSERT EDGE IN 'lblchk2' FROM 'a' TO 'b' TYPE 'bad{}label'",
         '\u{0001}'
     );
     let res = server.exec(&sql).await;
@@ -415,7 +417,7 @@ async fn graph_insert_edge_rejects_overlong_label() {
     // the exact cap; 256 bytes is a common choice). A 4 KiB label MUST
     // be rejected regardless of where the cap lands.
     let overlong = "x".repeat(4096);
-    let sql = format!("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE '{overlong}'");
+    let sql = format!("GRAPH INSERT EDGE IN 'lblchk3' FROM 'a' TO 'b' TYPE '{overlong}'");
     let res = server.exec(&sql).await;
     assert!(
         res.is_err(),
@@ -432,7 +434,7 @@ async fn graph_traverse_node_id_containing_keyword_substring() {
     // mistaken for the DEPTH keyword. The handler must tokenise, not
     // `upper.find("DEPTH")`.
     server
-        .exec("GRAPH INSERT EDGE FROM 'node_with_DEPTH_in_name' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'kwnodes2' FROM 'node_with_DEPTH_in_name' TO 'b' TYPE 'l'")
         .await
         .unwrap();
 

@@ -5,37 +5,44 @@ use super::store::{
 };
 
 impl EdgeStore {
-    /// Outbound neighbors of a node within the caller's tenant,
+    /// Outbound neighbors of a node within the caller's tenant and collection,
     /// optionally filtered by edge label.
     pub fn neighbors_out(
         &self,
         tid: TenantId,
+        collection: &str,
         src: &str,
         label_filter: Option<&str>,
     ) -> crate::Result<Vec<Edge>> {
         let prefix = match label_filter {
-            Some(label) => format!("{src}\x00{label}\x00"),
-            None => format!("{src}\x00"),
+            Some(label) => format!("{collection}\x00{src}\x00{label}\x00"),
+            None => format!("{collection}\x00{src}\x00"),
         };
 
-        self.scan_edges_with_prefix(tid, &prefix, |fwd_src, fwd_label, fwd_dst| Edge {
-            src_id: fwd_src.to_string(),
-            label: fwd_label.to_string(),
-            dst_id: fwd_dst.to_string(),
-            properties: Vec::new(),
-        })
+        self.scan_edges_with_prefix(
+            tid,
+            &prefix,
+            |fwd_collection, fwd_src, fwd_label, fwd_dst| Edge {
+                collection: fwd_collection.to_string(),
+                src_id: fwd_src.to_string(),
+                label: fwd_label.to_string(),
+                dst_id: fwd_dst.to_string(),
+                properties: Vec::new(),
+            },
+        )
     }
 
-    /// Inbound neighbors of a node within the caller's tenant.
+    /// Inbound neighbors of a node within the caller's tenant and collection.
     pub fn neighbors_in(
         &self,
         tid: TenantId,
+        collection: &str,
         dst: &str,
         label_filter: Option<&str>,
     ) -> crate::Result<Vec<Edge>> {
         let prefix = match label_filter {
-            Some(label) => format!("{dst}\x00{label}\x00"),
-            None => format!("{dst}\x00"),
+            Some(label) => format!("{collection}\x00{dst}\x00{label}\x00"),
+            None => format!("{collection}\x00{dst}\x00"),
         };
         let t = tid.as_u32();
 
@@ -58,8 +65,10 @@ impl EdgeStore {
             if kt != t || !composite.starts_with(&prefix) {
                 break;
             }
-            if let Some((_rev_dst, rev_label, rev_src)) = parse_edge_key(composite) {
+            if let Some((rev_collection, _rev_dst, rev_label, rev_src)) = parse_edge_key(composite)
+            {
                 edges.push(Edge {
+                    collection: rev_collection.to_string(),
                     src_id: rev_src.to_string(),
                     label: rev_label.to_string(),
                     dst_id: dst.to_string(),
@@ -73,7 +82,7 @@ impl EdgeStore {
                 .open_table(EDGES)
                 .map_err(|e| redb_err("open edges", e))?;
             for edge in &mut edges {
-                let fwd_key = edge_key(&edge.src_id, &edge.label, &edge.dst_id);
+                let fwd_key = edge_key(&edge.collection, &edge.src_id, &edge.label, &edge.dst_id);
                 if let Some(val) = fwd_table
                     .get((t, fwd_key.as_str()))
                     .map_err(|e| redb_err("get props", e))?
@@ -86,43 +95,48 @@ impl EdgeStore {
         Ok(edges)
     }
 
-    /// All neighbors (both directions) within the caller's tenant.
+    /// All neighbors (both directions) within the caller's tenant and collection.
     pub fn neighbors(
         &self,
         tid: TenantId,
+        collection: &str,
         node: &str,
         label_filter: Option<&str>,
         direction: Direction,
     ) -> crate::Result<Vec<Edge>> {
         match direction {
-            Direction::Out => self.neighbors_out(tid, node, label_filter),
-            Direction::In => self.neighbors_in(tid, node, label_filter),
+            Direction::Out => self.neighbors_out(tid, collection, node, label_filter),
+            Direction::In => self.neighbors_in(tid, collection, node, label_filter),
             Direction::Both => {
-                let mut out = self.neighbors_out(tid, node, label_filter)?;
-                let inbound = self.neighbors_in(tid, node, label_filter)?;
+                let mut out = self.neighbors_out(tid, collection, node, label_filter)?;
+                let inbound = self.neighbors_in(tid, collection, node, label_filter)?;
                 out.extend(inbound);
                 Ok(out)
             }
         }
     }
 
-    /// Count outbound edges from a source node within the caller's tenant.
+    /// Count outbound edges from a source node within the caller's tenant and collection.
     pub fn out_degree(
         &self,
         tid: TenantId,
+        collection: &str,
         src: &str,
         label_filter: Option<&str>,
     ) -> crate::Result<usize> {
-        Ok(self.neighbors_out(tid, src, label_filter)?.len())
+        Ok(self
+            .neighbors_out(tid, collection, src, label_filter)?
+            .len())
     }
 
-    /// Count inbound edges to a destination node within the caller's tenant.
+    /// Count inbound edges to a destination node within the caller's tenant and collection.
     pub fn in_degree(
         &self,
         tid: TenantId,
+        collection: &str,
         dst: &str,
         label_filter: Option<&str>,
     ) -> crate::Result<usize> {
-        Ok(self.neighbors_in(tid, dst, label_filter)?.len())
+        Ok(self.neighbors_in(tid, collection, dst, label_filter)?.len())
     }
 }

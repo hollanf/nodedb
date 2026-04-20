@@ -16,14 +16,17 @@ pub fn rebuild_sharded_from_store(store: &EdgeStore) -> crate::Result<ShardedCsr
 
     // First pass: materialize every (tenant, node) so isolated endpoints
     // get stable node ids before edge insertion.
-    for (tid, src, _label, dst, _props) in &all_edges {
+    // EdgeRecord is now (TenantId, collection, src, label, dst, props).
+    for (tid, _collection, src, _label, dst, _props) in &all_edges {
         let partition = sharded.get_or_create(*tid);
         partition.add_node(src);
         partition.add_node(dst);
     }
 
     // Second pass: insert edges into their tenant's partition.
-    for (tid, src, label, dst, props) in &all_edges {
+    // The CSR is collection-agnostic in memory — all collections'
+    // edges live in the same per-tenant partition.
+    for (tid, _collection, src, label, dst, props) in &all_edges {
         let partition = sharded.get_or_create(*tid);
         let weight = extract_weight_from_properties(props);
         let res = if weight != 1.0 {

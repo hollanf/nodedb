@@ -122,7 +122,12 @@ pub(crate) fn build_subgraph(fields: &TextFields) -> crate::Result<PhysicalPlan>
     }))
 }
 
-pub(crate) fn build_edge_put(fields: &TextFields) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_edge_put(fields: &TextFields, collection: &str) -> crate::Result<PhysicalPlan> {
+    if collection.is_empty() {
+        return Err(crate::Error::BadRequest {
+            detail: "edge PUT requires a non-empty collection".to_string(),
+        });
+    }
     let src = fields
         .from_node
         .as_ref()
@@ -147,6 +152,7 @@ pub(crate) fn build_edge_put(fields: &TextFields) -> crate::Result<PhysicalPlan>
         .map(|v| sonic_rs::to_string(v).unwrap_or_default())
         .unwrap_or_default();
     Ok(PhysicalPlan::Graph(GraphOp::EdgePut {
+        collection: collection.to_string(),
         src_id: src.clone(),
         label: label.clone(),
         dst_id: dst.clone(),
@@ -154,7 +160,15 @@ pub(crate) fn build_edge_put(fields: &TextFields) -> crate::Result<PhysicalPlan>
     }))
 }
 
-pub(crate) fn build_edge_delete(fields: &TextFields) -> crate::Result<PhysicalPlan> {
+pub(crate) fn build_edge_delete(
+    fields: &TextFields,
+    collection: &str,
+) -> crate::Result<PhysicalPlan> {
+    if collection.is_empty() {
+        return Err(crate::Error::BadRequest {
+            detail: "edge DELETE requires a non-empty collection".to_string(),
+        });
+    }
     let src = fields
         .from_node
         .as_ref()
@@ -174,6 +188,7 @@ pub(crate) fn build_edge_delete(fields: &TextFields) -> crate::Result<PhysicalPl
             detail: "missing 'edge_type'".to_string(),
         })?;
     Ok(PhysicalPlan::Graph(GraphOp::EdgeDelete {
+        collection: collection.to_string(),
         src_id: src.clone(),
         label: label.clone(),
         dst_id: dst.clone(),

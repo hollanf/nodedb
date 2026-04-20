@@ -16,6 +16,28 @@ pub enum NodedbStatement {
     DropCollection {
         name: String,
         if_exists: bool,
+        /// `DROP COLLECTION <n> PURGE` — skip the soft-delete step and
+        /// go straight to `CatalogEntry::PurgeCollection`. Requires
+        /// superuser or tenant_admin. Fails if dependents exist unless
+        /// `cascade` is also set.
+        purge: bool,
+        /// `DROP COLLECTION <n> CASCADE` — recursively drop dependents
+        /// (triggers, RLS, MVs sourcing the collection, change streams,
+        /// schedules). Rejects on cascade cycles (32-deep limit).
+        cascade: bool,
+        /// `DROP COLLECTION <n> CASCADE FORCE` — only difference from
+        /// `cascade`: also drops schedules whose SQL carries
+        /// `references_unknown = true`. Requires superuser.
+        cascade_force: bool,
+    },
+    /// `UNDROP COLLECTION <n>` — restore a soft-deleted collection
+    /// whose retention window has not yet elapsed. Flips
+    /// `StoredCollection.is_active` back to true via a new
+    /// `PutCollection` catalog entry. Fails if the retention window
+    /// has already expired (storage is already purged) or if an
+    /// active collection of the same name exists.
+    UndropCollection {
+        name: String,
     },
     AlterCollection {
         name: String,
@@ -276,12 +298,14 @@ pub enum NodedbStatement {
     // brace-aware, so node ids / labels / property values that
     // shadow DSL keywords cannot short-circuit extraction.
     GraphInsertEdge {
+        collection: String,
         src: String,
         dst: String,
         label: String,
         properties: GraphProperties,
     },
     GraphDeleteEdge {
+        collection: String,
         src: String,
         dst: String,
         label: String,

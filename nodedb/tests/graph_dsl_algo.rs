@@ -42,11 +42,11 @@ async fn graph_algo_pagerank_returns_unscoped_node_ids() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION memories").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'alice' TO 'bob' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'memories' FROM 'alice' TO 'bob' TYPE 'l'")
         .await
         .unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'bob' TO 'carol' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'memories' FROM 'bob' TO 'carol' TYPE 'l'")
         .await
         .unwrap();
 
@@ -69,11 +69,11 @@ async fn graph_algo_community_returns_unscoped_node_ids() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION memories").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'alice' TO 'bob' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'memories' FROM 'alice' TO 'bob' TYPE 'l'")
         .await
         .unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'bob' TO 'carol' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'memories' FROM 'bob' TO 'carol' TYPE 'l'")
         .await
         .unwrap();
 
@@ -89,7 +89,7 @@ async fn graph_algo_wcc_returns_unscoped_node_ids() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION wcc_nodes").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'wcc_nodes' FROM 'a' TO 'b' TYPE 'l'")
         .await
         .unwrap();
 
@@ -105,11 +105,11 @@ async fn graph_algo_louvain_returns_unscoped_node_ids() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION louv_nodes").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'louv_nodes' FROM 'a' TO 'b' TYPE 'l'")
         .await
         .unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'b' TO 'c' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'louv_nodes' FROM 'b' TO 'c' TYPE 'l'")
         .await
         .unwrap();
 
@@ -125,7 +125,7 @@ async fn graph_algo_degree_returns_unscoped_node_ids() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION deg_nodes").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'deg_nodes' FROM 'a' TO 'b' TYPE 'l'")
         .await
         .unwrap();
 
@@ -141,15 +141,15 @@ async fn graph_algo_kcore_returns_unscoped_node_ids() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION kc_nodes").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'kc_nodes' FROM 'a' TO 'b' TYPE 'l'")
         .await
         .unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'b' TO 'c' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'kc_nodes' FROM 'b' TO 'c' TYPE 'l'")
         .await
         .unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'c' TO 'a' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'kc_nodes' FROM 'c' TO 'a' TYPE 'l'")
         .await
         .unwrap();
 
@@ -165,11 +165,11 @@ async fn graph_algo_closeness_returns_unscoped_node_ids() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION cl_nodes").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'cl_nodes' FROM 'a' TO 'b' TYPE 'l'")
         .await
         .unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'b' TO 'c' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'cl_nodes' FROM 'b' TO 'c' TYPE 'l'")
         .await
         .unwrap();
 
@@ -191,7 +191,7 @@ async fn graph_algo_pagerank_preserves_digit_prefixed_user_id() {
     let server = TestServer::start().await;
     server.exec("CREATE COLLECTION dp_nodes").await.unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM '77:node' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'dp_nodes' FROM '77:node' TO 'b' TYPE 'l'")
         .await
         .unwrap();
 
@@ -232,7 +232,7 @@ async fn graph_algo_pagerank_node_id_is_joinable_with_collection_id() {
         .await
         .unwrap();
     server
-        .exec("GRAPH INSERT EDGE FROM 'alice' TO 'bob' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'rank_join_docs' FROM 'alice' TO 'bob' TYPE 'l'")
         .await
         .unwrap();
 

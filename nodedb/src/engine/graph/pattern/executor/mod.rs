@@ -349,11 +349,21 @@ mod tests {
 
         use nodedb_types::TenantId;
         const T: TenantId = TenantId::new(1);
-        store.put_edge(T, "alice", "KNOWS", "bob", b"").unwrap();
-        store.put_edge(T, "bob", "KNOWS", "carol", b"").unwrap();
-        store.put_edge(T, "carol", "KNOWS", "dave", b"").unwrap();
-        store.put_edge(T, "alice", "LIKES", "carol", b"").unwrap();
-        store.put_edge(T, "bob", "BLOCKED", "dave", b"").unwrap();
+        store
+            .put_edge(T, "col", "alice", "KNOWS", "bob", b"")
+            .unwrap();
+        store
+            .put_edge(T, "col", "bob", "KNOWS", "carol", b"")
+            .unwrap();
+        store
+            .put_edge(T, "col", "carol", "KNOWS", "dave", b"")
+            .unwrap();
+        store
+            .put_edge(T, "col", "alice", "LIKES", "carol", b"")
+            .unwrap();
+        store
+            .put_edge(T, "col", "bob", "BLOCKED", "dave", b"")
+            .unwrap();
 
         let csr = crate::engine::graph::csr::rebuild::rebuild_from_store(&store).unwrap();
         (csr, store, dir)

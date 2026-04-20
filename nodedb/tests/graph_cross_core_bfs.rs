@@ -43,7 +43,7 @@ async fn cross_core_bfs_does_not_issue_one_rpc_per_frontier_node() {
     // implementation is `O(hops)` broadcasts regardless of FANOUT.
     const FANOUT: usize = 2000;
     for i in 0..FANOUT {
-        let sql = format!("GRAPH INSERT EDGE FROM 'root' TO 'leaf_{i}' TYPE 'l'");
+        let sql = format!("GRAPH INSERT EDGE IN 'bfs_nodes' FROM 'root' TO 'leaf_{i}' TYPE 'l'");
         server.exec(&sql).await.unwrap();
     }
 
@@ -110,13 +110,13 @@ async fn cross_core_shortest_path_batches_frontier() {
     for i in 0..FANOUT {
         server
             .exec(&format!(
-                "GRAPH INSERT EDGE FROM 'root' TO 'leaf_{i}' TYPE 'l'"
+                "GRAPH INSERT EDGE IN 'sp_nodes' FROM 'root' TO 'leaf_{i}' TYPE 'l'"
             ))
             .await
             .unwrap();
     }
     server
-        .exec("GRAPH INSERT EDGE FROM 'leaf_500' TO 'target' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'sp_nodes' FROM 'leaf_500' TO 'target' TYPE 'l'")
         .await
         .unwrap();
 
@@ -169,7 +169,7 @@ async fn cross_core_bfs_respects_max_visited_mid_hop() {
     for i in 0..LEAVES {
         server
             .exec(&format!(
-                "GRAPH INSERT EDGE FROM 'root' TO 'n_{i}' TYPE 'l'"
+                "GRAPH INSERT EDGE IN 'bfs_cap' FROM 'root' TO 'n_{i}' TYPE 'l'"
             ))
             .await
             .unwrap();
@@ -210,7 +210,7 @@ async fn cross_core_bfs_stops_on_empty_frontier() {
     // after discovery must see an empty frontier and stop without
     // further broadcasts.
     server
-        .exec("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'")
+        .exec("GRAPH INSERT EDGE IN 'bfs_empty' FROM 'a' TO 'b' TYPE 'l'")
         .await
         .unwrap();
 

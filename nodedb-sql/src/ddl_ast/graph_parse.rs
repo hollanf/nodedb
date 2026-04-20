@@ -76,11 +76,13 @@ pub fn try_parse(sql: &str) -> Option<NodedbStatement> {
 // ── Variant builders ─────────────────────────────────────────────
 
 fn parse_insert_edge(toks: &[Tok<'_>]) -> Option<NodedbStatement> {
+    let collection = quoted_after(toks, "IN")?;
     let src = quoted_after(toks, "FROM")?;
     let dst = quoted_after(toks, "TO")?;
     let label = quoted_after(toks, "TYPE")?;
     let properties = extract_properties(toks);
     Some(NodedbStatement::GraphInsertEdge {
+        collection,
         src,
         dst,
         label,
@@ -89,10 +91,16 @@ fn parse_insert_edge(toks: &[Tok<'_>]) -> Option<NodedbStatement> {
 }
 
 fn parse_delete_edge(toks: &[Tok<'_>]) -> Option<NodedbStatement> {
+    let collection = quoted_after(toks, "IN")?;
     let src = quoted_after(toks, "FROM")?;
     let dst = quoted_after(toks, "TO")?;
     let label = quoted_after(toks, "TYPE")?;
-    Some(NodedbStatement::GraphDeleteEdge { src, dst, label })
+    Some(NodedbStatement::GraphDeleteEdge {
+        collection,
+        src,
+        dst,
+        label,
+    })
 }
 
 fn parse_set_labels(toks: &[Tok<'_>], remove: bool) -> Option<NodedbStatement> {
@@ -354,14 +362,17 @@ mod tests {
 
     #[test]
     fn parse_graph_insert_edge_keyword_shaped_ids() {
-        let stmt = try_parse("GRAPH INSERT EDGE FROM 'TO' TO 'FROM' TYPE 'LABEL'").unwrap();
+        let stmt =
+            try_parse("GRAPH INSERT EDGE IN 'myedges' FROM 'TO' TO 'FROM' TYPE 'LABEL'").unwrap();
         match stmt {
             NodedbStatement::GraphInsertEdge {
+                collection,
                 src,
                 dst,
                 label,
                 properties,
             } => {
+                assert_eq!(collection, "myedges");
                 assert_eq!(src, "TO");
                 assert_eq!(dst, "FROM");
                 assert_eq!(label, "LABEL");
@@ -372,16 +383,52 @@ mod tests {
     }
 
     #[test]
+    fn parse_graph_delete_edge_with_collection() {
+        let stmt = try_parse("GRAPH DELETE EDGE IN 'myedges' FROM 'a' TO 'b' TYPE 'l'").unwrap();
+        match stmt {
+            NodedbStatement::GraphDeleteEdge {
+                collection,
+                src,
+                dst,
+                label,
+            } => {
+                assert_eq!(collection, "myedges");
+                assert_eq!(src, "a");
+                assert_eq!(dst, "b");
+                assert_eq!(label, "l");
+            }
+            other => panic!("expected GraphDeleteEdge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_graph_insert_edge_missing_collection_returns_none() {
+        // Without IN <collection> the parser must fail, not return a partial result.
+        let result = try_parse("GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l'");
+        assert!(
+            result.is_none(),
+            "missing IN <collection> must not produce a statement"
+        );
+    }
+
+    #[test]
     fn parse_graph_insert_edge_with_object_properties() {
         let stmt = try_parse(
-            "GRAPH INSERT EDGE FROM 'a' TO 'b' TYPE 'l' PROPERTIES { note: '} DEPTH 999' }",
+            "GRAPH INSERT EDGE IN 'edges' FROM 'a' TO 'b' TYPE 'l' PROPERTIES { note: '} DEPTH 999' }",
         )
         .unwrap();
         match stmt {
-            NodedbStatement::GraphInsertEdge { properties, .. } => match properties {
-                GraphProperties::Object(s) => assert!(s.contains("} DEPTH 999")),
-                other => panic!("expected Object properties, got {other:?}"),
-            },
+            NodedbStatement::GraphInsertEdge {
+                collection,
+                properties,
+                ..
+            } => {
+                assert_eq!(collection, "edges");
+                match properties {
+                    GraphProperties::Object(s) => assert!(s.contains("} DEPTH 999")),
+                    other => panic!("expected Object properties, got {other:?}"),
+                }
+            }
             other => panic!("expected GraphInsertEdge, got {other:?}"),
         }
     }
