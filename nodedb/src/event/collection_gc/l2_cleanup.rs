@@ -167,7 +167,7 @@ async fn delete_prefix(
     while let Some(meta) = list.next().await {
         match meta {
             Ok(m) => {
-                total_bytes += m.size as u64;
+                total_bytes += m.size;
                 if let Err(e) = store.delete(&m.location).await
                     && first_err.is_none()
                 {
