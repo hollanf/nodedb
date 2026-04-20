@@ -35,10 +35,13 @@ pub fn spawn_post_apply_async_side_effects(
                 collection::purge_async(tenant_id, name, raft_index, shared).await;
             });
         }
-
         // ── Variants with no async side effect today ─────────────────────────
         // Listed explicitly (no `_ => {}`) so the compiler forces a decision
-        // when a new variant is added.
+        // when a new variant is added. Note: `DeleteTrigger`,
+        // `DeleteChangeStream`, and `DeleteMaterializedView` handle their
+        // per-node in-memory teardown synchronously via
+        // `apply_post_apply_side_effects_sync` (which also runs on every
+        // node); they have no additional async work today.
         CatalogEntry::DeactivateCollection { .. }
         | CatalogEntry::PutSequence(_)
         | CatalogEntry::DeleteSequence { .. }
