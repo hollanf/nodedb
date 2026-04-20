@@ -31,6 +31,53 @@ use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
 use crate::types::TenantId;
 
+/// Bounded retry wrapper for L1 reclaim ops.
+///
+/// Runs the op up to `MAX_ATTEMPTS` times; returns the first `Ok(T)`
+/// it sees. On every failure it captures the error text for the final
+/// warn. No sleep between attempts — the Data Plane is single-threaded
+/// per core and a `sleep` here would stall every other request on the
+/// shard; an immediate retry still recovers the vast majority of
+/// transient fs-level errors (momentary lock, inflight fsync race).
+const L1_RECLAIM_MAX_ATTEMPTS: u32 = 3;
+
+fn retry_reclaim<T, E, F>(op_name: &str, tenant_id: u32, collection: &str, mut op: F) -> Option<T>
+where
+    F: FnMut() -> Result<T, E>,
+    E: std::fmt::Display,
+{
+    let mut last_err: Option<String> = None;
+    for attempt in 1..=L1_RECLAIM_MAX_ATTEMPTS {
+        match op() {
+            Ok(v) => {
+                if attempt > 1 {
+                    info!(
+                        tenant_id,
+                        collection,
+                        op = op_name,
+                        attempt,
+                        "L1 reclaim recovered after transient failure"
+                    );
+                }
+                return Some(v);
+            }
+            Err(e) => {
+                last_err = Some(e.to_string());
+            }
+        }
+    }
+    warn!(
+        tenant_id,
+        collection,
+        op = op_name,
+        attempts = L1_RECLAIM_MAX_ATTEMPTS,
+        error = last_err.as_deref().unwrap_or("(no detail)"),
+        "L1 reclaim failed after all retries; leaving partial state \
+         for next purge attempt (idempotent)"
+    );
+    None
+}
+
 impl CoreLoop {
     /// Purge collection-scoped data on this core.
     pub(in crate::data::executor) fn execute_unregister_collection(
@@ -50,32 +97,26 @@ impl CoreLoop {
         // ── Persistent engines (redb-backed, collection-scoped range drop) ──
 
         // Sparse engine: documents + secondary indexes.
-        let (docs_removed, idxs_removed) =
-            match self.sparse.delete_all_for_collection(tenant_id, collection) {
-                Ok(counts) => counts,
-                Err(e) => {
-                    warn!(tenant_id, collection, error = %e, "sparse collection purge failed");
-                    (0, 0)
-                }
-            };
+        let (docs_removed, idxs_removed) = retry_reclaim(
+            "sparse.delete_all_for_collection",
+            tenant_id,
+            collection,
+            || self.sparse.delete_all_for_collection(tenant_id, collection),
+        )
+        .unwrap_or((0, 0));
 
         // Inverted index: postings + doc_lengths + stats + segments.
-        let inv_removed = match self.inverted.purge_collection(tid, collection) {
-            Ok(n) => n,
-            Err(e) => {
-                warn!(tenant_id, collection, error = %e, "inverted collection purge failed");
-                0
-            }
-        };
+        let inv_removed = retry_reclaim("inverted.purge_collection", tenant_id, collection, || {
+            self.inverted.purge_collection(tid, collection)
+        })
+        .unwrap_or(0);
 
         // Graph edge store: remove all edges scoped to this collection.
-        let edges_removed = match self.edge_store.purge_collection(tid, collection) {
-            Ok(n) => n,
-            Err(e) => {
-                warn!(tenant_id, collection, error = %e, "graph edge collection purge failed");
-                0
-            }
-        };
+        let edges_removed =
+            retry_reclaim("edge_store.purge_collection", tenant_id, collection, || {
+                self.edge_store.purge_collection(tid, collection)
+            })
+            .unwrap_or(0);
         // The CSR in-memory index is collection-agnostic. Stale edges will
         // be absent from the next CSR rebuild (which reads from EdgeStore).
         self.csr.drop_collection(tid, collection);
@@ -133,18 +174,51 @@ impl CoreLoop {
 
         // CRDT engine: clear rows for this collection in the tenant state.
         let crdt_rows_removed = match self.crdt_engines.get_mut(&tid) {
-            Some(engine) => match engine.purge_collection(collection) {
-                Ok(n) => n,
-                Err(e) => {
-                    warn!(tenant_id, collection, error = %e, "crdt collection purge failed");
-                    0
-                }
-            },
+            Some(engine) => retry_reclaim("crdt.purge_collection", tenant_id, collection, || {
+                engine.purge_collection(collection)
+            })
+            .unwrap_or(0),
             None => 0,
         };
 
         // Doc cache: evict entries for this collection.
         self.doc_cache.evict_collection(tenant_id, collection);
+
+        // ── Persistent on-disk unlinks (per-engine reclaim) ──────────────────
+        //
+        // Engines whose state is in shared redb (document, document-
+        // strict, FTS, graph edges) already reclaimed above; engines
+        // with no per-collection persistent file (KV hash index,
+        // CRDT — per-tenant checkpoint) are N/A.
+        use crate::data::executor::handlers::reclaim;
+        let mut l1_stats = reclaim::ReclaimStats::default();
+        l1_stats.merge(reclaim::vector::reclaim_vector_checkpoints(
+            &self.data_dir,
+            tenant_id,
+            collection,
+        ));
+        l1_stats.merge(reclaim::spatial::reclaim_spatial_checkpoints(
+            &self.data_dir,
+            tenant_id,
+            collection,
+        ));
+        l1_stats.merge(reclaim::sparse_vector::reclaim_sparse_vector_checkpoints(
+            &self.data_dir,
+            tenant_id,
+            collection,
+        ));
+        l1_stats.merge(reclaim::timeseries::reclaim_timeseries_partitions(
+            &self.data_dir,
+            tenant_id,
+            collection,
+        ));
+        if let Some(metrics) = self.metrics.as_ref()
+            && l1_stats.bytes_freed > 0
+        {
+            metrics
+                .purge
+                .add_bytes_reclaimed(tenant_id, "l1-mixed", "l1", l1_stats.bytes_freed);
+        }
 
         // Doc configs + chain hashes + aggregate cache.
         self.doc_configs
@@ -184,6 +258,8 @@ impl CoreLoop {
             "timeseries_removed": ts_removed,
             "spatial_removed": spatial_removed,
             "edges_removed": edges_removed,
+            "l1_files_unlinked": l1_stats.files_unlinked,
+            "l1_bytes_freed": l1_stats.bytes_freed,
         });
 
         match crate::data::executor::response_codec::encode_json(&summary) {
