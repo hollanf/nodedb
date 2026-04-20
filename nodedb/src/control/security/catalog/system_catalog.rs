@@ -131,6 +131,9 @@ impl SystemCatalog {
             let _ = write_txn
                 .open_table(WAL_TOMBSTONES)
                 .map_err(|e| catalog_err("init wal_tombstones table", e))?;
+            let _ = write_txn
+                .open_table(super::types::L2_CLEANUP_QUEUE)
+                .map_err(|e| catalog_err("init l2_cleanup_queue table", e))?;
         }
         write_txn
             .commit()

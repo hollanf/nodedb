@@ -7,6 +7,7 @@ use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 
 use super::dropped_collections::dropped_collections;
+use super::l2_cleanup_queue::l2_cleanup_queue;
 use super::tables;
 
 /// Try to handle a SQL query as a pg_catalog virtual-table lookup.
@@ -29,6 +30,7 @@ pub fn try_pg_catalog(
         "pg_index" => tables::pg_index(),
         "pg_authid" => tables::pg_authid(state, identity),
         "_system.dropped_collections" => dropped_collections(state, identity),
+        "_system.l2_cleanup_queue" => l2_cleanup_queue(state, identity),
         _ => return None,
     };
     Some(result)
@@ -95,6 +97,15 @@ pub fn pg_catalog_schema(table: &str) -> Option<Vec<pgwire::api::results::FieldI
             int8_field("deactivated_at_ns"),
             int8_field("retention_expires_at_ns"),
         ],
+        "_system.l2_cleanup_queue" => vec![
+            int8_field("tenant_id"),
+            text_field("name"),
+            int8_field("purge_lsn"),
+            int8_field("enqueued_at_ns"),
+            int8_field("bytes_pending"),
+            text_field("last_error"),
+            int4_field("attempts"),
+        ],
         _ => return None,
     };
     Some(fields)
@@ -109,6 +120,9 @@ pub fn extract_pg_catalog_table(upper: &str) -> Option<&'static str> {
     // could shadow a user-created collection).
     if upper.contains("_SYSTEM.DROPPED_COLLECTIONS") {
         return Some("_system.dropped_collections");
+    }
+    if upper.contains("_SYSTEM.L2_CLEANUP_QUEUE") {
+        return Some("_system.l2_cleanup_queue");
     }
     let known = [
         "pg_database",

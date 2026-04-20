@@ -58,6 +58,18 @@ pub(super) const COLLECTIONS: TableDefinition<&str, &[u8]> =
 pub(super) const WAL_TOMBSTONES: TableDefinition<(u32, &str), u64> =
     TableDefinition::new("_system.wal_tombstones");
 
+/// Table: `(tenant_id, collection_name)` -> MessagePack-serialized
+/// `StoredL2CleanupEntry`.
+///
+/// Populated when a collection hard-delete finishes on this node but
+/// L2 (S3) object delete has not completed yet. Drained by the L2
+/// cleanup worker as `DELETE` calls succeed. Surfaced via the
+/// `_system.l2_cleanup_queue` virtual view so operators can see the
+/// object-store delete backlog even after the `StoredCollection` row
+/// has been purged.
+pub(super) const L2_CLEANUP_QUEUE: TableDefinition<(u32, &str), &[u8]> =
+    TableDefinition::new("_system.l2_cleanup_queue");
+
 /// Table: "{tenant_id}:{name}" -> MessagePack-serialized materialized view metadata.
 pub(super) const MATERIALIZED_VIEWS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_system.materialized_views");

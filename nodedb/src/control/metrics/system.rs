@@ -8,6 +8,7 @@ use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::histogram::AtomicHistogram;
+use super::purge::PurgeMetrics;
 
 /// Core metrics collected across the system.
 #[derive(Debug, Default)]
@@ -130,6 +131,9 @@ pub struct SystemMetrics {
     /// Labeled counter: (registry, outcome) → total.
     /// `outcome` is one of "ok", "warning", "error".
     pub catalog_sanity_check_totals: RwLock<HashMap<(String, String), u64>>,
+
+    // ── Collection hard-delete (purge) ──
+    pub purge: PurgeMetrics,
 
     // ── Shutdown ──
     /// Gauge: phase name → last observed drain duration in milliseconds.
@@ -478,6 +482,7 @@ impl SystemMetrics {
         self.prometheus_engines(&mut out);
         self.prometheus_catalog_sanity(&mut out);
         self.prometheus_shutdown_phases(&mut out);
+        self.purge.write_prometheus(&mut out);
         out
     }
 

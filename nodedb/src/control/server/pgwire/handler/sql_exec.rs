@@ -297,6 +297,21 @@ impl NodeDbPgHandler {
             );
         }
 
+        // `_system.purge_collection('name')` scalar-function shim:
+        // rewritten to `DROP COLLECTION "name" PURGE` and handed back
+        // through the normal DDL router. Exists so scripts can call a
+        // deterministic function name instead of composing DDL; the
+        // behavior is identical.
+        if let Some(rewritten) =
+            super::super::system_functions::rewrite_purge_collection(sql_trimmed, &upper)
+        {
+            if let Some(result) =
+                super::super::ddl::dispatch(&self.state, identity, &rewritten).await
+            {
+                return result;
+            }
+        }
+
         // pg_catalog virtual tables — intercept before the normal planner.
         if let Some(result) =
             super::super::pg_catalog::try_pg_catalog(&self.state, identity, &upper)

@@ -34,6 +34,13 @@ pub(super) async fn dispatch(
         ));
     }
 
+    // System-level settings (ALTER SYSTEM SET ...).
+    if upper.starts_with("ALTER SYSTEM ") {
+        return Some(super::super::system_ddl::alter_system(
+            state, identity, parts,
+        ));
+    }
+
     // Tenant management.
     if upper.starts_with("CREATE TENANT ") {
         return Some(super::super::tenant::create_tenant(state, identity, parts));

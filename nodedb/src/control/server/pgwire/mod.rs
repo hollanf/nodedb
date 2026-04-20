@@ -4,4 +4,5 @@ pub mod handler;
 pub mod listener;
 pub mod pg_catalog;
 pub mod session;
+pub mod system_functions;
 pub mod types;
