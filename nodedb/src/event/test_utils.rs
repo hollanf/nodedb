@@ -34,6 +34,7 @@ pub fn event_test_deps(dir: &tempfile::TempDir) -> EventTestDeps {
         &catalog_path,
         &crate::config::auth::AuthConfig::default(),
         Default::default(),
+        crate::bridge::quiesce::CollectionQuiesce::new(),
     )
     .unwrap();
     let cdc_router = Arc::clone(&shared_state.cdc_router);
