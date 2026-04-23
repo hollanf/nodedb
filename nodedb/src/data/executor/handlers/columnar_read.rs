@@ -10,17 +10,36 @@ use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
 
+/// Parameters for a columnar base scan. Bundled as a struct because the
+/// raw parameter list exceeds the project's too-many-arguments bound.
+pub(in crate::data::executor) struct ColumnarScanParams<'a> {
+    pub collection: &'a str,
+    pub projection: &'a [String],
+    pub limit: usize,
+    pub filters: &'a [u8],
+    /// RLS filter bytes — wiring is the responsibility of a separate
+    /// enforcement pass; the base scan handler itself does not consume
+    /// them (hence the `_` destructure).
+    #[allow(dead_code)]
+    pub rls_filters: &'a [u8],
+    pub sort_keys: &'a [(String, bool)],
+}
+
 impl CoreLoop {
     /// Execute a base columnar scan: read from MutationEngine memtable.
     pub(in crate::data::executor) fn execute_columnar_scan(
         &mut self,
         task: &ExecutionTask,
-        collection: &str,
-        projection: &[String],
-        limit: usize,
-        filters: &[u8],
-        _rls_filters: &[u8],
+        params: ColumnarScanParams<'_>,
     ) -> Response {
+        let ColumnarScanParams {
+            collection,
+            projection,
+            limit,
+            filters,
+            rls_filters: _,
+            sort_keys,
+        } = params;
         let limit = if limit == 0 { 1000 } else { limit };
 
         // Scan-quiesce gate.
@@ -56,13 +75,18 @@ impl CoreLoop {
             Vec::new()
         };
 
-        let mut results = Vec::new();
-
-        // Scan more rows than `limit` so we have candidates to filter from.
-        for row in engine
-            .scan_memtable_rows()
-            .take(limit.saturating_mul(10).max(limit))
-        {
+        // Collect matched rows as (row_values, json_object) pairs. We keep
+        // the raw `Vec<Value>` for sort-key comparison — the JSON form is
+        // emitted only after ORDER BY + limit are applied. When no sort
+        // is requested we short-circuit the limit enforcement inside the
+        // loop to avoid materialising the entire memtable.
+        let mut matched: Vec<(Vec<nodedb_types::value::Value>, serde_json::Value)> = Vec::new();
+        let scan_budget = if sort_keys.is_empty() {
+            limit.saturating_mul(10).max(limit)
+        } else {
+            usize::MAX
+        };
+        for row in engine.scan_memtable_rows().take(scan_budget) {
             if !filter_predicates.is_empty()
                 && !row_matches_filters(&row, schema, &filter_predicates)
             {
@@ -77,11 +101,18 @@ impl CoreLoop {
                     obj.insert(col_def.name.clone(), value_to_json(&row[i]));
                 }
             }
-            results.push(serde_json::Value::Object(obj));
-            if results.len() >= limit {
+            matched.push((row, serde_json::Value::Object(obj)));
+            if sort_keys.is_empty() && matched.len() >= limit {
                 break;
             }
         }
+
+        if !sort_keys.is_empty() {
+            matched.sort_by(|(a, _), (b, _)| sort_rows_by_keys(a, b, schema, sort_keys));
+        }
+
+        let results: Vec<serde_json::Value> =
+            matched.into_iter().take(limit).map(|(_, j)| j).collect();
 
         match response_codec::encode_json_vec(&results) {
             Ok(payload) => self.response_with_payload(task, payload),
@@ -125,6 +156,59 @@ pub(in crate::data::executor) fn value_to_json(
             serde_json::Value::Object(obj)
         }
         _ => serde_json::Value::Null,
+    }
+}
+
+/// Compare two columnar rows by the planner's sort-key list. Missing
+/// columns compare as `Null`; unknown column names fall through as
+/// `Equal` so a mis-typed ORDER BY at least keeps scan order stable.
+pub(in crate::data::executor) fn sort_rows_by_keys(
+    a: &[nodedb_types::value::Value],
+    b: &[nodedb_types::value::Value],
+    schema: &nodedb_types::columnar::ColumnarSchema,
+    sort_keys: &[(String, bool)],
+) -> std::cmp::Ordering {
+    use nodedb_types::value::Value;
+    for (field, ascending) in sort_keys {
+        let idx = match schema.columns.iter().position(|c| &c.name == field) {
+            Some(i) => i,
+            None => continue,
+        };
+        let av = a.get(idx).unwrap_or(&Value::Null);
+        let bv = b.get(idx).unwrap_or(&Value::Null);
+        let ord = compare_values(av, bv);
+        if ord != std::cmp::Ordering::Equal {
+            return if *ascending { ord } else { ord.reverse() };
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+fn compare_values(
+    a: &nodedb_types::value::Value,
+    b: &nodedb_types::value::Value,
+) -> std::cmp::Ordering {
+    use nodedb_types::value::Value;
+    // Null sorts last in ascending order (Postgres default).
+    match (a, b) {
+        (Value::Null, Value::Null) => std::cmp::Ordering::Equal,
+        (Value::Null, _) => std::cmp::Ordering::Greater,
+        (_, Value::Null) => std::cmp::Ordering::Less,
+        (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
+        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+        (Value::Integer(x), Value::Float(y)) => (*x as f64)
+            .partial_cmp(y)
+            .unwrap_or(std::cmp::Ordering::Equal),
+        (Value::Float(x), Value::Integer(y)) => x
+            .partial_cmp(&(*y as f64))
+            .unwrap_or(std::cmp::Ordering::Equal),
+        (Value::String(x), Value::String(y)) => x.cmp(y),
+        (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
+        (Value::DateTime(x), Value::DateTime(y)) => x.unix_millis().cmp(&y.unix_millis()),
+        // Fallback: compare debug-formatted forms so the sort is
+        // deterministic for exotic types that happen to coincide in a
+        // sort key column.
+        _ => format!("{a:?}").cmp(&format!("{b:?}")),
     }
 }
 

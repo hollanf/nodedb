@@ -99,6 +99,7 @@ pub(super) fn convert_scan(p: ScanParams<'_>) -> crate::Result<Vec<PhysicalTask>
             limit: limit.unwrap_or(10000),
             filters: filter_bytes,
             rls_filters: Vec::new(),
+            sort_keys: sort.clone(),
         }),
         EngineType::Spatial => PhysicalPlan::Columnar(ColumnarOp::Scan {
             collection: collection.into(),
@@ -106,6 +107,7 @@ pub(super) fn convert_scan(p: ScanParams<'_>) -> crate::Result<Vec<PhysicalTask>
             limit: limit.unwrap_or(10000),
             filters: filter_bytes,
             rls_filters: Vec::new(),
+            sort_keys: sort.clone(),
         }),
         EngineType::KeyValue => PhysicalPlan::Kv(KvOp::Scan {
             collection: collection.into(),
@@ -175,6 +177,7 @@ pub(super) fn convert_document_index_lookup(
 pub(super) fn convert_point_get(
     collection: &str,
     engine: &EngineType,
+    key_column: &str,
     key_value: &SqlValue,
     tenant_id: TenantId,
 ) -> crate::Result<Vec<PhysicalTask>> {
@@ -192,12 +195,32 @@ pub(super) fn convert_point_get(
                 rls_filters: Vec::new(),
             })
         }
-        // Columnar point get: route through ColumnarOp::Scan with a limit-1 filter.
+        // Columnar point get: emit a ColumnarOp::Scan with an `Eq` filter
+        // on the PK column and limit=1. Columnar collections have no
+        // document store, so routing to `DocumentOp::PointGet` silently
+        // returns zero rows.
         EngineType::Columnar | EngineType::Spatial => {
-            PhysicalPlan::Document(DocumentOp::PointGet {
+            use nodedb_query::scan_filter::{FilterOp, ScanFilter};
+            let scan_filter = ScanFilter {
+                field: key_column.to_string(),
+                op: FilterOp::Eq,
+                value: super::value::sql_value_to_nodedb_value(key_value),
+                clauses: Vec::new(),
+                expr: None,
+            };
+            let filter_bytes = zerompk::to_msgpack_vec(&vec![scan_filter]).map_err(|e| {
+                crate::Error::Serialization {
+                    format: "msgpack".into(),
+                    detail: format!("columnar point-get filter: {e}"),
+                }
+            })?;
+            PhysicalPlan::Columnar(ColumnarOp::Scan {
                 collection: collection.into(),
-                document_id: sql_value_to_string(key_value),
+                projection: Vec::new(),
+                limit: 1,
+                filters: filter_bytes,
                 rls_filters: Vec::new(),
+                sort_keys: Vec::new(),
             })
         }
         // Timeseries should never reach here — nodedb-sql rejects point gets.

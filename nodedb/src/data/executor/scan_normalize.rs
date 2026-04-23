@@ -237,7 +237,7 @@ impl CoreLoop {
 /// Convert a single row from a `DecodedColumn` to a `nodedb_types::value::Value`.
 ///
 /// Returns `Value::Null` if the row index is out of range or the validity bit is false.
-fn decoded_col_to_value(
+pub(in crate::data::executor) fn decoded_col_to_value(
     col: &nodedb_columnar::reader::DecodedColumn,
     row_idx: usize,
 ) -> nodedb_types::value::Value {
