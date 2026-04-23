@@ -64,6 +64,9 @@ impl CoreLoop {
             Err(e) => return self.response_error(task, e),
         }
 
+        // `apply_point_put` returns prior bytes if any — for PointInsert this
+        // must be `None` because the probe above already rejected the
+        // conflict case. We intentionally drop it.
         if let Err(e) = self.apply_point_put(&txn, tid, collection, document_id, value) {
             return self.response_error(task, e);
         }
@@ -80,15 +83,7 @@ impl CoreLoop {
 
         self.checkpoint_coordinator.mark_dirty("sparse", 1);
 
-        let event_value = self.resolve_event_payload(tid, collection, value);
-        self.emit_write_event(
-            task,
-            collection,
-            crate::event::WriteOp::Insert,
-            document_id,
-            Some(event_value.as_deref().unwrap_or(value)),
-            None,
-        );
+        self.emit_put_event(task, tid, collection, document_id, value, None);
 
         self.response_ok(task)
     }

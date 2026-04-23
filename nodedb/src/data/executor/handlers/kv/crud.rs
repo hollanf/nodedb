@@ -70,23 +70,23 @@ impl CoreLoop {
         }
 
         let now_ms = current_ms();
-        let _old = self
+        let old = self
             .kv_engine
             .put(tid, collection, key, value, ttl_ms, now_ms);
         if let Some(ref m) = self.metrics {
             m.record_kv_put();
         }
 
-        // Emit write event to Event Plane.
+        // RESP SET / UPSERT semantics: if `old` is present the write
+        // replaced an existing row and the Event Plane must see an Update
+        // event with both sides populated. Otherwise it was a fresh
+        // Insert.
         let key_str = String::from_utf8_lossy(key);
-        self.emit_write_event(
-            task,
-            collection,
-            crate::event::WriteOp::Insert,
-            &key_str,
-            Some(value),
-            None,
-        );
+        let (op, old_slice): (_, Option<&[u8]>) = match old.as_deref() {
+            Some(o) => (crate::event::WriteOp::Update, Some(o)),
+            None => (crate::event::WriteOp::Insert, None),
+        };
+        self.emit_write_event(task, collection, op, &key_str, Some(value), old_slice);
 
         self.response_ok(task)
     }
@@ -135,8 +135,7 @@ impl CoreLoop {
             );
         }
 
-        let _old = self
-            .kv_engine
+        self.kv_engine
             .put(tid, collection, key, value, ttl_ms, now_ms);
         if let Some(ref m) = self.metrics {
             m.record_kv_put();
@@ -183,8 +182,7 @@ impl CoreLoop {
             return self.response_ok(task);
         }
 
-        let _old = self
-            .kv_engine
+        self.kv_engine
             .put(tid, collection, key, value, ttl_ms, now_ms);
         if let Some(ref m) = self.metrics {
             m.record_kv_put();
@@ -235,10 +233,10 @@ impl CoreLoop {
         let now_ms = current_ms();
         let existing_bytes = self.kv_engine.get(tid, collection, key, now_ms);
 
-        let stored_bytes: Vec<u8> = match existing_bytes {
+        let stored_bytes: Vec<u8> = match &existing_bytes {
             None => value.to_vec(),
             Some(existing_raw) => {
-                let existing_val = match nodedb_types::value_from_msgpack(&existing_raw) {
+                let existing_val = match nodedb_types::value_from_msgpack(existing_raw) {
                     Ok(v) => v,
                     Err(_) => {
                         return self.response_error(
@@ -283,21 +281,28 @@ impl CoreLoop {
             }
         };
 
-        let _old = self
-            .kv_engine
+        self.kv_engine
             .put(tid, collection, key, &stored_bytes, ttl_ms, now_ms);
         if let Some(ref m) = self.metrics {
             m.record_kv_put();
         }
 
+        // `ON CONFLICT DO UPDATE` onto an existing row is an Update from
+        // every downstream consumer's perspective; a fresh key with no
+        // prior value is an Insert. The pre-write `existing_bytes` probe
+        // above is the source of truth.
         let key_str = String::from_utf8_lossy(key);
+        let (op, old_slice): (_, Option<&[u8]>) = match existing_bytes.as_deref() {
+            Some(o) => (crate::event::WriteOp::Update, Some(o)),
+            None => (crate::event::WriteOp::Insert, None),
+        };
         self.emit_write_event(
             task,
             collection,
-            crate::event::WriteOp::Insert,
+            op,
             &key_str,
             Some(&stored_bytes),
-            None,
+            old_slice,
         );
 
         self.response_ok(task)

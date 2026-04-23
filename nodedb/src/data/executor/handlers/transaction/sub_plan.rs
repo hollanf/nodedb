@@ -374,7 +374,7 @@ impl CoreLoop {
             encode_for_storage(value)?
         };
         match self.sparse.put(tid, collection, document_id, &stored) {
-            Ok(()) => {
+            Ok(_prior) => {
                 // Auto-index text fields (includes nested block content).
                 if let Some(doc) = super::super::super::doc_format::decode_document(value) {
                     let text_content = super::super::document::extract_indexable_text(&doc);

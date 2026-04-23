@@ -322,7 +322,13 @@ impl CoreLoop {
         // Delete each matching document with full cascade.
         let mut affected = 0u64;
         for doc_id in &matching_ids {
-            if self.sparse.delete(tid, collection, doc_id).unwrap_or(false) {
+            if self
+                .sparse
+                .delete(tid, collection, doc_id)
+                .ok()
+                .flatten()
+                .is_some()
+            {
                 // Cascade: inverted index.
                 if let Err(e) = self.inverted.remove_document(
                     crate::types::TenantId::new(tid),

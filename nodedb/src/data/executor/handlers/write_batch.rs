@@ -70,8 +70,10 @@ impl CoreLoop {
         };
 
         // Execute each PointPut within the shared transaction.
-        // Track per-task success/failure for individual responses.
-        let mut results: Vec<Result<(), crate::bridge::envelope::Response>> =
+        // Track per-task success/failure for individual responses, and
+        // capture the prior stored bytes per row so the Event Plane emit
+        // below can resolve Insert vs Update from the actual mutation.
+        let mut results: Vec<Result<Option<Vec<u8>>, crate::bridge::envelope::Response>> =
             Vec::with_capacity(batch.len());
         for task in &batch {
             let PhysicalPlan::Document(DocumentOp::PointPut {
@@ -105,7 +107,7 @@ impl CoreLoop {
             for (task, result) in batch.into_iter().zip(results) {
                 let response = match result {
                     Err(err_response) => err_response,
-                    Ok(()) => self.response_error(
+                    Ok(_) => self.response_error(
                         &task,
                         ErrorCode::Internal {
                             detail: "batch aborted due to sibling failure".into(),
@@ -123,10 +125,12 @@ impl CoreLoop {
         let commit_result = txn.commit();
 
         let count = batch.len();
-        for task in &batch {
+        for (task, result) in batch.iter().zip(results.iter()) {
             let response = match &commit_result {
                 Ok(()) => {
                     // Emit write event for each successful batched PointPut.
+                    // The Insert vs Update tag is derived from the prior
+                    // bytes captured per row above.
                     if let PhysicalPlan::Document(DocumentOp::PointPut {
                         collection,
                         document_id,
@@ -134,15 +138,11 @@ impl CoreLoop {
                     }) = task.plan()
                     {
                         let tid = task.request.tenant_id.as_u32();
-                        let ev = self.resolve_event_payload(tid, collection, value);
-                        self.emit_write_event(
-                            task,
-                            collection,
-                            crate::event::WriteOp::Insert,
-                            document_id,
-                            Some(ev.as_deref().unwrap_or(value)),
-                            None,
-                        );
+                        let prior = match result {
+                            Ok(p) => p.as_deref(),
+                            Err(_) => None,
+                        };
+                        self.emit_put_event(task, tid, collection, document_id, value, prior);
                     }
                     self.response_ok(task)
                 }

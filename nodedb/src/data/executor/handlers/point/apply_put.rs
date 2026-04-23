@@ -13,6 +13,11 @@ impl CoreLoop {
     ///
     /// Stores the document, auto-indexes text fields, updates column stats,
     /// and populates the document cache. Does NOT commit the transaction.
+    ///
+    /// Returns the prior stored bytes when this put replaced an existing row,
+    /// or `None` when it was a fresh insert. The caller threads the prior
+    /// bytes into `emit_write_event` so the Event Plane's `WriteOp` tag
+    /// reflects the actual mutation.
     pub(in crate::data::executor) fn apply_point_put(
         &mut self,
         txn: &WriteTransaction,
@@ -20,7 +25,7 @@ impl CoreLoop {
         collection: &str,
         document_id: &str,
         value: &[u8],
-    ) -> crate::Result<()> {
+    ) -> crate::Result<Option<Vec<u8>>> {
         // Evaluate generated columns before encoding.
         let config_key = (crate::types::TenantId::new(tid), collection.to_string());
         let value = if let Some(config) = self.doc_configs.get(&config_key)
@@ -60,7 +65,8 @@ impl CoreLoop {
             value.to_vec()
         };
 
-        self.sparse
+        let prior = self
+            .sparse
             .put_in_txn(txn, tid, collection, document_id, &stored)?;
 
         // Text indexing and stats use the original JSON input, not the stored
@@ -282,7 +288,7 @@ impl CoreLoop {
             }
         }
 
-        Ok(())
+        Ok(prior)
     }
 }
 

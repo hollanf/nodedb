@@ -204,21 +204,22 @@ impl CoreLoop {
                     .sparse
                     .put(tid, collection, document_id, &updated_bytes)
                 {
-                    Ok(()) => {
+                    Ok(_prior) => {
                         self.doc_cache
                             .put(tid, collection, document_id, &updated_bytes);
 
-                        // Emit update event to Event Plane.
-                        // Convert Binary Tuple → msgpack for strict collections.
-                        let new_ev = self.resolve_event_payload(tid, collection, &updated_bytes);
-                        let old_ev = self.resolve_event_payload(tid, collection, &current_bytes);
-                        self.emit_write_event(
+                        // Emit update event to Event Plane. `current_bytes`
+                        // is the pre-update row already read above; the
+                        // helper derives `WriteOp::Update` from the Some
+                        // prior + Some new pair and handles strict→msgpack
+                        // conversion on both sides.
+                        self.emit_put_event(
                             task,
+                            tid,
                             collection,
-                            crate::event::WriteOp::Update,
                             document_id,
-                            Some(new_ev.as_deref().unwrap_or(&updated_bytes)),
-                            Some(old_ev.as_deref().unwrap_or(&current_bytes)),
+                            &updated_bytes,
+                            Some(&current_bytes),
                         );
 
                         if returning {

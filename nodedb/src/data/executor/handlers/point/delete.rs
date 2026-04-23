@@ -17,7 +17,7 @@ impl CoreLoop {
     ) -> Response {
         debug!(core = self.core_id, %collection, %document_id, "point delete");
         match self.sparse.delete(tid, collection, document_id) {
-            Ok(_) => {
+            Ok(prior) => {
                 // Cascade 1: Remove from full-text inverted index.
                 if let Err(e) = self.inverted.remove_document(
                     crate::types::TenantId::new(tid),
@@ -76,15 +76,22 @@ impl CoreLoop {
 
                 self.checkpoint_coordinator.mark_dirty("sparse", 1);
 
-                // Emit delete event to Event Plane.
-                self.emit_write_event(
-                    task,
-                    collection,
-                    crate::event::WriteOp::Delete,
-                    document_id,
-                    None,
-                    None, // old_value: would require reading before delete; future batch adds this.
-                );
+                // Emit delete event to Event Plane if the row actually
+                // existed. `sparse.delete` returns the prior bytes — we
+                // thread them through so CDC/trigger consumers see the
+                // pre-delete state as `old_value`. A delete against a
+                // non-existent key is a true no-op and emits nothing.
+                if let Some(prior_bytes) = prior.as_deref() {
+                    let old_converted = self.resolve_event_payload(tid, collection, prior_bytes);
+                    self.emit_write_event(
+                        task,
+                        collection,
+                        crate::event::WriteOp::Delete,
+                        document_id,
+                        None,
+                        Some(old_converted.as_deref().unwrap_or(prior_bytes)),
+                    );
+                }
 
                 self.response_ok(task)
             }

@@ -140,11 +140,22 @@ impl CoreLoop {
                     }
                 };
 
-                // Write directly to storage.
+                // Write directly to storage. `current_bytes` is the
+                // pre-merge stored row, already read above — thread it to
+                // the Event Plane as `old_value` so the emitted WriteOp
+                // resolves to Update.
                 match self.sparse.put(tid, collection, document_id, &stored_bytes) {
-                    Ok(()) => {
+                    Ok(_prior) => {
                         self.doc_cache
                             .put(tid, collection, document_id, &stored_bytes);
+                        self.emit_put_event(
+                            task,
+                            tid,
+                            collection,
+                            document_id,
+                            &stored_bytes,
+                            Some(&current_bytes),
+                        );
                         self.response_ok(task)
                     }
                     Err(e) => self.response_error(
@@ -169,14 +180,21 @@ impl CoreLoop {
                     }
                 };
 
-                if let Err(e) = self.apply_point_put(&txn, tid, collection, document_id, value) {
-                    return self.response_error(
-                        task,
-                        ErrorCode::Internal {
-                            detail: e.to_string(),
-                        },
-                    );
-                }
+                // `apply_point_put` returns prior bytes if any; here the
+                // existence probe just above found none, and apply_point_put
+                // is the only writer on this core — prior must be None. We
+                // pass it straight through so the emit resolves to Insert.
+                let prior = match self.apply_point_put(&txn, tid, collection, document_id, value) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return self.response_error(
+                            task,
+                            ErrorCode::Internal {
+                                detail: e.to_string(),
+                            },
+                        );
+                    }
+                };
 
                 if let Err(e) = txn.commit() {
                     return self.response_error(
@@ -186,6 +204,8 @@ impl CoreLoop {
                         },
                     );
                 }
+
+                self.emit_put_event(task, tid, collection, document_id, value, prior.as_deref());
 
                 self.response_ok(task)
             }

@@ -31,14 +31,17 @@ impl CoreLoop {
             }
         };
 
-        if let Err(e) = self.apply_point_put(&txn, tid, collection, document_id, value) {
-            return self.response_error(
-                task,
-                ErrorCode::Internal {
-                    detail: e.to_string(),
-                },
-            );
-        }
+        let prior = match self.apply_point_put(&txn, tid, collection, document_id, value) {
+            Ok(p) => p,
+            Err(e) => {
+                return self.response_error(
+                    task,
+                    ErrorCode::Internal {
+                        detail: e.to_string(),
+                    },
+                );
+            }
+        };
 
         if let Err(e) = txn.commit() {
             return self.response_error(
@@ -51,18 +54,10 @@ impl CoreLoop {
 
         self.checkpoint_coordinator.mark_dirty("sparse", 1);
 
-        // Emit write event to Event Plane (after successful commit).
-        // For strict collections, convert Binary Tuple → msgpack so the
-        // Event Plane can deserialize the payload for trigger dispatch.
-        let event_value = self.resolve_event_payload(tid, collection, value);
-        self.emit_write_event(
-            task,
-            collection,
-            crate::event::WriteOp::Insert,
-            document_id,
-            Some(event_value.as_deref().unwrap_or(value)),
-            None,
-        );
+        // Emit write event to Event Plane. Insert vs Update is derived
+        // from whether `prior` was present — a PointPut onto an existing
+        // row is an Update from every downstream consumer's perspective.
+        self.emit_put_event(task, tid, collection, document_id, value, prior.as_deref());
 
         self.response_ok(task)
     }
