@@ -354,6 +354,19 @@ pub enum NodedbStatement {
         raw_sql: String,
     },
 
+    /// `GRAPH RAG FUSION ON <collection> QUERY ARRAY[…] [options…]`
+    ///
+    /// All numeric and label options are optional at parse time; the pgwire
+    /// handler applies defaults and caps so validation errors surface with
+    /// proper SQLSTATE codes rather than parser panics.
+    ///
+    /// `query_vector` is `None` when no `ARRAY[…]` clause was found — the
+    /// handler rejects such requests with SQLSTATE 42601.
+    GraphRagFusion {
+        collection: String,
+        params: crate::ddl_ast::graph_parse::FusionParams,
+    },
+
     /// Catch-all for DDL-like commands not yet promoted to their
     /// own variant. Preserves the raw SQL for the legacy dispatch
     /// path so new variants can be added incrementally without

@@ -13,5 +13,6 @@ pub mod graph_parse;
 pub mod parse;
 pub mod statement;
 
+pub use graph_parse::{FusionParams, parse_search_using_fusion};
 pub use parse::parse;
 pub use statement::{GraphDirection, GraphProperties, NodedbStatement};
