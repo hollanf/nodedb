@@ -93,6 +93,11 @@ CREATE COLLECTION logs TYPE COLUMNAR (
 -- Ingest
 INSERT INTO logs (ts, host, level, message)
 VALUES (now(), 'web-01', 'error', 'connection refused');
+-- INSERT raises unique_violation on primary-key conflict; use UPSERT or
+-- INSERT ... ON CONFLICT (pk) DO UPDATE SET col = EXCLUDED.col for overwrite semantics.
+
+-- Point get by primary key — O(log N) via segment PK index (not a full scan)
+SELECT * FROM logs WHERE ts = '2026-04-24T10:00:00Z';
 
 -- Analytical query — only reads the columns it needs
 SELECT level, COUNT(*) AS count
@@ -100,6 +105,12 @@ FROM logs
 WHERE ts > now() - INTERVAL '1 hour'
 GROUP BY level
 ORDER BY count DESC;
+
+-- ORDER BY is supported for columnar scans
+SELECT ts, host, message FROM logs
+WHERE level = 'error'
+ORDER BY ts DESC
+LIMIT 100;
 
 -- Window functions
 SELECT host, message,

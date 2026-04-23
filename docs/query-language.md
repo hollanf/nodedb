@@ -169,14 +169,35 @@ INSERT INTO users { name: 'Alice', email: 'alice@example.com', age: 30 };
 INSERT INTO archive SELECT * FROM orders WHERE created_at < '2025-01-01';
 ```
 
+`INSERT` is strict: a duplicate primary key raises `unique_violation` (SQLSTATE `23505`). To write "insert if absent" or "insert or overwrite" semantics, use `ON CONFLICT` or `UPSERT`.
+
+### INSERT ... ON CONFLICT
+
+```sql
+-- Skip rows that would collide with an existing PK (no error)
+INSERT INTO users (id, name) VALUES ('u1', 'Alice')
+ON CONFLICT DO NOTHING;
+
+-- Overwrite selected fields on conflict; EXCLUDED refers to the incoming row,
+-- bare column names refer to the existing row.
+INSERT INTO users (id, name, login_count) VALUES ('u1', 'Alice', 1)
+ON CONFLICT (id) DO UPDATE SET
+  name        = EXCLUDED.name,
+  login_count = users.login_count + EXCLUDED.login_count;
+```
+
+`ON CONFLICT DO UPDATE` reroutes to the upsert path internally and fires `AFTER UPDATE` triggers (not `AFTER INSERT`) when a row is overwritten.
+
 ### UPSERT
 
 ```sql
--- Insert or merge if document ID exists (standard form)
+-- Insert or overwrite if the primary key exists (standard form)
 UPSERT INTO users (id, name, role) VALUES ('u1', 'Alice', 'admin');
 -- Or: JSON-like syntax also accepted
 UPSERT INTO users { id: 'u1', name: 'Alice', role: 'admin' };
 ```
+
+`UPSERT` is equivalent to `INSERT ... ON CONFLICT (<pk>) DO UPDATE SET <all-columns> = EXCLUDED.<col>` and fires `AFTER UPDATE` on overwrite, `AFTER INSERT` on first write.
 
 ### UPDATE
 
@@ -612,9 +633,9 @@ LIMIT 10;
 ```sql
 -- Add edges
 -- JSON string form:
-GRAPH INSERT EDGE FROM 'alice' TO 'bob' TYPE 'knows' PROPERTIES '{"since": 2020}';
+GRAPH INSERT EDGE IN 'edges' FROM 'alice' TO 'bob' TYPE 'knows' PROPERTIES '{"since": 2020}';
 -- Object literal form (equivalent):
-GRAPH INSERT EDGE FROM 'alice' TO 'bob' TYPE 'knows' PROPERTIES { since: 2020 };
+GRAPH INSERT EDGE IN 'edges' FROM 'alice' TO 'bob' TYPE 'knows' PROPERTIES { since: 2020 };
 
 -- Traversal
 GRAPH TRAVERSE FROM 'users:alice' DEPTH 3 LABEL 'follows' DIRECTION out;

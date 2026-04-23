@@ -28,18 +28,18 @@ INSERT INTO entities VALUES (
 );
 
 -- Insert relationships using graph edges
-GRAPH INSERT EDGE FROM 'chunks:chunk-042' TO 'entities:entity-raft' TYPE 'mentions';
+GRAPH INSERT EDGE IN 'kg_edges' FROM 'chunks:chunk-042' TO 'entities:entity-raft' TYPE 'mentions';
 -- JSON string form:
-GRAPH INSERT EDGE FROM 'entities:entity-raft' TO 'entities:entity-paxos' TYPE 'related_to'
+GRAPH INSERT EDGE IN 'kg_edges' FROM 'entities:entity-raft' TO 'entities:entity-paxos' TYPE 'related_to'
   PROPERTIES '{"weight": 0.85}';
 -- Object literal form (equivalent):
-GRAPH INSERT EDGE FROM 'entities:entity-raft' TO 'entities:entity-paxos' TYPE 'related_to'
+GRAPH INSERT EDGE IN 'kg_edges' FROM 'entities:entity-raft' TO 'entities:entity-paxos' TYPE 'related_to'
   PROPERTIES { weight: 0.85 };
 
 -- Bulk entity relationships from extraction results
 -- (Your app extracts entities and emits these statements)
-GRAPH INSERT EDGE FROM 'entities:entity-raft' TO 'entities:entity-leader-election' TYPE 'related_to';
-GRAPH INSERT EDGE FROM 'entities:entity-raft' TO 'entities:entity-log-replication' TYPE 'related_to';
+GRAPH INSERT EDGE IN 'kg_edges' FROM 'entities:entity-raft' TO 'entities:entity-leader-election' TYPE 'related_to';
+GRAPH INSERT EDGE IN 'kg_edges' FROM 'entities:entity-raft' TO 'entities:entity-log-replication' TYPE 'related_to';
 ```
 
 ## Seed Retrieval + Graph Expansion
@@ -139,8 +139,8 @@ RETURN COUNT(shared) AS shared_neighbors;
 -- After disambiguation, merge by redirecting edges
 -- (Your app decides which pairs to merge based on similarity + shared neighbors)
 -- Delete the duplicate's edges and redirect to the canonical entity
-GRAPH DELETE EDGE FROM 'entities:entity-js' TO 'entities:entity-dom-api' LABEL 'related_to';
-INSERT INTO related_to { from: 'entities:entity-javascript', to: 'entities:entity-dom-api' };
+GRAPH DELETE EDGE IN 'kg_edges' FROM 'entities:entity-js' TO 'entities:entity-dom-api' TYPE 'related_to';
+GRAPH INSERT EDGE IN 'kg_edges' FROM 'entities:entity-javascript' TO 'entities:entity-dom-api' TYPE 'related_to';
 ```
 
 ## Tips

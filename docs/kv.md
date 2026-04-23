@@ -44,6 +44,20 @@ CREATE COLLECTION sessions TYPE KEY_VALUE (key TEXT PRIMARY KEY);
 
 -- Set with TTL (seconds)
 INSERT INTO sessions { key: 'sess_abc123', user_id: 'alice', role: 'admin', ttl: 3600 };
+-- Plain INSERT raises unique_violation (23505) if the key already exists.
+
+-- Set-or-overwrite (Redis SET semantics)
+UPSERT INTO sessions { key: 'sess_abc123', user_id: 'alice', role: 'admin', ttl: 3600 };
+
+-- Set-if-absent (Redis SETNX semantics)
+INSERT INTO sessions { key: 'sess_abc123', user_id: 'alice', role: 'admin', ttl: 3600 }
+ON CONFLICT DO NOTHING;
+
+-- Conditional merge: bump counter and refresh role only on conflict
+INSERT INTO sessions (key, user_id, role, hits) VALUES ('sess_abc123', 'alice', 'admin', 1)
+ON CONFLICT (key) DO UPDATE SET
+  role = EXCLUDED.role,
+  hits = sessions.hits + 1;
 
 -- Get by key
 SELECT * FROM sessions WHERE key = 'sess_abc123';

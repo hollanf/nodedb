@@ -73,6 +73,8 @@ SHOW TRIGGERS;
 | `SYNC` | Same transaction (ACID) | Trigger time added | Yes |
 | `DEFERRED` | Same transaction, batched | At COMMIT time | Yes |
 
+**UPSERT and `ON CONFLICT` firing semantics.** The `WriteOp` tag emitted to the Event Plane is derived from storage prior-bytes, not from the surface SQL verb. An `UPSERT` or `INSERT ... ON CONFLICT (pk) DO UPDATE` that finds an existing row fires `AFTER UPDATE`; the same statement against a non-existent key fires `AFTER INSERT`. `ON CONFLICT DO NOTHING` on a conflict emits no event at all.
+
 ## CDC Change Streams
 
 Change streams provide durable, cursor-tracked access to the mutation log for a collection. Unlike `LIVE SELECT` (push to a session), change streams survive reconnects, support consumer groups, and can deliver to external systems via webhook.
@@ -93,6 +95,9 @@ CREATE CHANGE STREAM user_state ON users
 WITH (COMPACTION = 'key', KEY = 'id');
 
 DROP CHANGE STREAM order_changes;
+-- Dropping a change stream atomically tears down its consumer groups and
+-- persisted offset rows. Recreating a stream with the same name starts fresh
+-- from the head; it does not resume at stale offsets.
 SHOW CHANGE STREAMS;
 ```
 

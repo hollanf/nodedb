@@ -89,6 +89,10 @@ NodeDB uses tiered storage to match data temperature to the right medium:
 
 The WAL uses O_DIRECT (bypasses page cache) for deterministic write latency. L1 indexes use mmap for zero-copy reads. These never share page cache.
 
+**Checkpoints and tombstones.** Each checkpoint garbage-collects the WAL rows for collections that have been hard-deleted (tombstoned), so tombstone records do not accumulate across restarts. On replay, the startup path merges persisted WAL tombstones with tombstones extracted from the WAL itself, so a crash mid-purge cannot resurrect a dropped collection.
+
+**Backups.** The backup envelope embeds catalog rows and the source tombstone set alongside segment data, so a restored snapshot reconstructs the catalog deterministically and refuses to resurrect collections tombstoned before the backup was taken. Each `StoredCollection` row carries a `size_bytes_estimate` field, surfaced through `_system.dropped_collections` so operators can size the L2 cleanup queue before issuing `PURGE`.
+
 ## Per-Collection Storage Models
 
 Unlike most databases that lock you into one storage model, NodeDB lets you choose per collection:

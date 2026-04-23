@@ -43,20 +43,22 @@ Writes go to a mutable buffer and become visible immediately. Compaction merges 
 ### Insert Edge
 
 ```sql
-GRAPH INSERT EDGE FROM 'users:alice' TO 'users:bob' TYPE 'KNOWS';
+GRAPH INSERT EDGE IN 'edges' FROM 'users:alice' TO 'users:bob' TYPE 'KNOWS';
 
 -- With properties (JSON string form):
-GRAPH INSERT EDGE FROM 'users:alice' TO 'users:bob' TYPE 'KNOWS'
+GRAPH INSERT EDGE IN 'edges' FROM 'users:alice' TO 'users:bob' TYPE 'KNOWS'
   PROPERTIES '{"since": 2020, "weight": 0.9}';
 -- Object literal form (equivalent):
-GRAPH INSERT EDGE FROM 'users:alice' TO 'users:bob' TYPE 'KNOWS'
+GRAPH INSERT EDGE IN 'edges' FROM 'users:alice' TO 'users:bob' TYPE 'KNOWS'
   PROPERTIES { since: 2020, weight: 0.9 };
 ```
+
+The `IN '<collection>'` clause is **required** — edges are overlays on a named document collection, not a global namespace. Statements without `IN` fail to parse.
 
 ### Delete Edge
 
 ```sql
-GRAPH DELETE EDGE FROM 'users:alice' TO 'users:bob' TYPE 'KNOWS';
+GRAPH DELETE EDGE IN 'edges' FROM 'users:alice' TO 'users:bob' TYPE 'KNOWS';
 ```
 
 Removes both forward and reverse index entries atomically. Cascading delete is available for all edges touching a node.
@@ -275,6 +277,7 @@ Final top-N results with (node_id, rrf_score, vector_rank, vector_distance, hop_
 ```sql
 GRAPH RAG FUSION ON entities
   QUERY $embedding
+  VECTOR_FIELD 'embedding'
   VECTOR_TOP_K 50
   EXPANSION_DEPTH 2
   EDGE_LABEL 'related_to'
@@ -284,16 +287,17 @@ GRAPH RAG FUSION ON entities
   MAX_VISITED 1000;
 ```
 
-| Parameter         | Description                                               |
-| ----------------- | --------------------------------------------------------- |
-| `QUERY`           | Query embedding vector                                    |
-| `VECTOR_TOP_K`    | Number of seed nodes from vector search                   |
-| `EXPANSION_DEPTH` | BFS hop count from seeds                                  |
-| `EDGE_LABEL`      | Optional edge type filter during expansion                |
-| `DIRECTION`       | `in`, `out`, or `both` for BFS                            |
-| `FINAL_TOP_K`     | Final result count after fusion                           |
-| `RRF_K`           | Weighting constants `(vector_k, graph_k)` for RRF scoring |
-| `MAX_VISITED`     | Memory budget cap — BFS stops early if exceeded           |
+| Parameter         | Description                                                                                                          |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `QUERY`           | Query embedding vector                                                                                               |
+| `VECTOR_FIELD`    | Name of the embedding field on the target collection (optional — defaults to the collection's declared vector field) |
+| `VECTOR_TOP_K`    | Number of seed nodes from vector search                                                                              |
+| `EXPANSION_DEPTH` | BFS hop count from seeds                                                                                             |
+| `EDGE_LABEL`      | Optional edge type filter during expansion                                                                           |
+| `DIRECTION`       | `in`, `out`, or `both` for BFS                                                                                       |
+| `FINAL_TOP_K`     | Final result count after fusion                                                                                      |
+| `RRF_K`           | Weighting constants `(vector_k, graph_k)` for RRF scoring                                                            |
+| `MAX_VISITED`     | Memory budget cap — BFS stops early if exceeded                                                                      |
 
 The response includes a truncation flag if the memory budget forced early termination.
 
