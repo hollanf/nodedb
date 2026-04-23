@@ -398,6 +398,37 @@ pub(super) async fn fire_sync_after_triggers(
     None
 }
 
+/// Fire SYNC AFTER UPDATE triggers, returning an error response on failure.
+///
+/// Used by the UPSERT DSL when the probe finds a pre-existing row —
+/// without this, AFTER UPDATE subscribers would silently miss overwrite
+/// events because the UPSERT handler historically fired only AFTER INSERT.
+pub(super) async fn fire_sync_after_update_triggers(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    tenant_id: nodedb_types::TenantId,
+    coll_name: &str,
+    old_fields: &std::collections::HashMap<String, nodedb_types::Value>,
+    new_fields: &std::collections::HashMap<String, nodedb_types::Value>,
+) -> Option<PgWireResult<Vec<Response>>> {
+    use crate::control::security::catalog::trigger_types::TriggerExecutionMode;
+    if let Err(e) = crate::control::trigger::fire_after::fire_after_update(
+        state,
+        identity,
+        tenant_id,
+        coll_name,
+        old_fields,
+        new_fields,
+        0,
+        Some(TriggerExecutionMode::Sync),
+    )
+    .await
+    {
+        return Some(Err(sqlstate_error("XX000", &format!("trigger error: {e}"))));
+    }
+    None
+}
+
 /// Fire INSTEAD OF INSERT triggers, returning the result.
 pub(super) async fn fire_instead_triggers(
     state: &SharedState,

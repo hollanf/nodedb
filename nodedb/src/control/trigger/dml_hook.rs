@@ -35,9 +35,22 @@ pub struct DmlWriteInfo {
     /// Document ID (for point operations). None for bulk operations.
     pub document_id: Option<String>,
     /// DML event type.
+    ///
+    /// For UPSERT the initial value is a best guess — the true event is
+    /// not known until the routing layer probes the pre-write row via
+    /// `fetch_old_row`. When `needs_existence_probe` is set, routing
+    /// overrides this field based on probe results before firing
+    /// post-dispatch triggers.
     pub event: DmlEvent,
     /// NEW row fields extracted from the write plan. None for DELETE.
     pub new_fields: Option<HashMap<String, nodedb_types::Value>>,
+    /// True when the operation's real event type depends on whether the
+    /// target row already exists (currently: UPSERT / INSERT ... ON
+    /// CONFLICT). Routing uses this flag to force a pre-dispatch
+    /// existence probe so the correct AFTER INSERT vs AFTER UPDATE
+    /// triggers fire — otherwise an UPSERT onto an existing row would
+    /// silently fire AFTER INSERT, which is the wrong trigger class.
+    pub needs_existence_probe: bool,
 }
 
 /// Attempt to classify a PhysicalPlan as a document DML write.
@@ -74,6 +87,7 @@ fn classify_document_op(op: &DocumentOp) -> Option<DmlWriteInfo> {
                 document_id: Some(document_id.clone()),
                 event: DmlEvent::Insert,
                 new_fields: Some(new_fields),
+                needs_existence_probe: false,
             })
         }
         DocumentOp::Upsert {
@@ -82,12 +96,17 @@ fn classify_document_op(op: &DocumentOp) -> Option<DmlWriteInfo> {
             value,
             ..
         } => {
+            // UPSERT's event type depends on whether the primary key
+            // already exists — routing must probe before firing
+            // post-dispatch SYNC triggers. `event` starts at Insert as a
+            // harmless default; the probe result overrides it.
             let new_fields = deserialize_value_to_fields(value);
             Some(DmlWriteInfo {
                 collection: collection.clone(),
                 document_id: Some(document_id.clone()),
-                event: DmlEvent::Insert, // Upsert treated as INSERT for trigger purposes
+                event: DmlEvent::Insert,
                 new_fields: Some(new_fields),
+                needs_existence_probe: true,
             })
         }
         DocumentOp::PointDelete {
@@ -98,6 +117,7 @@ fn classify_document_op(op: &DocumentOp) -> Option<DmlWriteInfo> {
             document_id: Some(document_id.clone()),
             event: DmlEvent::Delete,
             new_fields: None,
+            needs_existence_probe: false,
         }),
         DocumentOp::PointUpdate {
             collection,
@@ -108,30 +128,35 @@ fn classify_document_op(op: &DocumentOp) -> Option<DmlWriteInfo> {
             document_id: Some(document_id.clone()),
             event: DmlEvent::Update,
             new_fields: None, // NEW fields computed after applying updates to OLD
+            needs_existence_probe: false,
         }),
         DocumentOp::BatchInsert { collection, .. } => Some(DmlWriteInfo {
             collection: collection.clone(),
             document_id: None,
             event: DmlEvent::Insert,
             new_fields: None, // Batch — individual rows not available here
+            needs_existence_probe: false,
         }),
         DocumentOp::BulkUpdate { collection, .. } => Some(DmlWriteInfo {
             collection: collection.clone(),
             document_id: None,
             event: DmlEvent::Update,
             new_fields: None,
+            needs_existence_probe: false,
         }),
         DocumentOp::BulkDelete { collection, .. } => Some(DmlWriteInfo {
             collection: collection.clone(),
             document_id: None,
             event: DmlEvent::Delete,
             new_fields: None,
+            needs_existence_probe: false,
         }),
         DocumentOp::Truncate { collection, .. } => Some(DmlWriteInfo {
             collection: collection.clone(),
             document_id: None,
             event: DmlEvent::Delete,
             new_fields: None,
+            needs_existence_probe: false,
         }),
         DocumentOp::InsertSelect {
             target_collection, ..
@@ -140,6 +165,7 @@ fn classify_document_op(op: &DocumentOp) -> Option<DmlWriteInfo> {
             document_id: None,
             event: DmlEvent::Insert,
             new_fields: None,
+            needs_existence_probe: false,
         }),
         // Not a write operation.
         DocumentOp::PointGet { .. }

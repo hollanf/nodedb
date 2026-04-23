@@ -340,16 +340,21 @@ impl NodeDbPgHandler {
             let plan_for_response = task.plan.clone();
 
             // --- Trigger interception for DML writes ---
-            let dml_info = crate::control::trigger::dml_hook::classify_dml_write(&task.plan);
+            let mut dml_info = crate::control::trigger::dml_hook::classify_dml_write(&task.plan);
 
             // Fetch OLD row and fire BEFORE/INSTEAD OF triggers if applicable.
+            // UPSERT sets `needs_existence_probe` so the probe decides whether
+            // AFTER INSERT or AFTER UPDATE triggers fire — post-dispatch routing
+            // branches on `info.event`, which we override here based on the
+            // probe result before the BEFORE / AFTER hooks run.
             let old_row = if let Some(ref info) = dml_info
                 && info.document_id.is_some()
-                && matches!(
+                && (matches!(
                     info.event,
                     crate::control::trigger::DmlEvent::Update
                         | crate::control::trigger::DmlEvent::Delete
-                ) {
+                ) || info.needs_existence_probe)
+            {
                 let doc_id = info.document_id.as_deref().unwrap_or("");
                 let row = crate::control::trigger::dml_hook::fetch_old_row(
                     &self.state,
@@ -362,6 +367,20 @@ impl NodeDbPgHandler {
             } else {
                 None
             };
+
+            // Probe-driven reclassification: UPSERT onto an existing row is an
+            // UPDATE for trigger purposes; onto a fresh key it's an INSERT.
+            // `needs_existence_probe` is the signal that `event` was a
+            // placeholder and must be refined from the probe result.
+            if let Some(ref mut info) = dml_info
+                && info.needs_existence_probe
+            {
+                info.event = if old_row.is_some() {
+                    crate::control::trigger::DmlEvent::Update
+                } else {
+                    crate::control::trigger::DmlEvent::Insert
+                };
+            }
 
             if let Some(ref info) = dml_info {
                 use crate::control::trigger::dml_hook::PreDispatchResult;

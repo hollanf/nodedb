@@ -7,7 +7,8 @@ use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 
 use super::insert_parse::{
-    fire_before_triggers, fire_instead_triggers, fire_sync_after_triggers, parse_write_statement,
+    fire_before_triggers, fire_instead_triggers, fire_sync_after_triggers,
+    fire_sync_after_update_triggers, parse_write_statement,
 };
 
 /// UPSERT INTO <collection> (col1, col2, ...) VALUES (val1, val2, ...)
@@ -88,6 +89,35 @@ pub async fn upsert_document(
         }
     }
 
+    // Probe for an existing row BEFORE dispatch so the correct AFTER
+    // trigger class fires: UPSERT onto an existing primary key is an
+    // UPDATE from every downstream consumer's perspective (AFTER UPDATE
+    // triggers, CDC, materialized views). Probing ahead of dispatch is
+    // safe because the document primary key acts as the upsert key and
+    // the probe + dispatch + AFTER-fire all run serially on this
+    // connection.
+    let pk_for_probe = fields
+        .get("id")
+        .or_else(|| fields.get("document_id"))
+        .or_else(|| fields.get("key"))
+        .map(|v| match v {
+            nodedb_types::Value::String(s) => s.clone(),
+            nodedb_types::Value::Integer(i) => i.to_string(),
+            other => format!("{other:?}"),
+        });
+    let old_fields = if let Some(ref pk) = pk_for_probe {
+        let row = crate::control::trigger::dml_hook::fetch_old_row(
+            state,
+            tenant_id,
+            &parsed.coll_name,
+            pk,
+        )
+        .await;
+        if row.is_empty() { None } else { Some(row) }
+    } else {
+        None
+    };
+
     // Build SQL and route through nodedb-sql → EngineRules → sql_plan_convert.
     let upsert_sql = super::insert_parse::fields_to_upsert_sql(&parsed.coll_name, &fields);
     if let Err(e) =
@@ -96,8 +126,25 @@ pub async fn upsert_document(
         return Some(Err(e));
     }
 
-    // Fire SYNC AFTER INSERT triggers.
-    if let Some(err) =
+    // Fire the AFTER trigger family that matches the actual mutation:
+    // AFTER UPDATE when a prior row existed, AFTER INSERT otherwise.
+    // Firing AFTER INSERT unconditionally would silently skip AFTER
+    // UPDATE subscribers on overwrites — the exact bug this routing
+    // fixes.
+    if let Some(ref old) = old_fields {
+        if let Some(err) = fire_sync_after_update_triggers(
+            state,
+            identity,
+            tenant_id,
+            &parsed.coll_name,
+            old,
+            &fields,
+        )
+        .await
+        {
+            return Some(err);
+        }
+    } else if let Some(err) =
         fire_sync_after_triggers(state, identity, tenant_id, &parsed.coll_name, &fields).await
     {
         return Some(err);
