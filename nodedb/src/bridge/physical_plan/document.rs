@@ -286,6 +286,12 @@ pub enum DocumentOp {
         /// Injected by the Control Plane planner from RLS policies.
         #[allow(clippy::doc_markdown)]
         rls_filters: Vec<u8>,
+        /// `FOR SYSTEM_TIME AS OF <ms>` cutoff. `None` = current state.
+        /// Honored only by bitemporal collections; the planner rejects
+        /// temporal point-gets on non-bitemporal collections.
+        system_as_of_ms: Option<i64>,
+        /// `FOR VALID_TIME CONTAINS <ms>` filter.
+        valid_at_ms: Option<i64>,
     },
 
     /// Point write: insert/update a document.
@@ -345,6 +351,13 @@ pub enum DocumentOp {
         computed_columns: Vec<u8>,
         /// Serialized `Vec<WindowFuncSpec>`.
         window_functions: Vec<u8>,
+        /// `FOR SYSTEM_TIME AS OF <ms>` cutoff. `None` = current state.
+        /// Honored only by collections registered with bitemporal storage;
+        /// the planner rejects temporal scans on non-bitemporal collections
+        /// at SQL plan time, so the handler trusts this field.
+        system_as_of_ms: Option<i64>,
+        /// `FOR VALID_TIME CONTAINS <ms>` filter. `None` = no filter.
+        valid_at_ms: Option<i64>,
     },
 
     /// Batch insert documents in a single redb transaction.
@@ -375,6 +388,10 @@ pub enum DocumentOp {
         storage_mode: StorageMode,
         /// Collection enforcement options propagated from catalog (boxed to reduce enum size).
         enforcement: Box<EnforcementOptions>,
+        /// Bitemporal storage: every write becomes a new version keyed by
+        /// `system_from_ms`; reads use the versioned table and Ceiling
+        /// resolver.
+        bitemporal: bool,
     },
 
     /// Lookup documents by secondary index value.

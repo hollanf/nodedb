@@ -86,6 +86,8 @@ mod tests {
             collection: "users".into(),
             document_id: "user-1".into(),
             rls_filters: vec![],
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }));
     }
 
@@ -114,6 +116,7 @@ mod tests {
                 }),
                 ..Default::default()
             }),
+            bitemporal: false,
         }));
     }
 

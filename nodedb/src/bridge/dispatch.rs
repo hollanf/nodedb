@@ -318,6 +318,8 @@ mod tests {
                 collection: "users".into(),
                 document_id: "u1".into(),
                 rls_filters: Vec::new(),
+                system_as_of_ms: None,
+                valid_at_ms: None,
             }),
             deadline: Instant::now() + Duration::from_secs(5),
             priority: Priority::Normal,
