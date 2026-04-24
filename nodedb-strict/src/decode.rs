@@ -268,6 +268,25 @@ impl TupleDecoder {
         &self.schema
     }
 
+    /// Extract the three bitemporal timestamps from a tuple:
+    /// `(system_from_ms, valid_from_ms, valid_until_ms)`. Only valid for
+    /// schemas constructed with `StrictSchema::new_bitemporal`.
+    pub fn extract_bitemporal_timestamps(
+        &self,
+        tuple: &[u8],
+    ) -> Result<(i64, i64, i64), StrictError> {
+        if !self.schema.bitemporal {
+            return Err(StrictError::ColumnOutOfRange {
+                index: 0,
+                count: self.schema.columns.len(),
+            });
+        }
+        let sys = extract_i64(self, tuple, 0)?;
+        let vf = extract_i64(self, tuple, 1)?;
+        let vu = extract_i64(self, tuple, 2)?;
+        Ok((sys, vf, vu))
+    }
+
     /// Byte offset where fixed-field section starts.
     pub fn fixed_section_start(&self) -> usize {
         self.header_size
@@ -331,6 +350,23 @@ impl TupleDecoder {
         let bitmap_byte = tuple[2 + col_idx / 8];
         bitmap_byte & (1 << (col_idx % 8)) != 0
     }
+}
+
+/// Extract a fixed Int64 column as a raw i64.
+fn extract_i64(
+    decoder: &TupleDecoder,
+    tuple: &[u8],
+    col_idx: usize,
+) -> Result<i64, StrictError> {
+    let raw = decoder
+        .extract_fixed_raw(tuple, col_idx)?
+        .ok_or(StrictError::TypeMismatch {
+            column: decoder.schema.columns[col_idx].name.clone(),
+            expected: ColumnType::Int64,
+        })?;
+    Ok(i64::from_le_bytes([
+        raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+    ]))
 }
 
 /// Decode a fixed-size raw byte slice into a Value.

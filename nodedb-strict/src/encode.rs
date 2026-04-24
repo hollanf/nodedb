@@ -149,6 +149,40 @@ impl TupleEncoder {
     pub fn schema(&self) -> &StrictSchema {
         &self.schema
     }
+
+    /// Encode a row for a bitemporal strict schema. The three reserved
+    /// slots (0/1/2) are populated from the provided timestamps; the
+    /// remaining slots are filled from `user_values` in schema order.
+    ///
+    /// Errors if the schema is not bitemporal or if `user_values.len() !=
+    /// schema.len() - 3`.
+    pub fn encode_bitemporal(
+        &self,
+        system_from_ms: i64,
+        valid_from_ms: i64,
+        valid_until_ms: i64,
+        user_values: &[Value],
+    ) -> Result<Vec<u8>, StrictError> {
+        if !self.schema.bitemporal {
+            return Err(StrictError::ValueCountMismatch {
+                expected: self.schema.columns.len(),
+                got: user_values.len() + 3,
+            });
+        }
+        let expected_user = self.schema.columns.len().saturating_sub(3);
+        if user_values.len() != expected_user {
+            return Err(StrictError::ValueCountMismatch {
+                expected: expected_user,
+                got: user_values.len(),
+            });
+        }
+        let mut all = Vec::with_capacity(self.schema.columns.len());
+        all.push(Value::Integer(system_from_ms));
+        all.push(Value::Integer(valid_from_ms));
+        all.push(Value::Integer(valid_until_ms));
+        all.extend_from_slice(user_values);
+        self.encode(&all)
+    }
 }
 
 /// Encode a fixed-size value into the buffer at the given position.
@@ -440,6 +474,71 @@ mod tests {
         let tuple = encoder.encode(&[Value::Integer(1), Value::Null]).unwrap();
         // Null bitmap byte (index 2): bit 1 (column 1) should be set → 0b00000010 = 2.
         assert_eq!(tuple[2] & 0b10, 0b10);
+    }
+
+    #[test]
+    fn encode_bitemporal_roundtrip() {
+        let schema = StrictSchema::new_bitemporal(vec![
+            ColumnDef::required("id", ColumnType::Int64).with_primary_key(),
+            ColumnDef::nullable("name", ColumnType::String),
+        ])
+        .unwrap();
+        assert!(schema.bitemporal);
+        assert_eq!(schema.columns[0].name, "__system_from_ms");
+        assert_eq!(schema.columns[1].name, "__valid_from_ms");
+        assert_eq!(schema.columns[2].name, "__valid_until_ms");
+        assert_eq!(schema.columns[3].name, "id");
+
+        let encoder = TupleEncoder::new(&schema);
+        let tuple = encoder
+            .encode_bitemporal(
+                100,
+                200,
+                i64::MAX,
+                &[Value::Integer(42), Value::String("alice".into())],
+            )
+            .unwrap();
+
+        let decoder = crate::decode::TupleDecoder::new(&schema);
+        let (sys, vf, vu) = decoder.extract_bitemporal_timestamps(&tuple).unwrap();
+        assert_eq!((sys, vf, vu), (100, 200, i64::MAX));
+        assert_eq!(decoder.extract_by_name(&tuple, "id").unwrap(), Value::Integer(42));
+        assert_eq!(
+            decoder.extract_by_name(&tuple, "name").unwrap(),
+            Value::String("alice".into())
+        );
+    }
+
+    #[test]
+    fn reserved_column_name_rejected() {
+        let err = StrictSchema::new(vec![ColumnDef::required(
+            "__system_from_ms",
+            ColumnType::Int64,
+        )])
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            nodedb_types::columnar::SchemaError::ReservedColumnName(ref s) if s == "__system_from_ms"
+        ));
+    }
+
+    #[test]
+    fn encode_bitemporal_rejects_wrong_user_count() {
+        let schema = StrictSchema::new_bitemporal(vec![
+            ColumnDef::required("id", ColumnType::Int64).with_primary_key(),
+        ])
+        .unwrap();
+        let encoder = TupleEncoder::new(&schema);
+        let err = encoder.encode_bitemporal(0, 0, 0, &[]).unwrap_err();
+        assert!(matches!(err, StrictError::ValueCountMismatch { expected: 1, got: 0 }));
+    }
+
+    #[test]
+    fn encode_bitemporal_on_non_bitemporal_schema_errors() {
+        let schema = crm_schema();
+        let encoder = TupleEncoder::new(&schema);
+        let err = encoder.encode_bitemporal(0, 0, 0, &[]).unwrap_err();
+        assert!(matches!(err, StrictError::ValueCountMismatch { .. }));
     }
 
     #[test]
