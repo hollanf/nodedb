@@ -112,6 +112,7 @@ pub async fn create_materialized_view(
             check_constraints: Vec::new(),
             materialized_sums: Vec::new(),
             lvc_enabled: false,
+            bitemporal: false,
             permission_tree_def: None,
             indexes: Vec::new(),
             size_bytes_estimate: 0,

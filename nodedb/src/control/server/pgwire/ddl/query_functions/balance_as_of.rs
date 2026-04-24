@@ -44,6 +44,8 @@ pub async fn balance_as_of(
         collection: collection.clone(),
         document_id: key.clone(),
         rls_filters: Vec::new(),
+        system_as_of_ms: None,
+        valid_at_ms: None,
     });
 
     let get_resp = dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard, get_plan, 0)
@@ -87,6 +89,8 @@ pub async fn balance_as_of(
         projection: Vec::new(),
         computed_columns: Vec::new(),
         window_functions: Vec::new(),
+        system_as_of_ms: None,
+        valid_at_ms: None,
     });
 
     let source_resp =

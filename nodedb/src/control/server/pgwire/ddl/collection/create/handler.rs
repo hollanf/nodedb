@@ -111,6 +111,11 @@ pub fn create_collection(
     // Parse enforcement options: WITH APPEND_ONLY, WITH HASH_CHAIN, WITH BALANCED ON (...).
     let append_only = upper.contains("APPEND_ONLY");
     let hash_chain = upper.contains("HASH_CHAIN");
+    // `BITEMPORAL` flag: when set, every write stores an immutable
+    // version keyed by `system_from_ms` and reads use the versioned
+    // table + Ceiling resolver. Enables `FOR SYSTEM_TIME AS OF` /
+    // `FOR VALID_TIME` queries on this collection.
+    let bitemporal = upper.contains("BITEMPORAL");
     if hash_chain && !append_only {
         return Err(sqlstate_error("42601", "HASH_CHAIN requires APPEND_ONLY"));
     }
@@ -143,6 +148,7 @@ pub fn create_collection(
         check_constraints: Vec::new(),
         materialized_sums: Vec::new(),
         lvc_enabled: false,
+        bitemporal,
         permission_tree_def: None,
         indexes: Vec::new(),
         size_bytes_estimate: 0,

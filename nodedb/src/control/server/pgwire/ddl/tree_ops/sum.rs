@@ -115,6 +115,8 @@ pub async fn tree_sum(
                     collection: coll_name.clone(),
                     document_id: node_id.clone(),
                     rls_filters: Vec::new(),
+                    system_as_of_ms: None,
+                    valid_at_ms: None,
                 });
             if let Ok(resp) =
                 dispatch_utils::dispatch_to_data_plane(state, tenant_id, coll_vshard, get_plan, 0)

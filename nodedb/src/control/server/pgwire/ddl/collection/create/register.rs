@@ -190,6 +190,7 @@ async fn dispatch_register_from_stored_inner(
             crdt_enabled,
             storage_mode,
             enforcement: Box::new(enforcement),
+            bitemporal: coll.bitemporal,
         },
     );
 

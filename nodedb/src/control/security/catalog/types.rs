@@ -331,6 +331,12 @@ pub struct StoredCollection {
     /// Enable last-value cache for timeseries.
     #[msgpack(default)]
     pub lvc_enabled: bool,
+    /// Bitemporal storage: every write is appended as an immutable version
+    /// keyed by `system_from_ms`, enabling `FOR SYSTEM_TIME AS OF` /
+    /// `FOR VALID_TIME` queries. Only honored for document engines today;
+    /// other engines ignore it.
+    #[msgpack(default)]
+    pub bitemporal: bool,
     /// Permission tree definition (JSON-serialized).
     #[msgpack(default)]
     pub permission_tree_def: Option<String>,
@@ -394,6 +400,7 @@ impl StoredCollection {
             check_constraints: Vec::new(),
             materialized_sums: Vec::new(),
             lvc_enabled: false,
+            bitemporal: false,
             permission_tree_def: None,
             indexes: Vec::new(),
             size_bytes_estimate: 0,

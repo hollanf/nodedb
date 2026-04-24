@@ -118,6 +118,8 @@ fn to_replicated_entry_writes_only() {
         collection: "c".into(),
         document_id: "d".into(),
         rls_filters: Vec::new(),
+        system_as_of_ms: None,
+        valid_at_ms: None,
     });
     assert!(to_replicated_entry(tenant, vshard, &plan).is_none());
 }

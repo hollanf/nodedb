@@ -254,6 +254,8 @@ impl Session {
                     collection,
                     document_id,
                     rls_filters: Vec::new(),
+                    system_as_of_ms: None,
+                    valid_at_ms: None,
                 })
             }
             "vector_search" => {

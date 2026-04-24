@@ -72,6 +72,8 @@ pub async fn verify_balance(
         projection: Vec::new(),
         computed_columns: Vec::new(),
         window_functions: Vec::new(),
+        system_as_of_ms: None,
+        valid_at_ms: None,
     });
     let target_resp =
         dispatch_utils::dispatch_to_data_plane(state, tenant_id, target_vshard, target_scan, 0)
@@ -94,6 +96,8 @@ pub async fn verify_balance(
         projection: Vec::new(),
         computed_columns: Vec::new(),
         window_functions: Vec::new(),
+        system_as_of_ms: None,
+        valid_at_ms: None,
     });
     let source_resp =
         dispatch_utils::dispatch_to_data_plane(state, tenant_id, source_vshard, source_scan, 0)

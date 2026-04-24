@@ -1,6 +1,17 @@
 //! Scan and search plan conversions (read-only query paths).
 
+use nodedb_sql::TemporalScope;
 use nodedb_sql::types::{EngineType, Filter, SqlPlan, SqlValue};
+
+/// Project `TemporalScope::valid_time` into the wire field `valid_at_ms`.
+/// `ValidTime::Range` is currently not threaded on the wire — a range
+/// form requires a wire-type widening, tracked as a separate batch.
+fn valid_at_from_scope(t: &TemporalScope) -> Option<i64> {
+    match t.valid_time {
+        nodedb_sql::ValidTime::Any | nodedb_sql::ValidTime::Range(..) => None,
+        nodedb_sql::ValidTime::At(ms) => Some(ms),
+    }
+}
 
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::*;
@@ -68,6 +79,7 @@ pub(super) fn convert_scan(p: ScanParams<'_>) -> crate::Result<Vec<PhysicalTask>
         distinct,
         window_functions,
         tenant_id,
+        temporal,
     } = p;
     let filter_bytes = serialize_filters(filters)?;
     let proj_names = extract_projection_names(projection, window_functions);
@@ -127,6 +139,8 @@ pub(super) fn convert_scan(p: ScanParams<'_>) -> crate::Result<Vec<PhysicalTask>
                 projection: proj_names,
                 computed_columns: computed_bytes,
                 window_functions: window_bytes,
+                system_as_of_ms: temporal.system_as_of_ms,
+                valid_at_ms: valid_at_from_scope(temporal),
             })
         }
     };
@@ -193,6 +207,8 @@ pub(super) fn convert_point_get(
                 collection: collection.into(),
                 document_id: sql_value_to_string(key_value),
                 rls_filters: Vec::new(),
+                system_as_of_ms: None,
+                valid_at_ms: None,
             })
         }
         // Columnar point get: emit a ColumnarOp::Scan with an `Eq` filter

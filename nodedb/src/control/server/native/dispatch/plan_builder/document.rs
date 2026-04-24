@@ -39,6 +39,8 @@ pub(crate) fn build_point_get(
                 collection: collection.to_string(),
                 document_id: doc_id,
                 rls_filters: Vec::new(),
+                system_as_of_ms: None,
+                valid_at_ms: None,
             }))
         }
     }
@@ -205,6 +207,8 @@ pub(crate) fn build_scan(fields: &TextFields, collection: &str) -> crate::Result
         projection: Vec::new(),
         computed_columns: Vec::new(),
         window_functions: Vec::new(),
+        system_as_of_ms: None,
+        valid_at_ms: None,
     }))
 }
 
@@ -337,6 +341,7 @@ pub(crate) fn build_register(fields: &TextFields, collection: &str) -> crate::Re
         crdt_enabled: false,
         storage_mode: crate::bridge::physical_plan::StorageMode::Schemaless,
         enforcement: Box::new(crate::bridge::physical_plan::EnforcementOptions::default()),
+        bitemporal: false,
     }))
 }
 

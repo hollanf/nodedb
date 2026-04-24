@@ -103,6 +103,8 @@ impl NodeDbPgHandler {
                         projection: Vec::new(),
                         computed_columns: Vec::new(),
                         window_functions: Vec::new(),
+                        system_as_of_ms: None,
+                        valid_at_ms: None,
                     },
                 );
                 let right_data = crate::control::server::dispatch_utils::broadcast_raw(
@@ -164,6 +166,8 @@ impl NodeDbPgHandler {
                         projection: Vec::new(),
                         computed_columns: Vec::new(),
                         window_functions: Vec::new(),
+                        system_as_of_ms: None,
+                        valid_at_ms: None,
                     },
                 );
                 crate::control::server::dispatch_utils::broadcast_raw(

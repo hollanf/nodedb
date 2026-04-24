@@ -263,6 +263,7 @@ impl SqlCatalog for OriginCatalog {
             primary_key,
             has_auto_tier: auto_tier,
             indexes,
+            bitemporal: stored.bitemporal,
         }))
     }
 }

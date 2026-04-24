@@ -18,6 +18,7 @@ pub(super) struct ScanParams<'a> {
     pub distinct: &'a bool,
     pub window_functions: &'a [nodedb_sql::types::WindowSpec],
     pub tenant_id: TenantId,
+    pub temporal: &'a nodedb_sql::TemporalScope,
 }
 
 /// Parameters for `convert_join`.

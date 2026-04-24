@@ -259,6 +259,8 @@ pub async fn fetch_old_row(
         collection: collection.to_string(),
         document_id: document_id.to_string(),
         rls_filters: Vec::new(),
+        system_as_of_ms: None,
+        valid_at_ms: None,
     });
     let vshard_id = crate::types::VShardId::from_key(document_id.as_bytes());
 

@@ -51,7 +51,7 @@ pub(super) fn convert_one(
             offset,
             distinct,
             window_functions,
-            temporal: _,
+            temporal,
         } => super::scan::convert_scan(super::scan_params::ScanParams {
             collection,
             engine,
@@ -63,6 +63,7 @@ pub(super) fn convert_one(
             distinct,
             window_functions,
             tenant_id,
+            temporal,
         }),
 
         SqlPlan::PointGet {

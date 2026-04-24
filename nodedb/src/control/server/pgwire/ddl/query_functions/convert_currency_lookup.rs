@@ -74,6 +74,8 @@ pub async fn convert_currency_lookup(
         projection: Vec::new(),
         computed_columns: Vec::new(),
         window_functions: Vec::new(),
+        system_as_of_ms: None,
+        valid_at_ms: None,
     });
 
     let scan_resp = dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard, scan_plan, 0)
