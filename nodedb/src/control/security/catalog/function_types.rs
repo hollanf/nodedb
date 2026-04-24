@@ -80,7 +80,7 @@ pub enum FunctionLanguage {
     /// SQL expression or procedural SQL (default).
     #[default]
     Sql = 0,
-    /// WebAssembly module (Tier 5).
+    /// WebAssembly module.
     Wasm = 1,
 }
 

@@ -190,7 +190,9 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
             | GraphOp::Subgraph { .. }
             | GraphOp::RagFusion { .. }
             | GraphOp::Algo { .. }
-            | GraphOp::Match { .. },
+            | GraphOp::Match { .. }
+            | GraphOp::TemporalNeighbors { .. }
+            | GraphOp::TemporalAlgorithm { .. },
         ) => Permission::Read,
 
         PhysicalPlan::Query(
