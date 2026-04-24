@@ -26,11 +26,11 @@ impl EngineRules for TimeseriesRules {
     }
 
     fn plan_scan(&self, p: ScanParams) -> Result<SqlPlan> {
-        if p.temporal.is_temporal() {
+        if p.temporal.is_temporal() && !p.bitemporal {
             return Err(SqlError::Unsupported {
                 detail: format!(
-                    "FOR SYSTEM_TIME / FOR VALID_TIME is not supported on timeseries \
-                     collection '{}' — filter by the existing time column instead",
+                    "FOR SYSTEM_TIME / FOR VALID_TIME requires a bitemporal \
+                     timeseries collection; '{}' was not created WITH bitemporal = true",
                     p.collection
                 ),
             });
@@ -48,6 +48,7 @@ impl EngineRules for TimeseriesRules {
             gap_fill: String::new(),
             limit: p.limit.unwrap_or(10000),
             tiered: false,
+            temporal: p.temporal,
         })
     }
 
@@ -78,6 +79,15 @@ impl EngineRules for TimeseriesRules {
     }
 
     fn plan_aggregate(&self, p: AggregateParams) -> Result<SqlPlan> {
+        if p.temporal.is_temporal() && !p.bitemporal {
+            return Err(SqlError::Unsupported {
+                detail: format!(
+                    "FOR SYSTEM_TIME / FOR VALID_TIME requires a bitemporal \
+                     timeseries collection; '{}' was not created WITH bitemporal = true",
+                    p.collection
+                ),
+            });
+        }
         Ok(SqlPlan::TimeseriesScan {
             collection: p.collection,
             time_range: default_time_range(),
@@ -89,6 +99,7 @@ impl EngineRules for TimeseriesRules {
             gap_fill: String::new(),
             limit: p.limit,
             tiered: p.has_auto_tier,
+            temporal: p.temporal,
         })
     }
 }

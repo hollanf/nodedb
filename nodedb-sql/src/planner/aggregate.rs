@@ -8,6 +8,7 @@ use crate::functions::registry::{FunctionRegistry, SearchTrigger};
 use crate::parser::normalize::normalize_ident;
 use crate::resolver::columns::ResolvedTable;
 use crate::resolver::expr::convert_expr;
+use crate::temporal::TemporalScope;
 use crate::types::*;
 
 /// Plan an aggregate query (GROUP BY + aggregate functions).
@@ -17,6 +18,7 @@ pub fn plan_aggregate(
     filters: &[Filter],
     _scope: &crate::resolver::columns::TableScope,
     functions: &FunctionRegistry,
+    temporal: &TemporalScope,
 ) -> Result<SqlPlan> {
     let group_by_exprs = convert_group_by(&select.group_by)?;
     let aggregates = extract_aggregates_from_projection(&select.projection, functions)?;
@@ -41,6 +43,8 @@ pub fn plan_aggregate(
         bucket_interval_ms,
         group_columns,
         has_auto_tier: table.info.has_auto_tier,
+        bitemporal: table.info.bitemporal,
+        temporal: *temporal,
     })
 }
 

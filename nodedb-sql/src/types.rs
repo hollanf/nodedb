@@ -181,6 +181,10 @@ pub enum SqlPlan {
         gap_fill: String,
         limit: usize,
         tiered: bool,
+        /// Bitemporal system-time / valid-time scope. Only non-default
+        /// on collections created `WITH BITEMPORAL`; `TimeseriesRules::plan_scan`
+        /// rejects temporal scopes otherwise.
+        temporal: crate::temporal::TemporalScope,
     },
     TimeseriesIngest {
         collection: String,

@@ -99,7 +99,7 @@ impl EngineRules for SchemalessRules {
             offset: 0,
             distinct: false,
             window_functions: Vec::new(),
-            temporal: crate::temporal::TemporalScope::default(),
+            temporal: p.temporal,
         };
         Ok(SqlPlan::Aggregate {
             input: Box::new(base_scan),

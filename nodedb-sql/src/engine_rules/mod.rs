@@ -97,6 +97,14 @@ pub struct AggregateParams {
     pub group_columns: Vec<String>,
     /// Whether the collection has auto-tiering enabled.
     pub has_auto_tier: bool,
+    /// Whether this collection was created with bitemporal storage.
+    /// When `true`, the base scan inside the aggregate is allowed to
+    /// carry a non-default temporal scope.
+    pub bitemporal: bool,
+    /// System-time / valid-time scope to propagate into the underlying
+    /// scan so bitemporal aggregate queries project an as-of snapshot
+    /// before grouping.
+    pub temporal: crate::temporal::TemporalScope,
 }
 
 /// Engine-specific planning rules.
