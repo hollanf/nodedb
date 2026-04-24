@@ -93,7 +93,7 @@ pub async fn convert_collection(
                 columns,
                 version: 1,
                 dropped_columns: Vec::new(),
-            bitemporal: false,
+                bitemporal: false,
             };
             if target_type == "kv" {
                 nodedb_types::CollectionType::kv(schema)

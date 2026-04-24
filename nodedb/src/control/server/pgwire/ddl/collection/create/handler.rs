@@ -87,9 +87,8 @@ pub fn create_collection(
     let collection_type = if upper.contains("TYPE") && upper.contains("KEY_VALUE") {
         super::super::super::kv::parse_kv_collection(sql, &upper)?
     } else if upper.contains("TYPE") && upper.contains("STRICT") {
-        let schema =
-            super::super::helpers::parse_typed_schema_with_flags(sql, bitemporal_flag)
-                .map_err(|e| sqlstate_error("42601", &e))?;
+        let schema = super::super::helpers::parse_typed_schema_with_flags(sql, bitemporal_flag)
+            .map_err(|e| sqlstate_error("42601", &e))?;
         nodedb_types::CollectionType::strict(schema)
     } else if upper.contains("TYPE") && upper.contains("COLUMNAR") {
         resolve_columnar(sql, &upper, &mut columnar_schema_columns)

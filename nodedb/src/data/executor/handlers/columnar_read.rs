@@ -98,10 +98,7 @@ impl CoreLoop {
         // Resolve hidden bitemporal column positions once; `None` means
         // the collection is not bitemporal, so the per-row filter is a
         // no-op regardless of `system_as_of_ms` / `valid_at_ms` values.
-        let ts_system_idx = schema
-            .columns
-            .iter()
-            .position(|c| c.name == "_ts_system");
+        let ts_system_idx = schema.columns.iter().position(|c| c.name == "_ts_system");
         let ts_valid_from_idx = schema
             .columns
             .iter()

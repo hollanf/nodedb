@@ -163,8 +163,9 @@ fn plan_select(
 
     // 6. Check for GROUP BY / aggregation.
     if has_aggregation(select, functions) {
-        let mut plan =
-            super::aggregate::plan_aggregate(select, table, &filters, &scope, functions, &temporal)?;
+        let mut plan = super::aggregate::plan_aggregate(
+            select, table, &filters, &scope, functions, &temporal,
+        )?;
 
         // Semi/anti subquery joins belong below the aggregate so they filter
         // the input rows before grouping. Scalar subqueries remain above the

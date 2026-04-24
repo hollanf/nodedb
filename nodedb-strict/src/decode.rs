@@ -353,11 +353,7 @@ impl TupleDecoder {
 }
 
 /// Extract a fixed Int64 column as a raw i64.
-fn extract_i64(
-    decoder: &TupleDecoder,
-    tuple: &[u8],
-    col_idx: usize,
-) -> Result<i64, StrictError> {
+fn extract_i64(decoder: &TupleDecoder, tuple: &[u8], col_idx: usize) -> Result<i64, StrictError> {
     let raw = decoder
         .extract_fixed_raw(tuple, col_idx)?
         .ok_or(StrictError::TypeMismatch {

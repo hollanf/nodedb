@@ -562,13 +562,7 @@ mod tests {
     fn bitemporal_encode_rejects_non_bitemporal_schema() {
         let schema = test_schema();
         let map = std::collections::HashMap::new();
-        let result = value_to_binary_tuple_bitemporal(
-            &Value::Object(map),
-            &schema,
-            0,
-            0,
-            0,
-        );
+        let result = value_to_binary_tuple_bitemporal(&Value::Object(map), &schema, 0, 0, 0);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not bitemporal"));
     }

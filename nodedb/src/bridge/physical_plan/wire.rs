@@ -169,8 +169,8 @@ mod tests {
             gap_fill: "null".into(),
             computed_columns: vec![],
             rls_filters: vec![],
-                system_as_of_ms: None,
-                valid_at_ms: None,
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }));
     }
 

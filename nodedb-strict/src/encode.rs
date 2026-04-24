@@ -502,7 +502,10 @@ mod tests {
         let decoder = crate::decode::TupleDecoder::new(&schema);
         let (sys, vf, vu) = decoder.extract_bitemporal_timestamps(&tuple).unwrap();
         assert_eq!((sys, vf, vu), (100, 200, i64::MAX));
-        assert_eq!(decoder.extract_by_name(&tuple, "id").unwrap(), Value::Integer(42));
+        assert_eq!(
+            decoder.extract_by_name(&tuple, "id").unwrap(),
+            Value::Integer(42)
+        );
         assert_eq!(
             decoder.extract_by_name(&tuple, "name").unwrap(),
             Value::String("alice".into())
@@ -530,7 +533,13 @@ mod tests {
         .unwrap();
         let encoder = TupleEncoder::new(&schema);
         let err = encoder.encode_bitemporal(0, 0, 0, &[]).unwrap_err();
-        assert!(matches!(err, StrictError::ValueCountMismatch { expected: 1, got: 0 }));
+        assert!(matches!(
+            err,
+            StrictError::ValueCountMismatch {
+                expected: 1,
+                got: 0
+            }
+        ));
     }
 
     #[test]

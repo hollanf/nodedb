@@ -97,7 +97,7 @@ fn document_scan_preserves_kv_rows_when_collection_has_strict_config() {
                     ],
                     version: 1,
                     dropped_columns: Vec::new(),
-            bitemporal: false,
+                    bitemporal: false,
                 },
             },
             enforcement: Box::new(EnforcementOptions::default()),

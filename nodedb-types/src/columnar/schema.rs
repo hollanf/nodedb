@@ -187,7 +187,10 @@ impl StrictSchema {
             BITEMPORAL_SYSTEM_FROM,
             ColumnType::Int64,
         ));
-        columns.push(ColumnDef::required(BITEMPORAL_VALID_FROM, ColumnType::Int64));
+        columns.push(ColumnDef::required(
+            BITEMPORAL_VALID_FROM,
+            ColumnType::Int64,
+        ));
         columns.push(ColumnDef::required(
             BITEMPORAL_VALID_UNTIL,
             ColumnType::Int64,
