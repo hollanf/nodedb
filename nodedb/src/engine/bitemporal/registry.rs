@@ -34,6 +34,10 @@ pub enum BitemporalEngineKind {
     /// dispatcher picks the right sub-path at runtime based on whether
     /// the collection is in the timeseries registry.
     Columnar,
+    /// CRDT (Loro-backed) engine. Purge drops archived row versions
+    /// from the per-collection bitemporal history sibling map while
+    /// preserving the live row.
+    Crdt,
 }
 
 impl BitemporalEngineKind {
@@ -43,6 +47,7 @@ impl BitemporalEngineKind {
             BitemporalEngineKind::EdgeStore => TemporalPurgeEngine::EdgeStore,
             BitemporalEngineKind::DocumentStrict => TemporalPurgeEngine::DocumentStrict,
             BitemporalEngineKind::Columnar => TemporalPurgeEngine::Columnar,
+            BitemporalEngineKind::Crdt => TemporalPurgeEngine::Crdt,
         }
     }
 }
@@ -218,6 +223,10 @@ mod tests {
         assert_eq!(
             BitemporalEngineKind::Columnar.wire_tag(),
             TemporalPurgeEngine::Columnar
+        );
+        assert_eq!(
+            BitemporalEngineKind::Crdt.wire_tag(),
+            TemporalPurgeEngine::Crdt
         );
     }
 }

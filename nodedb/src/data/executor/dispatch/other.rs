@@ -333,30 +333,12 @@ impl CoreLoop {
                 collection,
                 series_id,
             }) => self.meta_query_last_value(task, collection, *series_id),
-            PhysicalPlan::Meta(MetaOp::TemporalPurgeEdgeStore {
-                tenant_id,
-                collection,
-                cutoff_system_ms,
-            }) => {
-                self.meta_temporal_purge_edge_store(task, *tenant_id, collection, *cutoff_system_ms)
-            }
-            PhysicalPlan::Meta(MetaOp::TemporalPurgeDocumentStrict {
-                tenant_id,
-                collection,
-                cutoff_system_ms,
-            }) => self.meta_temporal_purge_document_strict(
-                task,
-                *tenant_id,
-                collection,
-                *cutoff_system_ms,
-            ),
-            PhysicalPlan::Meta(MetaOp::TemporalPurgeColumnar {
-                tenant_id,
-                collection,
-                cutoff_system_ms,
-            }) => {
-                self.meta_temporal_purge_columnar(task, *tenant_id, collection, *cutoff_system_ms)
-            }
+            PhysicalPlan::Meta(
+                op @ (MetaOp::TemporalPurgeEdgeStore { .. }
+                | MetaOp::TemporalPurgeDocumentStrict { .. }
+                | MetaOp::TemporalPurgeColumnar { .. }
+                | MetaOp::TemporalPurgeCrdt { .. }),
+            ) => self.dispatch_temporal_purge(task, op),
 
             PhysicalPlan::Meta(MetaOp::RawResponse { payload }) => {
                 self.response_with_payload(task, payload.clone())

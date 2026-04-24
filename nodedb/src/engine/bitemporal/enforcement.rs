@@ -112,6 +112,11 @@ async fn run_one(state: &Arc<SharedState>, entry: &Entry) {
             collection: entry.collection.clone(),
             cutoff_system_ms,
         }),
+        BitemporalEngineKind::Crdt => PhysicalPlan::Meta(MetaOp::TemporalPurgeCrdt {
+            tenant_id: tenant_id.as_u32(),
+            collection: entry.collection.clone(),
+            cutoff_system_ms,
+        }),
     };
 
     match crate::control::server::pgwire::ddl::sync_dispatch::dispatch_async(
@@ -172,7 +177,9 @@ async fn run_one(state: &Arc<SharedState>, entry: &Entry) {
 ///   reclaimed across the two versioned tables.
 fn parse_count_from_payload(engine: BitemporalEngineKind, payload: &[u8]) -> u64 {
     match engine {
-        BitemporalEngineKind::EdgeStore | BitemporalEngineKind::Columnar => {
+        BitemporalEngineKind::EdgeStore
+        | BitemporalEngineKind::Columnar
+        | BitemporalEngineKind::Crdt => {
             if payload.len() >= 8 {
                 u64::from_le_bytes(payload[..8].try_into().unwrap_or([0; 8]))
             } else {

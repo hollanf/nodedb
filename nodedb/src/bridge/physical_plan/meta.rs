@@ -162,6 +162,16 @@ pub enum MetaOp {
         cutoff_system_ms: i64,
     },
 
+    /// Bitemporal audit-retention purge for CRDT (Loro-backed) collections.
+    /// Drops archived row versions whose `_ts_system < cutoff_system_ms`
+    /// from the per-collection bitemporal history sibling. Never removes
+    /// the live row, so `AS OF now()` reads remain correct post-purge.
+    TemporalPurgeCrdt {
+        tenant_id: u32,
+        collection: String,
+        cutoff_system_ms: i64,
+    },
+
     /// Apply retention to continuous aggregate buckets managed by
     /// the aggregate manager. Drops materialized buckets older than
     /// each aggregate's configured retention_period_ms.

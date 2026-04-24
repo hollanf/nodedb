@@ -13,11 +13,59 @@
 use nodedb_types::TenantId;
 
 use crate::bridge::envelope::{ErrorCode, Response};
+use crate::bridge::physical_plan::MetaOp;
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
 
 impl CoreLoop {
+    /// Shared entry point for every `MetaOp::TemporalPurge*` variant.
+    /// `other.rs` funnels all four here with a single arm so the match
+    /// stays compact; each variant unwraps to its per-engine handler.
+    /// Panics only if called with a non-purge `MetaOp`, which the caller
+    /// guarantees via the outer `@` pattern.
+    pub(in crate::data::executor::dispatch) fn dispatch_temporal_purge(
+        &mut self,
+        task: &ExecutionTask,
+        op: &MetaOp,
+    ) -> Response {
+        match op {
+            MetaOp::TemporalPurgeEdgeStore {
+                tenant_id,
+                collection,
+                cutoff_system_ms,
+            } => {
+                self.meta_temporal_purge_edge_store(task, *tenant_id, collection, *cutoff_system_ms)
+            }
+            MetaOp::TemporalPurgeDocumentStrict {
+                tenant_id,
+                collection,
+                cutoff_system_ms,
+            } => self.meta_temporal_purge_document_strict(
+                task,
+                *tenant_id,
+                collection,
+                *cutoff_system_ms,
+            ),
+            MetaOp::TemporalPurgeColumnar {
+                tenant_id,
+                collection,
+                cutoff_system_ms,
+            } => self.meta_temporal_purge_columnar(task, *tenant_id, collection, *cutoff_system_ms),
+            MetaOp::TemporalPurgeCrdt {
+                tenant_id,
+                collection,
+                cutoff_system_ms,
+            } => self.meta_temporal_purge_crdt(task, *tenant_id, collection, *cutoff_system_ms),
+            other => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: format!("dispatch_temporal_purge: non-purge MetaOp {other:?}"),
+                },
+            ),
+        }
+    }
+
     /// `MetaOp::EnforceTimeseriesRetention`: drop partitions older than
     /// `max_age_ms`. Bitemporal collections use `max_system_ts` as the
     /// retention axis; non-bitemporal partitions fall through to `max_ts`.
@@ -239,6 +287,47 @@ impl CoreLoop {
                 },
             ),
         }
+    }
+
+    /// `MetaOp::TemporalPurgeCrdt`: drop archived row versions from the
+    /// tenant's CRDT (Loro) engine for `collection` whose `_ts_system <
+    /// cutoff_system_ms`. The live row is never touched. Returns a u64 LE
+    /// count of archive entries deleted. A missing tenant CRDT engine is
+    /// a no-op (returns 0) — the retention registry may outlive the
+    /// engine when every bitemporal row has been purged.
+    pub(in crate::data::executor::dispatch) fn meta_temporal_purge_crdt(
+        &mut self,
+        task: &ExecutionTask,
+        tenant_id: u32,
+        collection: &str,
+        cutoff_system_ms: i64,
+    ) -> Response {
+        let tid = TenantId::new(tenant_id);
+        let purged = match self.crdt_engines.get(&tid) {
+            Some(engine) => match engine.purge_history_before(collection, cutoff_system_ms) {
+                Ok(n) => n as u64,
+                Err(e) => {
+                    return self.response_error(
+                        task,
+                        ErrorCode::Internal {
+                            detail: format!("crdt temporal purge: {e}"),
+                        },
+                    );
+                }
+            },
+            None => 0,
+        };
+        if purged > 0 {
+            tracing::info!(
+                tenant = tenant_id,
+                collection,
+                purged,
+                cutoff_ms = cutoff_system_ms,
+                "crdt: temporal purge complete"
+            );
+        }
+        let payload = purged.to_le_bytes().to_vec();
+        self.response_with_payload(task, payload)
     }
 
     /// `MetaOp::TemporalPurgeColumnar`: bitemporal audit purge for columnar

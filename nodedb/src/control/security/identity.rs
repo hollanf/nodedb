@@ -358,7 +358,8 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
             | MetaOp::ApplyContinuousAggRetention
             | MetaOp::TemporalPurgeEdgeStore { .. }
             | MetaOp::TemporalPurgeDocumentStrict { .. }
-            | MetaOp::TemporalPurgeColumnar { .. },
+            | MetaOp::TemporalPurgeColumnar { .. }
+            | MetaOp::TemporalPurgeCrdt { .. },
         ) => Permission::Admin,
 
         // Watermark query is admin-level (invoked by enforcement loop).

@@ -31,6 +31,7 @@ pub enum TemporalPurgeEngine {
     EdgeStore = 1,
     DocumentStrict = 2,
     Columnar = 3,
+    Crdt = 4,
 }
 
 impl TemporalPurgeEngine {
@@ -39,6 +40,7 @@ impl TemporalPurgeEngine {
             1 => Some(Self::EdgeStore),
             2 => Some(Self::DocumentStrict),
             3 => Some(Self::Columnar),
+            4 => Some(Self::Crdt),
             _ => None,
         }
     }
@@ -91,27 +93,23 @@ impl TemporalPurgePayload {
 
     pub fn from_bytes(buf: &[u8]) -> Result<Self> {
         if buf.len() < 1 + 4 {
-            return Err(WalError::CorruptRecord {
-                lsn: 0,
+            return Err(WalError::InvalidPayload {
                 detail: "temporal-purge payload shorter than engine_tag + name_len".into(),
             });
         }
         let engine =
-            TemporalPurgeEngine::from_raw(buf[0]).ok_or_else(|| WalError::CorruptRecord {
-                lsn: 0,
+            TemporalPurgeEngine::from_raw(buf[0]).ok_or_else(|| WalError::InvalidPayload {
                 detail: format!("temporal-purge unknown engine_tag {}", buf[0]),
             })?;
         let name_len = u32::from_le_bytes([buf[1], buf[2], buf[3], buf[4]]) as usize;
         if name_len > MAX_COLLECTION_NAME_LEN {
-            return Err(WalError::CorruptRecord {
-                lsn: 0,
+            return Err(WalError::InvalidPayload {
                 detail: format!("temporal-purge name_len {name_len} exceeds max"),
             });
         }
         let need = 1 + 4 + name_len + 8 + 8;
         if buf.len() < need {
-            return Err(WalError::CorruptRecord {
-                lsn: 0,
+            return Err(WalError::InvalidPayload {
                 detail: format!(
                     "temporal-purge payload truncated: need {need} bytes, have {}",
                     buf.len()
@@ -120,8 +118,7 @@ impl TemporalPurgePayload {
         }
         let name_end = 5 + name_len;
         let collection = std::str::from_utf8(&buf[5..name_end])
-            .map_err(|e| WalError::CorruptRecord {
-                lsn: 0,
+            .map_err(|e| WalError::InvalidPayload {
                 detail: format!("temporal-purge collection not utf8: {e}"),
             })?
             .to_string();
@@ -163,6 +160,7 @@ mod tests {
             TemporalPurgeEngine::EdgeStore,
             TemporalPurgeEngine::DocumentStrict,
             TemporalPurgeEngine::Columnar,
+            TemporalPurgeEngine::Crdt,
         ] {
             let p = TemporalPurgePayload::new(e, "c", 0, 0);
             let b = p.to_bytes().unwrap();
