@@ -19,6 +19,7 @@ use nodedb_types::OrdinalClock;
 
 use super::task::ExecutionTask;
 
+mod bitemporal_time;
 pub(in crate::data::executor) mod deferred;
 mod event_emit;
 mod maintenance;
@@ -82,6 +83,8 @@ pub struct CoreLoop {
     /// Shared across all Data Plane cores so edge keys are globally ordered
     /// even under concurrent multi-core writes.
     pub(in crate::data::executor) hlc: Arc<OrdinalClock>,
+    /// HLC watermark for `_ts_system` stamping (see `bitemporal_time.rs`).
+    pub(in crate::data::executor) last_stamp_ms: std::sync::atomic::AtomicI64,
 
     /// Per-tenant in-memory CSR adjacency index, rebuilt from
     /// edge_store on startup. Each tenant's graph state lives in its
@@ -321,6 +324,7 @@ impl CoreLoop {
             vector_params: HashMap::new(),
             edge_store,
             hlc,
+            last_stamp_ms: std::sync::atomic::AtomicI64::new(0),
             csr,
             inverted,
             data_dir: data_dir.to_path_buf(),
@@ -491,26 +495,5 @@ impl CoreLoop {
         self.deleted_nodes
             .get(&TenantId::new(tid))
             .is_some_and(|s| s.contains(node_id))
-    }
-
-    /// Is this collection configured for bitemporal (versioned) storage?
-    /// Collections flagged `bitemporal: true` on registration route every
-    /// write to the versioned redb table and every read via the Ceiling
-    /// resolver, enabling `FOR SYSTEM_TIME AS OF` / `FOR VALID_TIME`
-    /// queries.
-    #[inline]
-    pub(in crate::data::executor) fn is_bitemporal(&self, tid: u32, collection: &str) -> bool {
-        let key = (TenantId::new(tid), collection.to_string());
-        self.doc_configs.get(&key).is_some_and(|c| c.bitemporal)
-    }
-
-    /// Wall-clock millisecond stamp for versioned writes. Used as
-    /// `system_from_ms` on every write to a bitemporal collection.
-    #[inline]
-    pub(in crate::data::executor) fn bitemporal_now_ms(&self) -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-            .unwrap_or(0)
     }
 }
