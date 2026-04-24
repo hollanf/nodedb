@@ -51,6 +51,7 @@ pub(super) fn convert_one(
             offset,
             distinct,
             window_functions,
+            temporal: _,
         } => super::scan::convert_scan(super::scan_params::ScanParams {
             collection,
             engine,
@@ -86,6 +87,7 @@ pub(super) fn convert_one(
             distinct: _,
             window_functions: _,
             case_insensitive: _,
+            temporal: _,
         } => super::scan::convert_document_index_lookup(
             collection, field, value, filters, projection, *limit, *offset, tenant_id,
         ),

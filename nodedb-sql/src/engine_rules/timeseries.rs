@@ -26,6 +26,16 @@ impl EngineRules for TimeseriesRules {
     }
 
     fn plan_scan(&self, p: ScanParams) -> Result<SqlPlan> {
+        if p.temporal.is_temporal() {
+            return Err(SqlError::Unsupported {
+                detail: format!(
+                    "FOR SYSTEM_TIME / FOR VALID_TIME is not supported on timeseries \
+                     collection '{}' — use bitemporal columnar collections (Tier 5) \
+                     or filter by the existing time column",
+                    p.collection
+                ),
+            });
+        }
         // Timeseries scans use TimeseriesScan for time-range-aware execution.
         let time_range = default_time_range();
         Ok(SqlPlan::TimeseriesScan {

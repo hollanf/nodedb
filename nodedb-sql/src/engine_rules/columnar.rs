@@ -43,6 +43,7 @@ impl EngineRules for ColumnarRules {
             offset: p.offset,
             distinct: p.distinct,
             window_functions: p.window_functions,
+            temporal: p.temporal,
         })
     }
 
@@ -88,6 +89,7 @@ impl EngineRules for ColumnarRules {
             offset: 0,
             distinct: false,
             window_functions: Vec::new(),
+            temporal: crate::temporal::TemporalScope::default(),
         };
         Ok(SqlPlan::Aggregate {
             input: Box::new(base_scan),

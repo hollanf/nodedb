@@ -15,6 +15,7 @@ pub fn plan_join_from_select(
     scope: &TableScope,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: crate::TemporalScope,
 ) -> Result<Option<SqlPlan>> {
     let from = &select.from[0];
     let left_table = scope
@@ -41,6 +42,7 @@ pub fn plan_join_from_select(
         offset: 0,
         distinct: false,
         window_functions: Vec::new(),
+        temporal: crate::temporal::TemporalScope::default(),
     };
 
     let mut current_plan = left_plan;
@@ -71,6 +73,7 @@ pub fn plan_join_from_select(
             offset: 0,
             distinct: false,
             window_functions: Vec::new(),
+            temporal: crate::temporal::TemporalScope::default(),
         };
 
         let (join_type, on_keys, condition) = extract_join_spec(&join_item.join_operator)?;
@@ -89,7 +92,7 @@ pub fn plan_join_from_select(
 
     // Extract subqueries from WHERE and wrap as additional joins.
     let (subquery_joins, effective_where) = if let Some(expr) = &select.selection {
-        let extraction = super::subquery::extract_subqueries(expr, catalog, functions)?;
+        let extraction = super::subquery::extract_subqueries(expr, catalog, functions, temporal)?;
         (extraction.joins, extraction.remaining_where)
     } else {
         (Vec::new(), None)

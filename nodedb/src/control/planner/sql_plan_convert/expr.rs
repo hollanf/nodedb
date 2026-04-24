@@ -280,6 +280,7 @@ pub(super) fn inline_cte(plan: &SqlPlan, cte_name: &str, cte_plan: &SqlPlan) -> 
                     offset: inner_o,
                     distinct: inner_d,
                     window_functions: inner_w,
+                    temporal: inner_t,
                 } = cte_plan
                 {
                     let mut merged_filters = inner_f.clone();
@@ -305,6 +306,7 @@ pub(super) fn inline_cte(plan: &SqlPlan, cte_name: &str, cte_plan: &SqlPlan) -> 
                         offset: if *offset > 0 { *offset } else { *inner_o },
                         distinct: *distinct || *inner_d,
                         window_functions: inner_w.clone(),
+                        temporal: *inner_t,
                     }
                 } else {
                     cte_plan.clone()

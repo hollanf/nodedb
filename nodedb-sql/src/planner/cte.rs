@@ -17,6 +17,7 @@ pub fn plan_recursive_cte(
     query: &Query,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: crate::TemporalScope,
 ) -> Result<SqlPlan> {
     let with = query.with.as_ref().ok_or_else(|| SqlError::Parse {
         detail: "expected WITH clause".into(),
@@ -49,7 +50,7 @@ pub fn plan_recursive_cte(
     let distinct = !matches!(set_quantifier, ast::SetQuantifier::All);
 
     // Plan the base case (should not reference the CTE name).
-    let base = plan_cte_branch(left, catalog, functions)?;
+    let base = plan_cte_branch(left, catalog, functions, temporal)?;
 
     // Extract the source collection from the base case.
     let collection = extract_collection(&base).unwrap_or_default();
@@ -59,7 +60,8 @@ pub fn plan_recursive_cte(
     // with a real table. We attempt to plan it; if it fails because the
     // CTE name isn't in the catalog, we try to extract the real table from
     // a JOIN and use it with the CTE self-reference as the recursive filter.
-    let (recursive_filters, join_link) = match plan_cte_branch(right, catalog, functions) {
+    let (recursive_filters, join_link) = match plan_cte_branch(right, catalog, functions, temporal)
+    {
         Ok(plan) => (extract_filters(&plan), None),
         Err(_) => {
             // The recursive branch references the CTE name. Try to extract
@@ -250,6 +252,7 @@ fn plan_cte_branch(
     expr: &SetExpr,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: crate::TemporalScope,
 ) -> Result<SqlPlan> {
     match expr {
         SetExpr::Select(select) => {
@@ -265,7 +268,7 @@ fn plan_cte_branch(
                 format_clause: None,
                 pipe_operators: Vec::new(),
             };
-            super::select::plan_query(&query, catalog, functions)
+            super::select::plan_query(&query, catalog, functions, temporal)
         }
         _ => Err(SqlError::Unsupported {
             detail: "CTE branch must be SELECT".into(),

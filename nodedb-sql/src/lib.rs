@@ -21,8 +21,11 @@ pub mod params;
 pub mod parser;
 pub mod planner;
 pub mod resolver;
+pub mod temporal;
 pub mod types;
 pub mod types_expr;
+
+pub use temporal::{TemporalScope, ValidTime};
 
 pub use catalog::{SqlCatalog, SqlCatalogError};
 pub use error::{Result, SqlError};
@@ -60,12 +63,16 @@ use parser::statement::{StatementKind, classify, parse_sql};
 /// Handles NodeDB-specific syntax (UPSERT, `{ }` object literals) via
 /// pre-processing before handing to sqlparser.
 pub fn plan_sql(sql: &str, catalog: &dyn SqlCatalog) -> Result<Vec<SqlPlan>> {
-    let preprocessed = preprocess::preprocess(sql);
+    let preprocessed = preprocess::preprocess(sql)?;
     let effective_sql = preprocessed.as_ref().map_or(sql, |p| p.sql.as_str());
     let is_upsert = preprocessed.as_ref().is_some_and(|p| p.is_upsert);
+    let temporal = preprocessed
+        .as_ref()
+        .map(|p| p.temporal)
+        .unwrap_or_default();
 
     let statements = parse_sql(effective_sql)?;
-    plan_statements(&statements, is_upsert, catalog)
+    plan_statements(&statements, is_upsert, temporal, catalog)
 }
 
 /// Plan SQL with bound parameters (prepared statement execution).
@@ -79,21 +86,26 @@ pub fn plan_sql_with_params(
     params: &[ParamValue],
     catalog: &dyn SqlCatalog,
 ) -> Result<Vec<SqlPlan>> {
-    let preprocessed = preprocess::preprocess(sql);
+    let preprocessed = preprocess::preprocess(sql)?;
     let effective_sql = preprocessed.as_ref().map_or(sql, |p| p.sql.as_str());
     let is_upsert = preprocessed.as_ref().is_some_and(|p| p.is_upsert);
+    let temporal = preprocessed
+        .as_ref()
+        .map(|p| p.temporal)
+        .unwrap_or_default();
 
     let mut statements = parse_sql(effective_sql)?;
     for stmt in &mut statements {
         params::bind_params(stmt, params);
     }
-    plan_statements(&statements, is_upsert, catalog)
+    plan_statements(&statements, is_upsert, temporal, catalog)
 }
 
 /// Plan a list of parsed statements.
 fn plan_statements(
     statements: &[sqlparser::ast::Statement],
     is_upsert: bool,
+    temporal: TemporalScope,
     catalog: &dyn SqlCatalog,
 ) -> Result<Vec<SqlPlan>> {
     let functions = FunctionRegistry::new();
@@ -102,7 +114,7 @@ fn plan_statements(
     for stmt in statements {
         match classify(stmt) {
             StatementKind::Select(query) => {
-                let plan = planner::select::plan_query(query, catalog, &functions)?;
+                let plan = planner::select::plan_query(query, catalog, &functions, temporal)?;
                 let plan = optimizer::optimize(plan);
                 plans.push(plan);
             }

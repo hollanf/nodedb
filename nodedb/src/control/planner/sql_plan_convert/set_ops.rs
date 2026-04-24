@@ -207,6 +207,7 @@ mod tests {
             offset: 0,
             distinct: false,
             window_functions: Vec::new(),
+            temporal: nodedb_sql::TemporalScope::default(),
         };
 
         let tasks = convert_insert_select(
@@ -248,6 +249,7 @@ mod tests {
             offset: 0,
             distinct: false,
             window_functions: Vec::new(),
+            temporal: nodedb_sql::TemporalScope::default(),
         };
 
         let tasks = convert_insert_select(

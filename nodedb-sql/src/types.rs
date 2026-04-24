@@ -26,6 +26,9 @@ pub enum SqlPlan {
         offset: usize,
         distinct: bool,
         window_functions: Vec<WindowSpec>,
+        /// Bitemporal qualifier extracted from `FOR SYSTEM_TIME` /
+        /// `FOR VALID_TIME`. Default when the scan is current-state.
+        temporal: crate::temporal::TemporalScope,
     },
     PointGet {
         collection: String,
@@ -62,6 +65,9 @@ pub enum SqlPlan {
         /// Whether the chosen index is COLLATE NOCASE — the executor
         /// lowercases the lookup value before probing.
         case_insensitive: bool,
+        /// Bitemporal qualifier — mirrors `Scan::temporal`. Document
+        /// engines must honor it at the Ceiling stage.
+        temporal: crate::temporal::TemporalScope,
     },
     RangeScan {
         collection: String,

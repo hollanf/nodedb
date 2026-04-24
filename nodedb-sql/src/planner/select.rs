@@ -11,6 +11,7 @@ use crate::functions::registry::{FunctionRegistry, SearchTrigger};
 use crate::parser::normalize::normalize_ident;
 use crate::resolver::columns::TableScope;
 use crate::resolver::expr::convert_expr;
+use crate::temporal::TemporalScope;
 use crate::types::*;
 
 /// Plan a SELECT query.
@@ -18,12 +19,13 @@ pub fn plan_query(
     query: &Query,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: TemporalScope,
 ) -> Result<SqlPlan> {
     // Handle CTEs (WITH clause).
     if let Some(with) = &query.with
         && with.recursive
     {
-        return super::cte::plan_recursive_cte(query, catalog, functions);
+        return super::cte::plan_recursive_cte(query, catalog, functions, temporal);
     }
     // Non-recursive CTEs: plan each CTE subquery and the outer query.
     if let Some(with) = &query.with
@@ -47,7 +49,7 @@ pub fn plan_query(
         let mut cte_names = Vec::new();
         for cte in &with.cte_tables {
             let name = normalize_ident(&cte.alias.name);
-            let cte_plan = plan_query(&cte.query, catalog, functions)?;
+            let cte_plan = plan_query(&cte.query, catalog, functions, temporal)?;
             definitions.push((name.clone(), cte_plan));
             cte_names.push(name);
         }
@@ -57,7 +59,7 @@ pub fn plan_query(
             inner: catalog,
             cte_names,
         };
-        let outer = plan_query(&inner_query, &cte_catalog, functions)?;
+        let outer = plan_query(&inner_query, &cte_catalog, functions, temporal)?;
 
         return Ok(SqlPlan::Cte {
             definitions,
@@ -68,7 +70,7 @@ pub fn plan_query(
     // Handle UNION.
     match &*query.body {
         SetExpr::Select(select) => {
-            let mut plan = plan_select(select, catalog, functions)?;
+            let mut plan = plan_select(select, catalog, functions, temporal)?;
             if let Some(order_by) = &query.order_by {
                 plan = apply_order_by(&plan, order_by, functions)?;
             }
@@ -80,7 +82,15 @@ pub fn plan_query(
             left,
             right,
             set_quantifier,
-        } => super::union::plan_set_operation(op, left, right, set_quantifier, catalog, functions),
+        } => super::union::plan_set_operation(
+            op,
+            left,
+            right,
+            set_quantifier,
+            catalog,
+            functions,
+            temporal,
+        ),
         _ => Err(SqlError::Unsupported {
             detail: format!("query body type: {}", query.body),
         }),
@@ -92,6 +102,7 @@ fn plan_select(
     select: &Select,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: TemporalScope,
 ) -> Result<SqlPlan> {
     // 1. Resolve FROM tables.
     let scope = TableScope::resolve_from(catalog, &select.from)?;
@@ -121,7 +132,7 @@ fn plan_select(
     }
 
     // 3. Check for JOINs.
-    if let Some(plan) = try_plan_join(select, &scope, catalog, functions)? {
+    if let Some(plan) = try_plan_join(select, &scope, catalog, functions, temporal)? {
         return Ok(plan);
     }
 
@@ -132,7 +143,7 @@ fn plan_select(
 
     // 4. Extract subqueries from WHERE and rewrite as semi/anti joins.
     let (subquery_joins, effective_where) = if let Some(expr) = &select.selection {
-        let extraction = super::subquery::extract_subqueries(expr, catalog, functions)?;
+        let extraction = super::subquery::extract_subqueries(expr, catalog, functions, temporal)?;
         (extraction.joins, extraction.remaining_where)
     } else {
         (Vec::new(), None)
@@ -228,6 +239,7 @@ fn plan_select(
         distinct: select.distinct.is_some(),
         window_functions,
         indexes: table.info.indexes.clone(),
+        temporal,
     })?;
 
     // 10. Wrap with subquery joins (semi/anti/cross) if any.
@@ -473,6 +485,7 @@ fn apply_order_by(
             offset,
             distinct,
             window_functions,
+            temporal,
             ..
         } => Ok(SqlPlan::Scan {
             collection: collection.clone(),
@@ -485,6 +498,7 @@ fn apply_order_by(
             offset: *offset,
             distinct: *distinct,
             window_functions: window_functions.clone(),
+            temporal: *temporal,
         }),
         _ => Ok(plan.clone()),
     }
@@ -867,6 +881,7 @@ fn try_plan_join(
     scope: &TableScope,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: TemporalScope,
 ) -> Result<Option<SqlPlan>> {
     if select.from.len() != 1 {
         return Ok(None);
@@ -875,7 +890,7 @@ fn try_plan_join(
     if from.joins.is_empty() {
         return Ok(None);
     }
-    super::join::plan_join_from_select(select, scope, catalog, functions)
+    super::join::plan_join_from_select(select, scope, catalog, functions, temporal)
 }
 
 /// Catalog wrapper that resolves CTE names as schemaless document collections.
@@ -978,7 +993,13 @@ mod tests {
         let Statement::Query(query) = &statements[0] else {
             panic!("expected query statement");
         };
-        plan_query(query, &TestCatalog, &FunctionRegistry::new()).unwrap()
+        plan_query(
+            query,
+            &TestCatalog,
+            &FunctionRegistry::new(),
+            crate::TemporalScope::default(),
+        )
+        .unwrap()
     }
 
     #[test]

@@ -87,6 +87,7 @@ pub fn plan_insert(ins: &ast::Insert, catalog: &dyn SqlCatalog) -> Result<Vec<Sq
             source,
             catalog,
             &crate::functions::registry::FunctionRegistry::new(),
+            crate::TemporalScope::default(),
         )?;
         return Ok(vec![SqlPlan::InsertSelect {
             target: table_name,

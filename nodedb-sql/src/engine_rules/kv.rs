@@ -31,6 +31,14 @@ impl EngineRules for KvRules {
     }
 
     fn plan_scan(&self, p: ScanParams) -> Result<SqlPlan> {
+        if p.temporal.is_temporal() {
+            return Err(SqlError::Unsupported {
+                detail: format!(
+                    "FOR SYSTEM_TIME / FOR VALID_TIME is not supported on KV collection '{}'",
+                    p.collection
+                ),
+            });
+        }
         Ok(SqlPlan::Scan {
             collection: p.collection,
             alias: p.alias,
@@ -42,6 +50,7 @@ impl EngineRules for KvRules {
             offset: p.offset,
             distinct: p.distinct,
             window_functions: p.window_functions,
+            temporal: p.temporal,
         })
     }
 
@@ -87,6 +96,7 @@ impl EngineRules for KvRules {
             offset: 0,
             distinct: false,
             window_functions: Vec::new(),
+            temporal: crate::temporal::TemporalScope::default(),
         };
         Ok(SqlPlan::Aggregate {
             input: Box::new(base_scan),

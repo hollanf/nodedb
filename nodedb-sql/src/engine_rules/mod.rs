@@ -34,6 +34,11 @@ pub struct ScanParams {
     /// engines consult this to rewrite equality-on-indexed-field into
     /// [`SqlPlan::DocumentIndexLookup`]. Other engines ignore it today.
     pub indexes: Vec<IndexSpec>,
+    /// Bitemporal qualifier propagated from `plan_sql`. Engines that do
+    /// not yet support bitemporal queries must reject a non-default
+    /// scope via `SqlError::Unsupported` — silently ignoring it would
+    /// return current-state data when the user asked for history.
+    pub temporal: crate::temporal::TemporalScope,
 }
 
 /// Parameters for planning a POINT GET operation.
@@ -213,6 +218,7 @@ pub(crate) fn try_document_index_lookup(
             distinct: params.distinct,
             window_functions: params.window_functions.clone(),
             case_insensitive: idx.case_insensitive,
+            temporal: params.temporal,
         });
     }
     None

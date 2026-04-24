@@ -14,9 +14,10 @@ pub fn plan_set_operation(
     quantifier: &SetQuantifier,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: crate::TemporalScope,
 ) -> Result<SqlPlan> {
-    let left_plan = plan_set_expr(left, catalog, functions)?;
-    let right_plan = plan_set_expr(right, catalog, functions)?;
+    let left_plan = plan_set_expr(left, catalog, functions, temporal)?;
+    let right_plan = plan_set_expr(right, catalog, functions, temporal)?;
 
     match op {
         SetOperator::Union => {
@@ -52,6 +53,7 @@ fn plan_set_expr(
     expr: &SetExpr,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: crate::TemporalScope,
 ) -> Result<SqlPlan> {
     match expr {
         SetExpr::Select(select) => {
@@ -68,14 +70,22 @@ fn plan_set_expr(
                 format_clause: None,
                 pipe_operators: Vec::new(),
             };
-            super::select::plan_query(&query, catalog, functions)
+            super::select::plan_query(&query, catalog, functions, temporal)
         }
         SetExpr::SetOperation {
             op,
             left,
             right,
             set_quantifier,
-        } => plan_set_operation(op, left, right, set_quantifier, catalog, functions),
+        } => plan_set_operation(
+            op,
+            left,
+            right,
+            set_quantifier,
+            catalog,
+            functions,
+            temporal,
+        ),
         _ => Err(SqlError::Unsupported {
             detail: format!("set expression: {expr}"),
         }),

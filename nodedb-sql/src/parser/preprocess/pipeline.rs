@@ -10,7 +10,10 @@
 
 use super::function_args::rewrite_object_literal_args;
 use super::object_literal_stmt::try_rewrite_object_literal;
+use super::temporal::extract as extract_temporal;
 use super::vector_ops::rewrite_arrow_distance;
+use crate::error::SqlError;
+use crate::temporal::TemporalScope;
 
 /// Result of pre-processing a SQL string.
 pub struct PreprocessedSql {
@@ -18,42 +21,61 @@ pub struct PreprocessedSql {
     pub sql: String,
     /// Whether the original statement was UPSERT (not INSERT).
     pub is_upsert: bool,
+    /// Bitemporal qualifier extracted from `FOR SYSTEM_TIME` /
+    /// `FOR VALID_TIME` / `__system_as_of__(...)`. Default when none
+    /// was present.
+    pub temporal: TemporalScope,
 }
 
 /// Pre-process a SQL string, rewriting NodeDB-specific syntax.
 ///
-/// Returns `None` if no rewriting was needed (pass through to sqlparser as-is).
-pub fn preprocess(sql: &str) -> Option<PreprocessedSql> {
+/// Returns `Ok(None)` if no rewriting was needed. Temporal clause parse
+/// errors bubble up as `SqlError::Parse` so they surface to the caller
+/// identically to sqlparser errors.
+pub fn preprocess(sql: &str) -> Result<Option<PreprocessedSql>, SqlError> {
     let trimmed = sql.trim();
-    let upper = trimmed.to_uppercase();
+
+    // Extract temporal clauses first — they can appear in both SELECT and
+    // INSERT...SELECT, and stripping them before the UPSERT/object-literal
+    // rewrites keeps those rewriters pattern-free of NodeDB extensions.
+    let (temporal_sql, temporal) =
+        match extract_temporal(trimmed).map_err(|e| SqlError::Parse { detail: e.0 })? {
+            Some(ex) => (ex.sql, ex.temporal),
+            None => (trimmed.to_string(), TemporalScope::default()),
+        };
+    let any_temporal = temporal != TemporalScope::default();
+    let upper = temporal_sql.to_uppercase();
 
     let is_upsert = upper.starts_with("UPSERT INTO ");
 
     if is_upsert {
-        let rewritten = format!("INSERT INTO {}", &trimmed["UPSERT INTO ".len()..]);
+        let rewritten = format!("INSERT INTO {}", &temporal_sql["UPSERT INTO ".len()..]);
         if let Some(result) = try_rewrite_object_literal(&rewritten) {
-            return Some(PreprocessedSql {
+            return Ok(Some(PreprocessedSql {
                 sql: result,
                 is_upsert: true,
-            });
+                temporal,
+            }));
         }
-        return Some(PreprocessedSql {
+        return Ok(Some(PreprocessedSql {
             sql: rewritten,
             is_upsert: true,
-        });
+            temporal,
+        }));
     }
 
     if upper.starts_with("INSERT INTO ")
-        && let Some(result) = try_rewrite_object_literal(trimmed)
+        && let Some(result) = try_rewrite_object_literal(&temporal_sql)
     {
-        return Some(PreprocessedSql {
+        return Ok(Some(PreprocessedSql {
             sql: result,
             is_upsert: false,
-        });
+            temporal,
+        }));
     }
 
-    let mut sql_buf = trimmed.to_string();
-    let mut any_rewrite = false;
+    let mut sql_buf = temporal_sql;
+    let mut any_rewrite = any_temporal;
 
     if sql_buf.contains("<->")
         && let Some(rewritten) = rewrite_arrow_distance(&sql_buf)
@@ -70,13 +92,14 @@ pub fn preprocess(sql: &str) -> Option<PreprocessedSql> {
     }
 
     if any_rewrite {
-        return Some(PreprocessedSql {
+        return Ok(Some(PreprocessedSql {
             sql: sql_buf,
             is_upsert: false,
-        });
+            temporal,
+        }));
     }
 
-    None
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -84,23 +107,27 @@ mod tests {
     use super::super::function_args::rewrite_object_literal_args;
     use super::*;
 
+    fn pp(sql: &str) -> Option<PreprocessedSql> {
+        super::preprocess(sql).unwrap()
+    }
+
     #[test]
     fn passthrough_standard_sql() {
-        assert!(preprocess("SELECT * FROM users").is_none());
-        assert!(preprocess("INSERT INTO users (name) VALUES ('alice')").is_none());
-        assert!(preprocess("DELETE FROM users WHERE id = 1").is_none());
+        assert!(pp("SELECT * FROM users").is_none());
+        assert!(pp("INSERT INTO users (name) VALUES ('alice')").is_none());
+        assert!(pp("DELETE FROM users WHERE id = 1").is_none());
     }
 
     #[test]
     fn upsert_rewrite() {
-        let result = preprocess("UPSERT INTO users (name) VALUES ('alice')").unwrap();
+        let result = pp("UPSERT INTO users (name) VALUES ('alice')").unwrap();
         assert!(result.is_upsert);
         assert_eq!(result.sql, "INSERT INTO users (name) VALUES ('alice')");
     }
 
     #[test]
     fn object_literal_insert() {
-        let result = preprocess("INSERT INTO users { name: 'alice', age: 30 }").unwrap();
+        let result = pp("INSERT INTO users { name: 'alice', age: 30 }").unwrap();
         assert!(!result.is_upsert);
         assert!(result.sql.starts_with("INSERT INTO users ("));
         assert!(result.sql.contains("'alice'"));
@@ -109,7 +136,7 @@ mod tests {
 
     #[test]
     fn object_literal_upsert() {
-        let result = preprocess("UPSERT INTO users { name: 'bob' }").unwrap();
+        let result = pp("UPSERT INTO users { name: 'bob' }").unwrap();
         assert!(result.is_upsert);
         assert!(result.sql.starts_with("INSERT INTO users ("));
         assert!(result.sql.contains("'bob'"));
@@ -118,8 +145,7 @@ mod tests {
     #[test]
     fn batch_array_insert() {
         let result =
-            preprocess("INSERT INTO users [{ name: 'alice', age: 30 }, { name: 'bob', age: 25 }]")
-                .unwrap();
+            pp("INSERT INTO users [{ name: 'alice', age: 30 }, { name: 'bob', age: 25 }]").unwrap();
         assert!(!result.is_upsert);
         assert!(result.sql.contains("VALUES"));
         assert!(result.sql.contains("'alice'"));
@@ -134,7 +160,7 @@ mod tests {
     #[test]
     fn batch_array_heterogeneous_keys() {
         let result =
-            preprocess("INSERT INTO docs [{ id: 'a', name: 'Alice' }, { id: 'b', role: 'admin' }]")
+            pp("INSERT INTO docs [{ id: 'a', name: 'Alice' }, { id: 'b', role: 'admin' }]")
                 .unwrap();
         assert!(result.sql.contains("NULL"));
         assert!(result.sql.contains("'Alice'"));
@@ -144,18 +170,16 @@ mod tests {
     #[test]
     fn batch_array_upsert() {
         let result =
-            preprocess("UPSERT INTO users [{ id: 'u1', name: 'a' }, { id: 'u2', name: 'b' }]")
-                .unwrap();
+            pp("UPSERT INTO users [{ id: 'u1', name: 'a' }, { id: 'u2', name: 'b' }]").unwrap();
         assert!(result.is_upsert);
         assert!(result.sql.contains("VALUES"));
     }
 
     #[test]
     fn arrow_distance_operator_select() {
-        let result = preprocess(
-            "SELECT title FROM articles ORDER BY embedding <-> ARRAY[0.1, 0.2, 0.3] LIMIT 5",
-        )
-        .unwrap();
+        let result =
+            pp("SELECT title FROM articles ORDER BY embedding <-> ARRAY[0.1, 0.2, 0.3] LIMIT 5")
+                .unwrap();
         assert!(
             result
                 .sql
@@ -168,8 +192,7 @@ mod tests {
 
     #[test]
     fn arrow_distance_operator_where() {
-        let result =
-            preprocess("SELECT * FROM docs WHERE embedding <-> ARRAY[1.0, 2.0] < 0.5").unwrap();
+        let result = pp("SELECT * FROM docs WHERE embedding <-> ARRAY[1.0, 2.0] < 0.5").unwrap();
         assert!(
             result
                 .sql
@@ -181,13 +204,12 @@ mod tests {
 
     #[test]
     fn arrow_distance_no_match() {
-        assert!(preprocess("SELECT * FROM users WHERE age > 30").is_none());
+        assert!(pp("SELECT * FROM users WHERE age > 30").is_none());
     }
 
     #[test]
     fn arrow_distance_with_alias() {
-        let result =
-            preprocess("SELECT embedding <-> ARRAY[0.1, 0.2] AS dist FROM articles").unwrap();
+        let result = pp("SELECT embedding <-> ARRAY[0.1, 0.2] AS dist FROM articles").unwrap();
         assert!(
             result
                 .sql
@@ -211,8 +233,7 @@ mod tests {
         );
 
         let result =
-            preprocess("SELECT * FROM articles WHERE text_match(body, 'query', { fuzzy: true })")
-                .unwrap();
+            pp("SELECT * FROM articles WHERE text_match(body, 'query', { fuzzy: true })").unwrap();
         assert!(
             !result.sql.contains("{ fuzzy"),
             "should not contain object literal, got: {}",
@@ -222,7 +243,7 @@ mod tests {
 
     #[test]
     fn fuzzy_object_literal_with_distance() {
-        let result = preprocess(
+        let result = pp(
             "SELECT * FROM articles WHERE text_match(title, 'test', { fuzzy: true, distance: 2 })",
         )
         .unwrap();
@@ -232,7 +253,7 @@ mod tests {
 
     #[test]
     fn object_literal_not_rewritten_outside_function() {
-        let result = preprocess("INSERT INTO docs { name: 'Alice' }").unwrap();
+        let result = pp("INSERT INTO docs { name: 'Alice' }").unwrap();
         assert!(result.sql.contains("VALUES"), "got: {}", result.sql);
     }
 }

@@ -1,7 +1,7 @@
 //! Engine rules for spatial columnar collections.
 
 use crate::engine_rules::*;
-use crate::error::Result;
+use crate::error::{Result, SqlError};
 use crate::types::*;
 
 pub struct SpatialRules;
@@ -31,6 +31,14 @@ impl EngineRules for SpatialRules {
     }
 
     fn plan_scan(&self, p: ScanParams) -> Result<SqlPlan> {
+        if p.temporal.is_temporal() {
+            return Err(SqlError::Unsupported {
+                detail: format!(
+                    "FOR SYSTEM_TIME / FOR VALID_TIME is not supported on spatial collection '{}'",
+                    p.collection
+                ),
+            });
+        }
         // Plain scan on spatial collection — no spatial predicate involved.
         // Spatial predicates (ST_DWithin, ST_Contains, etc.) are detected
         // in select.rs and routed to SpatialScan directly, bypassing this.
@@ -45,6 +53,7 @@ impl EngineRules for SpatialRules {
             offset: p.offset,
             distinct: p.distinct,
             window_functions: p.window_functions,
+            temporal: p.temporal,
         })
     }
 
@@ -90,6 +99,7 @@ impl EngineRules for SpatialRules {
             offset: 0,
             distinct: false,
             window_functions: Vec::new(),
+            temporal: crate::temporal::TemporalScope::default(),
         };
         Ok(SqlPlan::Aggregate {
             input: Box::new(base_scan),

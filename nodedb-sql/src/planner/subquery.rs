@@ -48,9 +48,10 @@ pub fn extract_subqueries(
     expr: &Expr,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: crate::TemporalScope,
 ) -> Result<SubqueryExtraction> {
     let mut joins = Vec::new();
-    let remaining = extract_recursive(expr, &mut joins, catalog, functions)?;
+    let remaining = extract_recursive(expr, &mut joins, catalog, functions, temporal)?;
     Ok(SubqueryExtraction {
         joins,
         remaining_where: remaining,
@@ -66,6 +67,7 @@ fn extract_recursive(
     joins: &mut Vec<SubqueryJoin>,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: crate::TemporalScope,
 ) -> Result<Option<Expr>> {
     match expr {
         // AND: recurse both sides, reconstruct with remaining parts.
@@ -74,8 +76,8 @@ fn extract_recursive(
             op: ast::BinaryOperator::And,
             right,
         } => {
-            let left_remaining = extract_recursive(left, joins, catalog, functions)?;
-            let right_remaining = extract_recursive(right, joins, catalog, functions)?;
+            let left_remaining = extract_recursive(left, joins, catalog, functions, temporal)?;
+            let right_remaining = extract_recursive(right, joins, catalog, functions, temporal)?;
             match (left_remaining, right_remaining) {
                 (None, None) => Ok(None),
                 (Some(l), None) => Ok(Some(l)),
@@ -95,7 +97,7 @@ fn extract_recursive(
             negated,
         } => {
             if let Some(join) =
-                try_plan_in_subquery(outer_expr, subquery, *negated, catalog, functions)?
+                try_plan_in_subquery(outer_expr, subquery, *negated, catalog, functions, temporal)?
             {
                 joins.push(join);
                 Ok(None) // This predicate is consumed.
@@ -108,7 +110,9 @@ fn extract_recursive(
         // Scalar subquery comparison: `col > (SELECT AGG(...) FROM ...)`
         Expr::BinaryOp { left, op, right } if is_comparison_op(op) => {
             if let Expr::Subquery(subquery) = right.as_ref() {
-                if let Some(scalar) = try_plan_scalar_subquery(subquery, catalog, functions)? {
+                if let Some(scalar) =
+                    try_plan_scalar_subquery(subquery, catalog, functions, temporal)?
+                {
                     joins.push(scalar.join);
                     Ok(Some(Expr::BinaryOp {
                         left: left.clone(),
@@ -126,7 +130,9 @@ fn extract_recursive(
         // EXISTS (SELECT ...): rewrite as semi-join.
         // NOT EXISTS (SELECT ...): rewrite as anti-join.
         Expr::Exists { subquery, negated } => {
-            if let Some(join) = try_plan_exists_subquery(subquery, *negated, catalog, functions)? {
+            if let Some(join) =
+                try_plan_exists_subquery(subquery, *negated, catalog, functions, temporal)?
+            {
                 joins.push(join);
                 Ok(None)
             } else {
@@ -135,7 +141,7 @@ fn extract_recursive(
         }
 
         // Nested parentheses.
-        Expr::Nested(inner) => extract_recursive(inner, joins, catalog, functions),
+        Expr::Nested(inner) => extract_recursive(inner, joins, catalog, functions, temporal),
 
         // Not a subquery pattern — return as-is.
         _ => Ok(Some(expr.clone())),
@@ -149,6 +155,7 @@ fn try_plan_in_subquery(
     negated: bool,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: crate::TemporalScope,
 ) -> Result<Option<SubqueryJoin>> {
     // Extract outer column name.
     let outer_col = match outer_expr {
@@ -158,7 +165,7 @@ fn try_plan_in_subquery(
     };
 
     // Plan the inner SELECT.
-    let inner_plan = super::select::plan_query(subquery, catalog, functions)?;
+    let inner_plan = super::select::plan_query(subquery, catalog, functions, temporal)?;
 
     // Extract the projected column from the inner plan.
     let inner_col = extract_single_projected_column(subquery)?;
@@ -220,6 +227,7 @@ fn try_plan_exists_subquery(
     negated: bool,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: crate::TemporalScope,
 ) -> Result<Option<SubqueryJoin>> {
     let select = match &*subquery.body {
         SetExpr::Select(s) => s,
@@ -236,7 +244,7 @@ fn try_plan_exists_subquery(
     };
 
     // Build a simplified subquery without the correlated predicate for planning.
-    let inner_plan = super::select::plan_query(subquery, catalog, functions)?;
+    let inner_plan = super::select::plan_query(subquery, catalog, functions, temporal)?;
 
     Ok(Some(SubqueryJoin {
         outer_column: outer_col,
@@ -324,8 +332,9 @@ fn try_plan_scalar_subquery(
     subquery: &ast::Query,
     catalog: &dyn SqlCatalog,
     functions: &FunctionRegistry,
+    temporal: crate::TemporalScope,
 ) -> Result<Option<ScalarSubqueryResult>> {
-    let inner_plan = super::select::plan_query(subquery, catalog, functions)?;
+    let inner_plan = super::select::plan_query(subquery, catalog, functions, temporal)?;
 
     // Extract the result column name from the subquery's SELECT list.
     let result_col = match extract_scalar_column(subquery) {
