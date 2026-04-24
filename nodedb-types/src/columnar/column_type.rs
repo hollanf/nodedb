@@ -27,6 +27,11 @@ pub enum ColumnType {
     Bool,
     Bytes,
     Timestamp,
+    /// System-assigned timestamp (bitemporal `system_from_ms`). Same 8-byte
+    /// layout as `Timestamp`, but tagged distinctly so the planner and DDL
+    /// layer can reject user-supplied values — the column is populated by the
+    /// engine from HLC at commit.
+    SystemTimestamp,
     Decimal,
     Geometry,
     /// Fixed-dimension float32 vector.
@@ -55,7 +60,11 @@ impl ColumnType {
     /// Whether this type has a fixed byte size in Binary Tuple layout.
     pub fn fixed_size(&self) -> Option<usize> {
         match self {
-            Self::Int64 | Self::Float64 | Self::Timestamp | Self::Duration => Some(8),
+            Self::Int64
+            | Self::Float64
+            | Self::Timestamp
+            | Self::SystemTimestamp
+            | Self::Duration => Some(8),
             Self::Bool => Some(1),
             Self::Decimal | Self::Uuid | Self::Ulid => Some(16),
             Self::Vector(dim) => Some(*dim as usize * 4),
@@ -94,6 +103,10 @@ impl ColumnType {
                     Value::DateTime(_) | Value::Integer(_) | Value::String(_)
                 )
                 | (
+                    Self::SystemTimestamp,
+                    Value::DateTime(_) | Value::Integer(_)
+                )
+                | (
                     Self::Decimal,
                     Value::Decimal(_) | Value::String(_) | Value::Float(_) | Value::Integer(_)
                 )
@@ -125,6 +138,7 @@ impl fmt::Display for ColumnType {
             Self::Bool => f.write_str("BOOL"),
             Self::Bytes => f.write_str("BYTES"),
             Self::Timestamp => f.write_str("TIMESTAMP"),
+            Self::SystemTimestamp => f.write_str("SYSTEM_TIMESTAMP"),
             Self::Decimal => f.write_str("DECIMAL"),
             Self::Geometry => f.write_str("GEOMETRY"),
             Self::Vector(dim) => write!(f, "VECTOR({dim})"),
@@ -174,6 +188,7 @@ impl FromStr for ColumnType {
             "BOOL" | "BOOLEAN" => Ok(Self::Bool),
             "BYTES" | "BYTEA" | "BLOB" => Ok(Self::Bytes),
             "TIMESTAMP" | "TIMESTAMPTZ" => Ok(Self::Timestamp),
+            "SYSTEM_TIMESTAMP" | "SYSTEMTIMESTAMP" => Ok(Self::SystemTimestamp),
             "DECIMAL" | "NUMERIC" => Ok(Self::Decimal),
             "GEOMETRY" => Ok(Self::Geometry),
             "UUID" => Ok(Self::Uuid),
@@ -337,6 +352,24 @@ impl fmt::Display for ColumnDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_system_timestamp() {
+        assert_eq!(
+            "SYSTEM_TIMESTAMP".parse::<ColumnType>().unwrap(),
+            ColumnType::SystemTimestamp
+        );
+        assert_eq!(
+            "SystemTimestamp".parse::<ColumnType>().unwrap(),
+            ColumnType::SystemTimestamp
+        );
+        assert_eq!(ColumnType::SystemTimestamp.fixed_size(), Some(8));
+        assert!(!ColumnType::SystemTimestamp.is_variable_length());
+        assert_eq!(ColumnType::SystemTimestamp.to_string(), "SYSTEM_TIMESTAMP");
+        // System timestamp rejects raw SQL string input — it's engine-assigned.
+        assert!(!ColumnType::SystemTimestamp.accepts(&Value::String("2024-01-01".into())));
+        assert!(ColumnType::SystemTimestamp.accepts(&Value::Integer(1_700_000_000)));
+    }
 
     #[test]
     fn parse_canonical() {

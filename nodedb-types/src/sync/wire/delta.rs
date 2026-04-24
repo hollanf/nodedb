@@ -23,6 +23,15 @@ pub struct DeltaPushMsg {
     /// Computed by sender, validated by receiver. 0 for legacy clients.
     #[serde(default)]
     pub checksum: u32,
+    /// Device-assigned valid-time for the mutation (ms since Unix epoch).
+    ///
+    /// Populated by offline-capable clients so Origin can preserve the
+    /// application's notion of "when did this fact take effect" independently
+    /// of the Origin-assigned `system_from_ms`. `None` means the client did
+    /// not supply a valid-time — Origin will use `system_from_ms` as the
+    /// default valid-from.
+    #[serde(default)]
+    pub device_valid_time_ms: Option<i64>,
 }
 
 /// Delta acknowledgment (server → client, 0x11).
@@ -34,6 +43,12 @@ pub struct DeltaAckMsg {
     pub mutation_id: u64,
     /// Server-assigned LSN for this mutation.
     pub lsn: u64,
+    /// Absolute clock-skew between `device_valid_time_ms` and the Origin
+    /// wall clock at commit, in milliseconds. `None` when the client did
+    /// not supply a device valid-time, or when skew was within tolerance
+    /// (≤ 24h). Populated so clients can surface a warning UX.
+    #[serde(default)]
+    pub clock_skew_warning_ms: Option<i64>,
 }
 
 /// Delta rejection (server → client, 0x12).

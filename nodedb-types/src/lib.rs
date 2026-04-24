@@ -27,6 +27,7 @@ pub mod protocol;
 pub mod result;
 pub mod sparse_vector;
 pub mod sync;
+pub mod temporal;
 pub mod text_search;
 pub mod timeseries;
 pub mod typeguard;
@@ -65,6 +66,10 @@ pub use sync::compensation::CompensationHint;
 pub use sync::shape::{ShapeDefinition, ShapeType};
 pub use sync::violation::ViolationType;
 pub use sync::wire::{SyncFrame, SyncMessageType};
+pub use temporal::{
+    BitemporalFilter, BitemporalInterval, LsnMapError, LsnMsAnchor, LsnMsMap, OPEN_UPPER,
+    ValidTimePredicate, lsn_to_ms,
+};
 pub use text_search::{Bm25Params, QueryMode, TextSearchParams};
 pub use typeguard::TypeGuardFieldDef;
 pub use value::Value;
