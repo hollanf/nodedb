@@ -240,6 +240,7 @@ fn plan_select(
         window_functions,
         indexes: table.info.indexes.clone(),
         temporal,
+        bitemporal: table.info.bitemporal,
     })?;
 
     // 10. Wrap with subquery joins (semi/anti/cross) if any.
@@ -913,6 +914,7 @@ impl SqlCatalog for CteCatalog<'_> {
                 primary_key: Some("id".into()),
                 has_auto_tier: false,
                 indexes: Vec::new(),
+                bitemporal: false,
             }));
         }
         self.inner.get_collection(name)
@@ -941,6 +943,7 @@ mod tests {
                     primary_key: Some("id".into()),
                     has_auto_tier: false,
                     indexes: Vec::new(),
+                    bitemporal: false,
                 }),
                 "users" => Some(CollectionInfo {
                     name: "users".into(),
@@ -949,6 +952,7 @@ mod tests {
                     primary_key: Some("id".into()),
                     has_auto_tier: false,
                     indexes: Vec::new(),
+                    bitemporal: false,
                 }),
                 "orders" => Some(CollectionInfo {
                     name: "orders".into(),
@@ -957,6 +961,7 @@ mod tests {
                     primary_key: Some("id".into()),
                     has_auto_tier: false,
                     indexes: Vec::new(),
+                    bitemporal: false,
                 }),
                 "docs" => Some(CollectionInfo {
                     name: "docs".into(),
@@ -965,6 +970,7 @@ mod tests {
                     primary_key: Some("id".into()),
                     has_auto_tier: false,
                     indexes: Vec::new(),
+                    bitemporal: false,
                 }),
                 "tags" => Some(CollectionInfo {
                     name: "tags".into(),
@@ -973,6 +979,7 @@ mod tests {
                     primary_key: Some("id".into()),
                     has_auto_tier: false,
                     indexes: Vec::new(),
+                    bitemporal: false,
                 }),
                 "user_prefs" => Some(CollectionInfo {
                     name: "user_prefs".into(),
@@ -981,6 +988,7 @@ mod tests {
                     primary_key: Some("key".into()),
                     has_auto_tier: false,
                     indexes: Vec::new(),
+                    bitemporal: false,
                 }),
                 _ => None,
             };

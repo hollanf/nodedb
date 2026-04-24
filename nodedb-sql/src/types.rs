@@ -447,6 +447,11 @@ pub struct CollectionInfo {
     /// are included so the planner can see them but MUST be skipped when
     /// choosing an index lookup — only `Ready` indexes back query rewrites.
     pub indexes: Vec<IndexSpec>,
+    /// When `true`, this collection stores every write as an immutable
+    /// version keyed by `system_from_ms`. Enables `FOR SYSTEM_TIME AS OF`
+    /// and `FOR VALID_TIME` queries. Only meaningful for document engines
+    /// today; other engines ignore this flag.
+    pub bitemporal: bool,
 }
 
 /// Secondary index metadata surfaced to the SQL planner.

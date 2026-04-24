@@ -39,6 +39,11 @@ pub struct ScanParams {
     /// `SqlError::Unsupported` — silently ignoring it would return
     /// current-state data when the user asked for history.
     pub temporal: crate::temporal::TemporalScope,
+    /// Whether this collection was created with bitemporal storage. When
+    /// `true`, engines that support bitemporal reads route the scan
+    /// through versioned storage; when `false`, a non-default
+    /// [`Self::temporal`] is rejected.
+    pub bitemporal: bool,
 }
 
 /// Parameters for planning a POINT GET operation.

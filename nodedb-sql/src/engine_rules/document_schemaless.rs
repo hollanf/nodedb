@@ -28,11 +28,11 @@ impl EngineRules for SchemalessRules {
     }
 
     fn plan_scan(&self, p: ScanParams) -> Result<SqlPlan> {
-        if p.temporal.is_temporal() {
+        if p.temporal.is_temporal() && !p.bitemporal {
             return Err(SqlError::Unsupported {
                 detail: format!(
-                    "FOR SYSTEM_TIME / FOR VALID_TIME is not supported on document \
-                     collection '{}'",
+                    "FOR SYSTEM_TIME / FOR VALID_TIME requires a bitemporal \
+                     collection; '{}' was not created WITH bitemporal = true",
                     p.collection
                 ),
             });
