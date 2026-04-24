@@ -2,7 +2,7 @@ use nodedb_types::TenantId;
 
 use super::store::{Direction, Edge, EdgeStore, REVERSE_EDGES, redb_err};
 use super::temporal::{
-    EdgeValuePayload, is_sentinel, parse_versioned_edge_key, versioned_edge_key,
+    EdgeRef, EdgeValuePayload, is_sentinel, parse_versioned_edge_key, versioned_edge_key,
 };
 
 impl EdgeStore {
@@ -101,11 +101,7 @@ impl EdgeStore {
                 continue;
             }
             let Some(props) = self.ceiling_resolve_edge(
-                tid,
-                collection,
-                &src_id,
-                &label,
-                &dst_id,
+                EdgeRef::new(tid, collection, &src_id, &label, &dst_id),
                 i64::MAX,
                 None,
             )?

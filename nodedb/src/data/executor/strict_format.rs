@@ -213,14 +213,13 @@ fn coerce_value(val: &Value, col_type: &ColumnType, col_name: &str) -> Result<Va
                 "column '{col_name}': expected TIMESTAMP, got {val:?}"
             )),
         },
-        ColumnType::SystemTimestamp => match val {
-            // System-timestamp columns are engine-assigned and must not be
-            // supplied via DML. Reaching this arm means a user-originated
-            // value leaked past planning; reject it.
-            _ => Err(format!(
+        ColumnType::SystemTimestamp => {
+            // Engine-assigned; user-supplied values must not reach coercion.
+            let _ = val;
+            Err(format!(
                 "column '{col_name}': SYSTEM_TIMESTAMP is engine-assigned, not user-supplied"
-            )),
-        },
+            ))
+        }
         ColumnType::Decimal => match val {
             Value::Decimal(_) => Ok(val.clone()),
             Value::Float(f) => rust_decimal::Decimal::try_from(*f)

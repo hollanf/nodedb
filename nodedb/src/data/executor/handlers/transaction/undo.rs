@@ -107,15 +107,12 @@ impl CoreLoop {
                 } => {
                     let tenant = nodedb_types::TenantId::new(tid);
                     let ord = self.hlc.next_ordinal();
+                    use crate::engine::graph::edge_store::EdgeRef;
+                    let edge_ref = EdgeRef::new(tenant, &collection, &src_id, &label, &dst_id);
                     if let Some(old_props) = old_properties {
-                        // Edge was overwritten — restore old properties as a new version.
                         let valid_from_ms = nodedb_types::ordinal_to_ms(ord);
                         let _ = self.edge_store.put_edge_versioned(
-                            tenant,
-                            &collection,
-                            &src_id,
-                            &label,
-                            &dst_id,
+                            edge_ref,
                             &old_props,
                             ord,
                             valid_from_ms,
@@ -123,14 +120,7 @@ impl CoreLoop {
                         );
                     } else {
                         // Edge was newly inserted — tombstone it; CSR drops the edge.
-                        let _ = self.edge_store.soft_delete_edge(
-                            tenant,
-                            &collection,
-                            &src_id,
-                            &label,
-                            &dst_id,
-                            ord,
-                        );
+                        let _ = self.edge_store.soft_delete_edge(edge_ref, ord);
                         self.csr_partition_mut(tid)
                             .remove_edge(&src_id, &label, &dst_id);
                     }
@@ -147,12 +137,9 @@ impl CoreLoop {
                     let valid_from_ms = nodedb_types::ordinal_to_ms(ord);
                     // Re-insert the deleted edge as a new version with the
                     // original properties.
+                    use crate::engine::graph::edge_store::EdgeRef;
                     let _ = self.edge_store.put_edge_versioned(
-                        tenant,
-                        &collection,
-                        &src_id,
-                        &label,
-                        &dst_id,
+                        EdgeRef::new(tenant, &collection, &src_id, &label, &dst_id),
                         &old_properties,
                         ord,
                         valid_from_ms,

@@ -347,13 +347,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = EdgeStore::open(&dir.path().join("graph.redb")).unwrap();
 
+        use crate::engine::graph::edge_store::EdgeRef;
         use nodedb_types::TenantId;
         const T: TenantId = TenantId::new(1);
         let mut ord = 0i64;
         let mut put = |src: &str, label: &str, dst: &str| {
             ord += 1;
             store
-                .put_edge_versioned(T, "col", src, label, dst, b"", ord, ord, i64::MAX)
+                .put_edge_versioned(
+                    EdgeRef::new(T, "col", src, label, dst),
+                    b"",
+                    ord,
+                    ord,
+                    i64::MAX,
+                )
                 .unwrap();
         };
         put("alice", "KNOWS", "bob");

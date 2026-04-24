@@ -408,13 +408,16 @@ mod tests {
         ]);
         let mut buf = Vec::new();
         rmpv::encode::write_value(&mut buf, &props).unwrap();
+        use crate::engine::graph::edge_store::EdgeRef;
         store
             .put_edge_versioned(
-                nodedb_types::TenantId::new(1),
-                "col",
-                "alice",
-                "KNOWS",
-                "bob",
+                EdgeRef::new(
+                    nodedb_types::TenantId::new(1),
+                    "col",
+                    "alice",
+                    "KNOWS",
+                    "bob",
+                ),
                 &buf,
                 1,
                 1,
@@ -447,13 +450,10 @@ mod tests {
             crate::engine::graph::edge_store::EdgeStore::open(&dir.path().join("graph.redb"))
                 .unwrap();
 
+        use crate::engine::graph::edge_store::EdgeRef;
         store
             .put_edge_versioned(
-                nodedb_types::TenantId::new(1),
-                "col",
-                "a",
-                "L",
-                "b",
+                EdgeRef::new(nodedb_types::TenantId::new(1), "col", "a", "L", "b"),
                 b"",
                 1,
                 1,

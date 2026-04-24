@@ -56,12 +56,9 @@ impl CoreLoop {
 
         let ord = self.hlc.next_ordinal();
         let valid_from_ms = nodedb_types::ordinal_to_ms(ord);
+        use crate::engine::graph::edge_store::EdgeRef;
         match self.edge_store.put_edge_versioned(
-            TenantId::new(tid),
-            collection,
-            src_id,
-            label,
-            dst_id,
+            EdgeRef::new(TenantId::new(tid), collection, src_id, label, dst_id),
             properties,
             ord,
             valid_from_ms,
@@ -124,12 +121,15 @@ impl CoreLoop {
             }
             let ord = self.hlc.next_ordinal();
             let valid_from_ms = nodedb_types::ordinal_to_ms(ord);
+            use crate::engine::graph::edge_store::EdgeRef;
             match self.edge_store.put_edge_versioned(
-                TenantId::new(tid),
-                &edge.collection,
-                &edge.src_id,
-                &edge.label,
-                &edge.dst_id,
+                EdgeRef::new(
+                    TenantId::new(tid),
+                    &edge.collection,
+                    &edge.src_id,
+                    &edge.label,
+                    &edge.dst_id,
+                ),
                 &[],
                 ord,
                 valid_from_ms,
@@ -177,12 +177,15 @@ impl CoreLoop {
         );
         for edge in edges {
             let ord = self.hlc.next_ordinal();
+            use crate::engine::graph::edge_store::EdgeRef;
             let _ = self.edge_store.soft_delete_edge(
-                TenantId::new(tid),
-                &edge.collection,
-                &edge.src_id,
-                &edge.label,
-                &edge.dst_id,
+                EdgeRef::new(
+                    TenantId::new(tid),
+                    &edge.collection,
+                    &edge.src_id,
+                    &edge.label,
+                    &edge.dst_id,
+                ),
                 ord,
             );
             let partition = self.csr_partition_mut(tid);
@@ -206,12 +209,9 @@ impl CoreLoop {
     ) -> Response {
         debug!(core = self.core_id, tid, %collection, %src_id, %label, %dst_id, "edge delete");
         let ord = self.hlc.next_ordinal();
+        use crate::engine::graph::edge_store::EdgeRef;
         match self.edge_store.soft_delete_edge(
-            TenantId::new(tid),
-            collection,
-            src_id,
-            label,
-            dst_id,
+            EdgeRef::new(TenantId::new(tid), collection, src_id, label, dst_id),
             ord,
         ) {
             Ok(_) => {
