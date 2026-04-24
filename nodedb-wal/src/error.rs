@@ -64,6 +64,12 @@ pub enum WalError {
     /// — the bytes passed CRC but the payload's own framing is wrong.
     #[error("corrupt WAL record at LSN {lsn}: {detail}")]
     CorruptRecord { lsn: u64, detail: String },
+
+    /// Record payload is structurally invalid at parse time, before the
+    /// surrounding LSN context is known (e.g., anchor payload decoded from
+    /// a byte slice during unit-level use).
+    #[error("invalid WAL payload: {detail}")]
+    InvalidPayload { detail: String },
 }
 
 pub type Result<T> = std::result::Result<T, WalError>;
