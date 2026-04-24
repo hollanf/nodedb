@@ -1,0 +1,18 @@
+//! Constraint validator — checks deltas against committed state.
+//!
+//! This is the core of the CRDT/SQL bridge. When a delta arrives from a peer,
+//! the validator checks all applicable constraints against the leader's
+//! committed state. If any constraint is violated, the delta is rejected
+//! with a compensation hint.
+
+pub mod bitemporal;
+mod core;
+mod policy_dispatch;
+mod types;
+mod validate;
+
+#[cfg(test)]
+mod tests;
+
+pub use core::Validator;
+pub use types::{ProposedChange, ValidationOutcome, Violation};

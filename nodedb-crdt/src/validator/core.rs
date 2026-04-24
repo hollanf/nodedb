@@ -1,0 +1,115 @@
+//! Validator struct, constructors, and accessors.
+
+use std::collections::{HashMap, HashSet};
+
+use crate::constraint::ConstraintSet;
+use crate::dead_letter::DeadLetterQueue;
+use crate::deferred::DeferredQueue;
+use crate::policy::PolicyRegistry;
+use crate::signing::DeltaSigner;
+
+/// The constraint validator.
+///
+/// Validates proposed changes against a set of constraints and the current
+/// committed state. Violations are resolved via declarative policies:
+/// - AUTO_RESOLVED — policy handles it (e.g., LAST_WRITER_WINS)
+/// - DEFERRED — queued for exponential backoff retry (CASCADE_DEFER)
+/// - WEBHOOK_REQUIRED — caller must POST to webhook for decision
+/// - ESCALATE — route to dead-letter queue (fallback)
+pub struct Validator {
+    pub(super) constraints: ConstraintSet,
+    pub(super) dlq: DeadLetterQueue,
+    pub(super) policies: PolicyRegistry,
+    pub(super) deferred: DeferredQueue,
+    /// Monotonic suffix counter: (collection, field) -> next suffix number
+    pub(super) suffix_counter: HashMap<(String, String), u64>,
+    /// Optional delta signature verifier. When set, signed deltas are
+    /// verified before constraint validation.
+    pub(super) delta_verifier: Option<DeltaSigner>,
+    /// Collections known to be bitemporal. UNIQUE checks for rows in these
+    /// collections scope to currently-live rows (open `_ts_valid_until`)
+    /// so superseded versions don't falsely collide with live writes.
+    pub(super) bitemporal_collections: HashSet<String>,
+}
+
+impl Validator {
+    /// Create a new validator with default (ephemeral) policies.
+    pub fn new(constraints: ConstraintSet, dlq_capacity: usize) -> Self {
+        Self::new_with_policies(constraints, dlq_capacity, PolicyRegistry::new(), 1000)
+    }
+
+    /// Create a new validator with custom policies and deferred queue.
+    pub fn new_with_policies(
+        constraints: ConstraintSet,
+        dlq_capacity: usize,
+        policies: PolicyRegistry,
+        deferred_capacity: usize,
+    ) -> Self {
+        Self {
+            constraints,
+            dlq: DeadLetterQueue::new(dlq_capacity),
+            policies,
+            deferred: DeferredQueue::new(deferred_capacity),
+            suffix_counter: HashMap::new(),
+            delta_verifier: None,
+            bitemporal_collections: HashSet::new(),
+        }
+    }
+
+    /// Register a collection as bitemporal. UNIQUE constraints for rows in
+    /// this collection will scope to currently-live rows only.
+    pub fn mark_bitemporal(&mut self, collection: impl Into<String>) {
+        self.bitemporal_collections.insert(collection.into());
+    }
+
+    /// Is the given collection registered as bitemporal?
+    pub fn is_bitemporal(&self, collection: &str) -> bool {
+        self.bitemporal_collections.contains(collection)
+    }
+
+    /// Access the dead-letter queue.
+    pub fn dlq(&self) -> &DeadLetterQueue {
+        &self.dlq
+    }
+
+    /// Mutable access to the DLQ (for dequeue/retry).
+    pub fn dlq_mut(&mut self) -> &mut DeadLetterQueue {
+        &mut self.dlq
+    }
+
+    /// Access the policy registry.
+    pub fn policies(&self) -> &PolicyRegistry {
+        &self.policies
+    }
+
+    /// Mutable access to the policy registry.
+    pub fn policies_mut(&mut self) -> &mut PolicyRegistry {
+        &mut self.policies
+    }
+
+    /// Access the deferred queue.
+    pub fn deferred(&self) -> &DeferredQueue {
+        &self.deferred
+    }
+
+    /// Mutable access to the deferred queue.
+    pub fn deferred_mut(&mut self) -> &mut DeferredQueue {
+        &mut self.deferred
+    }
+
+    /// Set the delta signature verifier. When set, deltas with non-zero
+    /// signatures in their CrdtAuthContext will be verified before validation.
+    pub fn set_delta_verifier(&mut self, verifier: DeltaSigner) {
+        self.delta_verifier = Some(verifier);
+    }
+
+    /// Access the delta verifier.
+    pub fn delta_verifier(&self) -> Option<&DeltaSigner> {
+        self.delta_verifier.as_ref()
+    }
+
+    /// Mutable access to the delta verifier.
+    pub fn delta_verifier_mut(&mut self) -> Option<&mut DeltaSigner> {
+        self.delta_verifier.as_mut()
+    }
+}
