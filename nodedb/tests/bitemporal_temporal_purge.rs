@@ -169,6 +169,7 @@ fn registry_snapshot_yields_one_entry_per_engine_kind() {
         BitemporalEngineKind::EdgeStore => 0,
         BitemporalEngineKind::DocumentStrict => 1,
         BitemporalEngineKind::Columnar => 2,
+        BitemporalEngineKind::Crdt => 3,
     });
     assert_eq!(
         kinds,

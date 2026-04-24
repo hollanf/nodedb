@@ -139,3 +139,156 @@ fn bitemporal_crdt_system_ts_receiver_stamped() {
         "stamped ts ({stamped}) must be >= receiver clock at apply ({before_ms})"
     );
 }
+
+/// Three successive writes to the same logical row must leave two prior
+/// versions in the bitemporal archive. Reading `AS OF` the time between
+/// any two stamps returns the version live at that time.
+#[test]
+fn bitemporal_crdt_preserves_multi_version_history() {
+    let mut eng = tenant();
+
+    // v1, then v2 supersedes v1, then v3 supersedes v2.
+    for (row_email, valid_from) in [
+        ("alice-1@example.com", 0),
+        ("alice-2@example.com", 1_000),
+        ("alice-3@example.com", 2_000),
+    ] {
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        eng.validate_and_apply(
+            1,
+            CrdtAuthContext::default(),
+            &change("u1", row_email, valid_from, VALID_UNTIL_OPEN, 0),
+            vec![],
+        )
+        .unwrap();
+    }
+
+    // Two archived versions expected (v1, v2); v3 is the live row.
+    let state = eng.state();
+    let archived = state.archive_version_count(USERS, "u1");
+    assert_eq!(archived, 2, "v1 and v2 must be archived when v3 overwrites");
+
+    // Live row holds v3.
+    let live = state.read_row(USERS, "u1").unwrap();
+    if let LoroValue::Map(m) = live {
+        let email = match m.get("email").unwrap() {
+            LoroValue::String(s) => s.to_string(),
+            other => panic!("expected string, got {other:?}"),
+        };
+        assert_eq!(email, "alice-3@example.com");
+    } else {
+        panic!("expected map");
+    }
+}
+
+/// Audit retention purge drops archived versions older than the cutoff
+/// while preserving the live row and versions after the cutoff.
+#[test]
+fn bitemporal_crdt_purge_drops_superseded_below_cutoff() {
+    let mut eng = tenant();
+
+    // Stage three versions with well-separated stamps.
+    for email in [
+        "v1@example.com",
+        "v2@example.com",
+        "v3@example.com",
+        "v4@example.com",
+    ] {
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        eng.validate_and_apply(
+            1,
+            CrdtAuthContext::default(),
+            &change("u1", email, 0, VALID_UNTIL_OPEN, 0),
+            vec![],
+        )
+        .unwrap();
+    }
+    let state = eng.state();
+    assert_eq!(state.archive_version_count(USERS, "u1"), 3);
+
+    // Capture the stamps the receiver assigned, then purge everything
+    // strictly below the stamp of the second-oldest archived version.
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+
+    // Purge history older than "now" — sweeps everything since all stamps
+    // precede the call to SystemTime::now() below. Live row must survive.
+    let cutoff = now_ms + 1;
+    let dropped = eng.purge_history_before(USERS, cutoff).unwrap();
+    assert_eq!(dropped, 3, "every archived version must be reclaimed");
+    assert_eq!(state.archive_version_count(USERS, "u1"), 0);
+
+    // Live row still readable — purge never touches the current state.
+    let live = state.read_row(USERS, "u1").unwrap();
+    if let LoroValue::Map(m) = live {
+        let email = match m.get("email").unwrap() {
+            LoroValue::String(s) => s.to_string(),
+            other => panic!("expected string, got {other:?}"),
+        };
+        assert_eq!(email, "v4@example.com");
+    } else {
+        panic!("expected map");
+    }
+}
+
+/// Two peers producing divergent writes with different receiver stamps
+/// must both leave an archived version after merge so the timeline is
+/// reconstructible via `read_row_as_of`.
+#[test]
+fn bitemporal_crdt_divergence_preserves_both_versions_via_archive() {
+    let mut eng = tenant();
+
+    // Peer A writes v1.
+    eng.validate_and_apply(
+        1,
+        CrdtAuthContext::default(),
+        &change("u1", "a@peer.com", 0, VALID_UNTIL_OPEN, 0),
+        vec![],
+    )
+    .unwrap();
+    let ts_a = {
+        let LoroValue::Map(live_a) = eng.state().read_row(USERS, "u1").unwrap() else {
+            panic!("expected map");
+        };
+        match live_a.get("_ts_system").unwrap() {
+            LoroValue::I64(n) => *n,
+            other => panic!("expected i64, got {other:?}"),
+        }
+    };
+
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // Peer B writes v2, which supersedes v1 — v1 must land in archive.
+    eng.validate_and_apply(
+        2,
+        CrdtAuthContext::default(),
+        &change("u1", "b@peer.com", 1_000, VALID_UNTIL_OPEN, 0),
+        vec![],
+    )
+    .unwrap();
+
+    let state = eng.state();
+    // AS OF ts_a returns the peer-A version.
+    let at_a = state.read_row_as_of(USERS, "u1", ts_a).expect("v1 as-of");
+    if let LoroValue::Map(m) = at_a {
+        let email = match m.get("email").unwrap() {
+            LoroValue::String(s) => s.to_string(),
+            other => panic!("expected string, got {other:?}"),
+        };
+        assert_eq!(email, "a@peer.com", "AS OF peer-A stamp returns peer-A row");
+    } else {
+        panic!("expected map");
+    }
+
+    // Current live row is peer-B's write.
+    let LoroValue::Map(live_b) = state.read_row(USERS, "u1").unwrap() else {
+        panic!("expected map");
+    };
+    let email_b = match live_b.get("email").unwrap() {
+        LoroValue::String(s) => s.to_string(),
+        other => panic!("expected string, got {other:?}"),
+    };
+    assert_eq!(email_b, "b@peer.com");
+}
