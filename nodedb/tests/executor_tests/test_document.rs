@@ -16,6 +16,8 @@ fn point_get_not_found() {
             collection: "users".into(),
             document_id: "nonexistent".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(resp.status, Status::Ok);
@@ -46,6 +48,8 @@ fn point_put_and_get() {
             collection: "docs".into(),
             document_id: "d1".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(resp.status, Status::Ok);
@@ -86,6 +90,8 @@ fn point_delete_removes() {
             collection: "docs".into(),
             document_id: "d1".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(resp.status, Status::Ok);
@@ -150,6 +156,8 @@ fn range_scan_returns_results() {
             projection: Vec::new(),
             computed_columns: Vec::new(),
             window_functions: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     let json = payload_json(&payload);

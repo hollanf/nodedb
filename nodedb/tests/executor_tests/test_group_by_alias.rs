@@ -30,6 +30,7 @@ impl SqlCatalog for TimeseriesCatalog {
                 primary_key: None,
                 has_auto_tier: false,
                 indexes: Vec::new(),
+                bitemporal: false,
             }),
             _ => None,
         };

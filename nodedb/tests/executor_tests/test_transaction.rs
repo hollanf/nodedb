@@ -39,6 +39,8 @@ fn transaction_batch_commits_atomically() {
             collection: "docs".into(),
             document_id: "d1".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(r1.status, Status::Ok);
@@ -51,6 +53,8 @@ fn transaction_batch_commits_atomically() {
             collection: "docs".into(),
             document_id: "d2".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(r2.status, Status::Ok);
@@ -160,6 +164,8 @@ fn transaction_batch_rollback_on_failure() {
             collection: "docs".into(),
             document_id: "d1".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(r.status, Status::Ok);
@@ -434,6 +440,8 @@ fn transaction_mixed_doc_edge_vector_rollback() {
             collection: "nodes".into(),
             document_id: "n1".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(r.status, Status::Ok);

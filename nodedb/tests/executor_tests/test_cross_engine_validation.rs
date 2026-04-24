@@ -139,6 +139,8 @@ fn cross_model_query_vector_graph_relational() {
             projection: Vec::new(),
             computed_columns: Vec::new(),
             window_functions: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     let scan_json = payload_json(&scan_payload);
@@ -390,6 +392,8 @@ fn document_indexes_consistent_after_simulated_crash() {
             collection: "articles".into(),
             document_id: "a1".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(get_a1.error_code, None);
@@ -402,6 +406,8 @@ fn document_indexes_consistent_after_simulated_crash() {
             collection: "articles".into(),
             document_id: "a2".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(get_a2.status, Status::Ok);

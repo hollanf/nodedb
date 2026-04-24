@@ -38,6 +38,8 @@ fn sparse_point_get_isolated() {
             collection: "users".into(),
             document_id: "u1".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(resp_a.status, Status::Ok);
@@ -54,6 +56,8 @@ fn sparse_point_get_isolated() {
             collection: "users".into(),
             document_id: "u1".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(

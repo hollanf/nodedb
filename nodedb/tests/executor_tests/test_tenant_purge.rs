@@ -129,6 +129,8 @@ fn purge_removes_all_tenant_data() {
             collection: "users".into(),
             document_id: "u0".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(resp.error_code, None, "Tenant A documents should be purged");
@@ -212,6 +214,8 @@ fn purge_removes_all_tenant_data() {
             collection: "users".into(),
             document_id: "u0".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(

@@ -191,6 +191,8 @@ fn read_ops_not_replicated() {
         collection: "orders".into(),
         document_id: "doc-1".into(),
         rls_filters: vec![],
+        system_as_of_ms: None,
+        valid_at_ms: None,
     });
     let entry = nodedb::control::wal_replication::to_replicated_entry(
         TenantId::new(1),

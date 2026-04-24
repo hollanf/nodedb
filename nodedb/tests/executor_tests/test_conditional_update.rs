@@ -59,6 +59,8 @@ fn get_stock(
             collection: "products".into(),
             document_id: id.into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     let v = payload_value(&payload);

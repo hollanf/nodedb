@@ -39,6 +39,8 @@ fn security_tenant_isolation() {
             collection: "secrets".into(),
             document_id: "s1".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(resp.status, Status::Ok);
@@ -147,6 +149,8 @@ fn linearizability_read_after_write() {
                 collection: "linear".into(),
                 document_id: doc_id.clone(),
                 rls_filters: Vec::new(),
+                system_as_of_ms: None,
+                valid_at_ms: None,
             }),
         );
         assert_eq!(
@@ -190,6 +194,8 @@ fn linearizability_delete_visibility() {
             collection: "linear".into(),
             document_id: "del1".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(resp.error_code, None);
@@ -235,6 +241,8 @@ fn wal_replay_deterministic() {
             collection: "replay".into(),
             document_id: "d1".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(d1.status, Status::Ok);
@@ -253,6 +261,8 @@ fn wal_replay_deterministic() {
             collection: "replay".into(),
             document_id: "d2".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(d2.status, Status::Ok);
@@ -265,6 +275,8 @@ fn wal_replay_deterministic() {
             collection: "replay".into(),
             document_id: "d3".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(d3.status, Status::Ok);
@@ -334,6 +346,8 @@ fn mixed_engine_isolation_no_cross_eviction() {
             collection: "mixed".into(),
             document_id: "doc_25".into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     assert_eq!(doc.status, Status::Ok, "sparse engine should be intact");

@@ -100,6 +100,7 @@ fn document_scan_preserves_kv_rows_when_collection_has_strict_config() {
                 },
             },
             enforcement: Box::new(EnforcementOptions::default()),
+            bitemporal: false,
         }),
     );
 
@@ -130,6 +131,8 @@ fn document_scan_preserves_kv_rows_when_collection_has_strict_config() {
             projection: Vec::new(),
             computed_columns: Vec::new(),
             window_functions: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
 
@@ -982,6 +985,8 @@ fn multi_core_broadcast_inner_join() {
             projection: Vec::new(),
             computed_columns: Vec::new(),
             window_functions: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
 
@@ -1092,6 +1097,8 @@ fn multi_core_broadcast_left_join() {
             projection: Vec::new(),
             computed_columns: Vec::new(),
             window_functions: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
 
@@ -1206,6 +1213,8 @@ fn multi_core_broadcast_merge_simulation() {
         projection: Vec::new(),
         computed_columns: Vec::new(),
         window_functions: Vec::new(),
+        system_as_of_ms: None,
+        valid_at_ms: None,
     });
     let payload0 = send_ok(
         &mut core0.core,
@@ -1371,6 +1380,8 @@ fn inline_hash_join_honors_qualified_left_keys() {
             projection: Vec::new(),
             computed_columns: Vec::new(),
             window_functions: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
 

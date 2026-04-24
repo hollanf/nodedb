@@ -34,6 +34,7 @@ fn register_with_generated(
             crdt_enabled: false,
             storage_mode: Default::default(),
             enforcement: Box::new(enforcement),
+            bitemporal: false,
         }),
     );
 }
@@ -59,6 +60,8 @@ fn get_doc(
             collection: collection.into(),
             document_id: id.into(),
             rls_filters: Vec::new(),
+            system_as_of_ms: None,
+            valid_at_ms: None,
         }),
     );
     payload_value(&payload)
