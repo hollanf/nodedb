@@ -8,13 +8,21 @@
 //! and stored in redb B-Trees as `(collection, path, value) -> doc_id`.
 
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::engine::sparse::btree::SparseEngine;
 
+/// Wall-clock millisecond timestamp for versioned writes. Bitemporal
+/// writes use this as `system_from_ms`.
+fn wall_now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
 use super::config::CollectionConfig;
-use super::extract::{
-    extract_index_values, extract_index_values_rmpv, json_to_msgpack, rmpv_to_json,
-};
+use super::extract::{extract_index_values_rmpv, json_to_msgpack, rmpv_to_json};
 
 pub struct DocumentEngine<'a> {
     sparse: &'a SparseEngine,
@@ -50,23 +58,13 @@ impl<'a> DocumentEngine<'a> {
             detail: format!("encode: {e}"),
         })?;
 
-        self.sparse.put(self.tenant_id, collection, doc_id, &buf)?;
+        // Delegate to put_raw so both JSON and raw-MessagePack entry points
+        // share the same bitemporal-aware write path.
+        self.put_raw(collection, doc_id, &buf)?;
 
-        if let Some(config) = self.configs.get(collection) {
-            for index_path in &config.index_paths {
-                let values = extract_index_values(document, &index_path.path, index_path.is_array);
-                for value in values {
-                    self.sparse.index_put(
-                        self.tenant_id,
-                        collection,
-                        &index_path.path,
-                        &value,
-                        doc_id,
-                    )?;
-                }
-            }
-        }
-
+        // `put_raw` already handled index extraction from the MessagePack
+        // body; nothing more to do here.
+        let _ = document;
         Ok(())
     }
 
@@ -77,8 +75,24 @@ impl<'a> DocumentEngine<'a> {
         doc_id: &str,
         msgpack_bytes: &[u8],
     ) -> crate::Result<()> {
-        self.sparse
-            .put(self.tenant_id, collection, doc_id, msgpack_bytes)?;
+        let bitemporal = self.configs.get(collection).is_some_and(|c| c.bitemporal);
+
+        if bitemporal {
+            let sys_from = wall_now_ms();
+            self.sparse
+                .versioned_put(crate::engine::sparse::btree_versioned::VersionedPut {
+                    tenant: self.tenant_id,
+                    coll: collection,
+                    doc_id,
+                    sys_from_ms: sys_from,
+                    valid_from_ms: i64::MIN,
+                    valid_until_ms: i64::MAX,
+                    body: msgpack_bytes,
+                })?;
+        } else {
+            self.sparse
+                .put(self.tenant_id, collection, doc_id, msgpack_bytes)?;
+        }
 
         if let Some(config) = self.configs.get(collection)
             && let Ok(value) = rmpv::decode::read_value(&mut &msgpack_bytes[..])
@@ -87,13 +101,25 @@ impl<'a> DocumentEngine<'a> {
                 let values =
                     extract_index_values_rmpv(&value, &index_path.path, index_path.is_array);
                 for v in values {
-                    self.sparse.index_put(
-                        self.tenant_id,
-                        collection,
-                        &index_path.path,
-                        &v,
-                        doc_id,
-                    )?;
+                    if bitemporal {
+                        let sys_from = wall_now_ms();
+                        self.sparse.versioned_index_put(
+                            self.tenant_id,
+                            collection,
+                            &index_path.path,
+                            &v,
+                            doc_id,
+                            sys_from,
+                        )?;
+                    } else {
+                        self.sparse.index_put(
+                            self.tenant_id,
+                            collection,
+                            &index_path.path,
+                            &v,
+                            doc_id,
+                        )?;
+                    }
                 }
             }
         }
@@ -101,9 +127,19 @@ impl<'a> DocumentEngine<'a> {
         Ok(())
     }
 
+    fn is_bitemporal(&self, collection: &str) -> bool {
+        self.configs.get(collection).is_some_and(|c| c.bitemporal)
+    }
+
     /// Get a document and deserialize from MessagePack to JSON.
     pub fn get(&self, collection: &str, doc_id: &str) -> crate::Result<Option<serde_json::Value>> {
-        match self.sparse.get(self.tenant_id, collection, doc_id)? {
+        let bytes_opt = if self.is_bitemporal(collection) {
+            self.sparse
+                .versioned_get_current(self.tenant_id, collection, doc_id)?
+        } else {
+            self.sparse.get(self.tenant_id, collection, doc_id)?
+        };
+        match bytes_opt {
             Some(bytes) => {
                 let rmpv_val = rmpv::decode::read_value(&mut bytes.as_slice()).map_err(|e| {
                     crate::Error::Serialization {
@@ -119,14 +155,51 @@ impl<'a> DocumentEngine<'a> {
 
     /// Get raw MessagePack bytes (zero-copy path for DataFusion UDFs).
     pub fn get_raw(&self, collection: &str, doc_id: &str) -> crate::Result<Option<Vec<u8>>> {
-        self.sparse.get(self.tenant_id, collection, doc_id)
+        if self.is_bitemporal(collection) {
+            self.sparse
+                .versioned_get_current(self.tenant_id, collection, doc_id)
+        } else {
+            self.sparse.get(self.tenant_id, collection, doc_id)
+        }
     }
 
-    /// Delete a document and its secondary index entries.
-    ///
-    /// Returns whether a row was actually removed. The prior bytes returned
-    /// by `sparse.delete` are not needed at this boundary.
+    /// Delete a document. On bitemporal collections this appends a
+    /// tombstone version so AS-OF queries still see prior history; on
+    /// non-bitemporal collections the row is removed in place.
     pub fn delete(&self, collection: &str, doc_id: &str) -> crate::Result<bool> {
+        if self.is_bitemporal(collection) {
+            // Read the current body so we know what values the index
+            // currently points at; we need to tombstone each one so
+            // `index_lookup_as_of(now)` stops returning this doc_id.
+            let prior_body =
+                self.sparse
+                    .versioned_get_current(self.tenant_id, collection, doc_id)?;
+            let Some(body) = prior_body else {
+                return Ok(false);
+            };
+            let sys_from = wall_now_ms();
+            self.sparse
+                .versioned_tombstone(self.tenant_id, collection, doc_id, sys_from)?;
+            if let Some(config) = self.configs.get(collection)
+                && let Ok(rmpv_val) = rmpv::decode::read_value(&mut &body[..])
+            {
+                for index_path in &config.index_paths {
+                    for v in
+                        extract_index_values_rmpv(&rmpv_val, &index_path.path, index_path.is_array)
+                    {
+                        self.sparse.versioned_index_tombstone(
+                            self.tenant_id,
+                            collection,
+                            &index_path.path,
+                            &v,
+                            doc_id,
+                            sys_from,
+                        )?;
+                    }
+                }
+            }
+            return Ok(true);
+        }
         self.sparse
             .delete_indexes_for_document(self.tenant_id, collection, doc_id)?;
         Ok(self

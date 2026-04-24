@@ -92,7 +92,10 @@ impl SparseEngine {
 
         info!(path = %path.display(), "sparse engine opened");
 
-        Ok(Self { db: Arc::new(db) })
+        let engine = Self { db: Arc::new(db) };
+        engine.ensure_documents_versioned_table()?;
+        engine.ensure_indexes_versioned_table()?;
+        Ok(engine)
     }
 
     /// Insert or update a document (tenant-scoped).

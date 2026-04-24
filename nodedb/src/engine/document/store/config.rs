@@ -14,6 +14,10 @@ pub struct CollectionConfig {
     pub storage_mode: crate::bridge::physical_plan::StorageMode,
     /// Collection enforcement options (append-only, period lock, retention, etc.).
     pub enforcement: crate::bridge::physical_plan::EnforcementOptions,
+    /// Bitemporal storage: every write goes to the versioned document
+    /// table, keyed by `system_from_ms`. Enables `FOR SYSTEM_TIME AS OF`
+    /// queries.
+    pub bitemporal: bool,
 }
 
 impl CollectionConfig {
@@ -24,7 +28,13 @@ impl CollectionConfig {
             crdt_enabled: false,
             storage_mode: crate::bridge::physical_plan::StorageMode::Schemaless,
             enforcement: crate::bridge::physical_plan::EnforcementOptions::default(),
+            bitemporal: false,
         }
+    }
+
+    pub fn with_bitemporal(mut self, on: bool) -> Self {
+        self.bitemporal = on;
+        self
     }
 
     pub fn with_index(mut self, path: &str) -> Self {

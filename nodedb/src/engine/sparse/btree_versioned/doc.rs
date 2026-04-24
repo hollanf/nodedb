@@ -1,0 +1,340 @@
+//! Document-level operations on the versioned document table.
+
+use redb::{ReadableTable, TableDefinition};
+
+use super::key::{
+    coll_prefix, coll_prefix_end, doc_prefix, doc_prefix_end, format_sys_from, versioned_doc_key,
+};
+use super::value::{
+    TAG_GDPR_ERASED, TAG_LIVE, TAG_TOMBSTONE, VersionedPut, decode_value, encode_value,
+};
+use crate::engine::sparse::btree::{SparseEngine, redb_err};
+
+/// Versioned document table. Distinct from `super::super::btree::DOCUMENTS`
+/// so bitemporal and current-only collections coexist without migration.
+pub(crate) const DOCUMENTS_VERSIONED: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("documents_versioned");
+
+impl SparseEngine {
+    /// Bootstrap: ensure the versioned document table exists. Called by
+    /// `open()` alongside [`super::index::ensure_indexes_versioned_table`].
+    pub(in crate::engine::sparse) fn ensure_documents_versioned_table(&self) -> crate::Result<()> {
+        let txn = self
+            .db
+            .begin_write()
+            .map_err(|e| redb_err("write txn", e))?;
+        {
+            let _ = txn
+                .open_table(DOCUMENTS_VERSIONED)
+                .map_err(|e| redb_err("open documents_versioned", e))?;
+        }
+        txn.commit().map_err(|e| redb_err("commit", e))?;
+        Ok(())
+    }
+
+    /// Append one version. Always creates a new key; never overwrites an
+    /// earlier version at the same `sys_from_ms`.
+    pub fn versioned_put(&self, p: VersionedPut<'_>) -> crate::Result<()> {
+        let key = versioned_doc_key(p.tenant, p.coll, p.doc_id, p.sys_from_ms)?;
+        let val = encode_value(TAG_LIVE, p.valid_from_ms, p.valid_until_ms, p.body);
+        let txn = self
+            .db
+            .begin_write()
+            .map_err(|e| redb_err("write txn", e))?;
+        {
+            let mut t = txn
+                .open_table(DOCUMENTS_VERSIONED)
+                .map_err(|e| redb_err("open table", e))?;
+            t.insert(key.as_str(), val.as_slice())
+                .map_err(|e| redb_err("insert", e))?;
+        }
+        txn.commit().map_err(|e| redb_err("commit", e))?;
+        Ok(())
+    }
+
+    /// `versioned_put` inside a caller-owned write transaction. Used by
+    /// composite write paths (PointPut / UPSERT / UPDATE on bitemporal
+    /// collections) so the document + its versioned index entries + the
+    /// current-state side-effects (stats, text/vector/spatial indexes,
+    /// document cache) commit atomically.
+    pub fn versioned_put_in_txn(
+        &self,
+        txn: &redb::WriteTransaction,
+        p: VersionedPut<'_>,
+    ) -> crate::Result<()> {
+        let key = versioned_doc_key(p.tenant, p.coll, p.doc_id, p.sys_from_ms)?;
+        let val = encode_value(TAG_LIVE, p.valid_from_ms, p.valid_until_ms, p.body);
+        let mut t = txn
+            .open_table(DOCUMENTS_VERSIONED)
+            .map_err(|e| redb_err("open table", e))?;
+        t.insert(key.as_str(), val.as_slice())
+            .map_err(|e| redb_err("insert", e))?;
+        Ok(())
+    }
+
+    /// Append a tombstone version.
+    pub fn versioned_tombstone(
+        &self,
+        tenant: u32,
+        coll: &str,
+        doc_id: &str,
+        sys_from_ms: i64,
+    ) -> crate::Result<()> {
+        let key = versioned_doc_key(tenant, coll, doc_id, sys_from_ms)?;
+        let val = encode_value(TAG_TOMBSTONE, 0, 0, &[]);
+        let txn = self
+            .db
+            .begin_write()
+            .map_err(|e| redb_err("write txn", e))?;
+        {
+            let mut t = txn
+                .open_table(DOCUMENTS_VERSIONED)
+                .map_err(|e| redb_err("open table", e))?;
+            t.insert(key.as_str(), val.as_slice())
+                .map_err(|e| redb_err("insert tombstone", e))?;
+        }
+        txn.commit().map_err(|e| redb_err("commit", e))?;
+        Ok(())
+    }
+
+    /// `versioned_tombstone` inside a caller-owned write transaction.
+    pub fn versioned_tombstone_in_txn(
+        &self,
+        txn: &redb::WriteTransaction,
+        tenant: u32,
+        coll: &str,
+        doc_id: &str,
+        sys_from_ms: i64,
+    ) -> crate::Result<()> {
+        let key = versioned_doc_key(tenant, coll, doc_id, sys_from_ms)?;
+        let val = encode_value(TAG_TOMBSTONE, 0, 0, &[]);
+        let mut t = txn
+            .open_table(DOCUMENTS_VERSIONED)
+            .map_err(|e| redb_err("open table", e))?;
+        t.insert(key.as_str(), val.as_slice())
+            .map_err(|e| redb_err("insert tombstone", e))?;
+        Ok(())
+    }
+
+    /// Check whether the current-state version of `doc_id` is live
+    /// (not tombstoned, not GDPR-erased, and at least one version
+    /// exists) inside a caller-owned write transaction. Used by
+    /// PointInsert on bitemporal collections to enforce primary-key
+    /// uniqueness linearizably with the subsequent `versioned_put`.
+    pub fn versioned_exists_current_in_txn(
+        &self,
+        txn: &redb::WriteTransaction,
+        tenant: u32,
+        coll: &str,
+        doc_id: &str,
+    ) -> crate::Result<bool> {
+        let lo = doc_prefix(tenant, coll, doc_id);
+        let hi = doc_prefix_end(tenant, coll, doc_id);
+        let t = txn
+            .open_table(DOCUMENTS_VERSIONED)
+            .map_err(|e| redb_err("open table", e))?;
+        let range = t
+            .range(lo.as_str()..hi.as_str())
+            .map_err(|e| redb_err("range", e))?;
+        let mut last: Option<Vec<u8>> = None;
+        for r in range {
+            let (_k, v) = r.map_err(|e| redb_err("entry", e))?;
+            last = Some(v.value().to_vec());
+        }
+        match last {
+            Some(bytes) => Ok(decode_value(&bytes)?.is_live()),
+            None => Ok(false),
+        }
+    }
+
+    /// GDPR erasure: replace the body of every existing version for a
+    /// doc_id with an empty body tagged `0xFE`. Preserves history
+    /// structure (so AS-OF queries still see the doc existed) but removes
+    /// personal data.
+    pub fn versioned_gdpr_erase(
+        &self,
+        tenant: u32,
+        coll: &str,
+        doc_id: &str,
+    ) -> crate::Result<usize> {
+        let lo = doc_prefix(tenant, coll, doc_id);
+        let hi = doc_prefix_end(tenant, coll, doc_id);
+        let txn = self
+            .db
+            .begin_write()
+            .map_err(|e| redb_err("write txn", e))?;
+        let mut replaced = 0;
+        {
+            let mut t = txn
+                .open_table(DOCUMENTS_VERSIONED)
+                .map_err(|e| redb_err("open table", e))?;
+            let keys: Vec<String> = t
+                .range(lo.as_str()..hi.as_str())
+                .map_err(|e| redb_err("range", e))?
+                .filter_map(|r| r.ok().map(|(k, _)| k.value().to_string()))
+                .collect();
+            for k in keys {
+                let erased = encode_value(TAG_GDPR_ERASED, 0, 0, &[]);
+                t.insert(k.as_str(), erased.as_slice())
+                    .map_err(|e| redb_err("erase insert", e))?;
+                replaced += 1;
+            }
+        }
+        txn.commit().map_err(|e| redb_err("commit", e))?;
+        Ok(replaced)
+    }
+
+    /// Ceiling read: most recent version at or before `sys_cutoff_ms`.
+    /// Returns `Ok(None)` when nothing is present, or the newest entry is
+    /// a tombstone / GDPR-erased (both hide the row from normal reads).
+    pub fn versioned_get_as_of(
+        &self,
+        tenant: u32,
+        coll: &str,
+        doc_id: &str,
+        sys_cutoff_ms: Option<i64>,
+        valid_at_ms: Option<i64>,
+    ) -> crate::Result<Option<Vec<u8>>> {
+        let lo = doc_prefix(tenant, coll, doc_id);
+        let hi = match sys_cutoff_ms {
+            Some(ms) => versioned_doc_key(tenant, coll, doc_id, ms)?,
+            None => doc_prefix_end(tenant, coll, doc_id),
+        };
+        let txn = self.db.begin_read().map_err(|e| redb_err("read txn", e))?;
+        let t = txn
+            .open_table(DOCUMENTS_VERSIONED)
+            .map_err(|e| redb_err("open table", e))?;
+        let range = match sys_cutoff_ms {
+            Some(_) => t
+                .range(lo.as_str()..=hi.as_str())
+                .map_err(|e| redb_err("range", e))?,
+            None => t
+                .range(lo.as_str()..hi.as_str())
+                .map_err(|e| redb_err("range", e))?,
+        };
+        let mut entries: Vec<Vec<u8>> = Vec::new();
+        for r in range {
+            let (_k, v) = r.map_err(|e| redb_err("entry", e))?;
+            entries.push(v.value().to_vec());
+        }
+        // Iterate in reverse to pick the newest version ≤ cutoff whose
+        // valid-time predicate holds.
+        for v in entries.into_iter().rev() {
+            let decoded = decode_value(&v)?;
+            if !decoded.is_live() {
+                // Ceiling hit a tombstone / erasure as the newest entry —
+                // the row is absent at this cutoff, even if live versions
+                // exist further back.
+                return Ok(None);
+            }
+            if let Some(vt) = valid_at_ms
+                && (vt < decoded.valid_from_ms || vt >= decoded.valid_until_ms)
+            {
+                continue;
+            }
+            return Ok(Some(decoded.body.to_vec()));
+        }
+        Ok(None)
+    }
+
+    /// Current-state read = `versioned_get_as_of(None, None)`.
+    pub fn versioned_get_current(
+        &self,
+        tenant: u32,
+        coll: &str,
+        doc_id: &str,
+    ) -> crate::Result<Option<Vec<u8>>> {
+        self.versioned_get_as_of(tenant, coll, doc_id, None, None)
+    }
+
+    /// Scan every doc_id in a collection at the requested cutoff.
+    /// Returns `(doc_id, body)` pairs for live versions only. O(N)
+    /// collection-wide; callers add filter/limit on top.
+    pub fn versioned_scan_as_of(
+        &self,
+        tenant: u32,
+        coll: &str,
+        sys_cutoff_ms: Option<i64>,
+        valid_at_ms: Option<i64>,
+        limit: usize,
+    ) -> crate::Result<Vec<(String, Vec<u8>)>> {
+        let lo = coll_prefix(tenant, coll);
+        let hi = coll_prefix_end(tenant, coll);
+        let cutoff_key = sys_cutoff_ms.map(format_sys_from);
+        let txn = self.db.begin_read().map_err(|e| redb_err("read txn", e))?;
+        let t = txn
+            .open_table(DOCUMENTS_VERSIONED)
+            .map_err(|e| redb_err("open table", e))?;
+        let range = t
+            .range(lo.as_str()..hi.as_str())
+            .map_err(|e| redb_err("range", e))?;
+
+        // Group entries by doc_id; keep the newest-in-window per group.
+        // The table is sorted by (doc_id, sys_from) ascending so we can
+        // stream and flush whenever doc_id changes.
+        let mut out = Vec::new();
+        let mut current_id: Option<String> = None;
+        let mut best_for_current: Option<(i64, Vec<u8>)> = None;
+
+        for r in range {
+            let (k, v) = r.map_err(|e| redb_err("entry", e))?;
+            let key_str = k.value();
+            let Some((id_part, suffix)) = key_str.rsplit_once('\x00') else {
+                continue;
+            };
+            let Some(doc_id) = id_part.strip_prefix(lo.as_str()) else {
+                continue;
+            };
+            if let Some(ref c) = cutoff_key
+                && suffix > c.as_str()
+            {
+                continue;
+            }
+            let Ok(sf) = suffix.parse::<i64>() else {
+                continue;
+            };
+            if current_id.as_deref() != Some(doc_id) {
+                if let Some(prev_id) = current_id.as_ref() {
+                    flush_scan(prev_id, &best_for_current, valid_at_ms, &mut out)?;
+                    if out.len() >= limit {
+                        return Ok(out);
+                    }
+                }
+                current_id = Some(doc_id.to_string());
+                best_for_current = None;
+            }
+            let val = v.value().to_vec();
+            // Keep the newest entry for this doc_id (largest sys_from).
+            best_for_current = Some(match best_for_current.take() {
+                Some((prev_sf, prev_v)) if prev_sf >= sf => (prev_sf, prev_v),
+                _ => (sf, val),
+            });
+        }
+        if let Some(prev_id) = current_id.as_ref() {
+            flush_scan(prev_id, &best_for_current, valid_at_ms, &mut out)?;
+        }
+        Ok(out)
+    }
+}
+
+/// Emit the newest-per-doc-id entry into `out` if it's live and passes
+/// the valid-time predicate.
+fn flush_scan(
+    id: &str,
+    pick: &Option<(i64, Vec<u8>)>,
+    valid_at_ms: Option<i64>,
+    out: &mut Vec<(String, Vec<u8>)>,
+) -> crate::Result<()> {
+    let Some((_sf, v)) = pick else { return Ok(()) };
+    let decoded = decode_value(v)?;
+    if !decoded.is_live() {
+        return Ok(());
+    }
+    if let Some(vt) = valid_at_ms
+        && (vt < decoded.valid_from_ms || vt >= decoded.valid_until_ms)
+    {
+        return Ok(());
+    }
+    out.push((id.to_string(), decoded.body.to_vec()));
+    Ok(())
+}
