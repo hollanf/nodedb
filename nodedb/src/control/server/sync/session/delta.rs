@@ -199,11 +199,83 @@ impl SyncSession {
             "delta push accepted"
         );
 
+        let clock_skew_warning_ms = compute_clock_skew_warning(msg.device_valid_time_ms);
+        if let Some(skew) = clock_skew_warning_ms {
+            warn!(
+                session = %self.session_id,
+                mutation_id = msg.mutation_id,
+                skew_ms = skew,
+                "device clock skew exceeds 24h tolerance"
+            );
+        }
+
         let ack = DeltaAckMsg {
             mutation_id: msg.mutation_id,
             lsn: 0,
-            clock_skew_warning_ms: None,
+            clock_skew_warning_ms,
         };
         Some(SyncFrame::encode_or_empty(SyncMessageType::DeltaAck, &ack))
+    }
+}
+
+/// Return `Some(skew_ms)` when the device-reported valid-time deviates
+/// from the Origin wall clock by more than 24 hours. Returning `None`
+/// inside tolerance keeps the ack payload small on the common path.
+fn compute_clock_skew_warning(device_valid_time_ms: Option<i64>) -> Option<i64> {
+    let device_ms = device_valid_time_ms?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
+    let skew = now_ms - device_ms;
+    const TOLERANCE_MS: i64 = 24 * 60 * 60 * 1000;
+    if skew.abs() > TOLERANCE_MS {
+        Some(skew)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_clock_skew_warning;
+
+    #[test]
+    fn none_device_time_returns_none() {
+        assert_eq!(compute_clock_skew_warning(None), None);
+    }
+
+    #[test]
+    fn within_tolerance_returns_none() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        // 1 hour off — within 24h tolerance.
+        assert_eq!(compute_clock_skew_warning(Some(now - 3_600_000)), None);
+    }
+
+    #[test]
+    fn past_tolerance_returns_skew() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        // 25 hours in the past.
+        let device = now - 25 * 3_600_000;
+        let skew = compute_clock_skew_warning(Some(device)).expect("should warn");
+        assert!(skew > 24 * 3_600_000);
+    }
+
+    #[test]
+    fn future_past_tolerance_returns_negative_skew() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        // 25 hours in the future.
+        let device = now + 25 * 3_600_000;
+        let skew = compute_clock_skew_warning(Some(device)).expect("should warn");
+        assert!(skew < -24 * 3_600_000);
     }
 }
