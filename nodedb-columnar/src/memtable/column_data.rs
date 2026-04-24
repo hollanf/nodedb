@@ -103,7 +103,7 @@ impl ColumnData {
                 values: Vec::new(),
                 valid,
             },
-            ColumnType::Timestamp => Self::Timestamp {
+            ColumnType::Timestamp | ColumnType::SystemTimestamp => Self::Timestamp {
                 values: Vec::new(),
                 valid,
             },

@@ -98,6 +98,7 @@ impl SyncSession {
             let ack = DeltaAckMsg {
                 mutation_id: msg.mutation_id,
                 lsn: 0,
+                clock_skew_warning_ms: None,
             };
             return Some(SyncFrame::encode_or_empty(SyncMessageType::DeltaAck, &ack));
         }
@@ -201,6 +202,7 @@ impl SyncSession {
         let ack = DeltaAckMsg {
             mutation_id: msg.mutation_id,
             lsn: 0,
+            clock_skew_warning_ms: None,
         };
         Some(SyncFrame::encode_or_empty(SyncMessageType::DeltaAck, &ack))
     }

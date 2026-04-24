@@ -411,6 +411,7 @@ async fn handle_sync_session(
                     peer_id: delta.peer_id,
                     mutation_id: delta.sequence,
                     checksum: 0,
+                    device_valid_time_ms: None,
                 };
                 if let Some(frame) = nodedb_types::sync::wire::SyncFrame::new_msgpack(
                     nodedb_types::sync::wire::SyncMessageType::DeltaPush,

@@ -66,6 +66,7 @@ fn delta_push_rejected_before_auth() {
         peer_id: 1,
         mutation_id: 100,
         checksum: 0,
+        device_valid_time_ms: None,
     };
 
     let response = session.handle_delta_push(&msg, None, None, None);
@@ -87,6 +88,7 @@ fn delta_push_accepted_when_authenticated() {
         peer_id: 1,
         mutation_id: 42,
         checksum: 0,
+        device_valid_time_ms: None,
     };
 
     let response = session.handle_delta_push(&msg, None, None, None);
@@ -141,6 +143,7 @@ fn delta_push_rls_silent_rejection() {
         peer_id: 1,
         mutation_id: 42,
         checksum: 0,
+        device_valid_time_ms: None,
     };
 
     let response =
@@ -182,6 +185,7 @@ fn delta_push_rate_limited_silent_drop() {
         peer_id: 1,
         mutation_id: 1,
         checksum: 0,
+        device_valid_time_ms: None,
     };
 
     let r1 = session.handle_delta_push(&msg, None, None, None);
@@ -198,6 +202,7 @@ fn delta_push_rate_limited_silent_drop() {
         peer_id: 1,
         mutation_id: 2,
         checksum: 0,
+        device_valid_time_ms: None,
     };
     let r2 = session.handle_delta_push(&msg2, None, Some(&mut audit_log), Some(&mut dlq));
     assert!(r2.is_none());
@@ -250,6 +255,7 @@ fn replay_dedup_skips_already_processed() {
         peer_id: 42,
         mutation_id: 5,
         checksum: 0,
+        device_valid_time_ms: None,
     };
 
     let r1 = session.handle_delta_push(&msg, None, None, None);
@@ -269,6 +275,7 @@ fn replay_dedup_skips_already_processed() {
         peer_id: 42,
         mutation_id: 3,
         checksum: 0,
+        device_valid_time_ms: None,
     };
     let r3 = session.handle_delta_push(&msg_old, None, None, None);
     assert!(r3.is_some());
@@ -282,6 +289,7 @@ fn replay_dedup_skips_already_processed() {
         peer_id: 42,
         mutation_id: 6,
         checksum: 0,
+        device_valid_time_ms: None,
     };
     let r4 = session.handle_delta_push(&msg_new, None, None, None);
     assert!(r4.is_some());
@@ -304,6 +312,7 @@ fn crc32c_mismatch_rejects_delta() {
         peer_id: 1,
         mutation_id: 1,
         checksum: valid_checksum,
+        device_valid_time_ms: None,
     };
     let r1 = session.handle_delta_push(&msg_ok, None, None, None);
     assert!(r1.is_some());
@@ -316,6 +325,7 @@ fn crc32c_mismatch_rejects_delta() {
         peer_id: 1,
         mutation_id: 2,
         checksum: valid_checksum ^ 0xDEAD,
+        device_valid_time_ms: None,
     };
     let r2 = session.handle_delta_push(&msg_bad, None, None, None);
     assert!(r2.is_some());

@@ -145,7 +145,7 @@ fn select_codec(col_type: &ColumnType) -> ColumnCodec {
     let hint = match col_type {
         ColumnType::Int64 => ColumnTypeHint::Int64,
         ColumnType::Float64 => ColumnTypeHint::Float64,
-        ColumnType::Timestamp => ColumnTypeHint::Timestamp,
+        ColumnType::Timestamp | ColumnType::SystemTimestamp => ColumnTypeHint::Timestamp,
         ColumnType::String | ColumnType::Geometry | ColumnType::Regex => ColumnTypeHint::String,
         ColumnType::Bool
         | ColumnType::Bytes

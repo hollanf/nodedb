@@ -46,7 +46,9 @@ pub fn extract_column_to_arrow(
         ColumnType::Int64 => extract_int64(decoder, tuples, col_idx, n),
         ColumnType::Float64 => extract_float64(decoder, tuples, col_idx, n),
         ColumnType::Bool => extract_bool(decoder, tuples, col_idx, n),
-        ColumnType::Timestamp => extract_timestamp(decoder, tuples, col_idx, n),
+        ColumnType::Timestamp | ColumnType::SystemTimestamp => {
+            extract_timestamp(decoder, tuples, col_idx, n)
+        }
         ColumnType::String => extract_string(decoder, tuples, col_idx, n),
         ColumnType::Bytes
         | ColumnType::Geometry

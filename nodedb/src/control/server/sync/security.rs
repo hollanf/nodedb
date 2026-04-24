@@ -302,6 +302,7 @@ mod tests {
             peer_id: 1,
             mutation_id: 42,
             checksum: 0,
+            device_valid_time_ms: None,
         }
     }
 
