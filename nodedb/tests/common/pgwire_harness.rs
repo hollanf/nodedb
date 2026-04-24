@@ -69,8 +69,14 @@ impl TestServer {
         let event_producer = event_producers.into_iter().next().unwrap();
         let (core_stop_tx, core_stop_rx) = std::sync::mpsc::channel::<()>();
         let core_handle = tokio::task::spawn_blocking(move || {
-            let mut core =
-                CoreLoop::open(0, data_side.request_rx, data_side.response_tx, &core_dir).unwrap();
+            let mut core = CoreLoop::open(
+                0,
+                data_side.request_rx,
+                data_side.response_tx,
+                &core_dir,
+                std::sync::Arc::new(nodedb_types::OrdinalClock::new()),
+            )
+            .unwrap();
             core.set_event_producer(event_producer);
             while matches!(
                 core_stop_rx.try_recv(),

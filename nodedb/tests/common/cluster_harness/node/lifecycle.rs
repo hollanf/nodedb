@@ -156,9 +156,14 @@ impl TestClusterNode {
         let core_metrics = shared.system_metrics.clone();
         let (core_stop_tx, core_stop_rx) = std::sync::mpsc::channel::<()>();
         let core_handle = tokio::task::spawn_blocking(move || {
-            let mut core =
-                CoreLoop::open(0, data_side.request_rx, data_side.response_tx, &core_dir)
-                    .expect("core open");
+            let mut core = CoreLoop::open(
+                0,
+                data_side.request_rx,
+                data_side.response_tx,
+                &core_dir,
+                std::sync::Arc::new(nodedb_types::OrdinalClock::new()),
+            )
+            .expect("core open");
             core.set_event_producer(event_producer);
             if let Some(m) = core_metrics {
                 core.set_metrics(m);

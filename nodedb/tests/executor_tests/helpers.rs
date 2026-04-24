@@ -39,7 +39,14 @@ pub fn make_core_with_id(
     let dir = tempfile::tempdir().unwrap();
     let (req_tx, req_rx) = RingBuffer::channel::<BridgeRequest>(64);
     let (resp_tx, resp_rx) = RingBuffer::channel::<BridgeResponse>(64);
-    let core = CoreLoop::open(core_id, req_rx, resp_tx, dir.path()).unwrap();
+    let core = CoreLoop::open(
+        core_id,
+        req_rx,
+        resp_tx,
+        dir.path(),
+        std::sync::Arc::new(nodedb_types::OrdinalClock::new()),
+    )
+    .unwrap();
     (core, req_tx, resp_rx, dir)
 }
 

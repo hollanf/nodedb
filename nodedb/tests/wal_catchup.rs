@@ -52,8 +52,14 @@ impl TestStack {
 
         // Data Plane: dedicated OS thread with tick loop.
         std::thread::spawn(move || {
-            let mut core =
-                CoreLoop::open(0, data_side.request_rx, data_side.response_tx, &core_dir).unwrap();
+            let mut core = CoreLoop::open(
+                0,
+                data_side.request_rx,
+                data_side.response_tx,
+                &core_dir,
+                std::sync::Arc::new(nodedb_types::OrdinalClock::new()),
+            )
+            .unwrap();
             loop {
                 core.tick();
                 std::thread::sleep(Duration::from_millis(1));
@@ -458,7 +464,14 @@ fn startup_replay_recovers_all_wal_data() {
     std::fs::create_dir_all(&data_dir).unwrap();
     let (mut req_tx, req_rx) = RingBuffer::channel(64);
     let (resp_tx, mut resp_rx) = RingBuffer::channel(64);
-    let mut core = CoreLoop::open(0, req_rx, resp_tx, &data_dir).unwrap();
+    let mut core = CoreLoop::open(
+        0,
+        req_rx,
+        resp_tx,
+        &data_dir,
+        std::sync::Arc::new(nodedb_types::OrdinalClock::new()),
+    )
+    .unwrap();
 
     // Replay WAL — simulating startup recovery.
     let records = wal.replay_from(nodedb_types::Lsn::new(0)).unwrap();

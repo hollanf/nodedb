@@ -264,20 +264,19 @@ pub fn extract_edge_properties(
     let n = csr.node_count();
     let mut columns = PropertyColumns::new(n);
 
-    // Scan only the caller's tenant partition. Keys are in
-    // `"collection\0src\0label\0dst"` form — parse via parse_edge_key.
-    let tenant_edges = edge_store.scan_edges_for_tenant(tid)?;
+    // Current-state view only — Ceiling-resolved, tombstones filtered,
+    // properties already decoded out of `EdgeValuePayload`.
+    let tenant_edges: Vec<_> = edge_store
+        .scan_all_edges_decoded(None)?
+        .into_iter()
+        .filter(|(rec_tid, _, _, _, _, _)| *rec_tid == tid)
+        .collect();
 
-    for (composite_key, properties) in &tenant_edges {
+    for (_tid, _coll, src_name, _label, _dst, properties) in &tenant_edges {
         if properties.is_empty() {
             continue;
         }
 
-        let src_name = match crate::engine::graph::edge_store::store::parse_edge_key(composite_key)
-        {
-            Some((_coll, src, _label, _dst)) => src,
-            None => continue,
-        };
         let Some(src_id) = csr.node_id_raw(src_name) else {
             continue;
         };
@@ -410,13 +409,16 @@ mod tests {
         let mut buf = Vec::new();
         rmpv::encode::write_value(&mut buf, &props).unwrap();
         store
-            .put_edge(
+            .put_edge_versioned(
                 nodedb_types::TenantId::new(1),
                 "col",
                 "alice",
                 "KNOWS",
                 "bob",
                 &buf,
+                1,
+                1,
+                i64::MAX,
             )
             .unwrap();
 
@@ -446,7 +448,17 @@ mod tests {
                 .unwrap();
 
         store
-            .put_edge(nodedb_types::TenantId::new(1), "col", "a", "L", "b", b"")
+            .put_edge_versioned(
+                nodedb_types::TenantId::new(1),
+                "col",
+                "a",
+                "L",
+                "b",
+                b"",
+                1,
+                1,
+                i64::MAX,
+            )
             .unwrap();
 
         let csr = crate::engine::graph::csr::rebuild::rebuild_from_store(&store).unwrap();
