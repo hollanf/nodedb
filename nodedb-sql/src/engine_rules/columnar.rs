@@ -1,7 +1,7 @@
 //! Engine rules for plain columnar collections.
 
 use crate::engine_rules::*;
-use crate::error::Result;
+use crate::error::{Result, SqlError};
 use crate::types::*;
 
 pub struct ColumnarRules;
@@ -32,6 +32,15 @@ impl EngineRules for ColumnarRules {
     }
 
     fn plan_scan(&self, p: ScanParams) -> Result<SqlPlan> {
+        if p.temporal.is_temporal() {
+            return Err(SqlError::Unsupported {
+                detail: format!(
+                    "FOR SYSTEM_TIME / FOR VALID_TIME is not supported on columnar \
+                     collection '{}'",
+                    p.collection
+                ),
+            });
+        }
         Ok(SqlPlan::Scan {
             collection: p.collection,
             alias: p.alias,

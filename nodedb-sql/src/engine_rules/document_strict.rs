@@ -1,7 +1,7 @@
 //! Engine rules for strict document collections.
 
 use crate::engine_rules::*;
-use crate::error::Result;
+use crate::error::{Result, SqlError};
 use crate::types::*;
 
 pub struct StrictRules;
@@ -28,6 +28,15 @@ impl EngineRules for StrictRules {
     }
 
     fn plan_scan(&self, p: ScanParams) -> Result<SqlPlan> {
+        if p.temporal.is_temporal() {
+            return Err(SqlError::Unsupported {
+                detail: format!(
+                    "FOR SYSTEM_TIME / FOR VALID_TIME is not supported on document \
+                     collection '{}'",
+                    p.collection
+                ),
+            });
+        }
         if let Some(plan) =
             crate::engine_rules::try_document_index_lookup(&p, EngineType::DocumentStrict)
         {

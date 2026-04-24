@@ -34,10 +34,10 @@ pub struct ScanParams {
     /// engines consult this to rewrite equality-on-indexed-field into
     /// [`SqlPlan::DocumentIndexLookup`]. Other engines ignore it today.
     pub indexes: Vec<IndexSpec>,
-    /// Bitemporal qualifier propagated from `plan_sql`. Engines that do
-    /// not yet support bitemporal queries must reject a non-default
-    /// scope via `SqlError::Unsupported` — silently ignoring it would
-    /// return current-state data when the user asked for history.
+    /// Bitemporal qualifier propagated from `plan_sql`. Engines without
+    /// bitemporal storage support reject a non-default scope via
+    /// `SqlError::Unsupported` — silently ignoring it would return
+    /// current-state data when the user asked for history.
     pub temporal: crate::temporal::TemporalScope,
 }
 

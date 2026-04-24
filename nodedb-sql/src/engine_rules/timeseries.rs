@@ -30,8 +30,7 @@ impl EngineRules for TimeseriesRules {
             return Err(SqlError::Unsupported {
                 detail: format!(
                     "FOR SYSTEM_TIME / FOR VALID_TIME is not supported on timeseries \
-                     collection '{}' — use bitemporal columnar collections (Tier 5) \
-                     or filter by the existing time column",
+                     collection '{}' — filter by the existing time column instead",
                     p.collection
                 ),
             });
