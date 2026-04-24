@@ -121,10 +121,26 @@ impl TenantCrdtEngine {
 
         if is_bitemporal {
             fields.push(("_ts_system", LoroValue::I64(now_ms)));
+            self.state
+                .upsert_versioned(&change.collection, &change.row_id, &fields)
+                .map_err(crate::Error::Crdt)
+        } else {
+            self.state
+                .upsert(&change.collection, &change.row_id, &fields)
+                .map_err(crate::Error::Crdt)
         }
+    }
 
+    /// Drop archived bitemporal versions older than `cutoff_system_ms`
+    /// for the given collection. The live row is never touched. Called
+    /// from the Data Plane purge handler.
+    pub fn purge_history_before(
+        &self,
+        collection: &str,
+        cutoff_system_ms: i64,
+    ) -> crate::Result<usize> {
         self.state
-            .upsert(&change.collection, &change.row_id, &fields)
+            .purge_history_before(collection, cutoff_system_ms)
             .map_err(crate::Error::Crdt)
     }
 

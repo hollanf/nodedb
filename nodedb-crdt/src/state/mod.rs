@@ -4,6 +4,7 @@
 //! state. Collections within the doc are `LoroMap` instances keyed by row ID,
 //! where each row is itself a `LoroMap` of field→value.
 
+pub mod bitemporal_archive;
 pub mod core;
 pub mod history;
 pub mod snapshot;
