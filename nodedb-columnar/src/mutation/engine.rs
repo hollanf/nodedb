@@ -94,6 +94,24 @@ impl MutationEngine {
         self.delete_bitmaps.get(&segment_id)
     }
 
+    /// Mutable access to a segment's delete bitmap. Creates an empty one
+    /// on first access so callers can `mark_deleted_batch` unconditionally.
+    /// Used by temporal-purge paths that tombstone superseded row positions
+    /// without going through the single-row `insert` / `delete` paths.
+    pub fn delete_bitmap_mut(&mut self, segment_id: u32) -> &mut DeleteBitmap {
+        self.delete_bitmaps.entry(segment_id).or_default()
+    }
+
+    /// The virtual segment id used for rows still in the memtable.
+    pub fn memtable_segment_id(&self) -> u32 {
+        self.memtable_segment_id
+    }
+
+    /// The schema's primary-key column indices, in schema order.
+    pub fn pk_col_indices(&self) -> &[usize] {
+        &self.pk_col_indices
+    }
+
     /// Access all delete bitmaps.
     pub fn delete_bitmaps(&self) -> &HashMap<u32, DeleteBitmap> {
         &self.delete_bitmaps
