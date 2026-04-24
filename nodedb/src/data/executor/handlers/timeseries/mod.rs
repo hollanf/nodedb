@@ -27,6 +27,11 @@ pub(in crate::data::executor) struct TimeseriesScanParams<'a> {
     pub gap_fill: &'a str,
     /// Serialized computed columns for scalar projection expressions.
     pub computed_columns: &'a [u8],
+    /// Bitemporal system-time cutoff: rows whose `_ts_system` exceeds
+    /// this cutoff are hidden. `None` on non-bitemporal collections.
+    pub system_as_of_ms: Option<i64>,
+    /// Bitemporal valid-time point. `None` skips valid-time filtering.
+    pub valid_at_ms: Option<i64>,
 }
 
 impl CoreLoop {
@@ -52,16 +57,48 @@ impl CoreLoop {
             aggregates,
             gap_fill,
             computed_columns,
+            system_as_of_ms,
+            valid_at_ms,
         } = params;
 
         // Lazy-load partition registry from disk if not yet loaded.
         self.ensure_ts_registry(tid, collection);
 
-        let filter_predicates: Vec<crate::bridge::scan_filter::ScanFilter> = if filters.is_empty() {
-            Vec::new()
-        } else {
-            zerompk::from_msgpack(filters).unwrap_or_default()
-        };
+        let mut filter_predicates: Vec<crate::bridge::scan_filter::ScanFilter> =
+            if filters.is_empty() {
+                Vec::new()
+            } else {
+                zerompk::from_msgpack(filters).unwrap_or_default()
+            };
+        // Bitemporal cutoffs: translate to column-level predicates on
+        // `_ts_system` / `_ts_valid_from` / `_ts_valid_until`. The
+        // segment reader's block-skip infrastructure applies these
+        // against per-block min/max automatically.
+        if let Some(cutoff) = system_as_of_ms {
+            filter_predicates.push(crate::bridge::scan_filter::ScanFilter {
+                field: "_ts_system".into(),
+                op: crate::bridge::scan_filter::FilterOp::Lte,
+                value: nodedb_types::Value::Integer(cutoff),
+                clauses: Vec::new(),
+                expr: None,
+            });
+        }
+        if let Some(point) = valid_at_ms {
+            filter_predicates.push(crate::bridge::scan_filter::ScanFilter {
+                field: "_ts_valid_from".into(),
+                op: crate::bridge::scan_filter::FilterOp::Lte,
+                value: nodedb_types::Value::Integer(point),
+                clauses: Vec::new(),
+                expr: None,
+            });
+            filter_predicates.push(crate::bridge::scan_filter::ScanFilter {
+                field: "_ts_valid_until".into(),
+                op: crate::bridge::scan_filter::FilterOp::Gt,
+                value: nodedb_types::Value::Integer(point),
+                clauses: Vec::new(),
+                expr: None,
+            });
+        }
         let has_filters = !filter_predicates.is_empty();
         let is_aggregate = !aggregates.is_empty();
         let has_time_range = time_range.0 > 0 || time_range.1 < i64::MAX;

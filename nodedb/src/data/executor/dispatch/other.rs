@@ -462,6 +462,8 @@ impl CoreLoop {
                 filters,
                 rls_filters,
                 sort_keys,
+                system_as_of_ms,
+                valid_at_ms,
             }) => self.execute_columnar_scan(
                 task,
                 super::super::handlers::columnar_read::ColumnarScanParams {
@@ -471,6 +473,8 @@ impl CoreLoop {
                     filters,
                     rls_filters,
                     sort_keys,
+                    system_as_of_ms: *system_as_of_ms,
+                    valid_at_ms: *valid_at_ms,
                 },
             ),
 
@@ -510,6 +514,8 @@ impl CoreLoop {
                 aggregates,
                 gap_fill,
                 computed_columns,
+                system_as_of_ms,
+                valid_at_ms,
                 ..
             }) => self.execute_timeseries_scan(
                 super::super::handlers::timeseries::TimeseriesScanParams {
@@ -524,6 +530,8 @@ impl CoreLoop {
                     aggregates,
                     gap_fill,
                     computed_columns,
+                    system_as_of_ms: *system_as_of_ms,
+                    valid_at_ms: *valid_at_ms,
                 },
             ),
 

@@ -63,9 +63,16 @@ impl CoreLoop {
         }
 
         let engine_key = (task.request.tenant_id, collection.to_string());
+        let tid = task.request.tenant_id.as_u32();
+        let bitemporal = self.is_bitemporal(tid, collection);
         // Ensure MutationEngine exists (auto-create on first write).
         if !self.columnar_engines.contains_key(&engine_key) {
-            let schema = infer_schema_from_value(&ndb_rows[0]);
+            let base_schema = infer_schema_from_value(&ndb_rows[0]);
+            let schema = if bitemporal {
+                prepend_bitemporal_columns(base_schema)
+            } else {
+                base_schema
+            };
             let engine = MutationEngine::new(collection.to_string(), schema);
             self.columnar_engines.insert(engine_key.clone(), engine);
         }
@@ -89,11 +96,33 @@ impl CoreLoop {
                 _ => continue,
             };
 
-            // Build Value slice in schema order.
+            // Build Value slice in schema order. For bitemporal
+            // collections, the three reserved columns are auto-populated
+            // when absent from the user payload: `_ts_system` is always
+            // clamped to the current wall-clock time (clients cannot
+            // forge system time), `_ts_valid_from` / `_ts_valid_until`
+            // default to the open interval `[i64::MIN, i64::MAX)` if
+            // missing.
+            let sys_now = if bitemporal {
+                self.bitemporal_now_ms()
+            } else {
+                0
+            };
             let values: Vec<Value> = schema
                 .columns
                 .iter()
-                .map(|col| ndb_field_to_value(obj.get(&col.name), &col.column_type))
+                .map(|col| match col.name.as_str() {
+                    "_ts_system" if bitemporal => Value::Integer(sys_now),
+                    "_ts_valid_from" if bitemporal => match obj.get("_ts_valid_from") {
+                        Some(Value::Integer(i)) => Value::Integer(*i),
+                        _ => Value::Integer(i64::MIN),
+                    },
+                    "_ts_valid_until" if bitemporal => match obj.get("_ts_valid_until") {
+                        Some(Value::Integer(i)) => Value::Integer(*i),
+                        _ => Value::Integer(i64::MAX),
+                    },
+                    _ => ndb_field_to_value(obj.get(&col.name), &col.column_type),
+                })
                 .collect();
 
             // Resolve the actual row to write (merged for ON CONFLICT DO
@@ -347,8 +376,19 @@ impl CoreLoop {
         obj: &serde_json::Map<String, serde_json::Value>,
     ) {
         let engine_key = (crate::types::TenantId::new(tid), collection.to_string());
+        let bitemporal = self.is_bitemporal(tid, collection);
+        let sys_now = if bitemporal {
+            self.bitemporal_now_ms()
+        } else {
+            0
+        };
         if !self.columnar_engines.contains_key(&engine_key) {
-            let schema = infer_schema_from_json(&serde_json::Value::Object(obj.clone()));
+            let base_schema = infer_schema_from_json(&serde_json::Value::Object(obj.clone()));
+            let schema = if bitemporal {
+                prepend_bitemporal_columns(base_schema)
+            } else {
+                base_schema
+            };
             let engine = MutationEngine::new(collection.to_string(), schema);
             self.columnar_engines.insert(engine_key.clone(), engine);
         }
@@ -365,7 +405,18 @@ impl CoreLoop {
         let values: Vec<Value> = schema
             .columns
             .iter()
-            .map(|col| ndb_field_to_value(ndb_obj.get(&col.name), &col.column_type))
+            .map(|col| match col.name.as_str() {
+                "_ts_system" if bitemporal => Value::Integer(sys_now),
+                "_ts_valid_from" if bitemporal => match ndb_obj.get("_ts_valid_from") {
+                    Some(Value::Integer(i)) => Value::Integer(*i),
+                    _ => Value::Integer(i64::MIN),
+                },
+                "_ts_valid_until" if bitemporal => match ndb_obj.get("_ts_valid_until") {
+                    Some(Value::Integer(i)) => Value::Integer(*i),
+                    _ => Value::Integer(i64::MAX),
+                },
+                _ => ndb_field_to_value(ndb_obj.get(&col.name), &col.column_type),
+            })
             .collect();
 
         let _ = engine.insert(&values);
@@ -495,6 +546,20 @@ fn infer_schema_from_value(row: &Value) -> ColumnarSchema {
     }
 
     ColumnarSchema::new(columns).expect("inferred schema must be valid")
+}
+
+/// Prepend the three reserved bitemporal columns (`_ts_system`,
+/// `_ts_valid_from`, `_ts_valid_until`) at positions 0/1/2 of a columnar
+/// schema. All three are required Int64; `_ts_system` is engine-stamped
+/// on every write, the valid-time pair is client-provided (or defaults
+/// to the open interval).
+fn prepend_bitemporal_columns(base: ColumnarSchema) -> ColumnarSchema {
+    let mut cols = Vec::with_capacity(3 + base.columns.len());
+    cols.push(ColumnDef::required("_ts_system", ColumnType::Int64));
+    cols.push(ColumnDef::required("_ts_valid_from", ColumnType::Int64));
+    cols.push(ColumnDef::required("_ts_valid_until", ColumnType::Int64));
+    cols.extend(base.columns);
+    ColumnarSchema::new(cols).expect("bitemporal columnar schema must be valid")
 }
 
 /// Infer a columnar schema from a JSON object — used by the spatial insert path.

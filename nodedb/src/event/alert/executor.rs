@@ -172,6 +172,8 @@ async fn execute_aggregate_scan(
         gap_fill: String::new(),
         computed_columns: Vec::new(),
         rls_filters: Vec::new(),
+                system_as_of_ms: None,
+                valid_at_ms: None,
     });
 
     let payload = sync_dispatch::dispatch_async(
