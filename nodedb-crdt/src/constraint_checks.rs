@@ -41,8 +41,16 @@ impl Validator {
 
         let value = &field_value.1;
 
-        // Check if this value already exists in another row.
-        if state.field_value_exists(&change.collection, &constraint.field, value) {
+        // Bitemporal collections: only consider live (non-superseded) rows,
+        // so a new version of the same logical row with the same value does
+        // not spuriously collide with its prior version.
+        let exists = if self.is_bitemporal(&change.collection) {
+            state.field_value_exists_live(&change.collection, &constraint.field, value)
+        } else {
+            state.field_value_exists(&change.collection, &constraint.field, value)
+        };
+
+        if exists {
             let value_str = format!("{:?}", value);
             Some(Violation {
                 constraint_name: constraint.name.clone(),

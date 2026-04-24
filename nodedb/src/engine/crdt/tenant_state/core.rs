@@ -90,6 +90,11 @@ impl TenantCrdtEngine {
     ///
     /// If constraints are violated, the delta is routed to the DLQ.
     /// Returns `Ok(())` on success, or the constraint violation error.
+    ///
+    /// For bitemporal collections, `_ts_system` is always stamped with the
+    /// receiving node's clock, overwriting any value the sender supplied.
+    /// This keeps system-time receiver-authoritative so convergence does
+    /// not depend on clock agreement between peers.
     pub fn validate_and_apply(
         &mut self,
         peer_id: u64,
@@ -101,18 +106,51 @@ impl TenantCrdtEngine {
             .validate_or_reject(&self.state, peer_id, auth, change, delta_bytes)
             .map_err(crate::Error::Crdt)?;
 
-        // Validation passed — apply to state.
-        // In production this would apply the delta bytes, but for now
-        // we upsert the fields directly since we have the ProposedChange.
-        let fields: Vec<(&str, LoroValue)> = change
+        let is_bitemporal = self.validator.is_bitemporal(&change.collection);
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        let mut fields: Vec<(&str, LoroValue)> = change
             .fields
             .iter()
+            .filter(|(k, _)| !(is_bitemporal && k == "_ts_system"))
             .map(|(k, v)| (k.as_str(), v.clone()))
             .collect();
+
+        if is_bitemporal {
+            fields.push(("_ts_system", LoroValue::I64(now_ms)));
+        }
 
         self.state
             .upsert(&change.collection, &change.row_id, &fields)
             .map_err(crate::Error::Crdt)
+    }
+
+    /// Set the conflict-resolution policy for a collection from a typed
+    /// `CollectionPolicy`. The JSON-accepting variant in `policy.rs` is the
+    /// DDL-facing path; this one is for in-process callers (tests, engine
+    /// setup).
+    pub fn set_collection_policy_typed(
+        &mut self,
+        collection: &str,
+        policy: nodedb_crdt::policy::CollectionPolicy,
+    ) {
+        self.validator.policies_mut().set(collection, policy);
+    }
+
+    /// Register a collection as bitemporal on this tenant's validator.
+    ///
+    /// Bitemporal collections get (a) UNIQUE constraints scoped to live
+    /// rows only and (b) receiver-stamped `_ts_system` on apply.
+    pub fn mark_bitemporal(&mut self, collection: impl Into<String>) {
+        self.validator.mark_bitemporal(collection);
+    }
+
+    /// Is the named collection bitemporal?
+    pub fn is_bitemporal(&self, collection: &str) -> bool {
+        self.validator.is_bitemporal(collection)
     }
 
     /// Number of entries in the dead-letter queue.

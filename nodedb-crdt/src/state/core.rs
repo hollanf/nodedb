@@ -3,6 +3,20 @@
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
 use crate::error::{CrdtError, Result};
+use crate::validator::bitemporal::{VALID_UNTIL, VALID_UNTIL_OPEN};
+
+/// A row is live when its `_ts_valid_until` field is absent, null, or the
+/// open sentinel (`i64::MAX`). Rows with any finite `_ts_valid_until` are
+/// treated as superseded, independent of wall-clock time — the write path
+/// sets finite `_ts_valid_until` only when explicitly terminating a version.
+fn row_is_live(row: &LoroMap) -> bool {
+    match row.get(VALID_UNTIL) {
+        None => true,
+        Some(ValueOrContainer::Value(LoroValue::Null)) => true,
+        Some(ValueOrContainer::Value(LoroValue::I64(n))) => n == VALID_UNTIL_OPEN,
+        _ => true,
+    }
+}
 
 /// A CRDT state for a single tenant/namespace.
 pub struct CrdtState {
@@ -135,6 +149,56 @@ impl CrdtState {
             }
         }
         false
+    }
+
+    /// Bitemporal variant of [`field_value_exists`]: only considers rows
+    /// whose `_ts_valid_until` is open (absent or `i64::MAX`).
+    ///
+    /// A UNIQUE collision between a superseded version and a new live row
+    /// is not a violation — both may share the same value because they
+    /// represent the same logical entity at different valid-times.
+    pub fn field_value_exists_live(
+        &self,
+        collection: &str,
+        field: &str,
+        value: &LoroValue,
+    ) -> bool {
+        let coll = self.doc.get_map(collection);
+        for key in coll.keys() {
+            let row_map = match coll.get(&key) {
+                Some(ValueOrContainer::Container(loro::Container::Map(m))) => m,
+                _ => continue,
+            };
+            if !row_is_live(&row_map) {
+                continue;
+            }
+            let field_val = match row_map.get(field) {
+                Some(ValueOrContainer::Value(v)) => v,
+                _ => continue,
+            };
+            if &field_val == value {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Return row IDs currently "live" in a bitemporal collection
+    /// (rows whose `_ts_valid_until` is open). For non-bitemporal
+    /// collections every row is returned.
+    pub fn live_row_ids(&self, collection: &str) -> Vec<String> {
+        let coll = self.doc.get_map(collection);
+        let mut out = Vec::new();
+        for key in coll.keys() {
+            let row_map = match coll.get(&key) {
+                Some(ValueOrContainer::Container(loro::Container::Map(m))) => m,
+                _ => continue,
+            };
+            if row_is_live(&row_map) {
+                out.push(key.to_string());
+            }
+        }
+        out
     }
 
     /// Get the underlying LoroDoc for advanced operations.

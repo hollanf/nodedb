@@ -131,7 +131,9 @@ fn timeseries_partition_registry_persist_is_durable() {
     // `PartitionRegistry::persist` writes the authoritative partition map via
     // the same tmp+rename pattern — recovery reads it on startup, so the
     // zero-file failure mode is identical to checkpoint writers.
-    assert_durable_checkpoint_writer("nodedb/src/engine/timeseries/partition_registry/persistence.rs");
+    assert_durable_checkpoint_writer(
+        "nodedb/src/engine/timeseries/partition_registry/persistence.rs",
+    );
 }
 
 #[test]
