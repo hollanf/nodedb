@@ -1,3 +1,4 @@
+mod bitemporal;
 mod data_plane;
 mod engines;
 mod memory;
@@ -5,6 +6,7 @@ mod network;
 mod scheduler;
 mod shutdown;
 
+pub use bitemporal::BitemporalTuning;
 pub use data_plane::{DataPlaneTuning, QueryTuning};
 pub use engines::{
     DEFAULT_MAX_DEPTH, DEFAULT_MAX_VISITED, GraphTuning, KvTuning, SparseTuning, TimeseriesToning,
@@ -51,6 +53,17 @@ pub struct TuningConfig {
     pub scheduler: SchedulerTuning,
     #[serde(default)]
     pub shutdown: ShutdownTuning,
+    #[serde(default)]
+    pub bitemporal: BitemporalTuning,
+}
+
+impl TuningConfig {
+    /// Tick interval for the bitemporal audit-retention enforcement loop.
+    /// Returns `None` when the operator wants the loop default; returns
+    /// `Some(d)` when `[tuning.bitemporal] tick_interval_secs` is set.
+    pub fn bitemporal_retention_tick(&self) -> Option<std::time::Duration> {
+        Some(self.bitemporal.tick_interval())
+    }
 }
 
 #[cfg(test)]
