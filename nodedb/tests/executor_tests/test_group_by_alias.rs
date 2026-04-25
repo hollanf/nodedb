@@ -54,6 +54,9 @@ fn sql_to_physical(sql: &str) -> PhysicalPlan {
     let plans = nodedb_sql::plan_sql(sql, &TimeseriesCatalog).unwrap();
     let ctx = ConvertContext {
         retention_registry: None,
+        array_catalog: None,
+        credentials: None,
+        wal: None,
     };
     let tenant_id = nodedb::types::TenantId::new(1);
     let tasks = convert(&plans, tenant_id, &ctx).unwrap();

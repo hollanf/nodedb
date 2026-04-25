@@ -64,6 +64,7 @@ fn audit_flush_persists_to_catalog() {
         &auth_config,
         nodedb_types::config::TuningConfig::default(),
         nodedb::bridge::quiesce::CollectionQuiesce::new(),
+        nodedb::control::array_catalog::ArrayCatalog::handle(),
     )
     .unwrap();
 
@@ -102,6 +103,7 @@ fn audit_sequence_survives_restart() {
             &auth_config,
             nodedb_types::config::TuningConfig::default(),
             nodedb::bridge::quiesce::CollectionQuiesce::new(),
+            nodedb::control::array_catalog::ArrayCatalog::handle(),
         )
         .unwrap();
 
@@ -120,6 +122,7 @@ fn audit_sequence_survives_restart() {
             &auth_config,
             nodedb_types::config::TuningConfig::default(),
             nodedb::bridge::quiesce::CollectionQuiesce::new(),
+            nodedb::control::array_catalog::ArrayCatalog::handle(),
         )
         .unwrap();
 

@@ -283,6 +283,35 @@ async fn main() -> anyhow::Result<()> {
     // Arc so edge keys are globally strictly monotonic.
     let hlc = Arc::new(nodedb_types::OrdinalClock::new());
 
+    // Load the persisted ND-array catalog once, before spawning cores.
+    // Data Plane cores and SharedState share the same `ArrayCatalogHandle`
+    // so every Control-Plane DDL mutation is immediately visible to
+    // every core's dispatch handler.
+    let array_catalog = nodedb::control::array_catalog::ArrayCatalog::handle();
+    {
+        let catalog_path = config.catalog_path();
+        match nodedb::control::security::catalog::SystemCatalog::open(&catalog_path) {
+            Ok(catalog) => match catalog.load_all_arrays() {
+                Ok(entries) => {
+                    let mut guard = array_catalog
+                        .write()
+                        .expect("array catalog lock poisoned at startup");
+                    for entry in entries {
+                        if let Err(e) = guard.register(entry) {
+                            tracing::warn!(error = %e, "failed to register array at startup");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to load _system.arrays at startup");
+                }
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, "could not open system catalog to load arrays");
+            }
+        }
+    }
+
     let mut core_handles = Vec::with_capacity(num_cores);
     let mut notifiers = Vec::with_capacity(num_cores);
     for (core_id, (data_side, event_producer)) in
@@ -302,6 +331,7 @@ async fn main() -> anyhow::Result<()> {
             Arc::clone(&governor),
             Some(Arc::clone(&quiesce)),
             Arc::clone(&hlc),
+            Arc::clone(&array_catalog),
         )?;
         core_handles.push(handle);
         notifiers.push((core_id, notifier));
@@ -348,6 +378,7 @@ async fn main() -> anyhow::Result<()> {
         &config.auth,
         config.tuning.clone(),
         Arc::clone(&quiesce),
+        Arc::clone(&array_catalog),
     )?;
 
     // Install the real startup gate on SharedState so listeners and health

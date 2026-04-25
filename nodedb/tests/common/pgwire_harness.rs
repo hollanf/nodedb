@@ -63,18 +63,23 @@ impl TestServer {
         );
         let shared = SharedState::new_with_credentials(dispatcher, Arc::clone(&wal), credentials);
 
-        // Data Plane core.
+        // Data Plane core. Share the SharedState's array_catalog so DDL
+        // mutations made by the SQL converter are visible to the handler
+        // (without this, CP and DP would each carry independent catalogs
+        // and `OpenArray` post-DROP-and-recreate would see stale state).
         let data_side = data_sides.into_iter().next().unwrap();
         let core_dir = dir.path().to_path_buf();
         let event_producer = event_producers.into_iter().next().unwrap();
+        let core_array_catalog = shared.array_catalog.clone();
         let (core_stop_tx, core_stop_rx) = std::sync::mpsc::channel::<()>();
         let core_handle = tokio::task::spawn_blocking(move || {
-            let mut core = CoreLoop::open(
+            let mut core = CoreLoop::open_with_array_catalog(
                 0,
                 data_side.request_rx,
                 data_side.response_tx,
                 &core_dir,
                 std::sync::Arc::new(nodedb_types::OrdinalClock::new()),
+                core_array_catalog,
             )
             .unwrap();
             core.set_event_producer(event_producer);

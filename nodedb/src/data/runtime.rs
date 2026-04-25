@@ -175,6 +175,7 @@ pub fn spawn_core(
     governor: Arc<nodedb_mem::MemoryGovernor>,
     quiesce: Option<Arc<crate::bridge::quiesce::CollectionQuiesce>>,
     hlc: Arc<nodedb_types::OrdinalClock>,
+    array_catalog: crate::control::array_catalog::ArrayCatalogHandle,
 ) -> std::io::Result<(JoinHandle<()>, EventFdNotifier)> {
     let data_dir = data_dir.to_path_buf();
 
@@ -192,8 +193,15 @@ pub fn spawn_core(
             }
 
             // 2. Open engines.
-            let mut core = CoreLoop::open(core_id, request_rx, response_tx, &data_dir, hlc)
-                .expect("failed to open CoreLoop engines");
+            let mut core = CoreLoop::open_with_array_catalog(
+                core_id,
+                request_rx,
+                response_tx,
+                &data_dir,
+                hlc,
+                array_catalog,
+            )
+            .expect("failed to open CoreLoop engines");
 
             // 2b. Apply memory governor.
             core.set_governor(governor);
