@@ -1,7 +1,7 @@
 //! In-memory registry of all arrays, mirrored to the system catalog.
 //!
 //! The registry is keyed by logical array name and maintains a reverse
-//! map `ArrayId -> name` so Data-Plane dispatch (sub-pass 1c) can
+//! map `ArrayId -> name` so Data-Plane dispatch can
 //! resolve either direction without scanning. All public methods return
 //! cloned [`ArrayCatalogEntry`] values — the handle is an `Arc<RwLock>`
 //! shared between Control and the Data Plane, and callers must not

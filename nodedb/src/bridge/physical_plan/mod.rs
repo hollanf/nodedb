@@ -71,10 +71,7 @@ pub enum PhysicalPlan {
     Query(QueryOp),
     /// Meta / maintenance: WAL, cancel, snapshot, compact, checkpoint.
     Meta(MetaOp),
-    /// Array engine: Tier 4 query operators + put/delete/flush/compact.
-    /// Handlers are wired in Tier 6 (after SQL DDL populates the
-    /// array catalog); Tier 5 dispatch routes to a deterministic
-    /// `Unimplemented` response.
+    /// Array engine: ND-array query operators + put/delete/flush/compact.
     Array(ArrayOp),
 }
 

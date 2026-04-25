@@ -192,7 +192,7 @@ impl AuthContext {
     /// This is the fallback path when no JWT is presented. The context is
     /// populated from the `AuthenticatedIdentity` and credential store data.
     /// Extended fields (email, groups, org) are empty — they require JWT or
-    /// JIT-provisioned `_system.auth_users` records (Wave 2).
+    /// JIT-provisioned `_system.auth_users` records.
     pub fn from_identity(identity: &AuthenticatedIdentity, session_id: String) -> Self {
         Self {
             id: identity.user_id.to_string(),

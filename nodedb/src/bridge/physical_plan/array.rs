@@ -1,6 +1,6 @@
 //! Array engine operations dispatched to the Data Plane.
 //!
-//! `ArrayOp` is the wire type for every Tier 4 operator (slice,
+//! `ArrayOp` is the wire type for array query operators (slice,
 //! project, aggregate, elementwise) plus the write-side ops (put,
 //! delete) and engine maintenance (flush, compact). Complex nested
 //! payloads — schemas, slice predicates, cell batches — ride as
@@ -8,11 +8,6 @@
 //! zerompk against the canonical type from `nodedb-array`. This keeps
 //! the bridge enum flat and zerompk-derivable while preserving full
 //! type fidelity at the engine boundary.
-//!
-//! The handler implementation is wired in Tier 6, after the SQL DDL
-//! surface populates the array catalog with schemas. Tier 5 dispatch
-//! routes `PhysicalPlan::Array(_)` to a deterministic
-//! `Unimplemented` response so the contract is observable end-to-end.
 
 use nodedb_array::types::ArrayId;
 
@@ -76,8 +71,8 @@ pub enum ArrayBinaryOp {
 )]
 pub enum ArrayOp {
     /// Open or attach to an existing array. Schema bytes are an
-    /// zerompk encoding of `nodedb_array::ArraySchema`. Tier 6's
-    /// SQL DDL pathway will replace this with a catalog lookup.
+    /// zerompk encoding of `nodedb_array::ArraySchema`. The DDL
+    /// pathway will replace this with a catalog lookup.
     OpenArray {
         array_id: ArrayId,
         schema_msgpack: Vec<u8>,

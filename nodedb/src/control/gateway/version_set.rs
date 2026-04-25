@@ -326,10 +326,8 @@ pub fn touched_collections(plan: &PhysicalPlan) -> Vec<String> {
         }
 
         // ── Array ────────────────────────────────────────────────────────
-        // Arrays use a separate catalog from collection-based engines;
-        // version-set tracking attaches per-array in Tier 6 once the
-        // SQL DDL surface registers them. For Tier 5 the wire types
-        // exist but there is no version-set contribution.
+        // Arrays use a separate catalog from collection-based engines and
+        // do not contribute to the version set.
         PhysicalPlan::Array(_) => {}
     }
 

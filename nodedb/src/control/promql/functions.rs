@@ -166,7 +166,7 @@ pub fn quantile_over_time(q: f64, samples: &[Sample]) -> Option<f64> {
     Some(vals[lo] * (1.0 - frac) + vals[hi] * frac)
 }
 
-// ── Tier 2 range-vector functions ─────────────────────────────────────
+// ── Range-vector functions ────────────────────────────────────────────
 
 /// `changes(v range-vector)` — number of times the value changed.
 pub fn changes(samples: &[Sample]) -> Option<f64> {

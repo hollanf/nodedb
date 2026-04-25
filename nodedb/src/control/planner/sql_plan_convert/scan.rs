@@ -152,7 +152,7 @@ pub(super) fn convert_scan(p: ScanParams<'_>) -> crate::Result<Vec<PhysicalTask>
         EngineType::Array => {
             return Err(crate::Error::PlanError {
                 detail: format!(
-                    "scan on '{collection}': array engine has no table-shaped scan; use ARRAY_SLICE (sub-pass 3)"
+                    "scan on '{collection}': array engine has no table-shaped scan; use NDARRAY_SLICE"
                 ),
             });
         }

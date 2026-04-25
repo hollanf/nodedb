@@ -2,8 +2,8 @@
 //!
 //! The schema is carried as an opaque msgpack blob so
 //! `nodedb-array`'s typed `ArraySchema` (and its transitive types) don't
-//! leak into Control-Plane catalog code. Sub-pass 1c decodes the blob
-//! only inside the Data Plane on open.
+//! leak into Control-Plane catalog code. The Data Plane decodes the
+//! blob on open.
 
 use nodedb_array::types::ArrayId;
 use serde::{Deserialize, Serialize};

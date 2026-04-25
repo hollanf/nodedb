@@ -1,5 +1,5 @@
 //! `SqlPlan::NdArray*` → `PhysicalTask` lowering for the read/maint
-//! function surface (Tier 6 sub-pass 3). Sub-pass 2 array DDL/DML
+//! function surface (ARRAY_SLICE, ARRAY_AGG, etc.). Array DDL/DML
 //! lowering is in [`super::array_convert`]; the two are kept side by
 //! side but split so each file stays under the 500-line limit.
 //!

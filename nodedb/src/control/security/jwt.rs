@@ -94,7 +94,7 @@ pub struct JwtClaims {
     /// Captures provider-specific claims (email, org_id, groups, permissions,
     /// status, metadata) that `AuthContext::from_jwt()` maps to session
     /// variables. Different providers use different claim names — the
-    /// `[auth.jwt.claims]` config section (Wave 2) remaps them.
+    /// `[auth.jwt.claims]` config section remaps them.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
