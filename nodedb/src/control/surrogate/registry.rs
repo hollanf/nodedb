@@ -140,6 +140,40 @@ impl SurrogateRegistry {
         false
     }
 
+    /// Idempotently raise the high-watermark to at least `new_hwm`.
+    /// Used by WAL replay: each replayed `SurrogateAlloc` record advances
+    /// the in-memory counter so post-restart allocations cannot collide
+    /// with pre-crash ones. Never lowers — a request to lower returns
+    /// a typed error so silent demotion (which would cause surrogate
+    /// reuse) is impossible.
+    pub fn restore_hwm(&self, new_hwm: u32) -> Result<(), SurrogateAllocError> {
+        let target = u64::from(new_hwm) + 1;
+        let mut current = self.counter.load(Ordering::Acquire);
+        loop {
+            if target < current {
+                return Err(SurrogateAllocError::FlushFailed {
+                    detail: format!(
+                        "restore_hwm: refusing to lower counter from {} to {} (new_hwm={new_hwm})",
+                        current.saturating_sub(1),
+                        new_hwm,
+                    ),
+                });
+            }
+            if target == current {
+                return Ok(());
+            }
+            match self.counter.compare_exchange_weak(
+                current,
+                target,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
     /// Persist the current high-watermark and reset flush counters.
     ///
     /// Idempotent: calling on an unmodified registry just rewrites the

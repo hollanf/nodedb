@@ -391,6 +391,37 @@ async fn main() -> anyhow::Result<()> {
     // System catalog (redb) is open — fire the ClusterCatalogOpen gate.
     catalog_gate.fire();
 
+    // Replay surrogate WAL records: re-apply every `SurrogateBind` into
+    // the catalog and advance the in-memory registry past every
+    // `SurrogateAlloc` hwm. Runs after `SharedState::open` seeds the
+    // registry from the catalog hwm row, so the WAL only fills the gap
+    // between the last checkpoint and the crash.
+    if let Some(catalog) = shared.credentials.catalog() {
+        match nodedb::wal::replay::replay_surrogate_records(
+            &wal_records,
+            catalog,
+            &shared.surrogate_registry,
+        ) {
+            Ok(stats) => {
+                if stats.allocs > 0 || stats.binds > 0 {
+                    info!(
+                        allocs = stats.allocs,
+                        binds = stats.binds,
+                        "WAL surrogate replay complete"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "StartupError: surrogate WAL replay failed — refusing to start \
+                     with a partially-recovered surrogate registry"
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Wire cluster handles into SharedState so that every code path
     // which checks `state.cluster_topology` / `state.cluster_transport`
     // (pgwire routing, scatter-gather, CDC transport, /health, etc.)

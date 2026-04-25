@@ -144,6 +144,30 @@ impl WalManager {
         )
     }
 
+    /// Append a `SurrogateBind` record. Emitted by
+    /// `SurrogateAssigner::assign` immediately after the catalog
+    /// two-table txn that writes `_system.surrogate_pk{,_rev}`, so the
+    /// binding survives a crash before the next hwm checkpoint. The
+    /// record is durably persisted before `assign` returns.
+    /// `vshard_id` is `0` — surrogate bindings are node-global metadata.
+    pub fn append_surrogate_bind(
+        &self,
+        surrogate: u32,
+        collection: &str,
+        pk_bytes: &[u8],
+    ) -> crate::Result<Lsn> {
+        let payload =
+            nodedb_wal::record::SurrogateBindPayload::new(surrogate, collection, pk_bytes.to_vec())
+                .to_bytes()
+                .map_err(crate::Error::Wal)?;
+        self.append_record(
+            RecordType::SurrogateBind,
+            TenantId::new(0),
+            VShardId::new(0),
+            &payload,
+        )
+    }
+
     pub fn append_collection_tombstone(
         &self,
         tid: TenantId,

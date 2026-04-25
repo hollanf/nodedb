@@ -23,6 +23,17 @@ pub trait SurrogateWalAppender: Send + Sync {
     /// surrogate value. Called by the surrogate-flush path after the
     /// catalog row has been updated.
     fn record_alloc_to_wal(&self, hi: u32) -> crate::Result<()>;
+
+    /// Append a `SurrogateBind` record carrying the
+    /// `(surrogate, collection, pk_bytes)` triple. Called by
+    /// `SurrogateAssigner::assign` after the catalog two-table txn so
+    /// the binding is durable before the write-lock is released.
+    fn record_bind_to_wal(
+        &self,
+        surrogate: u32,
+        collection: &str,
+        pk_bytes: &[u8],
+    ) -> crate::Result<()>;
 }
 
 /// Production appender — wraps `Arc<WalManager>` and forwards to
@@ -41,6 +52,21 @@ impl SurrogateWalAppender for WalSurrogateAppender {
     fn record_alloc_to_wal(&self, hi: u32) -> crate::Result<()> {
         self.wal.append_surrogate_alloc(hi).map(|_| ())
     }
+
+    fn record_bind_to_wal(
+        &self,
+        surrogate: u32,
+        collection: &str,
+        pk_bytes: &[u8],
+    ) -> crate::Result<()> {
+        self.wal
+            .append_surrogate_bind(surrogate, collection, pk_bytes)?;
+        // Force the record to disk before the assigner releases its
+        // write-lock. A crash after `assign` returns must always see
+        // the binding on replay; group-commit batching alone does not
+        // give us that guarantee.
+        self.wal.sync()
+    }
 }
 
 /// No-op appender. Used by tests that exercise assign / flush logic
@@ -49,6 +75,15 @@ pub struct NoopWalAppender;
 
 impl SurrogateWalAppender for NoopWalAppender {
     fn record_alloc_to_wal(&self, _hi: u32) -> crate::Result<()> {
+        Ok(())
+    }
+
+    fn record_bind_to_wal(
+        &self,
+        _surrogate: u32,
+        _collection: &str,
+        _pk_bytes: &[u8],
+    ) -> crate::Result<()> {
         Ok(())
     }
 }

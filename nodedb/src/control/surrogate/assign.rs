@@ -84,6 +84,15 @@ impl<'a> SurrogateAssigner<'a> {
         let surrogate = registry.alloc_one()?;
         self.catalog
             .put_surrogate(collection, pk_bytes, surrogate)?;
+        // Emit a durable WAL bind before the lock releases. Order is
+        // load-bearing: a crash between catalog write and bind append
+        // is invisible (the catalog row is already on disk via redb's
+        // own WAL); a crash before the catalog write leaves nothing
+        // to recover; a crash between bind append and lock release is
+        // recovered by replaying the bind into the catalog (idempotent
+        // via the two-table overwrite).
+        self.wal_appender
+            .record_bind_to_wal(surrogate.as_u32(), collection, pk_bytes)?;
 
         // Flush trigger: durably checkpoint the new hwm if either the
         // ops or elapsed-time threshold has tripped. Both writes are

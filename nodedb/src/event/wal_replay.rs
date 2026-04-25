@@ -140,6 +140,7 @@ fn record_to_event(record: &WalRecord, sequence: &mut u64) -> Option<WriteEvent>
         | RecordType::ArrayFlush
         | RecordType::Transaction
         | RecordType::SurrogateAlloc
+        | RecordType::SurrogateBind
         | RecordType::Checkpoint
         | RecordType::CollectionTombstoned
         | RecordType::LsnMsAnchor
