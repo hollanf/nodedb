@@ -2,6 +2,7 @@
 //! to the appropriate sub-dispatcher.
 
 pub mod array;
+pub mod bitmap;
 pub mod crdt;
 pub mod document;
 pub mod graph;
