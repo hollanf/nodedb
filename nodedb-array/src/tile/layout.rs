@@ -65,8 +65,8 @@ pub fn tile_indices_for_cell(schema: &ArraySchema, coord: &[CoordValue]) -> Arra
 }
 
 /// Compute the [`TileId`] for one cell coordinate at a given system
-/// time. Tier 1 callers pass `system_from_ms = 0`; bitemporal Tier 9
-/// supplies the leader-stamped HLC component.
+/// time. Non-bitemporal callers pass `system_from_ms = 0`; bitemporal
+/// writes supply the leader-stamped HLC component.
 pub fn tile_id_for_cell(
     schema: &ArraySchema,
     coord: &[CoordValue],

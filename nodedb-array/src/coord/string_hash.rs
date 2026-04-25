@@ -9,8 +9,8 @@
 //! site to swap for sort-preserving codes later.
 //!
 //! `RandomState` is per-process; bucket assignments are NOT stable
-//! across restarts. Tier 1 accepts the loss; future tiers may upgrade
-//! to a deterministic dictionary code.
+//! across restarts. Future work may upgrade to a deterministic
+//! dictionary code.
 
 use std::hash::{BuildHasher, Hasher};
 

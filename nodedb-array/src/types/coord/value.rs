@@ -5,7 +5,7 @@
 //! [`crate::schema::validation`] time, not constructed here.
 //!
 //! Each component is one of [`CoordValue`]'s typed variants so
-//! Hilbert/Z-order encoders (Tier 1) can dispatch by `DimType` without
+//! Hilbert/Z-order encoders can dispatch by `DimType` without
 //! re-parsing.
 
 use serde::{Deserialize, Serialize};

@@ -3,8 +3,8 @@
 //! Drops attribute columns the caller doesn't need. Coordinates and
 //! per-dim dictionaries are preserved; only `attr_cols` and the MBR's
 //! `attr_stats` are subsetted. The output schema (with the same subset
-//! of attrs in the same order) must be produced by the caller — Tier 4
-//! does not mutate schemas.
+//! of attrs in the same order) must be produced by the caller; this
+//! operator does not mutate schemas.
 
 use crate::error::{ArrayError, ArrayResult};
 use crate::tile::sparse_tile::SparseTile;

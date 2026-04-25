@@ -12,7 +12,7 @@
 //!
 //! `schema_hash` is a fingerprint of the [`crate::schema::ArraySchema`]
 //! the segment was written against; readers reject segments whose hash
-//! doesn't match the live schema (no implicit migrations at Tier 2).
+//! doesn't match the live schema (no implicit migrations).
 
 use crate::error::{ArrayError, ArrayResult};
 

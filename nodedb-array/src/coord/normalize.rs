@@ -12,8 +12,7 @@ use crate::schema::{ArraySchema, DimSpec};
 use crate::types::coord::value::CoordValue;
 use crate::types::domain::DomainBound;
 
-/// Maximum dims supported by ND Hilbert in this implementation. Mirrors
-/// the checklist contract ("supports up to 16 dims").
+/// Maximum dims supported by ND Hilbert in this implementation.
 pub const MAX_DIMS: usize = 16;
 
 /// Total bit budget for the combined space-filling-curve prefix.
@@ -120,8 +119,7 @@ fn map_float(array: &str, dim: &DimSpec, v: f64, lo: f64, hi: f64, max: u64) -> 
 
 /// String dims fall back to a deterministic hash bucket. Hilbert/Z-order
 /// over strings is inherently lossy — preserves equality, not ordering.
-/// Tier 1 accepts the loss; future work may swap in dictionary-based
-/// sort-preserving codes.
+/// Future work may swap in dictionary-based sort-preserving codes.
 fn map_string(v: &str, max: u64) -> u64 {
     super::string_hash::hash_string_masked(v, max)
 }

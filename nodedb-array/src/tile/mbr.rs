@@ -1,7 +1,7 @@
 //! Per-tile Minimum Bounding Region + per-attr statistics.
 //!
 //! The MBR is recorded in the tile footer and indexed at the segment
-//! level (Tier 2) via R\*-tree, so a slice query can prune entire tiles
+//! level via R\*-tree, so a slice query can prune entire tiles
 //! before any payload is decoded.
 
 use serde::{Deserialize, Serialize};

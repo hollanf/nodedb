@@ -1,7 +1,7 @@
 //! Sparse tile payload — coordinate list + per-attribute columns.
 //!
-//! Storage layout is column-major so Tier 2 can apply per-attribute
-//! codecs (`nodedb-codec`) without a transpose. Dimension values are
+//! Storage layout is column-major so per-attribute codecs
+//! (`nodedb-codec`) can be applied without a transpose. Dimension values are
 //! dictionary-encoded inline: rare in genomic / single-cell workloads
 //! that have many repeats per tile.
 
@@ -15,7 +15,7 @@ use crate::types::coord::value::CoordValue;
 
 /// Per-dim dictionary: distinct values seen, and one index per cell
 /// pointing into the dictionary. Index width is selected by callers
-/// (Tier 2) when picking the codec.
+/// when picking the codec.
 #[derive(
     Debug,
     Clone,

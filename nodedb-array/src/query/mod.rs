@@ -1,10 +1,10 @@
-//! Tier 4 query operators over tiles.
+//! Query operators over tiles.
 //!
 //! Pure, tile-local primitives: slice (coord-range filter), project
 //! (attr subset), aggregate (sum/count/min/max/mean with optional
 //! group-by + cross-tile merge), elementwise (binary ops between two
 //! aligned tiles) and rechunk (re-bucket cells into a new tile-extent
-//! layout). No engine state, no plane crossings — Tier 5 wires these
+//! layout). No engine state, no plane crossings — the executor wires these
 //! into the physical plan.
 
 pub mod aggregate;

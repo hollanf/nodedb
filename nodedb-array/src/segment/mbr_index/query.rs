@@ -7,4 +7,4 @@
 
 // Currently empty by design; see `HilbertPackedRTree::query` /
 // `HilbertPackedRTree::descend`. Adding sibling traversals (kNN,
-// nearest-tile, etc.) at Tier 4+ goes here.
+// nearest-tile, etc.) goes here.

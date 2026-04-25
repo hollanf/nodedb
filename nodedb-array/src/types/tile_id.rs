@@ -1,7 +1,7 @@
 //! Tile identifier — `(hilbert_prefix, system_from_ms)`.
 //!
 //! The Hilbert prefix locates the tile in ND space; the system-time
-//! suffix carries the bitemporal version (Tier 9). Until bitemporal
+//! suffix carries the bitemporal system-time version. Until bitemporal
 //! tiles land, callers pass `system_from_ms = 0`.
 
 use serde::{Deserialize, Serialize};
@@ -37,7 +37,7 @@ impl TileId {
         }
     }
 
-    /// Tile id for a non-bitemporal write — Tier 0 callers use this.
+    /// Tile id for a non-bitemporal write (pass `system_from_ms = 0`).
     pub fn snapshot(hilbert_prefix: u64) -> Self {
         Self::new(hilbert_prefix, 0)
     }
