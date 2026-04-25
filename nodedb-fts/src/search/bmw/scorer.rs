@@ -4,7 +4,7 @@
 //! pruning within each term's posting list. Operates on `Surrogate` row
 //! identities for zero-allocation scoring.
 
-use nodedb_types::Surrogate;
+use nodedb_types::{Surrogate, SurrogateBitmap};
 
 use crate::bm25;
 use crate::codec::smallfloat;
@@ -151,12 +151,16 @@ impl<'a> TermCursor<'a> {
 /// Run BMW scoring across multiple term posting lists.
 ///
 /// Returns the top-k `(score, doc_id_u32)` results.
+///
+/// When `prefilter` is `Some`, only surrogates present in the bitmap are
+/// scored; all others are skipped before any BM25 computation.
 pub fn bmw_score(
     term_blocks: &[TermBlocks],
     total_docs: u32,
     avg_doc_len: f32,
     params: &Bm25Params,
     top_k: usize,
+    prefilter: Option<&SurrogateBitmap>,
 ) -> TopKHeap {
     let mut heap = TopKHeap::new(top_k);
 
@@ -212,6 +216,18 @@ pub fn bmw_score(
         // Check if all cursors [0..=pivot_idx] point to the same doc_id.
         let first_doc_id = cursors[0].current_doc_id();
         if first_doc_id == pivot_doc_id {
+            // Prefilter: skip surrogates not present in the bitmap.
+            if let Some(bm) = prefilter
+                && !bm.contains(pivot_doc_id)
+            {
+                for cursor in &mut cursors {
+                    if cursor.current_doc_id() == pivot_doc_id {
+                        cursor.next();
+                    }
+                }
+                continue;
+            }
+
             // All essential terms are at the pivot doc — score it.
             // But first: block-level pruning. Sum block upper bounds.
             let mut block_upper = 0.0f32;
@@ -275,7 +291,7 @@ mod tests {
         let term_b = make_term(&[2, 3, 5, 6], 3);
 
         let params = Bm25Params::default();
-        let heap = bmw_score(&[term_a, term_b], 100, 100.0, &params, 3);
+        let heap = bmw_score(&[term_a, term_b], 100, 100.0, &params, 3, None);
 
         let results = heap.into_sorted();
         assert!(!results.is_empty());
@@ -289,7 +305,7 @@ mod tests {
     fn bmw_single_term() {
         let term = make_term(&[10, 20, 30, 40, 50], 1);
         let params = Bm25Params::default();
-        let heap = bmw_score(&[term], 1000, 100.0, &params, 3);
+        let heap = bmw_score(&[term], 1000, 100.0, &params, 3, None);
 
         let results = heap.into_sorted();
         assert_eq!(results.len(), 3);
@@ -299,7 +315,7 @@ mod tests {
     #[test]
     fn bmw_empty_terms() {
         let params = Bm25Params::default();
-        let heap = bmw_score(&[], 1000, 100.0, &params, 10);
+        let heap = bmw_score(&[], 1000, 100.0, &params, 10, None);
         assert!(heap.is_empty());
     }
 
@@ -308,7 +324,7 @@ mod tests {
         let ids: Vec<u32> = (0..500).collect();
         let term = make_term(&ids, 1);
         let params = Bm25Params::default();
-        let heap = bmw_score(&[term], 1000, 100.0, &params, 5);
+        let heap = bmw_score(&[term], 1000, 100.0, &params, 5, None);
 
         let results = heap.into_sorted();
         assert_eq!(results.len(), 5);
@@ -324,7 +340,7 @@ mod tests {
         let term_rare = make_term(&rare_ids, 5);
 
         let params = Bm25Params::default();
-        let heap = bmw_score(&[term_common, term_rare], 10_000, 100.0, &params, 3);
+        let heap = bmw_score(&[term_common, term_rare], 10_000, 100.0, &params, 3, None);
 
         let results = heap.into_sorted();
         assert_eq!(results.len(), 3);

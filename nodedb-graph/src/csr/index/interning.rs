@@ -23,6 +23,9 @@ impl CsrIndex {
                 self.buffer_out_weights.push(Vec::new());
                 self.buffer_in_weights.push(Vec::new());
                 self.node_label_bits.push(0);
+                // Surrogate is populated later by the EdgePut handler; start
+                // with the ZERO sentinel so unset nodes are never in a bitmap.
+                self.node_surrogates.push(0);
                 self.access_counts.push(std::cell::Cell::new(0));
                 id
             }
@@ -51,6 +54,36 @@ impl CsrIndex {
                 Ok(id)
             }
         }
+    }
+
+    // ── Surrogate methods ──
+
+    /// Set the surrogate for a node, identified by its user-visible name.
+    ///
+    /// Call once per node after `add_edge` / `add_edge_weighted` has allocated
+    /// a CSR-local id for it. If the node is not yet interned this is a no-op
+    /// (the edge insertion that follows will intern it and a subsequent call
+    /// with the correct surrogate will set it). Calling with `Surrogate::ZERO`
+    /// is a no-op — the zero sentinel is the initial state and has no meaning.
+    pub fn set_node_surrogate(&mut self, node: &str, surrogate: nodedb_types::Surrogate) {
+        if surrogate.as_u32() == 0 {
+            return;
+        }
+        if let Some(&id) = self.node_to_id.get(node)
+            && let Some(slot) = self.node_surrogates.get_mut(id as usize)
+        {
+            *slot = surrogate.as_u32();
+        }
+    }
+
+    /// Return the raw surrogate `u32` for a CSR-local node id.
+    ///
+    /// Returns `0` (the ZERO sentinel) when the node has no surrogate set.
+    pub fn node_surrogate_raw(&self, local_id: u32) -> u32 {
+        self.node_surrogates
+            .get(local_id as usize)
+            .copied()
+            .unwrap_or(0)
     }
 
     // ── Node label methods ──

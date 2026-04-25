@@ -2,7 +2,7 @@
 //! runs BMW scoring on `Surrogate` row identities, resolves top-k back
 //! to user-facing PK strings via the per-collection docmap.
 
-use nodedb_types::Surrogate;
+use nodedb_types::{Surrogate, SurrogateBitmap};
 
 use crate::backend::FtsBackend;
 use crate::block::{CompactPosting, into_blocks};
@@ -23,6 +23,9 @@ pub struct BmwParams<'a> {
     pub total_docs: u32,
     pub avg_doc_len: f32,
     pub bm25: &'a Bm25Params,
+    /// Optional surrogate prefilter. Only surrogates present in the bitmap
+    /// will be scored; all others are skipped before BM25 computation.
+    pub prefilter: Option<&'a SurrogateBitmap>,
 }
 
 /// Run BMW search over the FtsIndex.
@@ -68,6 +71,7 @@ pub fn bmw_search<B: FtsBackend>(
         p.avg_doc_len,
         p.bm25,
         p.top_k,
+        p.prefilter,
     );
     let scored = heap.into_sorted();
 
@@ -140,6 +144,7 @@ mod tests {
             total_docs: total,
             avg_doc_len: avg,
             bm25,
+            prefilter: None,
         }
     }
 
@@ -214,6 +219,7 @@ mod tests {
             total_docs: total,
             avg_doc_len: avg,
             bm25: &bm25,
+            prefilter: None,
         };
 
         let result = bmw_search(&idx, T, "docs", &p);

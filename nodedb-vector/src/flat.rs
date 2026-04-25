@@ -7,6 +7,8 @@
 //!
 //! Complexity: O(N × D) per query where N = vectors, D = dimensions.
 
+use roaring::RoaringBitmap;
+
 use crate::distance::{DistanceMetric, distance};
 use crate::hnsw::SearchResult;
 
@@ -110,9 +112,10 @@ impl FlatIndex {
 
     /// Search with a pre-filter bitmap applying a global id offset.
     ///
-    /// The bitmap is interpreted in a shifted id space: bit `i + id_offset`
-    /// tests local id `i`. Used by multi-segment collections where the
-    /// bitmap holds GLOBAL vector ids.
+    /// `bitmap` is a serialized `RoaringBitmap` (matching the HNSW filter
+    /// format). Bit `i + id_offset` tests local id `i`. Used by multi-segment
+    /// collections where the bitmap holds GLOBAL vector ids. If the bytes
+    /// fail to deserialize, the search degrades to unfiltered.
     pub fn search_filtered_offset(
         &self,
         query: &[f32],
@@ -126,16 +129,18 @@ impl FlatIndex {
             return Vec::new();
         }
 
+        let parsed = RoaringBitmap::deserialize_from(bitmap).ok();
+
         let mut candidates: Vec<SearchResult> = Vec::with_capacity(top_k * 2);
         for i in 0..n {
             if self.deleted[i] {
                 continue;
             }
-            let global = i + id_offset as usize;
-            let byte_idx = global / 8;
-            let bit_idx = global % 8;
-            if byte_idx >= bitmap.len() || (bitmap[byte_idx] & (1 << bit_idx)) == 0 {
-                continue;
+            if let Some(ref bm) = parsed {
+                let global = (i as u32).saturating_add(id_offset);
+                if !bm.contains(global) {
+                    continue;
+                }
             }
             let start = i * self.dim;
             let vec_slice = &self.data[start..start + self.dim];

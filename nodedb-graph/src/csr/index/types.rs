@@ -79,6 +79,15 @@ pub struct CsrIndex {
     pub(crate) node_label_to_id: HashMap<String, u8>,
     pub(crate) node_label_names: Vec<String>,
 
+    // ── Surrogate storage ──
+    /// Per-node surrogate: `node_surrogates[local_id]` = global `Surrogate.as_u32()`.
+    ///
+    /// `0` (Surrogate::ZERO) is the unset sentinel — populated at `EdgePut` time
+    /// from the surrogates resolved by the Control Plane. A node whose surrogate
+    /// is zero was inserted without surrogate plumbing (e.g. legacy paths or tests)
+    /// and is treated as "not in any prefilter bitmap" when a bitmap is active.
+    pub(crate) node_surrogates: Vec<u32>,
+
     // ── Hot/cold access tracking ──
     /// Per-node access counter: incremented on each neighbor/BFS/path query.
     /// Uses `Cell<u32>` so access can be tracked through `&self` references
@@ -123,6 +132,7 @@ impl CsrIndex {
             node_label_bits: Vec::new(),
             node_label_to_id: HashMap::new(),
             node_label_names: Vec::new(),
+            node_surrogates: Vec::new(),
             access_counts: Vec::new(),
             query_epoch: 0,
             partition_tag: crate::csr::local_node_id::next_partition_tag(),

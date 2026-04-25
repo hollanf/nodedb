@@ -19,6 +19,10 @@ impl CsrIndex {
     ///
     /// `max_visited` caps the number of nodes visited to prevent supernode fan-out
     /// explosion. Pass [`DEFAULT_MAX_VISITED`] for the standard limit.
+    ///
+    /// `frontier_bitmap`: when `Some`, only nodes whose surrogate is present in the
+    /// bitmap are eligible as traversal targets. Start nodes are not gated — only
+    /// newly discovered frontier nodes are checked.
     pub fn traverse_bfs(
         &self,
         start_nodes: &[&str],
@@ -26,6 +30,7 @@ impl CsrIndex {
         direction: Direction,
         max_depth: usize,
         max_visited: usize,
+        frontier_bitmap: Option<&nodedb_types::SurrogateBitmap>,
     ) -> Vec<String> {
         let label_id = label_filter.and_then(|l| self.label_id(l));
         let mut visited: HashSet<u32> = HashSet::new();
@@ -51,6 +56,9 @@ impl CsrIndex {
                 for (lid, dst) in self.dense_iter_out(node_id) {
                     if label_id.is_none_or(|f| f == lid)
                         && visited.len() < max_visited
+                        && frontier_bitmap.is_none_or(|bm| {
+                            bm.contains(nodedb_types::Surrogate::new(self.node_surrogate_raw(dst)))
+                        })
                         && visited.insert(dst)
                     {
                         self.prefetch_node(dst);
@@ -62,6 +70,9 @@ impl CsrIndex {
                 for (lid, src) in self.dense_iter_in(node_id) {
                     if label_id.is_none_or(|f| f == lid)
                         && visited.len() < max_visited
+                        && frontier_bitmap.is_none_or(|bm| {
+                            bm.contains(nodedb_types::Surrogate::new(self.node_surrogate_raw(src)))
+                        })
                         && visited.insert(src)
                     {
                         self.prefetch_node(src);
@@ -161,6 +172,9 @@ impl CsrIndex {
     ///
     /// `max_visited` caps the combined forward+backward visited set to prevent
     /// supernode fan-out explosion. Pass [`DEFAULT_MAX_VISITED`] for the standard limit.
+    ///
+    /// `frontier_bitmap`: when `Some`, only nodes whose surrogate is present in the
+    /// bitmap are eligible for expansion. Start and end nodes are not gated.
     pub fn shortest_path(
         &self,
         src: &str,
@@ -168,6 +182,7 @@ impl CsrIndex {
         label_filter: Option<&str>,
         max_depth: usize,
         max_visited: usize,
+        frontier_bitmap: Option<&nodedb_types::SurrogateBitmap>,
     ) -> Option<Vec<String>> {
         let src_id = *self.node_to_id.get(src)?;
         let dst_id = *self.node_to_id.get(dst)?;
@@ -193,7 +208,13 @@ impl CsrIndex {
             for &node in &fwd_frontier {
                 self.record_access(node);
                 for (lid, neighbor) in self.dense_iter_out(node) {
-                    if label_id.is_none_or(|f| f == lid) {
+                    if label_id.is_none_or(|f| f == lid)
+                        && frontier_bitmap.is_none_or(|bm| {
+                            bm.contains(nodedb_types::Surrogate::new(
+                                self.node_surrogate_raw(neighbor),
+                            ))
+                        })
+                    {
                         if let Entry::Vacant(e) = fwd_parent.entry(neighbor) {
                             e.insert(node);
                             next_fwd.push(neighbor);
@@ -210,7 +231,13 @@ impl CsrIndex {
             for &node in &bwd_frontier {
                 self.record_access(node);
                 for (lid, neighbor) in self.dense_iter_in(node) {
-                    if label_id.is_none_or(|f| f == lid) {
+                    if label_id.is_none_or(|f| f == lid)
+                        && frontier_bitmap.is_none_or(|bm| {
+                            bm.contains(nodedb_types::Surrogate::new(
+                                self.node_surrogate_raw(neighbor),
+                            ))
+                        })
+                    {
                         if let Entry::Vacant(e) = bwd_parent.entry(neighbor) {
                             e.insert(node);
                             next_bwd.push(neighbor);
@@ -335,6 +362,7 @@ mod tests {
             Direction::Out,
             2,
             DEFAULT_MAX_VISITED,
+            None,
         );
         result.sort();
         assert_eq!(result, vec!["a", "b", "c"]);
@@ -343,7 +371,8 @@ mod tests {
     #[test]
     fn bfs_all_labels() {
         let csr = make_csr();
-        let mut result = csr.traverse_bfs(&["a"], None, Direction::Out, 1, DEFAULT_MAX_VISITED);
+        let mut result =
+            csr.traverse_bfs(&["a"], None, Direction::Out, 1, DEFAULT_MAX_VISITED, None);
         result.sort();
         assert_eq!(result, vec!["a", "b", "e"]);
     }
@@ -354,7 +383,8 @@ mod tests {
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("b", "L", "c").unwrap();
         csr.add_edge("c", "L", "a").unwrap();
-        let mut result = csr.traverse_bfs(&["a"], None, Direction::Out, 10, DEFAULT_MAX_VISITED);
+        let mut result =
+            csr.traverse_bfs(&["a"], None, Direction::Out, 10, DEFAULT_MAX_VISITED, None);
         result.sort();
         assert_eq!(result, vec!["a", "b", "c"]);
     }
@@ -380,7 +410,7 @@ mod tests {
     fn shortest_path_direct() {
         let csr = make_csr();
         let path = csr
-            .shortest_path("a", "c", Some("KNOWS"), 5, DEFAULT_MAX_VISITED)
+            .shortest_path("a", "c", Some("KNOWS"), 5, DEFAULT_MAX_VISITED, None)
             .unwrap();
         assert_eq!(path, vec!["a", "b", "c"]);
     }
@@ -389,7 +419,7 @@ mod tests {
     fn shortest_path_same_node() {
         let csr = make_csr();
         let path = csr
-            .shortest_path("a", "a", None, 5, DEFAULT_MAX_VISITED)
+            .shortest_path("a", "a", None, 5, DEFAULT_MAX_VISITED, None)
             .unwrap();
         assert_eq!(path, vec!["a"]);
     }
@@ -397,14 +427,14 @@ mod tests {
     #[test]
     fn shortest_path_unreachable() {
         let csr = make_csr();
-        let path = csr.shortest_path("d", "a", Some("KNOWS"), 5, DEFAULT_MAX_VISITED);
+        let path = csr.shortest_path("d", "a", Some("KNOWS"), 5, DEFAULT_MAX_VISITED, None);
         assert!(path.is_none());
     }
 
     #[test]
     fn shortest_path_depth_limit() {
         let csr = make_csr();
-        let path = csr.shortest_path("a", "d", Some("KNOWS"), 1, DEFAULT_MAX_VISITED);
+        let path = csr.shortest_path("a", "d", Some("KNOWS"), 1, DEFAULT_MAX_VISITED, None);
         assert!(path.is_none());
     }
 
@@ -433,12 +463,64 @@ mod tests {
             Direction::Out,
             100,
             DEFAULT_MAX_VISITED,
+            None,
         );
         assert_eq!(result.len(), 101);
 
         let path = csr
-            .shortest_path("n0", "n50", Some("NEXT"), 100, DEFAULT_MAX_VISITED)
+            .shortest_path("n0", "n50", Some("NEXT"), 100, DEFAULT_MAX_VISITED, None)
             .unwrap();
         assert_eq!(path.len(), 51);
+    }
+
+    /// BFS with a frontier bitmap that includes only "b". Starting from "a",
+    /// "b" is reachable but "c" is blocked (its surrogate is not in the bitmap).
+    #[test]
+    fn bfs_frontier_bitmap_excludes_non_members() {
+        use nodedb_types::{Surrogate, SurrogateBitmap};
+
+        let mut csr = make_csr();
+        // Assign surrogates: b=10, c=20, d=30. "a" and "e" get no surrogate.
+        csr.set_node_surrogate("b", Surrogate::new(10));
+        csr.set_node_surrogate("c", Surrogate::new(20));
+        csr.set_node_surrogate("d", Surrogate::new(30));
+
+        // Bitmap contains only "b" (surrogate 10).
+        let mut bm = SurrogateBitmap::new();
+        bm.insert(Surrogate::new(10));
+
+        let mut result = csr.traverse_bfs(
+            &["a"],
+            Some("KNOWS"),
+            Direction::Out,
+            10,
+            DEFAULT_MAX_VISITED,
+            Some(&bm),
+        );
+        result.sort();
+        // "a" is the start node (not gated). "b" passes the bitmap. "c" is
+        // excluded (surrogate 20 not in bitmap) so traversal stops there.
+        assert_eq!(result, vec!["a", "b"]);
+    }
+
+    /// shortest_path with a bitmap that excludes the only intermediate node.
+    /// "b" is the only path from "a" to "c" via KNOWS edges; if "b" is blocked
+    /// then no path exists.
+    #[test]
+    fn shortest_path_frontier_bitmap_blocks_intermediate() {
+        use nodedb_types::{Surrogate, SurrogateBitmap};
+
+        let mut csr = make_csr();
+        csr.set_node_surrogate("b", Surrogate::new(10));
+        csr.set_node_surrogate("c", Surrogate::new(20));
+
+        // Bitmap that does NOT contain "b".
+        let mut bm = SurrogateBitmap::new();
+        bm.insert(Surrogate::new(20)); // only "c" is in the bitmap
+
+        let path = csr.shortest_path("a", "c", Some("KNOWS"), 5, DEFAULT_MAX_VISITED, Some(&bm));
+        // "b" (surrogate 10) is not in the bitmap so expansion through it is
+        // blocked, making the path from "a" to "c" unreachable.
+        assert!(path.is_none());
     }
 }
