@@ -4006,6 +4006,7 @@ dependencies = [
  "nodedb-codec",
  "rand 0.9.4",
  "rkyv 0.8.15",
+ "roaring",
  "rust_decimal",
  "serde",
  "serde_json",
