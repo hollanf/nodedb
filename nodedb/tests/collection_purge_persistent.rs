@@ -150,9 +150,11 @@ fn inverted_index_purge_is_scoped_to_collection() {
     inverted.purge_collection(tid, "purge_me").unwrap();
 
     let purged = inverted
-        .search(tid, "purge_me", "hello", 10, false)
+        .search(tid, "purge_me", "hello", 10, false, None)
         .unwrap();
     assert!(purged.is_empty(), "purged collection must return no hits");
-    let kept = inverted.search(tid, "keep", "hello", 10, false).unwrap();
+    let kept = inverted
+        .search(tid, "keep", "hello", 10, false, None)
+        .unwrap();
     assert_eq!(kept.len(), 1);
 }
