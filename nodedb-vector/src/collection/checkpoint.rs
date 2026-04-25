@@ -1,5 +1,8 @@
 //! Checkpoint serialization and deserialization for `VectorCollection`.
 
+use std::collections::HashMap;
+
+use nodedb_types::Surrogate;
 use serde::{Deserialize, Serialize};
 
 use crate::collection::segment::{DEFAULT_SEAL_THRESHOLD, SealedSegment};
@@ -24,10 +27,12 @@ pub(crate) struct CollectionSnapshot {
     pub growing_deleted: Vec<bool>,
     pub sealed_segments: Vec<SealedSnapshot>,
     pub building_segments: Vec<BuildingSnapshot>,
+    /// `(global_vector_id, surrogate_u32)` pairs.
     #[serde(default)]
-    pub doc_id_map: Vec<(u32, String)>,
+    pub surrogate_map: Vec<(u32, u32)>,
+    /// `(document_surrogate_u32, [global_vector_ids])` pairs.
     #[serde(default)]
-    pub multi_doc_map: Vec<(String, Vec<u32>)>,
+    pub multi_doc_map: Vec<(u32, Vec<u32>)>,
 }
 
 #[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
@@ -96,15 +101,15 @@ impl VectorCollection {
                         .collect(),
                 })
                 .collect(),
-            doc_id_map: self
-                .doc_id_map
+            surrogate_map: self
+                .surrogate_map
                 .iter()
-                .map(|(&k, v)| (k, v.clone()))
+                .map(|(&k, s)| (k, s.as_u32()))
                 .collect(),
             multi_doc_map: self
                 .multi_doc_map
                 .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
+                .map(|(k, v)| (k.as_u32(), v.clone()))
                 .collect(),
         };
         match zerompk::to_msgpack_vec(&snapshot) {
@@ -216,8 +221,21 @@ impl VectorCollection {
             ram_budget_bytes: 0,
             mmap_fallback_count: 0,
             mmap_segment_count: 0,
-            doc_id_map: snap.doc_id_map.into_iter().collect(),
-            multi_doc_map: snap.multi_doc_map.into_iter().collect(),
+            surrogate_map: snap
+                .surrogate_map
+                .iter()
+                .map(|&(k, s)| (k, Surrogate::new(s)))
+                .collect(),
+            surrogate_to_local: snap
+                .surrogate_map
+                .iter()
+                .map(|&(k, s)| (Surrogate::new(s), k))
+                .collect(),
+            multi_doc_map: snap
+                .multi_doc_map
+                .into_iter()
+                .map(|(k, v)| (Surrogate::new(k), v))
+                .collect::<HashMap<_, _>>(),
             seal_threshold: DEFAULT_SEAL_THRESHOLD,
             index_config,
         })

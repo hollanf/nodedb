@@ -1,4 +1,17 @@
 //! VectorCollection lifecycle: insert, delete, seal, complete_build, compact.
+//!
+//! Identity model: every vector inserted into the collection is bound to
+//! a global `Surrogate` allocated by the Control Plane before the engine
+//! sees the call. The HNSW segments keep their dense local node-ids
+//! internally for cache-locality and SIMD traversal; this file owns the
+//! `surrogate_map: HashMap<u32, Surrogate>` (global node-id → surrogate)
+//! and reverse `surrogate_to_local: HashMap<Surrogate, u32>` (for
+//! point-delete by surrogate). User-PK strings live in the catalog and
+//! are translated at the Control Plane response boundary.
+
+use std::collections::HashMap;
+
+use nodedb_types::Surrogate;
 
 use crate::flat::FlatIndex;
 use crate::hnsw::{HnswIndex, HnswParams};
@@ -34,10 +47,13 @@ pub struct VectorCollection {
     pub(crate) mmap_fallback_count: u32,
     /// Count of segments currently backed by mmap files.
     pub(crate) mmap_segment_count: u32,
-    /// Mapping from internal vector ID → user-facing document ID.
-    pub doc_id_map: std::collections::HashMap<u32, String>,
-    /// Reverse mapping for multi-vector documents: doc_id → list of vector IDs.
-    pub multi_doc_map: std::collections::HashMap<String, Vec<u32>>,
+    /// Mapping from internal global vector ID → surrogate.
+    pub surrogate_map: HashMap<u32, Surrogate>,
+    /// Reverse map: surrogate → global vector ID. Used by point delete.
+    pub surrogate_to_local: HashMap<Surrogate, u32>,
+    /// Reverse mapping for multi-vector documents:
+    /// document_surrogate → list of global vector IDs.
+    pub multi_doc_map: HashMap<Surrogate, Vec<u32>>,
     /// Number of vectors in the growing segment before sealing.
     pub(crate) seal_threshold: usize,
     /// Full index configuration (index type, PQ params, IVF params).
@@ -84,8 +100,9 @@ impl VectorCollection {
             ram_budget_bytes: 0,
             mmap_fallback_count: 0,
             mmap_segment_count: 0,
-            doc_id_map: std::collections::HashMap::new(),
-            multi_doc_map: std::collections::HashMap::new(),
+            surrogate_map: HashMap::new(),
+            surrogate_to_local: HashMap::new(),
+            multi_doc_map: HashMap::new(),
             seal_threshold,
             index_config: config,
         }
@@ -104,28 +121,42 @@ impl VectorCollection {
         id
     }
 
-    /// Insert a vector with an associated document ID.
-    pub fn insert_with_doc_id(&mut self, vector: Vec<f32>, doc_id: String) -> u32 {
+    /// Insert a vector with an associated surrogate. The surrogate is
+    /// allocated by the Control Plane before the call; the engine only
+    /// stores the binding.
+    pub fn insert_with_surrogate(&mut self, vector: Vec<f32>, surrogate: Surrogate) -> u32 {
         let id = self.insert(vector);
-        self.doc_id_map.insert(id, doc_id);
+        if surrogate != Surrogate::ZERO {
+            self.surrogate_map.insert(id, surrogate);
+            self.surrogate_to_local.insert(surrogate, id);
+        }
         id
     }
 
     /// Insert multiple vectors for a single document (ColBERT-style).
-    pub fn insert_multi_vector(&mut self, vectors: &[&[f32]], doc_id: String) -> Vec<u32> {
+    /// All N vectors are bound to the same `document_surrogate`.
+    pub fn insert_multi_vector(
+        &mut self,
+        vectors: &[&[f32]],
+        document_surrogate: Surrogate,
+    ) -> Vec<u32> {
         let mut ids = Vec::with_capacity(vectors.len());
         for &v in vectors {
             let id = self.insert(v.to_vec());
-            self.doc_id_map.insert(id, doc_id.clone());
+            if document_surrogate != Surrogate::ZERO {
+                self.surrogate_map.insert(id, document_surrogate);
+            }
             ids.push(id);
         }
-        self.multi_doc_map.insert(doc_id, ids.clone());
+        if document_surrogate != Surrogate::ZERO {
+            self.multi_doc_map.insert(document_surrogate, ids.clone());
+        }
         ids
     }
 
     /// Delete all vectors belonging to a multi-vector document.
-    pub fn delete_multi_vector(&mut self, doc_id: &str) -> usize {
-        let Some(ids) = self.multi_doc_map.remove(doc_id) else {
+    pub fn delete_multi_vector(&mut self, document_surrogate: Surrogate) -> usize {
+        let Some(ids) = self.multi_doc_map.remove(&document_surrogate) else {
             return 0;
         };
         let mut deleted = 0;
@@ -133,18 +164,32 @@ impl VectorCollection {
             if self.delete(*id) {
                 deleted += 1;
             }
-            self.doc_id_map.remove(id);
+            self.surrogate_map.remove(id);
         }
+        self.surrogate_to_local.remove(&document_surrogate);
         deleted
     }
 
-    /// Look up the document ID for a vector ID.
-    pub fn get_doc_id(&self, vector_id: u32) -> Option<&str> {
-        self.doc_id_map.get(&vector_id).map(|s| s.as_str())
+    /// Look up the surrogate for a global vector ID.
+    pub fn get_surrogate(&self, vector_id: u32) -> Option<Surrogate> {
+        self.surrogate_map.get(&vector_id).copied()
+    }
+
+    /// Resolve a surrogate back to its global vector ID, if bound.
+    pub fn local_for_surrogate(&self, surrogate: Surrogate) -> Option<u32> {
+        self.surrogate_to_local.get(&surrogate).copied()
     }
 
     /// Soft-delete a vector by global ID.
     pub fn delete(&mut self, id: u32) -> bool {
+        let ok = self.delete_inner(id);
+        if ok && let Some(s) = self.surrogate_map.remove(&id) {
+            self.surrogate_to_local.remove(&s);
+        }
+        ok
+    }
+
+    fn delete_inner(&mut self, id: u32) -> bool {
         if id >= self.growing_base_id {
             let local = id - self.growing_base_id;
             if (local as usize) < self.growing.len() {
@@ -168,6 +213,14 @@ impl VectorCollection {
             }
         }
         false
+    }
+
+    /// Soft-delete a vector by surrogate.
+    pub fn delete_by_surrogate(&mut self, surrogate: Surrogate) -> bool {
+        let Some(global_id) = self.surrogate_to_local.get(&surrogate).copied() else {
+            return false;
+        };
+        self.delete(global_id)
     }
 
     /// Un-delete a previously soft-deleted vector (for transaction rollback).
@@ -274,9 +327,9 @@ impl VectorCollection {
 
     /// Compact sealed segments by removing tombstoned nodes.
     ///
-    /// Rewrites `doc_id_map` and `multi_doc_map` for every sealed segment
-    /// so that global ids continue to resolve to the correct document
-    /// strings after local-id renumbering.
+    /// Rewrites `surrogate_map` and `multi_doc_map` for every sealed
+    /// segment so that global ids continue to resolve to the correct
+    /// surrogate after local-id renumbering.
     pub fn compact(&mut self) -> usize {
         let mut total_removed = 0;
         for seg in &mut self.sealed {
@@ -287,30 +340,33 @@ impl VectorCollection {
                 continue;
             }
 
-            // Rebuild doc_id_map for entries in [base_id, base_id + id_map.len()).
             let segment_end = base_id as u64 + id_map.len() as u64;
-            let doc_keys: Vec<u32> = self
-                .doc_id_map
+            let global_keys: Vec<u32> = self
+                .surrogate_map
                 .keys()
                 .copied()
                 .filter(|&k| (k as u64) >= base_id as u64 && (k as u64) < segment_end)
                 .collect();
-            // Two-phase: remove all old entries first, then insert new ones so
-            // we don't clobber a freshly-remapped entry with a later tombstone
-            // removal.
-            let mut new_entries: Vec<(u32, String)> = Vec::with_capacity(doc_keys.len());
-            for old_global in &doc_keys {
-                let doc = self.doc_id_map.remove(old_global);
+            // Two-phase: remove old entries first, then insert new ones
+            // so we don't clobber a freshly-remapped entry with a later
+            // tombstone removal.
+            let mut new_entries: Vec<(u32, Surrogate)> = Vec::with_capacity(global_keys.len());
+            for old_global in &global_keys {
+                let surrogate = self.surrogate_map.remove(old_global);
                 let old_local = (old_global - base_id) as usize;
                 let new_local = id_map[old_local];
                 if new_local != u32::MAX
-                    && let Some(doc) = doc
+                    && let Some(s) = surrogate
                 {
-                    new_entries.push((base_id + new_local, doc));
+                    new_entries.push((base_id + new_local, s));
+                } else if let Some(s) = surrogate {
+                    // Tombstoned — drop reverse mapping too.
+                    self.surrogate_to_local.remove(&s);
                 }
             }
-            for (k, v) in new_entries {
-                self.doc_id_map.insert(k, v);
+            for (k, s) in new_entries {
+                self.surrogate_map.insert(k, s);
+                self.surrogate_to_local.insert(s, k);
             }
 
             // Rewrite multi_doc_map entries for this segment.
@@ -336,14 +392,14 @@ impl VectorCollection {
     }
 
     /// Export all live vectors for snapshot.
-    pub fn export_snapshot(&self) -> Vec<(u32, Vec<f32>, Option<String>)> {
+    pub fn export_snapshot(&self) -> Vec<(u32, Vec<f32>, Option<Surrogate>)> {
         let mut result = Vec::new();
 
         for i in 0..self.growing.len() as u32 {
             let vid = self.growing_base_id + i;
             if let Some(data) = self.growing.get_vector(i) {
-                let doc_id = self.doc_id_map.get(&vid).cloned();
-                result.push((vid, data.to_vec(), doc_id));
+                let surrogate = self.surrogate_map.get(&vid).copied();
+                result.push((vid, data.to_vec(), surrogate));
             }
         }
 
@@ -351,8 +407,8 @@ impl VectorCollection {
             let vectors = seg.index.export_vectors();
             for (i, vec_data) in vectors.into_iter().enumerate() {
                 let vid = seg.base_id + i as u32;
-                let doc_id = self.doc_id_map.get(&vid).cloned();
-                result.push((vid, vec_data, doc_id));
+                let surrogate = self.surrogate_map.get(&vid).copied();
+                result.push((vid, vec_data, surrogate));
             }
         }
 
@@ -360,8 +416,8 @@ impl VectorCollection {
             for i in 0..seg.flat.len() as u32 {
                 let vid = seg.base_id + i;
                 if let Some(data) = seg.flat.get_vector(i) {
-                    let doc_id = self.doc_id_map.get(&vid).cloned();
-                    result.push((vid, data.to_vec(), doc_id));
+                    let surrogate = self.surrogate_map.get(&vid).copied();
+                    result.push((vid, data.to_vec(), surrogate));
                 }
             }
         }
@@ -406,89 +462,5 @@ impl VectorCollection {
     /// Update HNSW parameters for future builds.
     pub fn set_params(&mut self, params: HnswParams) {
         self.params = params;
-    }
-
-    /// Collect live statistics from all segments.
-    pub fn stats(&self) -> nodedb_types::VectorIndexStats {
-        let growing_vectors = self.growing.len();
-        let sealed_vectors: usize = self.sealed.iter().map(|s| s.index.len()).sum();
-        let building_vectors: usize = self.building.iter().map(|s| s.flat.len()).sum();
-
-        let tombstone_count: usize = self
-            .sealed
-            .iter()
-            .map(|s| s.index.tombstone_count())
-            .sum::<usize>()
-            + self.growing.tombstone_count()
-            + self
-                .building
-                .iter()
-                .map(|s| s.flat.tombstone_count())
-                .sum::<usize>();
-
-        let total = growing_vectors + sealed_vectors + building_vectors;
-        let tombstone_ratio = if total > 0 {
-            tombstone_count as f64 / total as f64
-        } else {
-            0.0
-        };
-
-        let quantization = if self.sealed.iter().any(|s| s.pq.is_some()) {
-            nodedb_types::VectorIndexQuantization::Pq
-        } else if self.sealed.iter().any(|s| s.sq8.is_some()) {
-            nodedb_types::VectorIndexQuantization::Sq8
-        } else {
-            nodedb_types::VectorIndexQuantization::None
-        };
-
-        let index_type = match self.index_config.index_type {
-            IndexType::HnswPq => nodedb_types::VectorIndexType::HnswPq,
-            IndexType::IvfPq => nodedb_types::VectorIndexType::IvfPq,
-            IndexType::Hnsw => nodedb_types::VectorIndexType::Hnsw,
-        };
-
-        let hnsw_mem: usize = self
-            .sealed
-            .iter()
-            .map(|s| s.index.memory_usage_bytes())
-            .sum();
-        let sq8_mem: usize = self
-            .sealed
-            .iter()
-            .filter_map(|s| s.sq8.as_ref().map(|(_, data)| data.len()))
-            .sum();
-        let growing_mem = growing_vectors * self.dim * std::mem::size_of::<f32>();
-        let building_mem = building_vectors * self.dim * std::mem::size_of::<f32>();
-        let memory_bytes = hnsw_mem + sq8_mem + growing_mem + building_mem;
-
-        let disk_bytes: usize = self
-            .sealed
-            .iter()
-            .filter_map(|s| s.mmap_vectors.as_ref().map(|m| m.file_size()))
-            .sum();
-
-        let metric_name = format!("{:?}", self.params.metric).to_lowercase();
-
-        nodedb_types::VectorIndexStats {
-            sealed_count: self.sealed.len(),
-            building_count: self.building.len(),
-            growing_vectors,
-            sealed_vectors,
-            live_count: self.live_count(),
-            tombstone_count,
-            tombstone_ratio,
-            quantization,
-            memory_bytes,
-            disk_bytes,
-            build_in_progress: !self.building.is_empty(),
-            index_type,
-            hnsw_m: self.params.m,
-            hnsw_m0: self.params.m0,
-            hnsw_ef_construction: self.params.ef_construction,
-            metric: metric_name,
-            dimensions: self.dim,
-            seal_threshold: self.seal_threshold,
-            mmap_segment_count: self.mmap_segment_count,
-        }
     }
 }

@@ -7,6 +7,7 @@ pub mod quantize;
 pub use distance::DistanceMetric;
 pub use error::VectorError;
 pub use hnsw::{HnswIndex, HnswParams, SearchResult};
+pub use nodedb_types::Surrogate;
 pub use quantize::Sq8Codec;
 
 // Origin-only modules (always compiled for native targets).

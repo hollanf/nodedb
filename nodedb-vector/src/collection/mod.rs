@@ -4,6 +4,7 @@ pub mod lifecycle;
 pub mod quantize;
 pub mod search;
 pub mod segment;
+pub mod stats;
 pub mod tier;
 
 pub use lifecycle::VectorCollection;
