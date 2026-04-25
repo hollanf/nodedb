@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use nodedb_types::Surrogate;
 use tracing::debug;
 
 use crate::backend::FtsBackend;
@@ -107,9 +108,10 @@ impl<B: FtsBackend> FtsIndex<B> {
 
         let doc_len = tokens.len() as u32;
 
+        let surrogate = Surrogate(int_id);
         for (term, (freq, positions)) in &term_data {
             let compact = CompactPosting {
-                doc_id: int_id,
+                doc_id: surrogate,
                 term_freq: *freq,
                 fieldnorm: smallfloat::encode(doc_len),
                 positions: positions.clone(),
@@ -117,12 +119,12 @@ impl<B: FtsBackend> FtsIndex<B> {
             let scoped_term = memtable_key(tid, collection, term);
             self.memtable.insert(&scoped_term, compact);
         }
-        self.memtable.record_doc(int_id, doc_len);
+        self.memtable.record_doc(surrogate, doc_len);
 
         // Write document length, fieldnorm, and update incremental stats.
         self.backend
             .write_doc_length(tid, collection, doc_id, doc_len)?;
-        self.write_fieldnorm(tid, collection, int_id, doc_len)?;
+        self.write_fieldnorm(tid, collection, surrogate, doc_len)?;
         self.backend.increment_stats(tid, collection, doc_len)?;
 
         if self.memtable.should_flush() {
@@ -161,7 +163,7 @@ impl<B: FtsBackend> FtsIndex<B> {
 
         let mut doc_map = self.load_doc_id_map(tid, collection)?;
         if let Some(int_id) = doc_map.to_u32(doc_id) {
-            self.memtable.remove_doc(int_id);
+            self.memtable.remove_doc(Surrogate(int_id));
         }
         doc_map.remove(doc_id);
         self.save_doc_id_map(tid, collection, &doc_map)?;

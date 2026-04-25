@@ -19,4 +19,5 @@ pub use block::{CompactPosting, PostingBlock};
 pub use codec::DocIdMap;
 pub use fuzzy::{fuzzy_discount, fuzzy_match, levenshtein, max_distance_for_length};
 pub use index::FtsIndex;
+pub use nodedb_types::Surrogate;
 pub use posting::{Bm25Params, MatchOffset, Posting, QueryMode, TextSearchResult};

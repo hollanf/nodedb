@@ -45,7 +45,7 @@ impl<B: FtsBackend> FtsIndex<B> {
                 let mut postings = Vec::new();
                 for block in &term_blocks[0].blocks {
                     for i in 0..block.doc_ids.len() {
-                        if let Some(doc_str) = doc_map.to_string(block.doc_ids[i]) {
+                        if let Some(doc_str) = doc_map.to_string(block.doc_ids[i].0) {
                             postings.push(Posting {
                                 doc_id: doc_str.to_string(),
                                 term_freq: block.term_freqs[i],

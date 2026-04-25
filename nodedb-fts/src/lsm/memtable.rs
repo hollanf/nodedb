@@ -6,6 +6,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use nodedb_types::Surrogate;
+
 use crate::block::CompactPosting;
 use crate::codec::smallfloat;
 
@@ -33,7 +35,7 @@ impl Default for MemtableConfig {
 
 /// In-memory accumulator for FTS postings.
 ///
-/// Stores per-term posting lists using u32 doc IDs (via DocIdMap).
+/// Stores per-term posting lists keyed on `Surrogate` row identities.
 /// Maintains incremental corpus stats.
 pub struct Memtable {
     /// term → sorted list of compact postings.
@@ -42,9 +44,9 @@ pub struct Memtable {
     total_postings: RefCell<usize>,
     /// Incremental stats: (doc_count, total_token_sum).
     stats: RefCell<(u32, u64)>,
-    /// Fieldnorm array: doc_id → SmallFloat-encoded length (used by BM25).
+    /// Fieldnorm array: surrogate.0 → SmallFloat-encoded length (used by BM25).
     fieldnorms: RefCell<Vec<u8>>,
-    /// Exact-length sidecar: doc_id → original u32 token count. Used to
+    /// Exact-length sidecar: surrogate.0 → original u32 token count. Used to
     /// decrement `stats.total_token_sum` symmetrically with the exact
     /// increment in `record_doc`. Storing the original length here keeps
     /// the smallfloat array lossy (space-efficient for ranking) while
@@ -66,7 +68,7 @@ impl Memtable {
         }
     }
 
-    /// Insert a posting for a term. Doc ID must already be assigned via DocIdMap.
+    /// Insert a posting for a term. Surrogate is supplied by the caller.
     pub fn insert(&self, term: &str, posting: CompactPosting) {
         let mut map = self.postings.borrow_mut();
         map.entry(term.to_string()).or_default().push(posting);
@@ -74,12 +76,12 @@ impl Memtable {
     }
 
     /// Record a document's stats (call once per indexed document).
-    pub fn record_doc(&self, doc_id: u32, doc_len: u32) {
+    pub fn record_doc(&self, doc_id: Surrogate, doc_len: u32) {
         let mut stats = self.stats.borrow_mut();
         stats.0 += 1;
         stats.1 += doc_len as u64;
 
-        let idx = doc_id as usize;
+        let idx = doc_id.0 as usize;
         {
             let mut norms = self.fieldnorms.borrow_mut();
             if idx >= norms.len() {
@@ -95,7 +97,7 @@ impl Memtable {
     }
 
     /// Remove a document's postings from all terms.
-    pub fn remove_doc(&self, doc_id: u32) {
+    pub fn remove_doc(&self, doc_id: Surrogate) {
         let mut map = self.postings.borrow_mut();
         let mut removed = 0usize;
         map.retain(|_, postings| {
@@ -110,7 +112,7 @@ impl Memtable {
         // matches the exact-length increment in record_doc. Using the
         // smallfloat-decoded length here would drift upward on churn.
         let mut exact = self.fieldnorms_exact.borrow_mut();
-        if let Some(slot) = exact.get_mut(doc_id as usize)
+        if let Some(slot) = exact.get_mut(doc_id.0 as usize)
             && *slot > 0
         {
             let doc_len = *slot;
@@ -208,7 +210,7 @@ mod tests {
 
     fn make_posting(doc_id: u32, tf: u32) -> CompactPosting {
         CompactPosting {
-            doc_id,
+            doc_id: Surrogate(doc_id),
             term_freq: tf,
             fieldnorm: smallfloat::encode(100),
             positions: vec![0],
@@ -234,13 +236,13 @@ mod tests {
         let mt = Memtable::new(MemtableConfig::default());
         mt.insert("hello", make_posting(0, 1));
         mt.insert("hello", make_posting(1, 2));
-        mt.record_doc(0, 100);
-        mt.record_doc(1, 50);
+        mt.record_doc(Surrogate(0), 100);
+        mt.record_doc(Surrogate(1), 50);
 
-        mt.remove_doc(0);
+        mt.remove_doc(Surrogate(0));
 
         assert_eq!(mt.get_postings("hello").len(), 1);
-        assert_eq!(mt.get_postings("hello")[0].doc_id, 1);
+        assert_eq!(mt.get_postings("hello")[0].doc_id, Surrogate(1));
         assert_eq!(mt.stats().0, 1); // Only doc 1 remains.
     }
 
@@ -249,8 +251,8 @@ mod tests {
         let mt = Memtable::new(MemtableConfig::default());
         mt.insert("hello", make_posting(0, 1));
         mt.insert("world", make_posting(1, 1));
-        mt.record_doc(0, 100);
-        mt.record_doc(1, 50);
+        mt.record_doc(Surrogate(0), 100);
+        mt.record_doc(Surrogate(1), 50);
 
         let drained = mt.drain();
         assert_eq!(drained.len(), 2);
@@ -302,7 +304,7 @@ mod tests {
         // cycle leaves positive residue in `total_token_sum`. After N cycles
         // of the same doc, the residue compounds and silently skews BM25.
         let churn = Memtable::new(MemtableConfig::default());
-        let doc_id = 0u32;
+        let doc_id = Surrogate(0);
         let doc_len = 137u32; // not smallfloat-representable exactly
         for _ in 0..500 {
             churn.record_doc(doc_id, doc_len);
@@ -326,13 +328,13 @@ mod tests {
         // exactly match a memtable that only ever saw that single live doc.
         let churn = Memtable::new(MemtableConfig::default());
         for _ in 0..200 {
-            churn.record_doc(0, 400);
-            churn.remove_doc(0);
+            churn.record_doc(Surrogate(0), 400);
+            churn.remove_doc(Surrogate(0));
         }
-        churn.record_doc(0, 250);
+        churn.record_doc(Surrogate(0), 250);
 
         let fresh = Memtable::new(MemtableConfig::default());
-        fresh.record_doc(0, 250);
+        fresh.record_doc(Surrogate(0), 250);
 
         assert_eq!(
             churn.stats(),
@@ -350,10 +352,10 @@ mod tests {
         // BM25 `avg_doc_len` is inflated and ranking is silently skewed.
         let mt = Memtable::new(MemtableConfig::default());
         for _ in 0..100 {
-            mt.record_doc(0, 777);
-            mt.remove_doc(0);
+            mt.record_doc(Surrogate(0), 777);
+            mt.remove_doc(Surrogate(0));
         }
-        mt.record_doc(0, 777);
+        mt.record_doc(Surrogate(0), 777);
         let (count, total) = mt.stats();
         assert_eq!(count, 1);
         assert_eq!(
@@ -365,8 +367,8 @@ mod tests {
     #[test]
     fn fieldnorms_recorded() {
         let mt = Memtable::new(MemtableConfig::default());
-        mt.record_doc(0, 100);
-        mt.record_doc(5, 50);
+        mt.record_doc(Surrogate(0), 100);
+        mt.record_doc(Surrogate(5), 50);
 
         let norms = mt.fieldnorms();
         assert_eq!(norms.len(), 6); // 0..=5

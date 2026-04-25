@@ -5,6 +5,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+use nodedb_types::Surrogate;
+
 use crate::block::{CompactPosting, PostingBlock, into_blocks};
 
 use super::segment::reader::SegmentReader;
@@ -86,7 +88,7 @@ pub fn dedup_postings(postings: &mut Vec<CompactPosting>) {
         return;
     }
     // Walk backward: for each doc_id, keep only the last (rightmost) occurrence.
-    let mut seen: HashMap<u32, usize> = HashMap::new();
+    let mut seen: HashMap<Surrogate, usize> = HashMap::new();
     for (i, p) in postings.iter().enumerate() {
         seen.insert(p.doc_id, i);
     }
@@ -104,7 +106,7 @@ mod tests {
 
     fn cp(doc_id: u32, tf: u32) -> CompactPosting {
         CompactPosting {
-            doc_id,
+            doc_id: Surrogate(doc_id),
             term_freq: tf,
             fieldnorm: smallfloat::encode(100),
             positions: vec![0],
@@ -149,7 +151,7 @@ mod tests {
         let merged = merge_term_postings(&mt_posts, &seg_posts);
         assert_eq!(merged.len(), 2); // doc 0 and doc 1.
         // Doc 0 should have the memtable version (tf=5) since it was added last.
-        let doc0 = merged.iter().find(|p| p.doc_id == 0).unwrap();
+        let doc0 = merged.iter().find(|p| p.doc_id == Surrogate(0)).unwrap();
         assert_eq!(doc0.term_freq, 5);
     }
 
@@ -158,7 +160,7 @@ mod tests {
         let mut posts = vec![cp(0, 1), cp(0, 5), cp(1, 2)];
         dedup_postings(&mut posts);
         assert_eq!(posts.len(), 2);
-        assert_eq!(posts[0].doc_id, 0);
+        assert_eq!(posts[0].doc_id, Surrogate(0));
         assert_eq!(posts[0].term_freq, 5); // Last occurrence wins.
     }
 }

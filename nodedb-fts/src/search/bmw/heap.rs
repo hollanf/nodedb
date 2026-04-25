@@ -1,13 +1,15 @@
 //! Fixed-capacity min-heap for top-k scoring in BMW.
 //!
-//! Maintains the k best `(score, doc_id)` pairs. The threshold (minimum
+//! Maintains the k best `(score, surrogate)` pairs. The threshold (minimum
 //! score to enter the heap) is the root's score when full, 0.0 when filling.
+
+use nodedb_types::Surrogate;
 
 /// A scored candidate in the top-k heap.
 #[derive(Debug, Clone, Copy)]
 pub struct ScoredDoc {
     pub score: f32,
-    pub doc_id: u32,
+    pub doc_id: Surrogate,
 }
 
 /// Fixed-capacity min-heap: smallest score is at the root.
@@ -42,7 +44,7 @@ impl TopKHeap {
     ///
     /// If the heap is not full, always inserts. If full, only inserts
     /// if `score > threshold()`, replacing the root.
-    pub fn insert(&mut self, score: f32, doc_id: u32) {
+    pub fn insert(&mut self, score: f32, doc_id: Surrogate) {
         if self.data.len() < self.capacity {
             self.data.push(ScoredDoc { score, doc_id });
             if self.data.len() == self.capacity {
@@ -112,28 +114,28 @@ mod tests {
     #[test]
     fn basic_top_k() {
         let mut heap = TopKHeap::new(3);
-        heap.insert(1.0, 1);
-        heap.insert(5.0, 5);
-        heap.insert(3.0, 3);
-        heap.insert(2.0, 2);
-        heap.insert(4.0, 4);
+        heap.insert(1.0, Surrogate(1));
+        heap.insert(5.0, Surrogate(5));
+        heap.insert(3.0, Surrogate(3));
+        heap.insert(2.0, Surrogate(2));
+        heap.insert(4.0, Surrogate(4));
 
         let sorted = heap.into_sorted();
         assert_eq!(sorted.len(), 3);
-        assert_eq!(sorted[0].doc_id, 5);
-        assert_eq!(sorted[1].doc_id, 4);
-        assert_eq!(sorted[2].doc_id, 3);
+        assert_eq!(sorted[0].doc_id, Surrogate(5));
+        assert_eq!(sorted[1].doc_id, Surrogate(4));
+        assert_eq!(sorted[2].doc_id, Surrogate(3));
     }
 
     #[test]
     fn threshold_while_filling() {
         let mut heap = TopKHeap::new(3);
         assert_eq!(heap.threshold(), 0.0);
-        heap.insert(5.0, 1);
+        heap.insert(5.0, Surrogate(1));
         assert_eq!(heap.threshold(), 0.0); // Not full yet.
-        heap.insert(3.0, 2);
+        heap.insert(3.0, Surrogate(2));
         assert_eq!(heap.threshold(), 0.0);
-        heap.insert(1.0, 3);
+        heap.insert(1.0, Surrogate(3));
         // Now full — threshold is the minimum.
         assert!((heap.threshold() - 1.0).abs() < f32::EPSILON);
     }
@@ -141,13 +143,13 @@ mod tests {
     #[test]
     fn rejects_below_threshold() {
         let mut heap = TopKHeap::new(2);
-        heap.insert(5.0, 1);
-        heap.insert(3.0, 2);
-        heap.insert(1.0, 99); // Below threshold (3.0) — rejected.
+        heap.insert(5.0, Surrogate(1));
+        heap.insert(3.0, Surrogate(2));
+        heap.insert(1.0, Surrogate(99)); // Below threshold (3.0) — rejected.
 
         let sorted = heap.into_sorted();
         assert_eq!(sorted.len(), 2);
-        assert!(sorted.iter().all(|d| d.doc_id != 99));
+        assert!(sorted.iter().all(|d| d.doc_id != Surrogate(99)));
     }
 
     #[test]
@@ -160,12 +162,12 @@ mod tests {
     #[test]
     fn single_element() {
         let mut heap = TopKHeap::new(1);
-        heap.insert(3.0, 1);
-        heap.insert(5.0, 2);
-        heap.insert(1.0, 3);
+        heap.insert(3.0, Surrogate(1));
+        heap.insert(5.0, Surrogate(2));
+        heap.insert(1.0, Surrogate(3));
 
         let sorted = heap.into_sorted();
         assert_eq!(sorted.len(), 1);
-        assert_eq!(sorted[0].doc_id, 2);
+        assert_eq!(sorted[0].doc_id, Surrogate(2));
     }
 }

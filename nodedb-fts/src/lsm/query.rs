@@ -129,7 +129,7 @@ mod tests {
 
     fn cp(doc_id: u32, tf: u32) -> CompactPosting {
         CompactPosting {
-            doc_id,
+            doc_id: nodedb_types::Surrogate(doc_id),
             term_freq: tf,
             fieldnorm: smallfloat::encode(100),
             positions: vec![0],

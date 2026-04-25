@@ -4,6 +4,8 @@
 //! 1. Advance to doc_id ≥ target (binary search on `last_doc_id`).
 //! 2. Compute block upper bound without decompressing the block.
 
+use nodedb_types::Surrogate;
+
 use crate::block::{BlockMeta, PostingBlock};
 
 /// Per-block skip entry for BMW.
@@ -78,7 +80,7 @@ impl TermBlocks {
     ///
     /// Returns `None` if all blocks have `last_doc_id < target_doc_id`
     /// (i.e., the term is exhausted past that point).
-    pub fn advance_to_block(&self, target_doc_id: u32) -> Option<usize> {
+    pub fn advance_to_block(&self, target_doc_id: Surrogate) -> Option<usize> {
         // Binary search on skip entries' last_doc_id.
         let pos = self
             .skip
@@ -101,7 +103,7 @@ mod tests {
         let mut postings: Vec<CompactPosting> = doc_ids
             .iter()
             .map(|&id| CompactPosting {
-                doc_id: id,
+                doc_id: Surrogate(id),
                 term_freq: tf,
                 fieldnorm: smallfloat::encode(100),
                 positions: vec![0],
@@ -122,8 +124,8 @@ mod tests {
         assert_eq!(tb.num_blocks(), 2);
         assert_eq!(tb.df, 200);
         assert_eq!(tb.global_max_tf, 2);
-        assert_eq!(tb.skip[0].meta.last_doc_id, 127);
-        assert_eq!(tb.skip[1].meta.last_doc_id, 199);
+        assert_eq!(tb.skip[0].meta.last_doc_id, Surrogate(127));
+        assert_eq!(tb.skip[1].meta.last_doc_id, Surrogate(199));
     }
 
     #[test]
@@ -132,14 +134,14 @@ mod tests {
         let tb = make_term_blocks(&ids, 1);
         // 3 blocks: [0..127], [128..255], [256..299]
 
-        assert_eq!(tb.advance_to_block(0), Some(0));
-        assert_eq!(tb.advance_to_block(50), Some(0));
-        assert_eq!(tb.advance_to_block(127), Some(0));
-        assert_eq!(tb.advance_to_block(128), Some(1));
-        assert_eq!(tb.advance_to_block(200), Some(1));
-        assert_eq!(tb.advance_to_block(256), Some(2));
-        assert_eq!(tb.advance_to_block(299), Some(2));
-        assert_eq!(tb.advance_to_block(300), None); // Past all blocks.
+        assert_eq!(tb.advance_to_block(Surrogate(0)), Some(0));
+        assert_eq!(tb.advance_to_block(Surrogate(50)), Some(0));
+        assert_eq!(tb.advance_to_block(Surrogate(127)), Some(0));
+        assert_eq!(tb.advance_to_block(Surrogate(128)), Some(1));
+        assert_eq!(tb.advance_to_block(Surrogate(200)), Some(1));
+        assert_eq!(tb.advance_to_block(Surrogate(256)), Some(2));
+        assert_eq!(tb.advance_to_block(Surrogate(299)), Some(2));
+        assert_eq!(tb.advance_to_block(Surrogate(300)), None); // Past all blocks.
     }
 
     #[test]
@@ -147,6 +149,6 @@ mod tests {
         let tb = TermBlocks::from_blocks(Vec::new());
         assert_eq!(tb.df, 0);
         assert_eq!(tb.num_blocks(), 0);
-        assert_eq!(tb.advance_to_block(0), None);
+        assert_eq!(tb.advance_to_block(Surrogate(0)), None);
     }
 }

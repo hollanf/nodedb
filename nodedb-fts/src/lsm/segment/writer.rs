@@ -133,13 +133,13 @@ mod tests {
             "hello".to_string(),
             vec![
                 CompactPosting {
-                    doc_id: 0,
+                    doc_id: nodedb_types::Surrogate(0),
                     term_freq: 2,
                     fieldnorm: smallfloat::encode(100),
                     positions: vec![0, 5],
                 },
                 CompactPosting {
-                    doc_id: 1,
+                    doc_id: nodedb_types::Surrogate(1),
                     term_freq: 1,
                     fieldnorm: smallfloat::encode(50),
                     positions: vec![3],
@@ -149,7 +149,7 @@ mod tests {
         map.insert(
             "world".to_string(),
             vec![CompactPosting {
-                doc_id: 0,
+                doc_id: nodedb_types::Surrogate(0),
                 term_freq: 1,
                 fieldnorm: smallfloat::encode(100),
                 positions: vec![1],

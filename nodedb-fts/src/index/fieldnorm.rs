@@ -1,8 +1,10 @@
 //! Fieldnorm storage: SmallFloat-encoded document lengths per collection.
 //!
-//! Stores a compact `Vec<u8>` array indexed by u32 doc_id. Each byte is
+//! Stores a compact `Vec<u8>` array indexed by surrogate. Each byte is
 //! a SmallFloat-encoded document length. Persisted as metadata blob via
 //! the backend's `read_meta`/`write_meta`.
+
+use nodedb_types::Surrogate;
 
 use crate::backend::FtsBackend;
 use crate::codec::smallfloat;
@@ -16,23 +18,23 @@ impl<B: FtsBackend> FtsIndex<B> {
         &self,
         tid: u32,
         collection: &str,
-        doc_id: u32,
+        doc_id: Surrogate,
     ) -> Result<Option<u32>, B::Error> {
         let data = self.backend.read_meta(tid, collection, "fieldnorms")?;
         match data {
-            Some(bytes) if (doc_id as usize) < bytes.len() => {
-                Ok(Some(smallfloat::decode(bytes[doc_id as usize])))
+            Some(bytes) if (doc_id.0 as usize) < bytes.len() => {
+                Ok(Some(smallfloat::decode(bytes[doc_id.0 as usize])))
             }
             _ => Ok(None),
         }
     }
 
-    /// Write a fieldnorm byte for a doc_id. Grows the array if needed.
+    /// Write a fieldnorm byte for a surrogate. Grows the array if needed.
     pub fn write_fieldnorm(
         &self,
         tid: u32,
         collection: &str,
-        doc_id: u32,
+        doc_id: Surrogate,
         doc_length: u32,
     ) -> Result<(), B::Error> {
         let mut data = self
@@ -40,7 +42,7 @@ impl<B: FtsBackend> FtsIndex<B> {
             .read_meta(tid, collection, "fieldnorms")?
             .unwrap_or_default();
 
-        let idx = doc_id as usize;
+        let idx = doc_id.0 as usize;
         if idx >= data.len() {
             data.resize(idx + 1, 0);
         }
@@ -53,6 +55,8 @@ impl<B: FtsBackend> FtsIndex<B> {
 
 #[cfg(test)]
 mod tests {
+    use nodedb_types::Surrogate;
+
     use crate::backend::memory::MemoryBackend;
     use crate::codec::smallfloat;
     use crate::index::FtsIndex;
@@ -62,11 +66,11 @@ mod tests {
     #[test]
     fn fieldnorm_roundtrip() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.write_fieldnorm(T, "col", 0, 100).unwrap();
-        idx.write_fieldnorm(T, "col", 5, 50).unwrap();
+        idx.write_fieldnorm(T, "col", Surrogate(0), 100).unwrap();
+        idx.write_fieldnorm(T, "col", Surrogate(5), 50).unwrap();
 
-        let norm0 = idx.read_fieldnorm(T, "col", 0).unwrap().unwrap();
-        let norm5 = idx.read_fieldnorm(T, "col", 5).unwrap().unwrap();
+        let norm0 = idx.read_fieldnorm(T, "col", Surrogate(0)).unwrap().unwrap();
+        let norm5 = idx.read_fieldnorm(T, "col", Surrogate(5)).unwrap().unwrap();
 
         assert!(norm0 <= 100);
         assert!(norm5 <= 50);
@@ -77,16 +81,16 @@ mod tests {
     #[test]
     fn fieldnorm_missing_doc() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        assert_eq!(idx.read_fieldnorm(T, "col", 99).unwrap(), None);
+        assert_eq!(idx.read_fieldnorm(T, "col", Surrogate(99)).unwrap(), None);
     }
 
     #[test]
     fn fieldnorm_overwrite() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.write_fieldnorm(T, "col", 0, 100).unwrap();
-        idx.write_fieldnorm(T, "col", 0, 200).unwrap();
+        idx.write_fieldnorm(T, "col", Surrogate(0), 100).unwrap();
+        idx.write_fieldnorm(T, "col", Surrogate(0), 200).unwrap();
 
-        let norm = idx.read_fieldnorm(T, "col", 0).unwrap().unwrap();
+        let norm = idx.read_fieldnorm(T, "col", Surrogate(0)).unwrap().unwrap();
         assert_eq!(norm, smallfloat::decode(smallfloat::encode(200)));
     }
 }

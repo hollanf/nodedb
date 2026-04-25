@@ -1,5 +1,8 @@
 //! BMW query entry point: merges memtable + segments via LSM layer,
-//! runs BMW scoring on u32 doc IDs, resolves top-k back to String.
+//! runs BMW scoring on `Surrogate` row identities, resolves top-k back
+//! to user-facing PK strings via the per-collection docmap.
+
+use nodedb_types::Surrogate;
 
 use crate::backend::FtsBackend;
 use crate::block::{CompactPosting, into_blocks};
@@ -70,7 +73,7 @@ pub fn bmw_search<B: FtsBackend>(
 
     let mut results = Vec::with_capacity(scored.len());
     for doc in &scored {
-        let doc_id_str = match doc_map.to_string(doc.doc_id) {
+        let doc_id_str = match doc_map.to_string(doc.doc_id.0) {
             Some(s) => s.to_string(),
             None => continue,
         };
@@ -95,15 +98,16 @@ fn to_compact<B: FtsBackend>(
 ) -> Result<Vec<CompactPosting>, B::Error> {
     let mut compact = Vec::with_capacity(postings.len());
     for p in postings {
-        let Some(doc_id) = doc_map.to_u32(&p.doc_id) else {
+        let Some(int_id) = doc_map.to_u32(&p.doc_id) else {
             continue;
         };
+        let surrogate = Surrogate(int_id);
         let fieldnorm = index
-            .read_fieldnorm(tid, collection, doc_id)?
+            .read_fieldnorm(tid, collection, surrogate)?
             .map(smallfloat::encode)
             .unwrap_or_else(|| smallfloat::encode(p.term_freq));
         compact.push(CompactPosting {
-            doc_id,
+            doc_id: surrogate,
             term_freq: p.term_freq,
             fieldnorm,
             positions: p.positions.clone(),

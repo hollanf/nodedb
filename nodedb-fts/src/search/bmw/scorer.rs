@@ -1,8 +1,10 @@
 //! Block-Max WAND scoring engine.
 //!
 //! Two-level skip: WAND pivot selection across terms, then block-level
-//! pruning within each term's posting list. Operates entirely on u32
-//! doc IDs for zero-allocation scoring.
+//! pruning within each term's posting list. Operates on `Surrogate` row
+//! identities for zero-allocation scoring.
+
+use nodedb_types::Surrogate;
 
 use crate::bm25;
 use crate::codec::smallfloat;
@@ -10,6 +12,9 @@ use crate::posting::Bm25Params;
 
 use super::heap::TopKHeap;
 use super::skip_index::TermBlocks;
+
+/// Sentinel returned by an exhausted cursor — sorts after every real surrogate.
+const EXHAUSTED: Surrogate = Surrogate(u32::MAX);
 
 /// Per-term iterator state during BMW traversal.
 struct TermCursor<'a> {
@@ -45,20 +50,20 @@ impl<'a> TermCursor<'a> {
         }
     }
 
-    /// Current doc_id the cursor points to, or `u32::MAX` if exhausted.
-    fn current_doc_id(&self) -> u32 {
+    /// Current surrogate the cursor points to, or `EXHAUSTED` if past end.
+    fn current_doc_id(&self) -> Surrogate {
         if self.block_idx >= self.term.blocks.len() {
-            return u32::MAX;
+            return EXHAUSTED;
         }
         let block = &self.term.blocks[self.block_idx];
         if self.pos_in_block >= block.doc_ids.len() {
-            return u32::MAX;
+            return EXHAUSTED;
         }
         block.doc_ids[self.pos_in_block]
     }
 
-    /// Advance cursor to the first doc_id ≥ `target`.
-    fn advance_to(&mut self, target: u32) {
+    /// Advance cursor to the first surrogate ≥ `target`.
+    fn advance_to(&mut self, target: Surrogate) {
         // Skip entire blocks using the skip index.
         if let Some(blk) = self.term.advance_to_block(target) {
             if blk > self.block_idx {
@@ -200,7 +205,7 @@ pub fn bmw_score(
         }
 
         let pivot_doc_id = cursors[pivot_idx].current_doc_id();
-        if pivot_doc_id == u32::MAX {
+        if pivot_doc_id == EXHAUSTED {
             break;
         }
 
@@ -254,7 +259,7 @@ mod tests {
         let postings: Vec<CompactPosting> = doc_ids
             .iter()
             .map(|&id| CompactPosting {
-                doc_id: id,
+                doc_id: Surrogate(id),
                 term_freq: tf,
                 fieldnorm: smallfloat::encode(100),
                 positions: vec![0],
@@ -275,9 +280,9 @@ mod tests {
         let results = heap.into_sorted();
         assert!(!results.is_empty());
         // Docs 2 and 3 match both terms — should score highest.
-        let top_ids: Vec<u32> = results.iter().map(|r| r.doc_id).collect();
-        assert!(top_ids.contains(&2));
-        assert!(top_ids.contains(&3));
+        let top_ids: Vec<Surrogate> = results.iter().map(|r| r.doc_id).collect();
+        assert!(top_ids.contains(&Surrogate(2)));
+        assert!(top_ids.contains(&Surrogate(3)));
     }
 
     #[test]
@@ -324,9 +329,9 @@ mod tests {
         let results = heap.into_sorted();
         assert_eq!(results.len(), 3);
         // The rare-term docs (50, 200, 500) should dominate due to high IDF + tf.
-        let top_ids: Vec<u32> = results.iter().map(|r| r.doc_id).collect();
-        assert!(top_ids.contains(&50));
-        assert!(top_ids.contains(&200));
-        assert!(top_ids.contains(&500));
+        let top_ids: Vec<Surrogate> = results.iter().map(|r| r.doc_id).collect();
+        assert!(top_ids.contains(&Surrogate(50)));
+        assert!(top_ids.contains(&Surrogate(200)));
+        assert!(top_ids.contains(&Surrogate(500)));
     }
 }

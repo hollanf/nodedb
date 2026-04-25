@@ -7,6 +7,8 @@
 
 use std::collections::HashMap;
 
+use nodedb_types::Surrogate;
+
 use crate::block::CompactPosting;
 use crate::codec::smallfloat;
 
@@ -15,7 +17,7 @@ use super::segment::{reader::SegmentReader, writer};
 
 /// A worker's accumulated result: per-term postings ready to flush.
 pub struct WorkerResult {
-    /// term → list of CompactPostings (already using u32 doc IDs).
+    /// term → list of CompactPostings keyed on `Surrogate` row identities.
     pub term_postings: HashMap<String, Vec<CompactPosting>>,
 }
 
@@ -87,7 +89,7 @@ pub fn partition_doc_range(total_docs: u32, num_workers: u32) -> Vec<(u32, u32)>
 
 /// Helper: create a CompactPosting for parallel build.
 pub fn make_compact_posting(
-    doc_id: u32,
+    doc_id: Surrogate,
     term_freq: u32,
     doc_len: u32,
     positions: Vec<u32>,
@@ -127,14 +129,20 @@ mod tests {
     fn worker_result_flush_and_merge() {
         // Worker 1: docs 0-1.
         let mut w1 = WorkerResult::new();
-        w1.insert("hello", make_compact_posting(0, 2, 100, vec![0, 3]));
-        w1.insert("hello", make_compact_posting(1, 1, 50, vec![5]));
-        w1.insert("world", make_compact_posting(0, 1, 100, vec![1]));
+        w1.insert(
+            "hello",
+            make_compact_posting(Surrogate(0), 2, 100, vec![0, 3]),
+        );
+        w1.insert("hello", make_compact_posting(Surrogate(1), 1, 50, vec![5]));
+        w1.insert("world", make_compact_posting(Surrogate(0), 1, 100, vec![1]));
 
         // Worker 2: docs 2-3.
         let mut w2 = WorkerResult::new();
-        w2.insert("hello", make_compact_posting(2, 1, 80, vec![0]));
-        w2.insert("foo", make_compact_posting(3, 3, 120, vec![0, 2, 7]));
+        w2.insert("hello", make_compact_posting(Surrogate(2), 1, 80, vec![0]));
+        w2.insert(
+            "foo",
+            make_compact_posting(Surrogate(3), 3, 120, vec![0, 2, 7]),
+        );
 
         let seg1 = w1.flush_to_segment();
         let seg2 = w2.flush_to_segment();

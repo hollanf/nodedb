@@ -124,13 +124,13 @@ mod tests {
             "alpha".to_string(),
             vec![
                 CompactPosting {
-                    doc_id: 0,
+                    doc_id: nodedb_types::Surrogate(0),
                     term_freq: 2,
                     fieldnorm: smallfloat::encode(50),
                     positions: vec![0, 3],
                 },
                 CompactPosting {
-                    doc_id: 5,
+                    doc_id: nodedb_types::Surrogate(5),
                     term_freq: 1,
                     fieldnorm: smallfloat::encode(100),
                     positions: vec![7],
@@ -140,7 +140,7 @@ mod tests {
         postings.insert(
             "beta".to_string(),
             vec![CompactPosting {
-                doc_id: 0,
+                doc_id: nodedb_types::Surrogate(0),
                 term_freq: 1,
                 fieldnorm: smallfloat::encode(50),
                 positions: vec![1],
@@ -157,7 +157,10 @@ mod tests {
 
         let blocks = reader.read_postings("alpha");
         assert_eq!(blocks.len(), 1); // 2 docs fit in 1 block.
-        assert_eq!(blocks[0].doc_ids, vec![0, 5]);
+        assert_eq!(
+            blocks[0].doc_ids,
+            vec![nodedb_types::Surrogate(0), nodedb_types::Surrogate(5)]
+        );
         assert_eq!(blocks[0].term_freqs, vec![2, 1]);
     }
 

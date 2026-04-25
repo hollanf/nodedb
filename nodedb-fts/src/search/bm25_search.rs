@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use nodedb_types::Surrogate;
+
 use crate::backend::FtsBackend;
 use crate::bm25::bm25_score;
 use crate::index::FtsIndex;
@@ -206,11 +208,11 @@ impl<B: FtsBackend> FtsIndex<B> {
 
         let mut results = Vec::new();
         for candidate in candidates {
-            let int_id = doc_map.to_u32(&candidate.doc_id);
+            let surrogate = doc_map.to_u32(&candidate.doc_id).map(Surrogate);
             let matched = term_blocks
                 .iter()
                 .filter(|tb| {
-                    int_id.is_some_and(|id| tb.blocks.iter().any(|b| b.doc_ids.contains(&id)))
+                    surrogate.is_some_and(|sid| tb.blocks.iter().any(|b| b.doc_ids.contains(&sid)))
                 })
                 .count();
             if matched >= num_terms {
@@ -234,6 +236,7 @@ impl<B: FtsBackend> FtsIndex<B> {
         let Some(int_id) = doc_map.to_u32(doc_id) else {
             return 0;
         };
+        let surrogate = Surrogate(int_id);
         let term_blocks = match crate::lsm::query::collect_merged_term_blocks(
             &self.backend,
             tid,
@@ -246,7 +249,7 @@ impl<B: FtsBackend> FtsIndex<B> {
         };
         term_blocks
             .iter()
-            .filter(|tb| tb.blocks.iter().any(|b| b.doc_ids.contains(&int_id)))
+            .filter(|tb| tb.blocks.iter().any(|b| b.doc_ids.contains(&surrogate)))
             .count()
     }
 

@@ -1,23 +1,31 @@
 //! 128-document posting block with compressed storage.
 //!
 //! Each `PostingBlock` holds up to 128 postings. Data is stored as:
-//! - Delta-encoded, bitpacked doc IDs (u32)
+//! - Delta-encoded, bitpacked surrogate IDs (raw `u32` on disk; typed
+//!   `Surrogate` in memory)
 //! - Bitpacked term frequencies (u32)
 //! - SmallFloat fieldnorm bytes (1 byte per doc)
 //! - Per-doc position lists (variable length)
 //!
 //! This is the storage unit for BMW (Block-Max WAND): each block carries
 //! `block_max_tf` and `block_min_fieldnorm` for skip-level pruning.
+//!
+//! `Surrogate` is the global, monotonically-allocated row identity shared
+//! across every engine. The on-disk encoding stays raw `u32` for delta
+//! compression and SIMD unpack; in-memory blocks expose typed `Surrogate`
+//! values so cross-engine bitmap intersections stay type-safe.
+
+use nodedb_types::Surrogate;
 
 use crate::codec::{bitpack, delta, smallfloat};
 
 /// Maximum number of documents per posting block.
 pub const BLOCK_SIZE: usize = 128;
 
-/// A compact posting entry using integer doc IDs.
+/// A compact posting entry keyed on a `Surrogate` row identity.
 #[derive(Debug, Clone)]
 pub struct CompactPosting {
-    pub doc_id: u32,
+    pub doc_id: Surrogate,
     pub term_freq: u32,
     pub fieldnorm: u8,
     pub positions: Vec<u32>,
@@ -29,8 +37,8 @@ pub struct CompactPosting {
 /// representation (via `to_bytes` / `from_bytes`).
 #[derive(Debug, Clone)]
 pub struct PostingBlock {
-    /// Sorted u32 doc IDs in this block.
-    pub doc_ids: Vec<u32>,
+    /// Sorted surrogate IDs in this block.
+    pub doc_ids: Vec<Surrogate>,
     /// Term frequencies, parallel to `doc_ids`.
     pub term_freqs: Vec<u32>,
     /// SmallFloat-encoded fieldnorms, parallel to `doc_ids`.
@@ -42,8 +50,8 @@ pub struct PostingBlock {
 /// Block-level metadata for BMW skip index.
 #[derive(Debug, Clone, Copy)]
 pub struct BlockMeta {
-    /// Last (largest) doc ID in this block.
-    pub last_doc_id: u32,
+    /// Last (largest) surrogate ID in this block.
+    pub last_doc_id: Surrogate,
     /// Number of documents in this block.
     pub doc_count: u16,
     /// Maximum term frequency in this block (for upper bound scoring).
@@ -61,7 +69,7 @@ impl PostingBlock {
         let n = postings.len().min(BLOCK_SIZE);
         debug_assert!(
             postings[..n].windows(2).all(|w| w[0].doc_id <= w[1].doc_id),
-            "postings must be sorted by doc_id"
+            "postings must be sorted by surrogate"
         );
 
         Self {
@@ -85,7 +93,7 @@ impl PostingBlock {
     /// Compute block metadata for BMW skip index.
     pub fn meta(&self) -> BlockMeta {
         BlockMeta {
-            last_doc_id: self.doc_ids.last().copied().unwrap_or(0),
+            last_doc_id: self.doc_ids.last().copied().unwrap_or(Surrogate::ZERO),
             doc_count: self.doc_ids.len() as u16,
             block_max_tf: self.term_freqs.iter().copied().max().unwrap_or(0),
             block_min_fieldnorm: self.fieldnorms.iter().copied().min().unwrap_or(0),
@@ -108,8 +116,9 @@ impl PostingBlock {
         // Doc count.
         buf.extend_from_slice(&(self.doc_ids.len() as u16).to_le_bytes());
 
-        // Delta-encoded, bitpacked doc IDs.
-        let deltas = delta::encode(&self.doc_ids);
+        // Delta-encoded, bitpacked surrogate IDs (raw u32 on disk).
+        let raw_ids: Vec<u32> = self.doc_ids.iter().map(|s| s.0).collect();
+        let deltas = delta::encode(&raw_ids);
         let packed_ids = bitpack::pack(&deltas);
         buf.extend_from_slice(&(packed_ids.len() as u32).to_le_bytes());
         buf.extend_from_slice(&packed_ids);
@@ -169,7 +178,8 @@ impl PostingBlock {
         }
         let packed_deltas = &buf[pos..pos + ids_len];
         let deltas = bitpack::unpack(packed_deltas);
-        let doc_ids = delta::decode(&deltas);
+        let raw_ids = delta::decode(&deltas);
+        let doc_ids: Vec<Surrogate> = raw_ids.into_iter().map(Surrogate).collect();
         pos += ids_len;
 
         // Packed term frequencies.
@@ -261,7 +271,7 @@ mod tests {
     fn make_postings(n: usize) -> Vec<CompactPosting> {
         (0..n)
             .map(|i| CompactPosting {
-                doc_id: (i * 3) as u32,
+                doc_id: Surrogate((i * 3) as u32),
                 term_freq: (i % 5 + 1) as u32,
                 fieldnorm: smallfloat::encode((i * 10 + 20) as u32),
                 positions: vec![i as u32, (i + 5) as u32],
@@ -302,7 +312,7 @@ mod tests {
         let meta = block.meta();
 
         assert_eq!(meta.doc_count, 10);
-        assert_eq!(meta.last_doc_id, 27); // (9 * 3)
+        assert_eq!(meta.last_doc_id, Surrogate(27)); // (9 * 3)
         assert_eq!(meta.block_max_tf, 5); // max of (i%5+1) for i=0..9
     }
 
@@ -348,7 +358,7 @@ mod tests {
         // 128 postings with small deltas should compress well.
         let postings: Vec<CompactPosting> = (0..128)
             .map(|i| CompactPosting {
-                doc_id: i,
+                doc_id: Surrogate(i),
                 term_freq: 1,
                 fieldnorm: smallfloat::encode(100),
                 positions: vec![0],
