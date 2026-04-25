@@ -3,6 +3,17 @@
 //! These types represent the output of the nodedb-sql planner. Both Origin
 //! (server) and Lite (embedded) map these to their own execution model.
 
+/// Cross-engine prefilter for `SqlPlan::VectorSearch`: the array slice
+/// runs first, its matching cells' surrogates form a bitmap that gates
+/// the HNSW candidate set.
+#[derive(Debug, Clone)]
+pub struct NdArrayPrefilter {
+    /// Array name (resolved against the catalog).
+    pub array_name: String,
+    /// Slice predicate (per-dim ranges).
+    pub slice: crate::types_array::ArraySliceAst,
+}
+
 /// The top-level plan produced by the SQL planner.
 #[derive(Debug, Clone)]
 pub enum SqlPlan {
@@ -199,6 +210,13 @@ pub enum SqlPlan {
         top_k: usize,
         ef_search: usize,
         filters: Vec<Filter>,
+        /// Optional cross-engine prefilter: when set, the ND-array slice
+        /// runs first and its output cells' surrogates form a bitmap that
+        /// gates the HNSW candidate set. Set by the planner when an
+        /// `ORDER BY vector_distance(...) LIMIT k` query is JOINed against
+        /// `NDARRAY_SLICE(...)`. The convert layer lowers this to
+        /// `VectorOp::Search { inline_prefilter_plan: Some(ArrayOp::SurrogateBitmapScan) }`.
+        array_prefilter: Option<NdArrayPrefilter>,
     },
     MultiVectorSearch {
         collection: String,

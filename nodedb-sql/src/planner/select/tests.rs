@@ -68,9 +68,48 @@ impl SqlCatalog for TestCatalog {
                 indexes: Vec::new(),
                 bitemporal: false,
             }),
+            "embeddings" => Some(CollectionInfo {
+                name: "embeddings".into(),
+                engine: EngineType::DocumentSchemaless,
+                columns: Vec::new(),
+                primary_key: Some("id".into()),
+                has_auto_tier: false,
+                indexes: Vec::new(),
+                bitemporal: false,
+            }),
             _ => None,
         };
         Ok(info)
+    }
+
+    fn lookup_array(&self, name: &str) -> Option<crate::types::ArrayCatalogView> {
+        if name == "genome" {
+            Some(crate::types::ArrayCatalogView {
+                name: "genome".into(),
+                dims: vec![
+                    crate::types_array::ArrayDimAst {
+                        name: "chrom".into(),
+                        dtype: crate::types_array::ArrayDimType::Int64,
+                        lo: crate::types_array::ArrayDomainBound::Int64(1),
+                        hi: crate::types_array::ArrayDomainBound::Int64(23),
+                    },
+                    crate::types_array::ArrayDimAst {
+                        name: "pos".into(),
+                        dtype: crate::types_array::ArrayDimType::Int64,
+                        lo: crate::types_array::ArrayDomainBound::Int64(0),
+                        hi: crate::types_array::ArrayDomainBound::Int64(1_000_000),
+                    },
+                ],
+                attrs: vec![crate::types_array::ArrayAttrAst {
+                    name: "qual".into(),
+                    dtype: crate::types_array::ArrayAttrType::Float64,
+                    nullable: true,
+                }],
+                tile_extents: vec![1, 1_000_000],
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -167,4 +206,30 @@ fn chained_join_preserves_qualified_on_keys() {
         panic!("expected nested left join");
     };
     assert_eq!(inner_on, vec![("d.id".into(), "t.doc_id".into())]);
+}
+
+#[test]
+fn order_by_vector_distance_with_array_join_fuses_into_vector_search() {
+    let plan = plan_select_sql(
+        "SELECT v.id FROM embeddings v \
+         JOIN NDARRAY_SLICE('genome', '{chrom: [1, 1], pos: [0, 50000]}') AS s \
+           ON v.id = s.qual \
+         ORDER BY vector_distance(v.embedding, [1.0, 0.0, 0.0]) \
+         LIMIT 10",
+    );
+
+    let SqlPlan::VectorSearch {
+        collection,
+        top_k,
+        array_prefilter,
+        ..
+    } = plan
+    else {
+        panic!("expected fused VectorSearch plan");
+    };
+    assert_eq!(collection, "embeddings");
+    assert_eq!(top_k, 10);
+    let prefilter = array_prefilter.expect("array_prefilter must be set on fused plan");
+    assert_eq!(prefilter.array_name, "genome");
+    assert_eq!(prefilter.slice.dim_ranges.len(), 2);
 }

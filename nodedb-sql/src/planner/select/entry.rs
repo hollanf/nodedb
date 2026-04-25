@@ -178,8 +178,12 @@ fn try_extract_sort_search(
             })
             .collect::<Vec<_>>()
             .join(".");
-        let collection = match plan {
-            SqlPlan::Scan { collection, .. } => collection.clone(),
+        let (collection, array_prefilter) = match plan {
+            SqlPlan::Scan { collection, .. } => (collection.clone(), None),
+            SqlPlan::Join { left, right, .. } => match extract_vector_join_target(left, right) {
+                Some(t) => (t.vector_collection, t.array_prefilter),
+                None => return Ok(None),
+            },
             _ => return Ok(None),
         };
         let args = extract_func_args(func)?;
@@ -193,6 +197,7 @@ fn try_extract_sort_search(
                 let vector = extract_float_array(&args[1])?;
                 let limit = match plan {
                     SqlPlan::Scan { limit, .. } => limit.unwrap_or(10),
+                    SqlPlan::Join { limit, .. } => *limit,
                     _ => 10,
                 };
                 return Ok(Some(SqlPlan::VectorSearch {
@@ -205,6 +210,7 @@ fn try_extract_sort_search(
                         SqlPlan::Scan { filters, .. } => filters.clone(),
                         _ => Vec::new(),
                     },
+                    array_prefilter,
                 }));
             }
             SearchTrigger::TextSearch if args.len() >= 2 => {
@@ -328,6 +334,20 @@ fn apply_limit(mut plan: SqlPlan, limit_clause: &Option<ast::LimitClause>) -> Sq
                 *l = lv;
             }
         }
+        SqlPlan::VectorSearch {
+            top_k: ref mut k,
+            ef_search: ref mut ef,
+            ..
+        } => {
+            // Fused VectorSearch (e.g. ORDER BY vector_distance + JOIN
+            // NDARRAY_SLICE) inherits its outer LIMIT here. Without this,
+            // a join-derived VectorSearch carries the join's default
+            // 10000 limit instead of the user's `LIMIT N`.
+            if let Some(lv) = limit_val {
+                *k = lv;
+                *ef = lv * 2;
+            }
+        }
         _ => {}
     }
     plan
@@ -357,5 +377,42 @@ impl SqlCatalog for CteCatalog<'_> {
             }));
         }
         self.inner.get_collection(name)
+    }
+}
+
+/// Result of inspecting a `SqlPlan::Join` for the
+/// `ORDER BY vector_distance(...) + JOIN NDARRAY_SLICE(...)` fusion shape.
+struct VectorJoinTarget {
+    /// Vector collection backing the search (left or right of the join).
+    vector_collection: String,
+    /// Array slice that materializes into a surrogate prefilter.
+    array_prefilter: Option<crate::types::NdArrayPrefilter>,
+}
+
+/// If the join has exactly one `SqlPlan::NdArraySlice` side and the other
+/// side is a vector-collection scan, return the fused target. Returns
+/// `None` for any other shape — the caller falls through to non-fused
+/// join planning.
+fn extract_vector_join_target(left: &SqlPlan, right: &SqlPlan) -> Option<VectorJoinTarget> {
+    match (left, right) {
+        (SqlPlan::Scan { collection, .. }, SqlPlan::NdArraySlice { name, slice, .. }) => {
+            Some(VectorJoinTarget {
+                vector_collection: collection.clone(),
+                array_prefilter: Some(crate::types::NdArrayPrefilter {
+                    array_name: name.clone(),
+                    slice: slice.clone(),
+                }),
+            })
+        }
+        (SqlPlan::NdArraySlice { name, slice, .. }, SqlPlan::Scan { collection, .. }) => {
+            Some(VectorJoinTarget {
+                vector_collection: collection.clone(),
+                array_prefilter: Some(crate::types::NdArrayPrefilter {
+                    array_name: name.clone(),
+                    slice: slice.clone(),
+                }),
+            })
+        }
+        _ => None,
     }
 }
