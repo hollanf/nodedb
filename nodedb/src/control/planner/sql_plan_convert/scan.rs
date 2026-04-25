@@ -1,6 +1,7 @@
 //! Scan and search plan conversions (read-only query paths).
 
 use nodedb_sql::TemporalScope;
+use nodedb_sql::planner::bitmap_emit::predicate::BitmapHint;
 use nodedb_sql::types::{EngineType, Filter, SqlPlan, SqlValue};
 
 /// Project `TemporalScope::valid_time` into the wire field `valid_at_ms`.
@@ -297,6 +298,30 @@ pub(super) fn convert_point_get(
     }])
 }
 
+/// Build a `PhysicalPlan` bitmap-producer sub-plan from a `BitmapHint`.
+///
+/// Returns `None` for hint shapes that cannot be represented as an
+/// `IndexedFetch` (e.g. non-string primary values that have no reasonable
+/// index-path encoding). The caller treats `None` as "no bitmap pushdown".
+fn bitmap_hint_to_plan(hint: &BitmapHint) -> Option<Box<PhysicalPlan>> {
+    // Only equality hints translate to an `IndexedFetch` sub-plan.
+    // IN-list hints with extra_values would require a multi-value fetch —
+    // not currently supported by `DocumentOp::IndexedFetch`; skip them.
+    if !hint.extra_values.is_empty() {
+        return None;
+    }
+    let value_str = sql_value_to_string(&hint.primary_value);
+    Some(Box::new(PhysicalPlan::Document(DocumentOp::IndexedFetch {
+        collection: hint.collection.clone(),
+        path: hint.field.clone(),
+        value: value_str,
+        filters: Vec::new(),
+        projection: Vec::new(),
+        limit: 10_000,
+        offset: 0,
+    })))
+}
+
 pub(super) fn convert_join(p: JoinPlanParams<'_>) -> crate::Result<Vec<PhysicalTask>> {
     let JoinPlanParams {
         left,
@@ -342,6 +367,17 @@ pub(super) fn convert_join(p: JoinPlanParams<'_>) -> crate::Result<Vec<PhysicalT
         join_type.as_str().to_string()
     };
 
+    // Analyze join children for selective-predicate bitmap pushdown.
+    // The analysis runs on the *original* (pre-swap) children since it inspects
+    // SqlPlan shape. After the RIGHT→LEFT swap, we swap the resulting hints too.
+    let bitmap_hints = nodedb_sql::planner::bitmap_emit::hashjoin::analyze_join_sides(left, right);
+    let (mut raw_left_bm, mut raw_right_bm) = (bitmap_hints.left, bitmap_hints.right);
+    if join_type.as_str() == "right" {
+        std::mem::swap(&mut raw_left_bm, &mut raw_right_bm);
+    }
+    let inline_left_bitmap = raw_left_bm.and_then(|h| bitmap_hint_to_plan(&h));
+    let inline_right_bitmap = raw_right_bm.and_then(|h| bitmap_hint_to_plan(&h));
+
     let vshard = VShardId::from_collection(&left_collection);
 
     Ok(vec![PhysicalTask {
@@ -361,8 +397,8 @@ pub(super) fn convert_join(p: JoinPlanParams<'_>) -> crate::Result<Vec<PhysicalT
             post_filters: filter_bytes,
             inline_left,
             inline_right,
-            inline_left_bitmap: None,
-            inline_right_bitmap: None,
+            inline_left_bitmap,
+            inline_right_bitmap,
         }),
         post_set_op: PostSetOp::None,
     }])

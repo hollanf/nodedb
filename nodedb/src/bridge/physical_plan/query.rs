@@ -1,7 +1,5 @@
 //! Query operations (joins, aggregates) dispatched to the Data Plane.
 
-use nodedb_types::SurrogateBitmap;
-
 /// Aggregate specification for Data Plane aggregate execution.
 #[derive(
     Debug,
@@ -95,12 +93,14 @@ pub enum QueryOp {
         /// small-side inputs. The Control Plane executes this plan first,
         /// merges it if needed, then embeds the result into `BroadcastJoin`.
         inline_right: Option<Box<crate::bridge::envelope::PhysicalPlan>>,
-        /// Surrogate bitmap currency produced by the inline left sub-plan.
-        /// Carried as a separate field so Stage 2 can thread it into the
-        /// parent engine's prefilter slot without re-executing the sub-plan.
-        inline_left_bitmap: Option<SurrogateBitmap>,
-        /// Surrogate bitmap currency produced by the inline right sub-plan.
-        inline_right_bitmap: Option<SurrogateBitmap>,
+        /// Bitmap-producer sub-plan for the left side. When set, the executor
+        /// executes this plan first, collects surrogates from all returned rows,
+        /// and injects the resulting bitmap into the probe-side prefilter before
+        /// scanning. `None` = no bitmap pushdown for the left side.
+        inline_left_bitmap: Option<Box<crate::bridge::envelope::PhysicalPlan>>,
+        /// Bitmap-producer sub-plan for the right side. Same semantics as
+        /// `inline_left_bitmap` but applied to the right (probe) collection.
+        inline_right_bitmap: Option<Box<crate::bridge::envelope::PhysicalPlan>>,
     },
 
     /// Inline hash join: both sides are pre-gathered msgpack data.

@@ -51,6 +51,8 @@ impl CoreLoop {
                 post_filters,
                 inline_left,
                 inline_right,
+                inline_left_bitmap,
+                inline_right_bitmap,
                 ..
             }) => self.execute_hash_join(HashJoinParams {
                 join: JoinParams {
@@ -68,6 +70,8 @@ impl CoreLoop {
                 right_alias: right_alias.as_deref(),
                 inline_left: inline_left.as_deref(),
                 inline_right: inline_right.as_deref(),
+                inline_left_bitmap: inline_left_bitmap.as_deref(),
+                inline_right_bitmap: inline_right_bitmap.as_deref(),
             }),
 
             PhysicalPlan::Query(QueryOp::InlineHashJoin {
@@ -240,6 +244,8 @@ impl CoreLoop {
                     right_alias: None,
                     inline_left: None,
                     inline_right: None,
+                    inline_left_bitmap: None,
+                    inline_right_bitmap: None,
                 })
             }
 

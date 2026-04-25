@@ -25,6 +25,13 @@ pub(crate) struct HashJoinParams<'a> {
     pub right_alias: Option<&'a str>,
     pub inline_left: Option<&'a PhysicalPlan>,
     pub inline_right: Option<&'a PhysicalPlan>,
+    /// Bitmap-producer sub-plan for the left side. When `Some`, the executor
+    /// runs this sub-plan first, collects surrogates, and injects the bitmap
+    /// into the right (probe) side's scan prefilter.
+    pub inline_left_bitmap: Option<&'a PhysicalPlan>,
+    /// Bitmap-producer sub-plan for the right side. Same semantics as
+    /// `inline_left_bitmap` but applied to the right collection.
+    pub inline_right_bitmap: Option<&'a PhysicalPlan>,
 }
 
 /// Inline hash join: both sides are pre-gathered as msgpack byte arrays.

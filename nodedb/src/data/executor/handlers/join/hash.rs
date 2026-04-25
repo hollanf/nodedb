@@ -231,6 +231,8 @@ impl CoreLoop {
             right_alias,
             inline_left,
             inline_right,
+            inline_left_bitmap,
+            inline_right_bitmap,
         } = p;
 
         debug!(
@@ -247,15 +249,55 @@ impl CoreLoop {
 
         let scan_limit = (join.limit * 10).min(50000);
 
+        // Materialize bitmap from inline_left_bitmap sub-plan (if set) and
+        // apply it as a prefilter to the left collection scan.
+        let left_bm = inline_left_bitmap.map(|sub_plan| {
+            crate::data::executor::dispatch::bitmap::hashjoin_inline::run_bitmap_subplan(
+                self, join.task, sub_plan,
+            )
+        });
+
+        // Materialize bitmap from inline_right_bitmap sub-plan (if set) and
+        // apply it as a prefilter to the right collection scan.
+        let right_bm = inline_right_bitmap.map(|sub_plan| {
+            crate::data::executor::dispatch::bitmap::hashjoin_inline::run_bitmap_subplan(
+                self, join.task, sub_plan,
+            )
+        });
+
         // If inline_left is set, execute the sub-plan to get left side docs.
         let left_docs = if let Some(sub_plan) = inline_left {
             let sub_response = self.execute_plan(join.task, sub_plan);
-            match super::super::super::response_codec::decode_response_to_docs(&sub_response) {
+            match crate::data::executor::response_codec::decode_response_to_docs(&sub_response) {
                 Some(docs) => docs,
                 None => {
                     // Sub-plan returned no decodable rows — pass through the response.
                     return sub_response;
                 }
+            }
+        } else if let Some(bm) = left_bm {
+            // Run a prefiltered document scan instead of a full collection scan.
+            match crate::data::executor::dispatch::bitmap::hashjoin_inline::prefiltered_scan_plan(
+                left_collection,
+                scan_limit,
+                bm,
+            ) {
+                Some(scan_plan) => {
+                    let resp = self.execute_plan(join.task, &scan_plan);
+                    crate::data::executor::response_codec::decode_response_to_docs(&resp)
+                        .unwrap_or_default()
+                }
+                None => match self.scan_collection(tid, left_collection, scan_limit) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        return self.response_error(
+                            join.task,
+                            ErrorCode::Internal {
+                                detail: e.to_string(),
+                            },
+                        );
+                    }
+                },
             }
         } else {
             match self.scan_collection(tid, left_collection, scan_limit) {
@@ -272,11 +314,34 @@ impl CoreLoop {
         };
         let right_docs = if let Some(sub_plan) = inline_right {
             let sub_response = self.execute_plan(join.task, sub_plan);
-            match super::super::super::response_codec::decode_response_to_docs(&sub_response) {
+            match crate::data::executor::response_codec::decode_response_to_docs(&sub_response) {
                 Some(docs) => docs,
                 None => {
                     return sub_response;
                 }
+            }
+        } else if let Some(bm) = right_bm {
+            match crate::data::executor::dispatch::bitmap::hashjoin_inline::prefiltered_scan_plan(
+                right_collection,
+                scan_limit,
+                bm,
+            ) {
+                Some(scan_plan) => {
+                    let resp = self.execute_plan(join.task, &scan_plan);
+                    crate::data::executor::response_codec::decode_response_to_docs(&resp)
+                        .unwrap_or_default()
+                }
+                None => match self.scan_collection(tid, right_collection, scan_limit) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        return self.response_error(
+                            join.task,
+                            ErrorCode::Internal {
+                                detail: e.to_string(),
+                            },
+                        );
+                    }
+                },
             }
         } else {
             match self.scan_collection(tid, right_collection, scan_limit) {
@@ -345,8 +410,9 @@ impl CoreLoop {
 
         // Decode left side: msgpack array or JSON array (from inner join result).
         let left_docs =
-            match super::super::super::response_codec::decode_response_to_docs_from_bytes(left_data)
-            {
+            match crate::data::executor::response_codec::decode_response_to_docs_from_bytes(
+                left_data,
+            ) {
                 Some(d) => d,
                 None => {
                     return self.response_with_payload(
