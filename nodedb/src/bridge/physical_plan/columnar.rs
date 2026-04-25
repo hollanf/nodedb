@@ -7,6 +7,8 @@
 //!
 //! All profiles share the same `ColumnarMemtable` → `SegmentWriter` infrastructure.
 
+use nodedb_types::Surrogate;
+
 /// Intent carried on `ColumnarOp::Insert` — see enum docs.
 #[derive(
     Clone,
@@ -102,6 +104,11 @@ pub enum ColumnarOp {
         /// or a `SqlExpr` the handler evaluates against the existing row
         /// plus the would-be-inserted row (with `EXCLUDED.col` resolution).
         on_conflict_updates: Vec<(String, super::document::UpdateValue)>,
+        /// Per-row stable cross-engine identities, parallel to the rows
+        /// in `payload`. CP-side assigner populates this in row order
+        /// before dispatch. `vec![]` only in test fixtures (and length
+        /// must equal the row count when populated).
+        surrogates: Vec<Surrogate>,
     },
 
     /// Update rows matching filter predicates.

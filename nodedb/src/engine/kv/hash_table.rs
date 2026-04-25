@@ -9,6 +9,10 @@
 //!   migrates entries progressively (a few per PUT) to avoid stalling the reactor.
 //! - Lazy expiry fallback: GET checks expiry and returns None for expired keys.
 
+use std::collections::HashMap;
+
+use nodedb_types::Surrogate;
+
 use super::entry::{KvEntry, NO_EXPIRY};
 use super::hash_helpers::{
     extract_value_from, free_value_from, hash_key, read_value_from, store_value_in,
@@ -55,6 +59,12 @@ pub struct KvHashTable {
 
     /// Inline value threshold in bytes.
     inline_threshold: usize,
+
+    /// Reverse mapping `surrogate.0 → primary key bytes`. Populated on
+    /// inserts that carry a non-zero surrogate. Read paths consult this
+    /// to translate a surrogate back to its user-facing primary key
+    /// (e.g. when emitting bitmap-join results).
+    surrogate_to_key: HashMap<u32, Vec<u8>>,
 }
 
 impl KvHashTable {
@@ -79,7 +89,24 @@ impl KvHashTable {
             rehash_cursor: 0,
             overflow: SlabAllocator::new(),
             inline_threshold,
+            surrogate_to_key: HashMap::new(),
         }
+    }
+
+    /// Look up the primary key bytes for a given surrogate, if any.
+    ///
+    /// Returns `None` when the surrogate is unbound (e.g. a row created
+    /// via an internal RMW path that does not yet allocate one).
+    pub fn key_for_surrogate(&self, surrogate: Surrogate) -> Option<&[u8]> {
+        self.surrogate_to_key
+            .get(&surrogate.0)
+            .map(|v| v.as_slice())
+    }
+
+    /// Number of bound surrogates in the reverse map. Test/diagnostic only.
+    #[cfg(test)]
+    pub fn surrogate_count(&self) -> usize {
+        self.surrogate_to_key.len()
     }
 
     /// Number of entries in the table (including entries still in rehash source).
@@ -197,9 +224,23 @@ impl KvHashTable {
 
     /// Insert or update a key-value pair. Returns the old value bytes if overwritten.
     ///
+    /// `surrogate` is the row's stable global identity:
+    /// - On insert of a new row, it is recorded in the reverse map.
+    /// - On update of an existing row, the entry's existing surrogate is
+    ///   preserved unless `surrogate` is non-zero AND the existing entry
+    ///   is unbound (`Surrogate::ZERO`), in which case the entry is bound.
+    /// - `Surrogate::ZERO` is the unbound sentinel — used by internal
+    ///   read-modify-write callers that do not allocate an identity.
+    ///
     /// Triggers incremental rehash migration if a rehash is in progress.
     /// Triggers a new rehash if the load factor exceeds the threshold.
-    pub fn put(&mut self, key: &[u8], value: &[u8], expire_at_ms: u64) -> Option<Vec<u8>> {
+    pub fn put(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+        expire_at_ms: u64,
+        surrogate: Surrogate,
+    ) -> Option<Vec<u8>> {
         // Progress incremental rehash.
         self.rehash_step();
 
@@ -218,6 +259,11 @@ impl KvHashTable {
             if let Some(entry) = self.slots[idx].as_mut() {
                 entry.value = new_kv_value;
                 entry.expire_at_ms = expire_at_ms;
+                // Late-bind a surrogate onto a previously-unbound entry.
+                if entry.surrogate == Surrogate::ZERO && surrogate != Surrogate::ZERO {
+                    entry.surrogate = surrogate;
+                    self.surrogate_to_key.insert(surrogate.0, key.to_vec());
+                }
             }
             return Some(old_value);
         }
@@ -230,11 +276,20 @@ impl KvHashTable {
             let old_value = extract_value_from(&old_entry.value, &self.overflow);
             free_value_from(&old_entry.value, &mut self.overflow);
             let new_kv_value = store_value_in(&mut self.overflow, value, self.inline_threshold);
+            let preserved = if old_entry.surrogate != Surrogate::ZERO {
+                old_entry.surrogate
+            } else {
+                surrogate
+            };
+            if preserved != Surrogate::ZERO {
+                self.surrogate_to_key.insert(preserved.0, key.to_vec());
+            }
             let new_entry = KvEntry {
                 hash: h,
                 key: key.to_vec(), // Only copy key when migrating from rehash source.
                 value: new_kv_value,
                 expire_at_ms,
+                surrogate: preserved,
             };
             Self::robin_hood_insert(&mut self.slots, new_entry);
             return Some(old_value);
@@ -242,11 +297,15 @@ impl KvHashTable {
 
         // New key — insert into primary. Single key copy here (unavoidable — entry owns key).
         let kv_value = store_value_in(&mut self.overflow, value, self.inline_threshold);
+        if surrogate != Surrogate::ZERO {
+            self.surrogate_to_key.insert(surrogate.0, key.to_vec());
+        }
         let entry = KvEntry {
             hash: h,
             key: key.to_vec(),
             value: kv_value,
             expire_at_ms,
+            surrogate,
         };
         Self::robin_hood_insert(&mut self.slots, entry);
         self.len += 1;
@@ -267,6 +326,9 @@ impl KvHashTable {
                 return false;
             };
             free_value_from(&entry.value, &mut self.overflow);
+            if entry.surrogate != Surrogate::ZERO {
+                self.surrogate_to_key.remove(&entry.surrogate.0);
+            }
             Self::repair_after_delete_static(&mut self.slots, idx);
             self.len -= 1;
             return true;
@@ -280,6 +342,9 @@ impl KvHashTable {
                 return false;
             };
             free_value_from(&entry.value, &mut self.overflow);
+            if entry.surrogate != Surrogate::ZERO {
+                self.surrogate_to_key.remove(&entry.surrogate.0);
+            }
             Self::repair_after_delete_static(old_slots, idx);
             self.len -= 1;
             return true;
@@ -304,6 +369,9 @@ impl KvHashTable {
                 return false;
             };
             free_value_from(&entry.value, &mut self.overflow);
+            if entry.surrogate != Surrogate::ZERO {
+                self.surrogate_to_key.remove(&entry.surrogate.0);
+            }
             Self::repair_after_delete_static(&mut self.slots, idx);
             self.len -= 1;
             return true;
@@ -319,6 +387,9 @@ impl KvHashTable {
                 return false;
             };
             free_value_from(&entry.value, &mut self.overflow);
+            if entry.surrogate != Surrogate::ZERO {
+                self.surrogate_to_key.remove(&entry.surrogate.0);
+            }
             Self::repair_after_delete_static(old_slots, idx);
             self.len -= 1;
             return true;
@@ -549,11 +620,11 @@ mod tests {
         let mut t = make_table();
         assert!(t.is_empty());
 
-        t.put(b"key1", b"value1", NO_EXPIRY);
+        t.put(b"key1", b"value1", NO_EXPIRY, Surrogate::ZERO);
         assert_eq!(t.len(), 1);
         assert_eq!(t.get(b"key1", 0), Some(b"value1".as_slice()));
 
-        t.put(b"key2", b"value2", NO_EXPIRY);
+        t.put(b"key2", b"value2", NO_EXPIRY, Surrogate::ZERO);
         assert_eq!(t.len(), 2);
 
         assert!(t.delete(b"key1", 0));
@@ -565,8 +636,8 @@ mod tests {
     #[test]
     fn overwrite_returns_old_value() {
         let mut t = make_table();
-        assert!(t.put(b"k", b"v1", NO_EXPIRY).is_none());
-        let old = t.put(b"k", b"v2", NO_EXPIRY);
+        assert!(t.put(b"k", b"v1", NO_EXPIRY, Surrogate::ZERO).is_none());
+        let old = t.put(b"k", b"v2", NO_EXPIRY, Surrogate::ZERO);
         assert_eq!(old, Some(b"v1".to_vec()));
         assert_eq!(t.get(b"k", 0), Some(b"v2".as_slice()));
         assert_eq!(t.len(), 1);
@@ -581,7 +652,7 @@ mod tests {
     #[test]
     fn lazy_expiry_on_get() {
         let mut t = make_table();
-        t.put(b"k", b"v", 1000);
+        t.put(b"k", b"v", 1000, Surrogate::ZERO);
 
         assert_eq!(t.get(b"k", 999), Some(b"v".as_slice()));
         assert!(t.get(b"k", 1000).is_none()); // Expired.
@@ -591,14 +662,14 @@ mod tests {
     #[test]
     fn set_expire_and_persist() {
         let mut t = make_table();
-        t.put(b"k", b"v", NO_EXPIRY);
+        t.put(b"k", b"v", NO_EXPIRY, Surrogate::ZERO);
 
         assert!(t.set_expire(b"k", 5000));
         assert!(t.get(b"k", 4999).is_some());
         assert!(t.get(b"k", 5000).is_none());
 
         // Reset expiry to force it to be visible again — need to re-put.
-        t.put(b"k", b"v", 10000);
+        t.put(b"k", b"v", 10000, Surrogate::ZERO);
         assert!(t.persist(b"k"));
         assert!(t.get(b"k", u64::MAX).is_some()); // Never expires.
     }
@@ -606,7 +677,7 @@ mod tests {
     #[test]
     fn reap_expired_removes_matching() {
         let mut t = make_table();
-        t.put(b"k", b"v", 5000);
+        t.put(b"k", b"v", 5000, Surrogate::ZERO);
 
         // Wrong expire_at_ms — should not reap.
         assert!(!t.reap_expired(b"k", 9999));
@@ -625,7 +696,7 @@ mod tests {
         for i in 0..10 {
             let key = format!("key{i:03}");
             let val = format!("val{i:03}");
-            t.put(key.as_bytes(), val.as_bytes(), NO_EXPIRY);
+            t.put(key.as_bytes(), val.as_bytes(), NO_EXPIRY, Surrogate::ZERO);
         }
 
         // Rehash should have been triggered.
@@ -633,7 +704,7 @@ mod tests {
         for i in 10..20 {
             let key = format!("key{i:03}");
             let val = format!("val{i:03}");
-            t.put(key.as_bytes(), val.as_bytes(), NO_EXPIRY);
+            t.put(key.as_bytes(), val.as_bytes(), NO_EXPIRY, Surrogate::ZERO);
         }
 
         // All entries should be findable.
@@ -655,8 +726,8 @@ mod tests {
         let small = b"tiny".to_vec(); // 4 bytes — inline.
         let large = vec![0xAB; 100]; // 100 bytes — overflow.
 
-        t.put(b"s", &small, NO_EXPIRY);
-        t.put(b"l", &large, NO_EXPIRY);
+        t.put(b"s", &small, NO_EXPIRY, Surrogate::ZERO);
+        t.put(b"l", &large, NO_EXPIRY, Surrogate::ZERO);
 
         assert_eq!(t.get(b"s", 0), Some(small.as_slice()));
         assert_eq!(t.get(b"l", 0), Some(large.as_slice()));
@@ -668,7 +739,12 @@ mod tests {
 
         // Insert 500 keys.
         for i in 0u32..500 {
-            t.put(&i.to_be_bytes(), &(i * 7).to_be_bytes(), NO_EXPIRY);
+            t.put(
+                &i.to_be_bytes(),
+                &(i * 7).to_be_bytes(),
+                NO_EXPIRY,
+                Surrogate::ZERO,
+            );
         }
         assert_eq!(t.len(), 500);
 
@@ -701,13 +777,13 @@ mod tests {
     fn get_entry_meta_returns_ttl_info() {
         let mut t = make_table();
         // Key without TTL.
-        t.put(b"persistent", b"v", NO_EXPIRY);
+        t.put(b"persistent", b"v", NO_EXPIRY, Surrogate::ZERO);
         let meta = t.get_entry_meta(b"persistent").unwrap();
         assert!(!meta.has_ttl);
         assert_eq!(meta.expire_at_ms, NO_EXPIRY);
 
         // Key with TTL.
-        t.put(b"ephemeral", b"v", 5000);
+        t.put(b"ephemeral", b"v", 5000, Surrogate::ZERO);
         let meta = t.get_entry_meta(b"ephemeral").unwrap();
         assert!(meta.has_ttl);
         assert_eq!(meta.expire_at_ms, 5000);
@@ -717,12 +793,52 @@ mod tests {
     }
 
     #[test]
+    fn surrogate_round_trip_via_reverse_map() {
+        let mut t = make_table();
+        let s1 = Surrogate::new(101);
+        let s2 = Surrogate::new(202);
+
+        t.put(b"alpha", b"v1", NO_EXPIRY, s1);
+        t.put(b"beta", b"v2", NO_EXPIRY, s2);
+
+        assert_eq!(t.surrogate_count(), 2);
+        assert_eq!(t.key_for_surrogate(s1), Some(b"alpha".as_slice()));
+        assert_eq!(t.key_for_surrogate(s2), Some(b"beta".as_slice()));
+        assert!(t.key_for_surrogate(Surrogate::new(999)).is_none());
+        assert!(t.key_for_surrogate(Surrogate::ZERO).is_none());
+
+        // Updating an existing key with a non-zero surrogate must
+        // preserve the original surrogate (assigner is idempotent).
+        t.put(b"alpha", b"v1b", NO_EXPIRY, Surrogate::new(303));
+        assert_eq!(t.key_for_surrogate(s1), Some(b"alpha".as_slice()));
+        assert!(t.key_for_surrogate(Surrogate::new(303)).is_none());
+
+        // Delete drops the reverse mapping.
+        assert!(t.delete(b"alpha", 0));
+        assert!(t.key_for_surrogate(s1).is_none());
+        assert_eq!(t.surrogate_count(), 1);
+    }
+
+    #[test]
+    fn unbound_entries_dont_pollute_reverse_map() {
+        let mut t = make_table();
+        t.put(b"k", b"v", NO_EXPIRY, Surrogate::ZERO);
+        assert_eq!(t.surrogate_count(), 0);
+
+        // Late-bind a surrogate via update.
+        let s = Surrogate::new(7);
+        t.put(b"k", b"v2", NO_EXPIRY, s);
+        assert_eq!(t.surrogate_count(), 1);
+        assert_eq!(t.key_for_surrogate(s), Some(b"k".as_slice()));
+    }
+
+    #[test]
     fn mem_usage_grows_with_entries() {
         let mut t = make_table();
         let base = t.mem_usage();
 
         for i in 0..100u32 {
-            t.put(&i.to_be_bytes(), &[0u8; 32], NO_EXPIRY);
+            t.put(&i.to_be_bytes(), &[0u8; 32], NO_EXPIRY, Surrogate::ZERO);
         }
 
         assert!(t.mem_usage() > base);

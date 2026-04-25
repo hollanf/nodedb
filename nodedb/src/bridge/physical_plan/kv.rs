@@ -1,5 +1,7 @@
 //! KV engine operations dispatched to the Data Plane.
 
+use nodedb_types::Surrogate;
+
 /// KV engine physical operations.
 ///
 /// All operations target a hash-indexed collection with O(1) point lookups.
@@ -35,6 +37,10 @@ pub enum KvOp {
         value: Vec<u8>,
         /// Per-key TTL override in milliseconds. 0 = use collection default.
         ttl_ms: u64,
+        /// Stable cross-engine identity assigned by the CP-side
+        /// `SurrogateAssigner` from `(collection, key)`.
+        /// `Surrogate::ZERO` only appears in test fixtures.
+        surrogate: Surrogate,
     },
 
     /// SQL `INSERT` semantics: write only if the key does not already exist.
@@ -46,6 +52,8 @@ pub enum KvOp {
         key: Vec<u8>,
         value: Vec<u8>,
         ttl_ms: u64,
+        /// Stable cross-engine identity. `Surrogate::ZERO` only in tests.
+        surrogate: Surrogate,
     },
 
     /// SQL `INSERT ... ON CONFLICT DO NOTHING` semantics: write if the key
@@ -55,6 +63,8 @@ pub enum KvOp {
         key: Vec<u8>,
         value: Vec<u8>,
         ttl_ms: u64,
+        /// Stable cross-engine identity. `Surrogate::ZERO` only in tests.
+        surrogate: Surrogate,
     },
 
     /// SQL `INSERT ... ON CONFLICT (key) DO UPDATE SET ...` semantics:
@@ -69,6 +79,8 @@ pub enum KvOp {
         value: Vec<u8>,
         ttl_ms: u64,
         updates: Vec<(String, super::document::UpdateValue)>,
+        /// Stable cross-engine identity. `Surrogate::ZERO` only in tests.
+        surrogate: Surrogate,
     },
 
     /// Delete by primary key(s). Returns count of keys actually deleted.

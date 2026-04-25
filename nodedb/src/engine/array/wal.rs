@@ -20,6 +20,7 @@
 use nodedb_array::types::cell_value::value::CellValue;
 use nodedb_array::types::coord::value::CoordValue;
 use nodedb_array::types::{ArrayId, TileId};
+use nodedb_types::Surrogate;
 use serde::{Deserialize, Serialize};
 
 #[derive(
@@ -34,6 +35,11 @@ use serde::{Deserialize, Serialize};
 pub struct ArrayPutCell {
     pub coord: Vec<CoordValue>,
     pub attrs: Vec<CellValue>,
+    /// Control-Plane-allocated global surrogate for this `(array, coord)`.
+    /// Recovery and follower replication re-derive it from the catalog
+    /// surrogate map; the live INSERT path stamps it here so engine
+    /// writers can carry it directly into the memtable / segment.
+    pub surrogate: Surrogate,
 }
 
 #[derive(
@@ -102,6 +108,7 @@ mod tests {
             cells: vec![ArrayPutCell {
                 coord: vec![CoordValue::Int64(1), CoordValue::Int64(2)],
                 attrs: vec![CellValue::Int64(99)],
+                surrogate: Surrogate::ZERO,
             }],
         };
         let bytes = zerompk::to_msgpack_vec(&p).unwrap();

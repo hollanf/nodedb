@@ -1,5 +1,7 @@
 //! Timeseries engine operations dispatched to the Data Plane.
 
+use nodedb_types::Surrogate;
+
 /// Timeseries engine physical operations.
 #[derive(
     Debug,
@@ -64,5 +66,17 @@ pub enum TimeseriesOp {
         /// so the Data Plane can skip records that have already been ingested
         /// or flushed to disk. `None` for live ingest (always accepted).
         wal_lsn: Option<u64>,
+        /// Per-row stable cross-engine identities, parallel to the rows
+        /// in `payload`. CP-side assigner populates this in row order
+        /// before dispatch when the payload is decoded at planning time
+        /// (SQL VALUES path). For opaque bulk payloads (ILP, OTEL,
+        /// PromQL remote-write, sync push, WAL replay) the CP cannot
+        /// enumerate rows without parsing the wire format, so this is
+        /// `vec![]`; the Data Plane handler decodes the payload and the
+        /// CP-driven re-derivation pattern is owned by the timeseries
+        /// engine integration.
+        #[serde(default)]
+        #[msgpack(default)]
+        surrogates: Vec<Surrogate>,
     },
 }

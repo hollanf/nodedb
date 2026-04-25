@@ -85,6 +85,8 @@ mod tests {
         roundtrip(PhysicalPlan::Document(DocumentOp::PointGet {
             collection: "users".into(),
             document_id: "user-1".into(),
+            surrogate: nodedb_types::Surrogate::ZERO,
+            pk_bytes: vec![],
             rls_filters: vec![],
             system_as_of_ms: None,
             valid_at_ms: None,
@@ -127,6 +129,7 @@ mod tests {
             key: b"sess:abc".to_vec(),
             value: b"\x81\xa3foo\xa3bar".to_vec(),
             ttl_ms: 3_600_000,
+            surrogate: nodedb_types::Surrogate::ZERO,
         }));
     }
 
@@ -157,6 +160,13 @@ mod tests {
 
     #[test]
     fn roundtrip_timeseries() {
+        roundtrip(PhysicalPlan::Timeseries(TimeseriesOp::Ingest {
+            collection: "metrics".into(),
+            payload: vec![0xc0],
+            format: "ilp".into(),
+            wal_lsn: Some(42),
+            surrogates: vec![nodedb_types::Surrogate::ZERO],
+        }));
         roundtrip(PhysicalPlan::Timeseries(TimeseriesOp::Scan {
             collection: "cpu_metrics".into(),
             time_range: (0, i64::MAX),

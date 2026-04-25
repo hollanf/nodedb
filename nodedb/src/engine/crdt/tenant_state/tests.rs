@@ -23,6 +23,7 @@ fn valid_write_applies() {
     let change = ProposedChange {
         collection: "users".into(),
         row_id: "u1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![
             ("name".into(), LoroValue::String("Alice".into())),
             (
@@ -58,6 +59,7 @@ fn constraint_violation_routes_to_dlq() {
     let change = ProposedChange {
         collection: "users".into(),
         row_id: "u1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![("email".into(), LoroValue::String("a@b.com".into()))],
     };
 
@@ -81,6 +83,7 @@ fn pre_validate_fast_rejects() {
     let change = ProposedChange {
         collection: "users".into(),
         row_id: "u1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![("email".into(), LoroValue::String("a@b.com".into()))],
     };
 
@@ -104,6 +107,7 @@ fn unique_violation_after_first_write() {
     let first = ProposedChange {
         collection: "users".into(),
         row_id: "u1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![
             ("name".into(), LoroValue::String("Alice".into())),
             (
@@ -125,6 +129,7 @@ fn unique_violation_after_first_write() {
     let second = ProposedChange {
         collection: "users".into(),
         row_id: "u2".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![
             ("name".into(), LoroValue::String("Bob".into())),
             (

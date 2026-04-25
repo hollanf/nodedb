@@ -1,10 +1,17 @@
 //! Graph engine operations dispatched to the Data Plane.
 
+use nodedb_types::Surrogate;
+
 use crate::engine::graph::algo::params::{AlgoParams, GraphAlgorithm};
 use crate::engine::graph::edge_store::Direction;
 use crate::engine::graph::traversal_options::GraphTraversalOptions;
 
 /// One edge in an `EdgePutBatch` / `EdgeDeleteBatch`.
+///
+/// `src_surrogate` / `dst_surrogate` carry the global row identity for the
+/// edge endpoints (resolved at construction time via the surrogate assigner).
+/// `Surrogate::ZERO` is used in test fixtures and on in-memory paths where
+/// no catalog is wired; production paths always populate real surrogates.
 #[derive(
     Debug,
     Clone,
@@ -19,6 +26,8 @@ pub struct BatchEdge {
     pub src_id: String,
     pub label: String,
     pub dst_id: String,
+    pub src_surrogate: Surrogate,
+    pub dst_surrogate: Surrogate,
 }
 
 /// Graph engine physical operations.
@@ -33,12 +42,20 @@ pub struct BatchEdge {
 )]
 pub enum GraphOp {
     /// Insert a graph edge with properties.
+    ///
+    /// `src_surrogate` / `dst_surrogate` carry the global row identity for
+    /// the two endpoints, resolved at construction time. The string `src_id`
+    /// / `dst_id` remain user-visible identifiers (used by the CSR partition
+    /// for label interning and by the edge store for keying), while the
+    /// surrogates are the cross-engine join currency.
     EdgePut {
         collection: String,
         src_id: String,
         label: String,
         dst_id: String,
         properties: Vec<u8>,
+        src_surrogate: Surrogate,
+        dst_surrogate: Surrogate,
     },
 
     /// Batched edge insert: many `(collection, src, label, dst)` tuples.

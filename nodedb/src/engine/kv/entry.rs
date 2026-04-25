@@ -4,6 +4,8 @@
 //! (≤ inline threshold) are embedded directly to avoid a pointer chase.
 //! Larger values are stored in an overflow buffer and referenced by index.
 
+use nodedb_types::Surrogate;
+
 /// Sentinel value indicating no TTL (key never expires).
 pub const NO_EXPIRY: u64 = 0;
 
@@ -26,6 +28,11 @@ pub struct KvEntry {
     /// Absolute expiry timestamp in milliseconds since Unix epoch.
     /// `0` = no expiry.
     pub expire_at_ms: u64,
+    /// Stable global row identity assigned by the Control-Plane allocator.
+    /// `Surrogate::ZERO` means "unbound" — set on entries created via
+    /// internal RMW paths (atomic ops, transfer item-create) where the
+    /// owning op variant does not yet carry a surrogate.
+    pub surrogate: Surrogate,
 }
 
 impl KvEntry {
@@ -36,6 +43,7 @@ impl KvEntry {
             key,
             value: KvValue::Inline(data),
             expire_at_ms,
+            surrogate: Surrogate::ZERO,
         }
     }
 
@@ -46,6 +54,7 @@ impl KvEntry {
             key,
             value: KvValue::Overflow { index, len },
             expire_at_ms,
+            surrogate: Surrogate::ZERO,
         }
     }
 
@@ -71,8 +80,8 @@ impl KvEntry {
 
     /// Approximate memory usage in bytes (for budget accounting).
     pub fn mem_size(&self) -> usize {
-        // Fixed overhead: hash(8) + expire(8) + enum discriminant(8) + vec overhead(24)
-        let fixed = 48;
+        // Fixed overhead: hash(8) + expire(8) + enum discriminant(8) + vec overhead(24) + surrogate(4) + pad(4)
+        let fixed = 56;
         let key_size = self.key.len();
         let value_size = match &self.value {
             KvValue::Inline(data) => data.len(),
@@ -141,7 +150,7 @@ mod tests {
     fn mem_size_is_reasonable() {
         let entry = KvEntry::inline(1, b"key".to_vec(), b"val".to_vec(), NO_EXPIRY);
         let size = entry.mem_size();
-        // 48 fixed + 3 key + 3 value = 54
-        assert_eq!(size, 54);
+        // 56 fixed + 3 key + 3 value = 62
+        assert_eq!(size, 62);
     }
 }

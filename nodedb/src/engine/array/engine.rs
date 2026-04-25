@@ -160,6 +160,7 @@ mod tests {
             vec![ArrayPutCell {
                 coord: vec![CoordValue::Int64(4), CoordValue::Int64(4)],
                 attrs: vec![CellValue::Int64(99)],
+                surrogate: nodedb_types::Surrogate::ZERO,
             }],
             1,
         )

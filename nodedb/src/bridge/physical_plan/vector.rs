@@ -1,5 +1,7 @@
 //! Vector engine operations dispatched to the Data Plane.
 
+use nodedb_types::Surrogate;
+
 /// Vector engine physical operations.
 #[derive(
     Debug,
@@ -35,8 +37,10 @@ pub enum VectorOp {
         dim: usize,
         /// Named vector field. Empty string = default (unnamed) field.
         field_name: String,
-        /// Optional document ID to associate with this vector.
-        doc_id: Option<String>,
+        /// Global surrogate identifying this row. Allocated by the
+        /// Control Plane via `SurrogateAssigner` before dispatch; the
+        /// engine binds the HNSW node id to this surrogate.
+        surrogate: Surrogate,
     },
 
     /// Batch insert vectors into the HNSW index.
@@ -44,6 +48,9 @@ pub enum VectorOp {
         collection: String,
         vectors: Vec<Vec<f32>>,
         dim: usize,
+        /// One surrogate per inserted vector, parallel to `vectors`.
+        /// Empty vector = headless batch (no PK binding).
+        surrogates: Vec<Surrogate>,
     },
 
     /// Multi-vector search: query across all named vector fields, fuse via RRF.
@@ -143,13 +150,14 @@ pub enum VectorOp {
     },
 
     /// Insert multiple vectors for a single document (ColBERT-style).
-    /// All vectors are inserted as separate HNSW nodes sharing the same doc_id.
+    /// All vectors are inserted as separate HNSW nodes sharing the
+    /// same `document_surrogate`.
     MultiVectorInsert {
         collection: String,
         /// Named vector field. Empty = default.
         field_name: String,
-        /// Document ID shared by all vectors.
-        doc_id: String,
+        /// Surrogate shared by all vectors of the document.
+        document_surrogate: Surrogate,
         /// Flat vector data: count × dim f32 values.
         vectors: Vec<f32>,
         /// Number of vectors.
@@ -163,8 +171,8 @@ pub enum VectorOp {
         collection: String,
         /// Named vector field. Empty = default.
         field_name: String,
-        /// Document ID whose vectors should be tombstoned.
-        doc_id: String,
+        /// Document surrogate whose vectors should be tombstoned.
+        document_surrogate: Surrogate,
     },
 
     /// Search with multi-vector aggregated scoring (MaxSim, AvgSim, SumSim).

@@ -81,6 +81,10 @@ pub enum ArrayOp {
 
     /// Insert one or more cells. `cells_msgpack` is an zerompk
     /// encoding of `Vec<nodedb::engine::array::wal::ArrayPutCell>`.
+    /// Each cell carries a Control-Plane-allocated `Surrogate` parallel
+    /// to its `coord` tuple — cross-engine bitmap joins read the
+    /// surrogate column on read paths instead of translating coords
+    /// back to user-visible PKs.
     Put {
         array_id: ArrayId,
         cells_msgpack: Vec<u8>,

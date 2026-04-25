@@ -1,5 +1,7 @@
 //! CRDT engine operations dispatched to the Data Plane.
 
+use nodedb_types::Surrogate;
+
 /// CRDT engine physical operations.
 #[derive(
     Debug,
@@ -18,6 +20,11 @@ pub enum CrdtOp {
     },
 
     /// CRDT delta application (write path).
+    ///
+    /// Binds the user-visible `document_id` to a stable cross-engine
+    /// `Surrogate`. UPSERT-aware: if the document already has a surrogate,
+    /// the assigner returns the existing one. `Surrogate::ZERO` only
+    /// appears in test fixtures.
     Apply {
         collection: String,
         document_id: String,
@@ -25,6 +32,8 @@ pub enum CrdtOp {
         peer_id: u64,
         /// Per-mutation unique ID for deduplication and compensation tracking.
         mutation_id: u64,
+        /// Stable cross-engine identity for the document this delta targets.
+        surrogate: Surrogate,
     },
 
     /// Set conflict resolution policy for a CRDT collection (DDL).
@@ -61,6 +70,8 @@ pub enum CrdtOp {
         document_id: String,
         /// JSON-serialized version vector of the target version.
         target_version_json: String,
+        /// Stable cross-engine identity for the document being restored.
+        surrogate: Surrogate,
     },
 
     /// Compact history at a specific version.
@@ -72,12 +83,18 @@ pub enum CrdtOp {
     // ─── Block Document (LoroList) Operations ───────────────────────
     /// Insert a block (LoroMap) into a document's block list.
     /// `fields_json` contains the block's fields as a JSON object.
+    ///
+    /// The inserted list element is a sub-document of the existing CRDT
+    /// document — it does not allocate a new top-level surrogate. The
+    /// `surrogate` field carries the parent document's surrogate.
     ListInsert {
         collection: String,
         document_id: String,
         list_path: String,
         index: usize,
         fields_json: String,
+        /// Surrogate of the parent document hosting this block list.
+        surrogate: Surrogate,
     },
 
     /// Delete a block from a document's block list.
@@ -86,6 +103,8 @@ pub enum CrdtOp {
         document_id: String,
         list_path: String,
         index: usize,
+        /// Surrogate of the parent document hosting this block list.
+        surrogate: Surrogate,
     },
 
     /// Move a block within a document's block list (reorder).
@@ -95,5 +114,7 @@ pub enum CrdtOp {
         list_path: String,
         from_index: usize,
         to_index: usize,
+        /// Surrogate of the parent document hosting this block list.
+        surrogate: Surrogate,
     },
 }

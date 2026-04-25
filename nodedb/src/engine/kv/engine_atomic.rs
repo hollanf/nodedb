@@ -368,7 +368,7 @@ impl KvEngine {
 
         // Write the value.
         let table = self.tables.get_mut(&tkey).expect("table ensured");
-        table.put(key, value, expire_at);
+        table.put(key, value, expire_at, nodedb_types::Surrogate::ZERO);
 
         // Schedule new expiry if needed.
         if expire_at != NO_EXPIRY {
@@ -468,6 +468,8 @@ fn decode_msgpack_f64(bytes: &[u8]) -> Result<f64, AtomicError> {
 
 #[cfg(test)]
 mod tests {
+    use nodedb_types::Surrogate;
+
     use super::*;
 
     fn make_engine() -> KvEngine {
@@ -502,7 +504,7 @@ mod tests {
         let mut engine = make_engine();
         // Set to MAX.
         let bytes = zerompk::to_msgpack_vec(&i64::MAX).unwrap();
-        engine.put(1, "counters", b"max", &bytes, 0, 1000);
+        engine.put(1, "counters", b"max", &bytes, 0, 1000, Surrogate::ZERO);
         let result = engine.incr(1, "counters", b"max", 1, 0, 1000);
         assert!(matches!(result, Err(AtomicError::Overflow)));
     }
@@ -511,7 +513,7 @@ mod tests {
     fn incr_type_mismatch() {
         let mut engine = make_engine();
         let bytes = zerompk::to_msgpack_vec(&"hello").unwrap();
-        engine.put(1, "counters", b"str", &bytes, 0, 1000);
+        engine.put(1, "counters", b"str", &bytes, 0, 1000, Surrogate::ZERO);
         let result = engine.incr(1, "counters", b"str", 1, 0, 1000);
         assert!(matches!(result, Err(AtomicError::TypeMismatch { .. })));
     }
@@ -532,7 +534,7 @@ mod tests {
         let mut engine = make_engine();
         // Set key with TTL.
         let bytes = zerompk::to_msgpack_vec(&50i64).unwrap();
-        engine.put(1, "counters", b"temp", &bytes, 5000, 1000);
+        engine.put(1, "counters", b"temp", &bytes, 5000, 1000, Surrogate::ZERO);
         // Incr with ttl_ms=0 should preserve existing TTL.
         engine.incr(1, "counters", b"temp", 10, 0, 1000).unwrap();
         let ttl = engine.get_ttl_ms(1, "counters", b"temp", 1000);
@@ -559,7 +561,7 @@ mod tests {
     fn incr_float_infinity_rejected() {
         let mut engine = make_engine();
         let bytes = zerompk::to_msgpack_vec(&f64::MAX).unwrap();
-        engine.put(1, "scores", b"big", &bytes, 0, 1000);
+        engine.put(1, "scores", b"big", &bytes, 0, 1000, Surrogate::ZERO);
         let result = engine.incr_float(1, "scores", b"big", f64::MAX, 1000);
         assert!(matches!(result, Err(AtomicError::Overflow)));
     }
@@ -578,7 +580,7 @@ mod tests {
     #[test]
     fn cas_success() {
         let mut engine = make_engine();
-        engine.put(1, "state", b"p1", b"idle", 0, 1000);
+        engine.put(1, "state", b"p1", b"idle", 0, 1000, Surrogate::ZERO);
         let result = engine.cas(1, "state", b"p1", b"idle", b"in_match", 1000);
         assert!(result.success);
         assert_eq!(result.current_value.as_deref(), Some(b"idle".as_slice()));
@@ -589,7 +591,7 @@ mod tests {
     #[test]
     fn cas_failure() {
         let mut engine = make_engine();
-        engine.put(1, "state", b"p1", b"fighting", 0, 1000);
+        engine.put(1, "state", b"p1", b"fighting", 0, 1000, Surrogate::ZERO);
         let result = engine.cas(1, "state", b"p1", b"idle", b"in_match", 1000);
         assert!(!result.success);
         assert_eq!(
@@ -613,7 +615,7 @@ mod tests {
     #[test]
     fn getset_existing_key() {
         let mut engine = make_engine();
-        engine.put(1, "session", b"tok", b"old-token", 0, 1000);
+        engine.put(1, "session", b"tok", b"old-token", 0, 1000, Surrogate::ZERO);
         let old = engine.getset(1, "session", b"tok", b"new-token", 1000);
         assert_eq!(old.as_deref(), Some(b"old-token".as_slice()));
         let val = engine.get(1, "session", b"tok", 1000);

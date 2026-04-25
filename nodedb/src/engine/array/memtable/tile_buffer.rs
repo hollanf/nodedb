@@ -16,10 +16,11 @@ use nodedb_array::tile::tile_id_for_cell;
 use nodedb_array::types::TileId;
 use nodedb_array::types::cell_value::value::CellValue;
 use nodedb_array::types::coord::value::CoordValue;
+use nodedb_types::Surrogate;
 
 #[derive(Debug, Default, Clone)]
 pub struct TileBuffer {
-    rows: Vec<(Vec<CoordValue>, Vec<CellValue>)>,
+    rows: Vec<(Vec<CoordValue>, Vec<CellValue>, Surrogate)>,
     tombstones: HashSet<Vec<CoordValue>>,
     /// Highest WAL LSN that produced a row or tombstone in this buffer.
     /// The flush watermark is the max across all buffers in a memtable.
@@ -27,16 +28,22 @@ pub struct TileBuffer {
 }
 
 impl TileBuffer {
-    pub fn push_row(&mut self, coord: Vec<CoordValue>, attrs: Vec<CellValue>, lsn: u64) {
+    pub fn push_row(
+        &mut self,
+        coord: Vec<CoordValue>,
+        attrs: Vec<CellValue>,
+        surrogate: Surrogate,
+        lsn: u64,
+    ) {
         // Re-insert overrides earlier writes at the same coord.
-        self.rows.retain(|(c, _)| c != &coord);
+        self.rows.retain(|(c, _, _)| c != &coord);
         self.tombstones.remove(&coord);
-        self.rows.push((coord, attrs));
+        self.rows.push((coord, attrs, surrogate));
         self.last_lsn = self.last_lsn.max(lsn);
     }
 
     pub fn tombstone(&mut self, coord: Vec<CoordValue>, lsn: u64) {
-        self.rows.retain(|(c, _)| c != &coord);
+        self.rows.retain(|(c, _, _)| c != &coord);
         self.tombstones.insert(coord);
         self.last_lsn = self.last_lsn.max(lsn);
     }
@@ -54,8 +61,8 @@ impl TileBuffer {
     /// just folds the survivors.
     pub fn materialise(&self, schema: &ArraySchema) -> ArrayResult<SparseTile> {
         let mut b = SparseTileBuilder::new(schema);
-        for (coord, attrs) in &self.rows {
-            b.push(coord, attrs)?;
+        for (coord, attrs, surrogate) in &self.rows {
+            b.push_with_surrogate(coord, attrs, *surrogate)?;
         }
         Ok(b.build())
     }
@@ -83,13 +90,14 @@ impl Memtable {
         schema: &ArraySchema,
         coord: Vec<CoordValue>,
         attrs: Vec<CellValue>,
+        surrogate: Surrogate,
         lsn: u64,
     ) -> ArrayResult<TileId> {
         let tile = tile_id_for_cell(schema, &coord, 0)?;
         self.tiles
             .entry(tile)
             .or_default()
-            .push_row(coord, attrs, lsn);
+            .push_row(coord, attrs, surrogate, lsn);
         Ok(tile)
     }
 
@@ -168,6 +176,7 @@ mod tests {
             &s,
             vec![CoordValue::Int64(1), CoordValue::Int64(2)],
             vec![CellValue::Int64(10)],
+            Surrogate::ZERO,
             1,
         )
         .unwrap();
@@ -175,6 +184,7 @@ mod tests {
             &s,
             vec![CoordValue::Int64(2), CoordValue::Int64(3)],
             vec![CellValue::Int64(20)],
+            Surrogate::ZERO,
             2,
         )
         .unwrap();
@@ -192,6 +202,7 @@ mod tests {
             &s,
             vec![CoordValue::Int64(1), CoordValue::Int64(1)],
             vec![CellValue::Int64(1)],
+            Surrogate::ZERO,
             1,
         )
         .unwrap();
@@ -208,6 +219,7 @@ mod tests {
             &s,
             vec![CoordValue::Int64(0), CoordValue::Int64(0)],
             vec![CellValue::Int64(1)],
+            Surrogate::ZERO,
             1,
         )
         .unwrap();
@@ -215,6 +227,7 @@ mod tests {
             &s,
             vec![CoordValue::Int64(0), CoordValue::Int64(0)],
             vec![CellValue::Int64(2)],
+            Surrogate::ZERO,
             2,
         )
         .unwrap();
@@ -233,6 +246,7 @@ mod tests {
             &s,
             vec![CoordValue::Int64(8), CoordValue::Int64(8)],
             vec![CellValue::Int64(1)],
+            Surrogate::ZERO,
             1,
         )
         .unwrap();
@@ -240,6 +254,7 @@ mod tests {
             &s,
             vec![CoordValue::Int64(0), CoordValue::Int64(0)],
             vec![CellValue::Int64(1)],
+            Surrogate::ZERO,
             2,
         )
         .unwrap();

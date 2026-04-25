@@ -6,6 +6,8 @@
 
 use std::collections::HashMap;
 
+use nodedb_types::Surrogate;
+
 use super::engine_helpers::{expiry_key, extract_all_field_values_from_msgpack, table_key};
 use super::entry::NO_EXPIRY;
 use super::expiry_wheel::ExpiryWheel;
@@ -159,6 +161,22 @@ impl KvEngine {
     // Core operations
     // -----------------------------------------------------------------------
 
+    /// Look up the user primary key bytes for a given surrogate within
+    /// `(tenant_id, collection)`. Returns `None` when the surrogate is
+    /// unbound or the collection is empty.
+    pub fn key_for_surrogate(
+        &self,
+        tenant_id: u32,
+        collection: &str,
+        surrogate: Surrogate,
+    ) -> Option<Vec<u8>> {
+        let tkey = table_key(tenant_id, collection);
+        self.tables
+            .get(&tkey)?
+            .key_for_surrogate(surrogate)
+            .map(|k| k.to_vec())
+    }
+
     /// GET: O(1) hash table lookup. Returns None if not found or expired.
     pub fn get(
         &self,
@@ -203,6 +221,11 @@ impl KvEngine {
     ///
     /// If `ttl_ms > 0`, schedules expiry. If the key already had a TTL,
     /// the old expiry is cancelled and replaced.
+    ///
+    /// `surrogate` is the row's stable global identity. Pass
+    /// `Surrogate::ZERO` from internal RMW callers that do not allocate
+    /// one — existing entries preserve their bound surrogate either way.
+    #[allow(clippy::too_many_arguments)]
     pub fn put(
         &mut self,
         tenant_id: u32,
@@ -211,6 +234,7 @@ impl KvEngine {
         value: &[u8],
         ttl_ms: u64,
         now_ms: u64,
+        surrogate: Surrogate,
     ) -> Option<Vec<u8>> {
         let expire_at = if ttl_ms > 0 {
             now_ms + ttl_ms
@@ -258,7 +282,7 @@ impl KvEngine {
                 )
             })
         };
-        let old = table.put(key, value, expire_at);
+        let old = table.put(key, value, expire_at, surrogate);
 
         // Schedule new expiry.
         if expire_at != NO_EXPIRY {
@@ -438,7 +462,15 @@ impl KvEngine {
         let mut new_count = 0;
         for (key, value) in entries {
             if self
-                .put(tenant_id, collection, key, value, ttl_ms, now_ms)
+                .put(
+                    tenant_id,
+                    collection,
+                    key,
+                    value,
+                    ttl_ms,
+                    now_ms,
+                    Surrogate::ZERO,
+                )
                 .is_none()
             {
                 new_count += 1;
@@ -552,10 +584,10 @@ mod tests {
 
         assert!(e.get(1, "cache", b"k1", n).is_none());
 
-        e.put(1, "cache", b"k1", b"v1", 0, n);
+        e.put(1, "cache", b"k1", b"v1", 0, n, Surrogate::ZERO);
         assert_eq!(e.get(1, "cache", b"k1", n).unwrap(), b"v1");
 
-        e.put(1, "cache", b"k1", b"v2", 0, n);
+        e.put(1, "cache", b"k1", b"v2", 0, n, Surrogate::ZERO);
         assert_eq!(e.get(1, "cache", b"k1", n).unwrap(), b"v2");
 
         assert_eq!(e.delete(1, "cache", &[b"k1".to_vec()], n), 1);
@@ -568,7 +600,7 @@ mod tests {
         let n = now();
 
         // Put with 5-second TTL.
-        e.put(1, "sess", b"s1", b"data", 5000, n);
+        e.put(1, "sess", b"s1", b"data", 5000, n, Surrogate::ZERO);
         assert!(e.get(1, "sess", b"s1", n).is_some());
 
         // Still alive at t+4999.
@@ -590,7 +622,7 @@ mod tests {
         let mut e = make_engine();
         let n = now();
 
-        e.put(1, "cache", b"k", b"v", 3000, n);
+        e.put(1, "cache", b"k", b"v", 3000, n, Surrogate::ZERO);
         assert!(e.persist(1, "cache", b"k"));
 
         // Should never expire now.
@@ -602,7 +634,7 @@ mod tests {
         let mut e = make_engine();
         let n = now();
 
-        e.put(1, "cache", b"k", b"v", 0, n);
+        e.put(1, "cache", b"k", b"v", 0, n, Surrogate::ZERO);
         assert!(e.get(1, "cache", b"k", n + 100_000).is_some()); // No TTL.
 
         assert!(e.expire(1, "cache", b"k", 2000, n));
@@ -633,8 +665,8 @@ mod tests {
         let mut e = make_engine();
         let n = now();
 
-        e.put(1, "c", b"k", b"t1", 0, n);
-        e.put(2, "c", b"k", b"t2", 0, n);
+        e.put(1, "c", b"k", b"t1", 0, n, Surrogate::ZERO);
+        e.put(2, "c", b"k", b"t2", 0, n, Surrogate::ZERO);
 
         assert_eq!(e.get(1, "c", b"k", n).unwrap(), b"t1");
         assert_eq!(e.get(2, "c", b"k", n).unwrap(), b"t2");
@@ -648,7 +680,7 @@ mod tests {
         assert_eq!(e.total_entries(), 0);
 
         for i in 0..10u32 {
-            e.put(1, "c", &i.to_be_bytes(), &[0; 32], 0, n);
+            e.put(1, "c", &i.to_be_bytes(), &[0; 32], 0, n, Surrogate::ZERO);
         }
         assert_eq!(e.total_entries(), 10);
         assert_eq!(e.collection_len(1, "c"), 10);
@@ -677,6 +709,7 @@ mod tests {
             &mp_obj(&[("region", "us-east"), ("status", "active")]),
             0,
             n,
+            Surrogate::ZERO,
         );
         e.put(
             1,
@@ -685,6 +718,7 @@ mod tests {
             &mp_obj(&[("region", "us-east"), ("status", "inactive")]),
             0,
             n,
+            Surrogate::ZERO,
         );
         e.put(
             1,
@@ -693,6 +727,7 @@ mod tests {
             &mp_obj(&[("region", "eu-west"), ("status", "active")]),
             0,
             n,
+            Surrogate::ZERO,
         );
 
         // Create index with backfill.
@@ -718,11 +753,27 @@ mod tests {
         e.register_index(1, "c", "status", 0, false, n);
 
         // Insert.
-        e.put(1, "c", b"k1", &mp_obj(&[("status", "active")]), 0, n);
+        e.put(
+            1,
+            "c",
+            b"k1",
+            &mp_obj(&[("status", "active")]),
+            0,
+            n,
+            Surrogate::ZERO,
+        );
         assert_eq!(e.index_lookup_eq(1, "c", "status", b"active").len(), 1);
 
         // Update: status changes.
-        e.put(1, "c", b"k1", &mp_obj(&[("status", "inactive")]), 0, n);
+        e.put(
+            1,
+            "c",
+            b"k1",
+            &mp_obj(&[("status", "inactive")]),
+            0,
+            n,
+            Surrogate::ZERO,
+        );
         assert!(e.index_lookup_eq(1, "c", "status", b"active").is_empty());
         assert_eq!(e.index_lookup_eq(1, "c", "status", b"inactive").len(), 1);
     }
@@ -733,8 +784,24 @@ mod tests {
         let n = now();
 
         e.register_index(1, "c", "region", 0, false, n);
-        e.put(1, "c", b"k1", &mp_obj(&[("region", "us")]), 0, n);
-        e.put(1, "c", b"k2", &mp_obj(&[("region", "us")]), 0, n);
+        e.put(
+            1,
+            "c",
+            b"k1",
+            &mp_obj(&[("region", "us")]),
+            0,
+            n,
+            Surrogate::ZERO,
+        );
+        e.put(
+            1,
+            "c",
+            b"k2",
+            &mp_obj(&[("region", "us")]),
+            0,
+            n,
+            Surrogate::ZERO,
+        );
 
         assert_eq!(e.index_lookup_eq(1, "c", "region", b"us").len(), 2);
 
@@ -749,7 +816,7 @@ mod tests {
 
         // No indexes — PUT should work without index overhead.
         assert!(!e.has_indexes(1, "c"));
-        e.put(1, "c", b"k", b"raw_value", 0, n);
+        e.put(1, "c", b"k", b"raw_value", 0, n, Surrogate::ZERO);
         assert!(e.get(1, "c", b"k", n).is_some());
         assert_eq!(e.write_amp_ratio(1, "c"), 0.0);
     }
@@ -760,7 +827,15 @@ mod tests {
         let n = now();
 
         e.register_index(1, "c", "status", 0, false, n);
-        e.put(1, "c", b"k1", &mp_obj(&[("status", "active")]), 0, n);
+        e.put(
+            1,
+            "c",
+            b"k1",
+            &mp_obj(&[("status", "active")]),
+            0,
+            n,
+            Surrogate::ZERO,
+        );
         assert_eq!(e.index_count(1, "c"), 1);
 
         let dropped = e.drop_index(1, "c", "status");
@@ -786,6 +861,7 @@ mod tests {
                 &mp_obj(&[("a", "x"), ("b", "y")]),
                 0,
                 n,
+                Surrogate::ZERO,
             );
         }
 
@@ -803,7 +879,7 @@ mod tests {
 
         // Warmup: insert all keys once.
         for key in &keys {
-            e.put(1, "b", key, &value, 0, n);
+            e.put(1, "b", key, &value, 0, n, Surrogate::ZERO);
         }
 
         // Timed: 100K updates (keys already exist).
@@ -811,7 +887,7 @@ mod tests {
         let start = std::time::Instant::now();
         for i in 0..iters {
             let key = &keys[(i as usize) % 10_000];
-            e.put(1, "b", key, &value, 0, n);
+            e.put(1, "b", key, &value, 0, n, Surrogate::ZERO);
         }
         let elapsed = start.elapsed();
         let ns_per_op = elapsed.as_nanos() / iters as u128;

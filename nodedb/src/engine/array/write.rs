@@ -64,7 +64,9 @@ pub(crate) fn stamp_put_cells(
 ) -> ArrayEngineResult<()> {
     let schema = store.schema().clone();
     for c in cells {
-        store.memtable.put_cell(&schema, c.coord, c.attrs, lsn)?;
+        store
+            .memtable
+            .put_cell(&schema, c.coord, c.attrs, c.surrogate, lsn)?;
     }
     Ok(())
 }
@@ -112,6 +114,7 @@ mod tests {
         let cells = vec![ArrayPutCell {
             coord: vec![CoordValue::Int64(3), CoordValue::Int64(5)],
             attrs: vec![CellValue::Int64(77)],
+            surrogate: nodedb_types::Surrogate::ZERO,
         }];
         e.put_cells(&aid(), cells, 42).unwrap();
         let seg = e.flush(&aid(), 43).unwrap().unwrap();

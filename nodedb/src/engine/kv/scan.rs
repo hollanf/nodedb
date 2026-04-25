@@ -104,6 +104,8 @@ pub(crate) fn glob_match(pattern: &[u8], input: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use nodedb_types::Surrogate;
+
     use super::*;
     use crate::engine::kv::entry::NO_EXPIRY;
 
@@ -140,7 +142,7 @@ mod tests {
     fn scan_basic() {
         let mut t = KvHashTable::new(16, 0.75, 4, 64);
         for i in 0..5u8 {
-            t.put(&[i], &[i * 10], NO_EXPIRY);
+            t.put(&[i], &[i * 10], NO_EXPIRY, Surrogate::ZERO);
         }
 
         let (entries, next) = t.scan(0, 100, 0, None);
@@ -152,7 +154,7 @@ mod tests {
     fn scan_with_count_limit() {
         let mut t = KvHashTable::new(16, 0.75, 4, 64);
         for i in 0..10u8 {
-            t.put(&[i], &[i * 10], NO_EXPIRY);
+            t.put(&[i], &[i * 10], NO_EXPIRY, Surrogate::ZERO);
         }
 
         let (entries, next) = t.scan(0, 3, 0, None);
@@ -167,8 +169,8 @@ mod tests {
     #[test]
     fn scan_skips_expired() {
         let mut t = KvHashTable::new(16, 0.75, 4, 64);
-        t.put(b"alive", b"v", NO_EXPIRY);
-        t.put(b"dead", b"v", 500); // Expires at 500.
+        t.put(b"alive", b"v", NO_EXPIRY, Surrogate::ZERO);
+        t.put(b"dead", b"v", 500, Surrogate::ZERO); // Expires at 500.
 
         let (entries, _) = t.scan(0, 100, 1000, None);
         assert_eq!(entries.len(), 1);

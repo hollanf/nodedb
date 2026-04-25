@@ -1,0 +1,75 @@
+//! `DocumentEngine` struct, constructor, registration, and index lookups.
+
+use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::engine::document::store::config::CollectionConfig;
+use crate::engine::sparse::btree::SparseEngine;
+
+/// Wall-clock millisecond timestamp for versioned writes.
+pub(super) fn wall_now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+pub struct DocumentEngine<'a> {
+    pub(super) sparse: &'a SparseEngine,
+    pub(super) tenant_id: u32,
+    pub(super) configs: HashMap<String, CollectionConfig>,
+}
+
+impl<'a> DocumentEngine<'a> {
+    pub fn new(sparse: &'a SparseEngine, tenant_id: u32) -> Self {
+        Self {
+            sparse,
+            tenant_id,
+            configs: HashMap::new(),
+        }
+    }
+
+    /// Register a collection configuration with index paths.
+    pub fn register_collection(&mut self, config: CollectionConfig) {
+        self.configs.insert(config.name.clone(), config);
+    }
+
+    pub(super) fn is_bitemporal(&self, collection: &str) -> bool {
+        self.configs.get(collection).is_some_and(|c| c.bitemporal)
+    }
+
+    /// Drop all secondary index entries for a field across the entire collection.
+    pub fn drop_field_index(&self, collection: &str, field: &str) -> crate::Result<usize> {
+        self.sparse
+            .delete_index_entries_for_field(self.tenant_id, collection, field)
+    }
+
+    /// Lookup documents by a secondary index value.
+    pub fn index_lookup(
+        &self,
+        collection: &str,
+        path: &str,
+        value: &str,
+    ) -> crate::Result<Vec<String>> {
+        let prefix_with_value = format!("{value}:");
+        let results = self.sparse.range_scan(
+            self.tenant_id,
+            collection,
+            path,
+            Some(prefix_with_value.as_bytes()),
+            None,
+            1000,
+        )?;
+
+        let mut doc_ids = Vec::new();
+        for (key, _) in results {
+            if let Some(doc_id) = key.rsplit(':').next() {
+                let expected_prefix = format!("{}:{collection}:{path}:{value}:", self.tenant_id);
+                if key.starts_with(&expected_prefix) {
+                    doc_ids.push(doc_id.to_string());
+                }
+            }
+        }
+        Ok(doc_ids)
+    }
+}
