@@ -15,7 +15,16 @@ use serde::{Deserialize, Serialize};
 /// Variants mirror [`crate::schema::DimType`]: every dim type has
 /// exactly one coordinate variant. Strings are owned to keep `Coord`
 /// `'static`-friendly for buffering in memtables.
-#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum CoordValue {
     Int64(i64),
     Float64(f64),
@@ -38,7 +47,17 @@ impl std::hash::Hash for CoordValue {
 }
 
 /// Variable-arity coordinate tuple.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct Coord {
     components: Vec<CoordValue>,
 }

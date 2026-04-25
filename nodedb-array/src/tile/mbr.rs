@@ -11,7 +11,15 @@ use crate::types::coord::value::CoordValue;
 use crate::types::domain::DomainBound;
 
 /// Per-attribute summary used for predicate pushdown.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum AttrStats {
     /// Numeric (`Int64` / `Float64`) min + max + null count.
     Numeric { min: f64, max: f64, null_count: u32 },
@@ -24,7 +32,15 @@ pub enum AttrStats {
 /// Tile-level MBR. `dim_mins` / `dim_maxs` carry one bound per schema
 /// dimension; `nnz` is the count of populated (non-tombstoned) cells;
 /// `attr_stats` is parallel to the schema's `attrs`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct TileMBR {
     pub dim_mins: Vec<DomainBound>,
     pub dim_maxs: Vec<DomainBound>,

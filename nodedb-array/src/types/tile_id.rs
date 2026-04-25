@@ -10,7 +10,20 @@ use serde::{Deserialize, Serialize};
 /// system_from_ms)` keeps newer tile versions adjacent to their
 /// spatial parents, so the Ceiling resolver can reverse-scan a single
 /// Hilbert range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct TileId {
     pub hilbert_prefix: u64,
     pub system_from_ms: i64,

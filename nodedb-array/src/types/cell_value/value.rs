@@ -11,7 +11,15 @@ use serde::{Deserialize, Serialize};
 ///
 /// Keep this enum strictly in sync with [`crate::schema::AttrType`]:
 /// every attribute type has exactly one cell variant.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum CellValue {
     Int64(i64),
     Float64(f64),

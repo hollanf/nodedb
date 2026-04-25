@@ -6,7 +6,16 @@
 use serde::{Deserialize, Serialize};
 
 /// Typed domain bound. Variant tag must match the dim's type.
-#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub enum DomainBound {
     Int64(i64),
     Float64(f64),
@@ -18,7 +27,16 @@ pub enum DomainBound {
 impl Eq for DomainBound {}
 
 /// Closed `[lo, hi]` interval over a single dimension.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct Domain {
     pub lo: DomainBound,
     pub hi: DomainBound,

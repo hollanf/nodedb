@@ -16,7 +16,15 @@ use crate::types::coord::value::CoordValue;
 /// Per-dim dictionary: distinct values seen, and one index per cell
 /// pointing into the dictionary. Index width is selected by callers
 /// (Tier 2) when picking the codec.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct DimDict {
     pub values: Vec<CoordValue>,
     pub indices: Vec<u32>,
@@ -53,7 +61,15 @@ impl DimDict {
 }
 
 /// Sparse tile payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct SparseTile {
     /// One dictionary per schema dim, parallel to `schema.dims`.
     pub dim_dicts: Vec<DimDict>,

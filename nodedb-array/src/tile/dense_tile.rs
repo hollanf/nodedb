@@ -12,7 +12,15 @@ use crate::schema::ArraySchema;
 use crate::types::cell_value::value::CellValue;
 
 /// Dense tile payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct DenseTile {
     /// One column per schema attr, parallel to `schema.attrs`. Each
     /// column has `cells_per_tile` entries; absent cells are
