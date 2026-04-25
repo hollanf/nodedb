@@ -7,7 +7,17 @@ use nodedb_types::TenantId;
 /// Logical handle to an array within a tenant. The pair
 /// `(tenant_id, name)` is the canonical key used by storage and the
 /// catalog; `name` is the user-visible identifier.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
 pub struct ArrayId {
     pub tenant_id: TenantId,
     pub name: String,
