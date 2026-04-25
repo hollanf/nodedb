@@ -140,14 +140,19 @@ async fn dispatch_remote(args: RemoteDispatchArgs<'_>) -> Result<Vec<Vec<u8>>, E
         "gateway: dispatching ExecuteRequest to remote node"
     );
 
-    let resp_rpc = transport
-        .send_rpc(node_id, req)
-        .await
-        .map_err(|e| Error::NotLeader {
+    let resp_rpc = transport.send_rpc(node_id, req).await.map_err(|e| {
+        // Transport failure means the target node is unreachable —
+        // we do NOT know who the new leader is. Use leader_node = 0
+        // so the retry loop does NOT re-entrench the unreachable node
+        // as leader in the routing table. The next retry will route
+        // locally (leader == 0 → local) and let the local Raft state
+        // resolve to the actual leader.
+        Error::NotLeader {
             vshard_id: VShardId::new(vshard_id.min(u16::MAX as u64) as u16),
-            leader_node: node_id,
+            leader_node: 0,
             leader_addr: format!("node-{node_id} (transport error: {e})"),
-        })?;
+        }
+    })?;
 
     match resp_rpc {
         RaftRpc::ExecuteResponse(resp) => {

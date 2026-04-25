@@ -59,8 +59,12 @@ where
                     "gateway: NotLeader — will retry with new leader hint"
                 );
 
-                // Update routing table if we have a hint and a table.
-                if let (true, Some(rt)) = (leader_node != 0, routing)
+                // Update routing table with the new leader hint:
+                //   • `leader_node != 0` → a redirect hint; set the group leader.
+                //   • `leader_node == 0` → transport failure or no hint; clear
+                //     the group leader to 0 so the next attempt falls back to
+                //     local dispatch rather than retrying the same dead node.
+                if let Some(rt) = routing
                     && let Ok(mut table) = rt.write()
                     && let Ok(group_id) = table.group_for_vshard(vshard_id.as_u16())
                 {
