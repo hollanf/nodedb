@@ -90,11 +90,34 @@ fn drop_collection_wipes_surrogate_map() {
 /// Counting WAL appender — verifies `assign_surrogate` actually
 /// triggers a `SurrogateAlloc` WAL emission when the registry's
 /// 1024-ops threshold is crossed.
-struct CountingAppender(std::sync::atomic::AtomicU32);
+struct CountingAppender {
+    allocs: std::sync::atomic::AtomicU32,
+    binds: std::sync::atomic::AtomicU32,
+}
+
+impl CountingAppender {
+    fn new() -> Self {
+        Self {
+            allocs: std::sync::atomic::AtomicU32::new(0),
+            binds: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+}
 
 impl SurrogateWalAppender for CountingAppender {
     fn record_alloc_to_wal(&self, _hi: u32) -> nodedb::Result<()> {
-        self.0.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.allocs
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Ok(())
+    }
+
+    fn record_bind_to_wal(
+        &self,
+        _surrogate: u32,
+        _collection: &str,
+        _pk_bytes: &[u8],
+    ) -> nodedb::Result<()> {
+        self.binds.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         Ok(())
     }
 }
@@ -103,7 +126,7 @@ impl SurrogateWalAppender for CountingAppender {
 fn flush_emits_wal_record_at_threshold() {
     let (_dir, cat) = open_catalog();
     let reg = fresh_registry();
-    let wal = CountingAppender(std::sync::atomic::AtomicU32::new(0));
+    let wal = CountingAppender::new();
     let a = SurrogateAssigner::new(&reg, &cat, &wal);
 
     let n = FLUSH_OPS_THRESHOLD as usize;
@@ -116,10 +139,15 @@ fn flush_emits_wal_record_at_threshold() {
     // WAL appender exactly once and persists the new hwm to the
     // catalog. Subsequent assigns inside the same window will not
     // re-flush until the next threshold.
-    let calls = wal.0.load(std::sync::atomic::Ordering::Acquire);
+    let alloc_calls = wal.allocs.load(std::sync::atomic::Ordering::Acquire);
     assert!(
-        calls >= 1,
-        "expected at least one SurrogateAlloc WAL emission after {n} allocations, got {calls}"
+        alloc_calls >= 1,
+        "expected at least one SurrogateAlloc WAL emission after {n} allocations, got {alloc_calls}"
+    );
+    let bind_calls = wal.binds.load(std::sync::atomic::Ordering::Acquire);
+    assert_eq!(
+        bind_calls as usize, n,
+        "expected one SurrogateBind per fresh allocation"
     );
     // The persisted hwm is whatever the most recent flush captured;
     // it must be non-zero and ≤ n (the total allocations so far).
