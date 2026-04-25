@@ -37,6 +37,21 @@ impl TestClusterNode {
             .unwrap_or(0)
     }
 
+    /// Observed data-group (group 1) leader id from this node's local Raft
+    /// state, or `0` if no leader is known yet.
+    pub fn data_group_leader(&self) -> u64 {
+        let Some(observer) = self.shared.cluster_observer.get() else {
+            return 0;
+        };
+        observer
+            .group_status
+            .group_statuses()
+            .into_iter()
+            .find(|g| g.group_id == 1)
+            .map(|g| g.leader_id)
+            .unwrap_or(0)
+    }
+
     /// Count of `DocumentOp::BackfillIndex` handler invocations on
     /// this node's Data Plane since startup. A CREATE INDEX against a
     /// cluster must fan out backfill to every node — this counter
