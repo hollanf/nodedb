@@ -227,6 +227,7 @@ fn slice_returns_only_cells_in_range() {
         slice_msgpack: slice_bytes,
         attr_projection: vec![],
         limit: 0,
+        cell_filter: None,
     });
     assert_eq!(r.status, Status::Ok, "slice failed: {r:?}");
     let rows = decode_value_vec(r.payload.as_ref());
@@ -262,6 +263,7 @@ fn aggregate_sum_scalar_across_multiple_tiles() {
         attr_idx: 0,
         reducer: ArrayReducer::Sum,
         group_by_dim: -1,
+        cell_filter: None,
     });
     assert_eq!(r.status, Status::Ok, "agg failed: {r:?}");
     let rows = decode_agg_rows(r.payload.as_ref());
@@ -290,6 +292,7 @@ fn aggregate_group_by_dim_buckets_per_x() {
         attr_idx: 0,
         reducer: ArrayReducer::Sum,
         group_by_dim: 0,
+        cell_filter: None,
     });
     assert_eq!(r.status, Status::Ok, "group agg failed: {r:?}");
     let rows = decode_agg_rows(r.payload.as_ref());
@@ -328,6 +331,7 @@ fn elementwise_add_two_arrays() {
         right: right.clone(),
         op: ArrayBinaryOp::Add,
         attr_idx: 0,
+        cell_filter: None,
     });
     assert_eq!(r.status, Status::Ok, "ew failed: {r:?}");
     let rows = decode_value_vec(r.payload.as_ref());
@@ -359,6 +363,7 @@ fn elementwise_schema_hash_mismatch_errors() {
         right,
         op: ArrayBinaryOp::Add,
         attr_idx: 0,
+        cell_filter: None,
     });
     assert_ne!(r.status, Status::Ok);
 }

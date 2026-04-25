@@ -21,6 +21,7 @@ pub(crate) fn build_scan(fields: &TextFields, collection: &str) -> crate::Result
         sort_keys: Vec::new(),
         system_as_of_ms: None,
         valid_at_ms: None,
+        prefilter: None,
     }))
 }
 

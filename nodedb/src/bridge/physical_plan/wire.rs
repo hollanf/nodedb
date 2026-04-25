@@ -49,7 +49,9 @@ mod tests {
             query_vector: vec![0.1, 0.2, 0.3],
             top_k: 10,
             ef_search: 40,
-            filter_bitmap: Some(vec![0x01, 0x02]),
+            filter_bitmap: Some(nodedb_types::SurrogateBitmap::from_iter(
+                [1u32, 2].map(nodedb_types::Surrogate),
+            )),
             field_name: "vec".into(),
             rls_filters: vec![],
         }));
@@ -64,6 +66,7 @@ mod tests {
             depth: 2,
             options: GraphTraversalOptions::default(),
             rls_filters: vec![],
+            frontier_bitmap: None,
         }));
     }
 
@@ -141,6 +144,7 @@ mod tests {
             top_k: 5,
             fuzzy: true,
             rls_filters: vec![],
+            prefilter: None,
         }));
     }
 
@@ -155,6 +159,7 @@ mod tests {
             sort_keys: vec![],
             system_as_of_ms: None,
             valid_at_ms: None,
+            prefilter: None,
         }));
     }
 
@@ -196,6 +201,7 @@ mod tests {
             limit: 20,
             projection: vec!["name".into()],
             rls_filters: vec![],
+            prefilter: None,
         }));
     }
 
@@ -246,6 +252,8 @@ mod tests {
             post_filters: vec![],
             inline_left: None,
             inline_right: None,
+            inline_left_bitmap: None,
+            inline_right_bitmap: None,
         }));
     }
 

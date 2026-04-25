@@ -10,6 +10,7 @@
 //! type fidelity at the engine boundary.
 
 use nodedb_array::types::ArrayId;
+use nodedb_types::SurrogateBitmap;
 
 /// Reducer for [`ArrayOp::Aggregate`]. Numeric `c_enum` keeps the
 /// wire encoding to a single byte.
@@ -108,6 +109,10 @@ pub enum ArrayOp {
         slice_msgpack: Vec<u8>,
         attr_projection: Vec<u32>,
         limit: u32,
+        /// Optional surrogate prefilter restricting which cells are returned.
+        /// Only cells whose surrogate is present in this bitmap are included.
+        /// `None` = no restriction.
+        cell_filter: Option<SurrogateBitmap>,
     },
 
     /// Attribute projection (no coord filter).
@@ -124,6 +129,9 @@ pub enum ArrayOp {
         attr_idx: u32,
         reducer: ArrayReducer,
         group_by_dim: i32,
+        /// Optional surrogate prefilter: only cells whose surrogate is in
+        /// this bitmap contribute to the aggregate. `None` = all cells.
+        cell_filter: Option<SurrogateBitmap>,
     },
 
     /// Pairwise op between two coord-aligned arrays. Both must share
@@ -133,6 +141,10 @@ pub enum ArrayOp {
         right: ArrayId,
         op: ArrayBinaryOp,
         attr_idx: u32,
+        /// Optional surrogate prefilter restricting which cells participate
+        /// in the pairwise op. Applied to the left array's surrogate column.
+        /// `None` = all cells.
+        cell_filter: Option<SurrogateBitmap>,
     },
 
     /// Force a memtable flush. Returns the new segment ref's id +
@@ -190,6 +202,7 @@ mod tests {
             attr_idx: 0,
             reducer: ArrayReducer::Sum,
             group_by_dim: -1,
+            cell_filter: None,
         };
         let bytes = zerompk::to_msgpack_vec(&op).unwrap();
         let back: ArrayOp = zerompk::from_msgpack(&bytes).unwrap();
@@ -203,6 +216,7 @@ mod tests {
             right: ArrayId::new(TenantId::new(1), "R"),
             op: ArrayBinaryOp::Add,
             attr_idx: 0,
+            cell_filter: None,
         };
         assert_eq!(op.primary_array().name, "L");
     }

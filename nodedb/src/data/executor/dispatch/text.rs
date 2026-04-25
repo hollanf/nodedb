@@ -15,6 +15,7 @@ impl CoreLoop {
                 query,
                 top_k,
                 fuzzy,
+                prefilter: _,
                 rls_filters,
             } => {
                 self.execute_text_search(task, tid, collection, query, *top_k, *fuzzy, rls_filters)
@@ -40,7 +41,7 @@ impl CoreLoop {
                 *ef_search,
                 *fuzzy,
                 *vector_weight,
-                filter_bitmap.as_deref(),
+                filter_bitmap.as_ref(),
                 rls_filters,
             ),
         }

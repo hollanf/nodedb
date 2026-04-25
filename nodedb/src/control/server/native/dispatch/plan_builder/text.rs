@@ -20,6 +20,7 @@ pub(crate) fn build_search(fields: &TextFields, collection: &str) -> crate::Resu
         query: query_text.clone(),
         top_k,
         fuzzy,
+        prefilter: None,
         rls_filters: Vec::new(),
     }))
 }

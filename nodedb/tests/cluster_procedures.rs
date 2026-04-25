@@ -53,6 +53,7 @@ fn procedure_reads_not_replicated() {
         window_functions: vec![],
         system_as_of_ms: None,
         valid_at_ms: None,
+        prefilter: None,
     });
     let entry = nodedb::control::wal_replication::to_replicated_entry(
         TenantId::new(1),

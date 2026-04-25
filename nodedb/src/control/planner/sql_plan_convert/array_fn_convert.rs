@@ -73,6 +73,7 @@ pub(super) fn convert_slice(
             slice_msgpack,
             attr_projection: attr_indices,
             limit,
+            cell_filter: None,
         }),
         post_set_op: PostSetOp::None,
     }])
@@ -140,6 +141,7 @@ pub(super) fn convert_agg(
             attr_idx,
             reducer: map_reducer(reducer),
             group_by_dim: group_by_dim_idx,
+            cell_filter: None,
         }),
         post_set_op: PostSetOp::None,
     }])
@@ -185,6 +187,7 @@ pub(super) fn convert_elementwise(
             right,
             op: map_binary_op(op),
             attr_idx,
+            cell_filter: None,
         }),
         post_set_op: PostSetOp::None,
     }])

@@ -76,6 +76,7 @@ fn graph_hop_traversal() {
             depth: 2,
             options: Default::default(),
             rls_filters: Vec::new(),
+            frontier_bitmap: None,
         }),
     );
     let nodes: Vec<String> = serde_json::from_value(payload_value(&payload)).unwrap();
@@ -116,6 +117,7 @@ fn graph_path_and_subgraph() {
             max_depth: 5,
             options: Default::default(),
             rls_filters: Vec::new(),
+            frontier_bitmap: None,
         }),
     );
     let path: Vec<String> = serde_json::from_value(payload_value(&payload)).unwrap();

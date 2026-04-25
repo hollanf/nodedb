@@ -112,6 +112,7 @@ fn cross_model_query_vector_graph_relational() {
             depth: 3,
             options: Default::default(),
             rls_filters: Vec::new(),
+            frontier_bitmap: None,
         }),
     );
     let graph_nodes: Vec<String> = serde_json::from_value(payload_value(&graph_payload)).unwrap();
@@ -145,6 +146,7 @@ fn cross_model_query_vector_graph_relational() {
             window_functions: Vec::new(),
             system_as_of_ms: None,
             valid_at_ms: None,
+            prefilter: None,
         }),
     );
     let scan_json = payload_json(&scan_payload);
@@ -339,6 +341,7 @@ fn document_indexes_consistent_after_simulated_crash() {
             top_k: 10,
             fuzzy: true,
             rls_filters: Vec::new(),
+            prefilter: None,
         }),
     );
     let text_json = payload_json(&text_payload);
@@ -371,6 +374,7 @@ fn document_indexes_consistent_after_simulated_crash() {
             top_k: 10,
             fuzzy: true,
             rls_filters: Vec::new(),
+            prefilter: None,
         }),
     );
     let text_after_json = payload_json(&text_after);
@@ -390,6 +394,7 @@ fn document_indexes_consistent_after_simulated_crash() {
             top_k: 10,
             fuzzy: true,
             rls_filters: Vec::new(),
+            prefilter: None,
         }),
     );
     let text_a2_json = payload_json(&text_a2);

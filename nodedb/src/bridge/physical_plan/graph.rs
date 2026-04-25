@@ -1,6 +1,6 @@
 //! Graph engine operations dispatched to the Data Plane.
 
-use nodedb_types::Surrogate;
+use nodedb_types::{Surrogate, SurrogateBitmap};
 
 use crate::engine::graph::algo::params::{AlgoParams, GraphAlgorithm};
 use crate::engine::graph::edge_store::Direction;
@@ -84,6 +84,9 @@ pub enum GraphOp {
         options: GraphTraversalOptions,
         /// RLS filters applied to traversed nodes before returning.
         rls_filters: Vec<u8>,
+        /// Optional surrogate prefilter restricting which frontier nodes are
+        /// eligible as traversal targets. `None` = no restriction.
+        frontier_bitmap: Option<SurrogateBitmap>,
     },
 
     /// Immediate 1-hop neighbors lookup.
@@ -122,6 +125,9 @@ pub enum GraphOp {
         options: GraphTraversalOptions,
         /// RLS filters applied to path nodes before returning.
         rls_filters: Vec<u8>,
+        /// Optional surrogate prefilter restricting which nodes may appear
+        /// on the path. `None` = no restriction.
+        frontier_bitmap: Option<SurrogateBitmap>,
     },
 
     /// Materialize a subgraph as edge tuples.
@@ -163,6 +169,9 @@ pub enum GraphOp {
     Match {
         /// Serialized `MatchQuery` (MessagePack).
         query: Vec<u8>,
+        /// Optional surrogate prefilter restricting which nodes are eligible
+        /// as pattern anchors. `None` = no restriction.
+        frontier_bitmap: Option<SurrogateBitmap>,
     },
 
     /// Set node labels (bitset-based, up to 64 distinct labels).

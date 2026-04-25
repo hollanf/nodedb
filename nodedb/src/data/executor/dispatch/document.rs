@@ -91,6 +91,7 @@ impl CoreLoop {
                 window_functions,
                 system_as_of_ms,
                 valid_at_ms,
+                prefilter: _,
             } => {
                 if system_as_of_ms.is_some() || valid_at_ms.is_some() {
                     self.execute_document_scan_as_of(

@@ -422,6 +422,7 @@ mod tests {
             sort_keys: Vec::new(),
             system_as_of_ms: None,
             valid_at_ms: None,
+            prefilter: None,
         });
         assert!(plan.is_broadcast_scan());
     }
@@ -440,6 +441,7 @@ mod tests {
             window_functions: Vec::new(),
             system_as_of_ms: None,
             valid_at_ms: None,
+            prefilter: None,
         });
         assert!(plan.is_broadcast_scan());
     }

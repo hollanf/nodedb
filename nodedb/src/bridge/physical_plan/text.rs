@@ -1,5 +1,7 @@
 //! Full-text search operations dispatched to the Data Plane.
 
+use nodedb_types::SurrogateBitmap;
+
 /// Full-text search physical operations.
 #[derive(
     Debug,
@@ -18,6 +20,9 @@ pub enum TextOp {
         top_k: usize,
         /// Enable fuzzy matching (Levenshtein) for typo tolerance.
         fuzzy: bool,
+        /// Pre-computed bitmap of eligible surrogates (from prefilter evaluation).
+        /// `None` = no prefilter; all postings are eligible.
+        prefilter: Option<SurrogateBitmap>,
         /// RLS post-score filters (serialized `Vec<ScanFilter>`).
         /// Applied after BM25 scoring, before returning to client.
         /// Result count may be less than requested `top_k`.
@@ -34,7 +39,7 @@ pub enum TextOp {
         fuzzy: bool,
         /// Weight for vector results in RRF (0.0–1.0). Default: 0.5.
         vector_weight: f32,
-        filter_bitmap: Option<Vec<u8>>,
+        filter_bitmap: Option<SurrogateBitmap>,
         /// RLS post-fusion filters.
         rls_filters: Vec<u8>,
     },

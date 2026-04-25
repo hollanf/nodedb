@@ -53,6 +53,7 @@ pub async fn verify_hash_chain(
         window_functions: Vec::new(),
         system_as_of_ms: None,
         valid_at_ms: None,
+        prefilter: None,
     });
 
     let scan_resp = dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard, scan_plan, 0)

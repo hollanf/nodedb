@@ -95,6 +95,7 @@ pub async fn create_graph_index(
         window_functions: Vec::new(),
         system_as_of_ms: None,
         valid_at_ms: None,
+        prefilter: None,
     });
     let scan_resp = broadcast_to_all_cores(state, tenant_id, scan_plan, 0)
         .await

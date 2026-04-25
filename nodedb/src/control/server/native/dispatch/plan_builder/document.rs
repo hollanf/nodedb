@@ -247,6 +247,7 @@ pub(crate) fn build_scan(fields: &TextFields, collection: &str) -> crate::Result
         window_functions: Vec::new(),
         system_as_of_ms: None,
         valid_at_ms: None,
+        prefilter: None,
     }))
 }
 

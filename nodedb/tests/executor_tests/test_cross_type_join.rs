@@ -137,6 +137,7 @@ fn document_scan_preserves_kv_rows_when_collection_has_strict_config() {
             window_functions: Vec::new(),
             system_as_of_ms: None,
             valid_at_ms: None,
+            prefilter: None,
         }),
     );
 
@@ -318,6 +319,8 @@ fn single_core_cross_type_hash_join() {
             post_filters: Vec::new(),
             inline_left: None,
             inline_right: None,
+            inline_left_bitmap: None,
+            inline_right_bitmap: None,
         }),
     );
 
@@ -402,6 +405,8 @@ fn single_core_left_join_with_nulls() {
             post_filters: Vec::new(),
             inline_left: None,
             inline_right: None,
+            inline_left_bitmap: None,
+            inline_right_bitmap: None,
         }),
     );
 
@@ -486,6 +491,8 @@ fn single_core_self_join_respects_aliases_in_filter_and_projection() {
             post_filters,
             inline_left: None,
             inline_right: None,
+            inline_left_bitmap: None,
+            inline_right_bitmap: None,
         }),
     );
 
@@ -544,6 +551,8 @@ fn single_core_self_join_star_keeps_both_sides() {
             post_filters: Vec::new(),
             inline_left: None,
             inline_right: None,
+            inline_left_bitmap: None,
+            inline_right_bitmap: None,
         }),
     );
 
@@ -646,6 +655,8 @@ fn schemaless_self_join_matches_on_canonicalized_object_fields() {
             post_filters,
             inline_left: None,
             inline_right: None,
+            inline_left_bitmap: None,
+            inline_right_bitmap: None,
         }),
     );
 
@@ -734,6 +745,8 @@ fn cross_join_uses_inline_right_scalar_aggregate_for_post_filter() {
                 sub_group_by: Vec::new(),
                 sub_aggregates: Vec::new(),
             }))),
+            inline_left_bitmap: None,
+            inline_right_bitmap: None,
         }),
     );
 
@@ -824,6 +837,8 @@ fn cross_join_uses_unaliased_scalar_aggregate_key_for_post_filter() {
                 sub_group_by: Vec::new(),
                 sub_aggregates: Vec::new(),
             }))),
+            inline_left_bitmap: None,
+            inline_right_bitmap: None,
         }),
     );
 
@@ -947,7 +962,11 @@ fn semi_join_uses_nested_scalar_subquery_result_as_inline_right() {
                     sub_group_by: Vec::new(),
                     sub_aggregates: Vec::new(),
                 }))),
+                inline_left_bitmap: None,
+                inline_right_bitmap: None,
             }))),
+            inline_left_bitmap: None,
+            inline_right_bitmap: None,
         }),
     );
 
@@ -1033,6 +1052,7 @@ fn multi_core_broadcast_inner_join() {
             window_functions: Vec::new(),
             system_as_of_ms: None,
             valid_at_ms: None,
+            prefilter: None,
         }),
     );
 
@@ -1148,6 +1168,7 @@ fn multi_core_broadcast_left_join() {
             window_functions: Vec::new(),
             system_as_of_ms: None,
             valid_at_ms: None,
+            prefilter: None,
         }),
     );
 
@@ -1270,6 +1291,7 @@ fn multi_core_broadcast_merge_simulation() {
         window_functions: Vec::new(),
         system_as_of_ms: None,
         valid_at_ms: None,
+        prefilter: None,
     });
     let payload0 = send_ok(
         &mut core0.core,
@@ -1424,6 +1446,8 @@ fn inline_hash_join_honors_qualified_left_keys() {
             post_filters: Vec::new(),
             inline_left: None,
             inline_right: None,
+            inline_left_bitmap: None,
+            inline_right_bitmap: None,
         }),
     );
 
@@ -1443,6 +1467,7 @@ fn inline_hash_join_honors_qualified_left_keys() {
             window_functions: Vec::new(),
             system_as_of_ms: None,
             valid_at_ms: None,
+            prefilter: None,
         }),
     );
 

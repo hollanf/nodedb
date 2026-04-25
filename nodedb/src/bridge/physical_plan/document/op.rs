@@ -1,4 +1,4 @@
-use nodedb_types::Surrogate;
+use nodedb_types::{Surrogate, SurrogateBitmap};
 
 use super::types::{EnforcementOptions, RegisteredIndex, StorageMode, UpdateValue};
 
@@ -125,6 +125,12 @@ pub enum DocumentOp {
         system_as_of_ms: Option<i64>,
         /// `FOR VALID_TIME CONTAINS <ms>` filter. `None` = no filter.
         valid_at_ms: Option<i64>,
+        /// Optional surrogate prefilter injected by a cross-engine sub-plan.
+        /// When present, the scan skips rows whose surrogate is absent from
+        /// this bitmap. `None` = no prefilter; full collection is scanned.
+        #[serde(default)]
+        #[msgpack(default)]
+        prefilter: Option<SurrogateBitmap>,
     },
 
     /// Batch insert documents in a single redb transaction.

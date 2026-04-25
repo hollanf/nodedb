@@ -57,6 +57,7 @@ fn fulltext_search_isolated() {
             top_k: 5,
             fuzzy: false,
             rls_filters: Vec::new(),
+            prefilter: None,
         }),
     );
     assert_eq!(resp_a.status, Status::Ok);
@@ -73,6 +74,7 @@ fn fulltext_search_isolated() {
             top_k: 5,
             fuzzy: false,
             rls_filters: Vec::new(),
+            prefilter: None,
         }),
     );
     assert_eq!(resp_b.status, Status::Ok);

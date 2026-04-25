@@ -67,6 +67,7 @@ pub(crate) fn build_hop(fields: &TextFields) -> crate::Result<PhysicalPlan> {
         direction: parse_direction(fields.direction.as_deref()),
         options: Default::default(),
         rls_filters: Vec::new(),
+        frontier_bitmap: None,
     }))
 }
 
@@ -105,6 +106,7 @@ pub(crate) fn build_path(fields: &TextFields) -> crate::Result<PhysicalPlan> {
         edge_label: fields.edge_label.clone(),
         options: Default::default(),
         rls_filters: Vec::new(),
+        frontier_bitmap: None,
     }))
 }
 
@@ -270,5 +272,8 @@ pub(crate) fn build_match(fields: &TextFields, _collection: &str) -> crate::Resu
         detail: format!("match query serialization: {e}"),
     })?;
 
-    Ok(PhysicalPlan::Graph(GraphOp::Match { query }))
+    Ok(PhysicalPlan::Graph(GraphOp::Match {
+        query,
+        frontier_bitmap: None,
+    }))
 }

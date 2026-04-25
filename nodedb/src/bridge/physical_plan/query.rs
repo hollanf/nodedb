@@ -1,5 +1,7 @@
 //! Query operations (joins, aggregates) dispatched to the Data Plane.
 
+use nodedb_types::SurrogateBitmap;
+
 /// Aggregate specification for Data Plane aggregate execution.
 #[derive(
     Debug,
@@ -93,6 +95,12 @@ pub enum QueryOp {
         /// small-side inputs. The Control Plane executes this plan first,
         /// merges it if needed, then embeds the result into `BroadcastJoin`.
         inline_right: Option<Box<crate::bridge::envelope::PhysicalPlan>>,
+        /// Surrogate bitmap currency produced by the inline left sub-plan.
+        /// Carried as a separate field so Stage 2 can thread it into the
+        /// parent engine's prefilter slot without re-executing the sub-plan.
+        inline_left_bitmap: Option<SurrogateBitmap>,
+        /// Surrogate bitmap currency produced by the inline right sub-plan.
+        inline_right_bitmap: Option<SurrogateBitmap>,
     },
 
     /// Inline hash join: both sides are pre-gathered msgpack data.

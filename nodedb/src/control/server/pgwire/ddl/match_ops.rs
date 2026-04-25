@@ -47,7 +47,10 @@ pub async fn match_query(
 
     let tenant_id = identity.tenant_id;
 
-    let plan = crate::bridge::envelope::PhysicalPlan::Graph(GraphOp::Match { query: query_bytes });
+    let plan = crate::bridge::envelope::PhysicalPlan::Graph(GraphOp::Match {
+        query: query_bytes,
+        frontier_bitmap: None,
+    });
 
     // Broadcast to all cores.
     match dispatch_utils::broadcast_to_all_cores(state, tenant_id, plan, 0).await {

@@ -174,6 +174,7 @@ fn range_scan_returns_results() {
             window_functions: Vec::new(),
             system_as_of_ms: None,
             valid_at_ms: None,
+            prefilter: None,
         }),
     );
     let json = payload_json(&payload);

@@ -48,6 +48,7 @@ impl CoreLoop {
                 depth,
                 options: _,
                 rls_filters: _,
+                frontier_bitmap: _,
             } => self.execute_graph_hop(task, tid, start_nodes, edge_label, *direction, *depth),
 
             GraphOp::Neighbors {
@@ -79,6 +80,7 @@ impl CoreLoop {
                 max_depth,
                 options: _,
                 rls_filters: _,
+                frontier_bitmap: _,
             } => self.execute_graph_path(task, tid, src, dst, edge_label, *max_depth),
 
             GraphOp::Subgraph {
@@ -119,7 +121,10 @@ impl CoreLoop {
                 self.execute_graph_algo(task, tid, algorithm, params)
             }
 
-            GraphOp::Match { query } => self.execute_graph_match(task, tid, query),
+            GraphOp::Match {
+                query,
+                frontier_bitmap: _,
+            } => self.execute_graph_match(task, tid, query),
 
             GraphOp::SetNodeLabels { node_id, labels } => {
                 let partition = self.csr_partition_mut(tid);

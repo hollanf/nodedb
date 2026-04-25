@@ -116,6 +116,7 @@ pub(super) fn convert_scan(p: ScanParams<'_>) -> crate::Result<Vec<PhysicalTask>
             sort_keys: sort.clone(),
             system_as_of_ms: temporal.system_as_of_ms,
             valid_at_ms: valid_at_from_scope(temporal),
+            prefilter: None,
         }),
         EngineType::Spatial => PhysicalPlan::Columnar(ColumnarOp::Scan {
             collection: collection.into(),
@@ -126,6 +127,7 @@ pub(super) fn convert_scan(p: ScanParams<'_>) -> crate::Result<Vec<PhysicalTask>
             sort_keys: sort.clone(),
             system_as_of_ms: None,
             valid_at_ms: None,
+            prefilter: None,
         }),
         EngineType::KeyValue => PhysicalPlan::Kv(KvOp::Scan {
             collection: collection.into(),
@@ -147,6 +149,7 @@ pub(super) fn convert_scan(p: ScanParams<'_>) -> crate::Result<Vec<PhysicalTask>
                 window_functions: window_bytes,
                 system_as_of_ms: temporal.system_as_of_ms,
                 valid_at_ms: valid_at_from_scope(temporal),
+                prefilter: None,
             })
         }
         EngineType::Array => {
@@ -268,6 +271,7 @@ pub(super) fn convert_point_get(
                 sort_keys: Vec::new(),
                 system_as_of_ms: None,
                 valid_at_ms: None,
+                prefilter: None,
             })
         }
         // Timeseries should never reach here — nodedb-sql rejects point gets.
@@ -357,6 +361,8 @@ pub(super) fn convert_join(p: JoinPlanParams<'_>) -> crate::Result<Vec<PhysicalT
             post_filters: filter_bytes,
             inline_left,
             inline_right,
+            inline_left_bitmap: None,
+            inline_right_bitmap: None,
         }),
         post_set_op: PostSetOp::None,
     }])
@@ -514,6 +520,7 @@ pub(super) fn convert_text_search(
             query: query.to_string(),
             top_k: *top_k,
             fuzzy: *fuzzy,
+            prefilter: None,
             rls_filters: Vec::new(),
         }),
         post_set_op: PostSetOp::None,
@@ -584,6 +591,7 @@ pub(super) fn convert_spatial_scan(p: SpatialScanParams<'_>) -> crate::Result<Ve
             limit: *limit,
             projection: proj_names,
             rls_filters: Vec::new(),
+            prefilter: None,
         }),
         post_set_op: PostSetOp::None,
     }])

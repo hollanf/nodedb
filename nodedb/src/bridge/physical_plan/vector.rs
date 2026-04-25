@@ -1,6 +1,6 @@
 //! Vector engine operations dispatched to the Data Plane.
 
-use nodedb_types::Surrogate;
+use nodedb_types::{Surrogate, SurrogateBitmap};
 
 /// Vector engine physical operations.
 #[derive(
@@ -20,8 +20,8 @@ pub enum VectorOp {
         top_k: usize,
         /// Optional search beam width override. If 0, uses default `4 * top_k`.
         ef_search: usize,
-        /// Pre-computed bitmap of eligible document IDs (from filter evaluation).
-        filter_bitmap: Option<Vec<u8>>,
+        /// Pre-computed bitmap of eligible surrogates (from filter evaluation).
+        filter_bitmap: Option<SurrogateBitmap>,
         /// Named vector field to search. Empty string = default field.
         field_name: String,
         /// RLS post-candidate filters (serialized `Vec<ScanFilter>`).
@@ -59,7 +59,7 @@ pub enum VectorOp {
         query_vector: Vec<f32>,
         top_k: usize,
         ef_search: usize,
-        filter_bitmap: Option<Vec<u8>>,
+        filter_bitmap: Option<SurrogateBitmap>,
         /// RLS post-candidate filters.
         rls_filters: Vec<u8>,
     },

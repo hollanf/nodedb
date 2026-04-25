@@ -73,6 +73,8 @@ pub(super) fn convert_aggregate(
                 post_filters: Vec::new(),
                 inline_left,
                 inline_right,
+                inline_left_bitmap: None,
+                inline_right_bitmap: None,
             }),
             post_set_op: PostSetOp::None,
         }]);

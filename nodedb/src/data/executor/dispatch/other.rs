@@ -353,6 +353,7 @@ impl CoreLoop {
                 sort_keys,
                 system_as_of_ms,
                 valid_at_ms,
+                prefilter: _,
             }) => self.execute_columnar_scan(
                 task,
                 super::super::handlers::columnar_read::ColumnarScanParams {
@@ -450,6 +451,7 @@ impl CoreLoop {
                 limit,
                 projection,
                 rls_filters,
+                prefilter: _,
             }) => self.execute_spatial_scan(
                 task,
                 tid,

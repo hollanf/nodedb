@@ -41,5 +41,6 @@ pub(crate) fn build_scan(fields: &TextFields, collection: &str) -> crate::Result
         limit,
         projection: Vec::new(),
         rls_filters: Vec::new(),
+        prefilter: None,
     }))
 }

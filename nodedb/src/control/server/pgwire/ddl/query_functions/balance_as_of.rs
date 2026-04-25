@@ -99,6 +99,7 @@ pub async fn balance_as_of(
         window_functions: Vec::new(),
         system_as_of_ms: None,
         valid_at_ms: None,
+        prefilter: None,
     });
 
     let source_resp =

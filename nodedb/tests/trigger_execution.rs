@@ -203,6 +203,7 @@ fn classify_scan_returns_none() {
         window_functions: vec![],
         system_as_of_ms: None,
         valid_at_ms: None,
+        prefilter: None,
     });
     assert!(classify_dml_write(&plan).is_none());
 }

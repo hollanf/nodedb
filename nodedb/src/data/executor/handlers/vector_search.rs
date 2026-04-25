@@ -65,7 +65,7 @@ pub(in crate::data::executor) struct VectorSearchParams<'a> {
     pub query_vector: &'a [f32],
     pub top_k: usize,
     pub ef_search: usize,
-    pub filter_bitmap: Option<&'a [u8]>,
+    pub filter_bitmap: Option<&'a nodedb_types::SurrogateBitmap>,
     pub field_name: &'a str,
     /// RLS post-candidate filters. Applied after HNSW/IVF returns candidates.
     pub rls_filters: &'a [u8],
@@ -79,7 +79,7 @@ pub(in crate::data::executor) struct VectorMultiSearchParams<'a> {
     pub query_vector: &'a [f32],
     pub top_k: usize,
     pub ef_search: usize,
-    pub filter_bitmap: Option<&'a [u8]>,
+    pub filter_bitmap: Option<&'a nodedb_types::SurrogateBitmap>,
     /// RLS post-candidate filters (evaluated per-candidate after RRF fusion).
     pub rls_filters: &'a [u8],
 }
@@ -129,8 +129,13 @@ impl CoreLoop {
         let fetch_k = top_k;
         let ef = effective_ef(ef_search, fetch_k);
         let results = match filter_bitmap {
-            Some(bitmap_bytes) => {
-                collection_ref.search_with_bitmap_bytes(query_vector, fetch_k, ef, bitmap_bytes)
+            Some(surrogate_bm) => {
+                let mut buf = Vec::with_capacity(surrogate_bm.0.serialized_size());
+                if surrogate_bm.0.serialize_into(&mut buf).is_ok() {
+                    collection_ref.search_with_bitmap_bytes(query_vector, fetch_k, ef, &buf)
+                } else {
+                    collection_ref.search(query_vector, fetch_k, ef)
+                }
             }
             None => collection_ref.search(query_vector, fetch_k, ef),
         };
@@ -154,7 +159,7 @@ impl CoreLoop {
         ivf: &crate::engine::vector::ivf::IvfPqIndex,
         query_vector: &[f32],
         top_k: usize,
-        filter_bitmap: Option<&[u8]>,
+        filter_bitmap: Option<&nodedb_types::SurrogateBitmap>,
     ) -> Response {
         if ivf.is_empty() {
             return self.response_with_payload(task, b"[]".to_vec());
@@ -172,12 +177,10 @@ impl CoreLoop {
             .map(|r| build_search_hit(surrogate_source, r.id, r.distance))
             .collect();
 
-        if let Some(bitmap_bytes) = filter_bitmap {
-            if let Ok(bm) = crate::query::bitmap::deserialize(bitmap_bytes) {
-                // Bitmap is a set of surrogates; hit.id is now the surrogate.
-                hits.retain(|h| bm.contains(h.id));
-                let _ = resolve_surrogate; // kept available for future bitmap modes
-            }
+        if let Some(surrogate_bm) = filter_bitmap {
+            // Bitmap is a set of surrogates; hit.id is now the surrogate.
+            hits.retain(|h| surrogate_bm.0.contains(h.id));
+            let _ = resolve_surrogate; // kept available for future bitmap modes
             hits.truncate(top_k);
         }
 
@@ -223,7 +226,14 @@ impl CoreLoop {
                 }
                 let ef = effective_ef(ef_search, top_k);
                 let results = match filter_bitmap {
-                    Some(bm) => coll.search_with_bitmap_bytes(query_vector, top_k, ef, bm),
+                    Some(surrogate_bm) => {
+                        let mut buf = Vec::with_capacity(surrogate_bm.0.serialized_size());
+                        if surrogate_bm.0.serialize_into(&mut buf).is_ok() {
+                            coll.search_with_bitmap_bytes(query_vector, top_k, ef, &buf)
+                        } else {
+                            coll.search(query_vector, top_k, ef)
+                        }
+                    }
                     None => coll.search(query_vector, top_k, ef),
                 };
                 all_results.push(results);

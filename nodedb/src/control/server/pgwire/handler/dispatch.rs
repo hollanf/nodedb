@@ -94,6 +94,8 @@ impl NodeDbPgHandler {
                 ref post_filters,
                 ref inline_left,
                 ref inline_right,
+                inline_left_bitmap: _,
+                inline_right_bitmap: _,
             },
         ) = task.plan
         {
@@ -124,6 +126,7 @@ impl NodeDbPgHandler {
                         window_functions: Vec::new(),
                         system_as_of_ms: None,
                         valid_at_ms: None,
+                        prefilter: None,
                     },
                 );
                 let right_data = crate::control::server::dispatch_utils::broadcast_raw(
@@ -187,6 +190,7 @@ impl NodeDbPgHandler {
                         window_functions: Vec::new(),
                         system_as_of_ms: None,
                         valid_at_ms: None,
+                        prefilter: None,
                     },
                 );
                 crate::control::server::dispatch_utils::broadcast_raw(

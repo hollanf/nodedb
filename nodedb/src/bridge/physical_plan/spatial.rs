@@ -1,5 +1,7 @@
 //! Spatial engine operations dispatched to the Data Plane.
 
+use nodedb_types::SurrogateBitmap;
+
 /// Spatial predicate type for R-tree index scan.
 #[derive(
     Debug,
@@ -50,5 +52,9 @@ pub enum SpatialOp {
         projection: Vec<String>,
         /// RLS post-candidate filters.
         rls_filters: Vec<u8>,
+        /// Optional surrogate prefilter injected by a cross-engine sub-plan.
+        /// When present, only candidates whose surrogate is in this bitmap
+        /// are returned. `None` = no prefilter; all R-tree candidates pass.
+        prefilter: Option<SurrogateBitmap>,
     },
 }

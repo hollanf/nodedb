@@ -101,7 +101,7 @@ impl CoreLoop {
         ef_search: usize,
         fuzzy: bool,
         vector_weight: f32,
-        filter_bitmap: Option<&[u8]>,
+        filter_bitmap: Option<&nodedb_types::SurrogateBitmap>,
         rls_filters: &[u8],
     ) -> Response {
         let tenant_id = TenantId::new(tid);
@@ -144,7 +144,14 @@ impl CoreLoop {
                     fetch_k.saturating_mul(4).max(64)
                 };
                 match filter_bitmap {
-                    Some(bm) => index.search_with_bitmap_bytes(query_vector, fetch_k, ef, bm),
+                    Some(surrogate_bm) => {
+                        let mut buf = Vec::with_capacity(surrogate_bm.0.serialized_size());
+                        if surrogate_bm.0.serialize_into(&mut buf).is_ok() {
+                            index.search_with_bitmap_bytes(query_vector, fetch_k, ef, &buf)
+                        } else {
+                            index.search(query_vector, fetch_k, ef)
+                        }
+                    }
                     None => index.search(query_vector, fetch_k, ef),
                 }
             }

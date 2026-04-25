@@ -182,6 +182,7 @@ mod tests {
             window_functions: vec![],
             system_as_of_ms: None,
             valid_at_ms: None,
+            prefilter: None,
         });
         let routes = route_plan(plan, 1, Some(&table));
         // Broadcast should produce VSHARD_COUNT routes.
