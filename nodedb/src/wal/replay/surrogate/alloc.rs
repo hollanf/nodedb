@@ -36,12 +36,12 @@ mod tests {
     }
 
     #[test]
-    fn alloc_does_not_lower_hwm() {
+    fn alloc_below_current_hwm_is_noop() {
         let reg: SurrogateRegistryHandle =
             Arc::new(RwLock::new(SurrogateRegistry::from_persisted_hwm(100)));
         let payload = SurrogateAllocPayload::new(50).to_bytes();
-        let err = apply_surrogate_alloc(&payload, &reg).unwrap_err();
-        assert!(matches!(err, crate::Error::Storage { .. }));
+        apply_surrogate_alloc(&payload, &reg).unwrap();
+        assert_eq!(reg.read().unwrap().current_hwm(), 100);
     }
 
     #[test]
