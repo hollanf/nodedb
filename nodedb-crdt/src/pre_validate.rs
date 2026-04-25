@@ -62,6 +62,7 @@ mod tests {
         let change = ProposedChange {
             collection: "users".into(),
             row_id: "u1".into(),
+            surrogate: nodedb_types::Surrogate::ZERO,
             fields: vec![("email".into(), LoroValue::String("a@b.com".into()))],
         };
 
@@ -83,6 +84,7 @@ mod tests {
         let change = ProposedChange {
             collection: "users".into(),
             row_id: "u1".into(),
+            surrogate: nodedb_types::Surrogate::ZERO,
             fields: vec![("name".into(), LoroValue::String("Alice".into()))],
         };
 

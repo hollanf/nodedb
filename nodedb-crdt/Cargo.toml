@@ -14,6 +14,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 loro = { workspace = true }
 serde = { workspace = true }
+nodedb-types = { workspace = true }
 sha2 = "0.10"
 hmac = "0.12"
 

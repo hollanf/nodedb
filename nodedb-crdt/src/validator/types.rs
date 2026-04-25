@@ -2,6 +2,7 @@
 
 use crate::dead_letter::CompensationHint;
 use loro::LoroValue;
+use nodedb_types::Surrogate;
 
 /// Outcome of validating a proposed change against constraints.
 #[derive(Debug)]
@@ -30,6 +31,13 @@ pub struct ProposedChange {
     pub collection: String,
     /// Row ID being inserted/updated.
     pub row_id: String,
+    /// Stable cross-engine identity assigned at the boundary.
+    ///
+    /// `Surrogate::ZERO` is the in-test sentinel and is also accepted
+    /// for legacy callers that have not yet plumbed an assigner. UNIQUE
+    /// and FK checks key on this when non-zero, so cross-engine bitmap
+    /// joins reference the same row identity.
+    pub surrogate: Surrogate,
     /// Field values being set.
     ///
     /// For bitemporal collections, the reserved columns `_ts_valid_from`

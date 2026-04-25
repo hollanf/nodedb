@@ -24,6 +24,7 @@ fn valid_insert_accepted() {
     let change = ProposedChange {
         collection: "users".into(),
         row_id: "u1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![
             ("name".into(), LoroValue::String("Alice".into())),
             (
@@ -48,6 +49,7 @@ fn not_null_violation() {
     let change = ProposedChange {
         collection: "users".into(),
         row_id: "u1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![(
             "email".into(),
             LoroValue::String("alice@example.com".into()),
@@ -75,6 +77,7 @@ fn foreign_key_violation() {
     let change = ProposedChange {
         collection: "posts".into(),
         row_id: "p1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![("author_id".into(), LoroValue::String("u1".into()))],
     };
 
@@ -109,6 +112,7 @@ fn foreign_key_passes_when_parent_exists() {
     let change = ProposedChange {
         collection: "posts".into(),
         row_id: "p1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![("author_id".into(), LoroValue::String("u1".into()))],
     };
 
@@ -130,6 +134,7 @@ fn validate_or_reject_enqueues_to_dlq() {
     let change = ProposedChange {
         collection: "users".into(),
         row_id: "u1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![("email".into(), LoroValue::String("a@b.com".into()))],
     };
 
@@ -166,6 +171,7 @@ fn validate_with_policy_last_writer_wins() {
     let change = ProposedChange {
         collection: "users".into(),
         row_id: "u1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![("email".into(), LoroValue::String("a@b.com".into()))],
     };
 
@@ -215,6 +221,7 @@ fn validate_with_policy_rename_suffix() {
     let change = ProposedChange {
         collection: "users".into(),
         row_id: "u2".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![
             ("name".into(), LoroValue::String("Bob".into())),
             (
@@ -265,6 +272,7 @@ fn validate_with_policy_cascade_defer() {
     let change = ProposedChange {
         collection: "posts".into(),
         row_id: "p1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![("author_id".into(), LoroValue::String("u1".into()))],
     };
 
@@ -311,6 +319,7 @@ fn validate_with_policy_escalate_to_dlq() {
     let change = ProposedChange {
         collection: "users".into(),
         row_id: "u1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![("email".into(), LoroValue::String("a@b.com".into()))],
     };
 

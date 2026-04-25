@@ -44,6 +44,7 @@ fn split_brain_unique_violation_with_compensation() {
     let agent_b_change = ProposedChange {
         collection: "users".into(),
         row_id: "user-b".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![
             ("name".into(), LoroValue::String("Bob".into())),
             (
@@ -74,6 +75,7 @@ fn split_brain_unique_violation_with_compensation() {
     let agent_a_change = ProposedChange {
         collection: "users".into(),
         row_id: "user-a".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![
             ("name".into(), LoroValue::String("Alice".into())),
             (
@@ -113,6 +115,7 @@ fn split_brain_unique_violation_with_compensation() {
     let retry_change = ProposedChange {
         collection: "users".into(),
         row_id: "user-a".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![
             ("name".into(), LoroValue::String("Alice".into())),
             (
@@ -146,6 +149,7 @@ fn offline_agent_references_deleted_user() {
     let change = ProposedChange {
         collection: "posts".into(),
         row_id: "post-1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![("author_id".into(), LoroValue::String("u1".into()))],
     };
 
@@ -198,6 +202,7 @@ fn pre_validation_saves_raft_roundtrip() {
     let change = ProposedChange {
         collection: "users".into(),
         row_id: "u2".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![
             ("name".into(), LoroValue::String("New".into())),
             (
@@ -261,6 +266,7 @@ fn not_null_violation_hints_provide_field() {
     let change = ProposedChange {
         collection: "users".into(),
         row_id: "u1".into(),
+        surrogate: nodedb_types::Surrogate::ZERO,
         fields: vec![
             // Missing "name" field — violates NOT NULL.
             ("email".into(), LoroValue::String("a@b.com".into())),
