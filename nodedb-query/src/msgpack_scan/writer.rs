@@ -161,10 +161,16 @@ pub fn write_kv_null(buf: &mut Vec<u8>, key: &str) {
 
 /// Inject a string field into a msgpack map without full decode.
 ///
-/// If `value` is a valid msgpack map, returns a new map with the field prepended.
-/// If `value` is not a map, wraps as `{field_name: field_value, "value": raw}`.
+/// If `value` is a valid msgpack map that already contains `field_name`,
+/// the existing value is preserved and the input is returned unchanged —
+/// the caller's body is authoritative for its own primary key. If the map
+/// does not contain the field, it is prepended. If `value` is not a map,
+/// wraps as `{field_name: field_value, "value": raw}`.
 pub fn inject_str_field(value: &[u8], field_name: &str, field_value: &str) -> Vec<u8> {
     if let Some((count, body_start)) = crate::msgpack_scan::reader::map_header(value, 0) {
+        if crate::msgpack_scan::extract_field(value, 0, field_name).is_some() {
+            return value.to_vec();
+        }
         let mut buf = Vec::with_capacity(value.len() + field_name.len() + field_value.len() + 16);
         write_map_header(&mut buf, count + 1);
         write_kv_str(&mut buf, field_name, field_value);
