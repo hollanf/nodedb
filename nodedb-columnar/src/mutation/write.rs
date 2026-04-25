@@ -1,5 +1,6 @@
 //! Write-path mutations: insert, insert_if_absent, delete, update.
 
+use nodedb_types::surrogate::Surrogate;
 use nodedb_types::value::Value;
 
 use crate::error::ColumnarError;
@@ -62,6 +63,49 @@ impl MutationEngine {
             row_index: self.memtable_row_counter,
         };
         self.pk_index.upsert(pk_bytes, location);
+        self.memtable_surrogates.push(None);
+        self.memtable_row_counter += 1;
+
+        Ok(MutationResult { wal_records })
+    }
+
+    /// Insert with a stable cross-engine surrogate identity.
+    ///
+    /// Identical to [`Self::insert`] but also records `surrogate` in the
+    /// per-row side-table so scan prefilters can perform bitmap membership
+    /// checks without a separate lookup pass.
+    pub fn insert_with_surrogate(
+        &mut self,
+        values: &[Value],
+        surrogate: Surrogate,
+    ) -> Result<MutationResult, ColumnarError> {
+        let pk_bytes = self.extract_pk_bytes(values)?;
+        let mut wal_records = Vec::with_capacity(2);
+
+        let bitemporal = self.schema.is_bitemporal();
+        if !bitemporal && let Some(prior) = self.pk_index.get(&pk_bytes).copied() {
+            let bitmap = self.delete_bitmaps.entry(prior.segment_id).or_default();
+            bitmap.mark_deleted(prior.row_index);
+            wal_records.push(ColumnarWalRecord::DeleteRows {
+                collection: self.collection.clone(),
+                segment_id: prior.segment_id,
+                row_indices: vec![prior.row_index],
+            });
+        }
+
+        let row_data = encode_row_for_wal(values)?;
+        wal_records.push(ColumnarWalRecord::InsertRow {
+            collection: self.collection.clone(),
+            row_data,
+        });
+
+        self.memtable.append_row(values)?;
+        let location = RowLocation {
+            segment_id: self.memtable_segment_id,
+            row_index: self.memtable_row_counter,
+        };
+        self.pk_index.upsert(pk_bytes, location);
+        self.memtable_surrogates.push(Some(surrogate));
         self.memtable_row_counter += 1;
 
         Ok(MutationResult { wal_records })
@@ -92,6 +136,7 @@ impl MutationEngine {
             row_index: self.memtable_row_counter,
         };
         self.pk_index.upsert(pk_bytes, location);
+        self.memtable_surrogates.push(None);
         self.memtable_row_counter += 1;
 
         Ok(MutationResult {

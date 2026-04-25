@@ -28,6 +28,7 @@ impl MutationEngine {
         self.memtable_segment_id = self.next_segment_id;
         self.next_segment_id += 1;
         self.memtable_row_counter = 0;
+        self.memtable_surrogates.clear();
 
         let wal = ColumnarWalRecord::MemtableFlushed {
             collection: self.collection.clone(),

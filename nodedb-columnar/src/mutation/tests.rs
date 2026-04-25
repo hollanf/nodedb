@@ -1,4 +1,6 @@
 use nodedb_types::columnar::{ColumnDef, ColumnType, ColumnarSchema};
+use nodedb_types::surrogate::Surrogate;
+use nodedb_types::surrogate_bitmap::SurrogateBitmap;
 use nodedb_types::value::Value;
 
 use crate::error::ColumnarError;
@@ -163,6 +165,119 @@ fn multiple_inserts_and_deletes() {
     }
 
     assert_eq!(engine.pk_index().len(), 5); // 0, 2, 4, 6, 8.
+}
+
+#[test]
+fn prefilter_row_boundary_membership() {
+    // Insert 5 rows with surrogates 10, 20, 30, 40, 50.
+    // A prefilter bitmap containing only {20, 40} should yield exactly
+    // the two matching rows and skip the other three.
+    let mut engine = MutationEngine::new("col".into(), test_schema());
+
+    let surrogates = [10u32, 20, 30, 40, 50];
+    for (i, &s) in surrogates.iter().enumerate() {
+        engine
+            .insert_with_surrogate(
+                &[
+                    Value::Integer(i as i64),
+                    Value::String(format!("r{i}")),
+                    Value::Null,
+                ],
+                Surrogate(s),
+            )
+            .expect("insert_with_surrogate");
+    }
+
+    assert_eq!(engine.memtable_surrogates().len(), 5);
+
+    let bitmap = SurrogateBitmap::from_iter([Surrogate(20), Surrogate(40)]);
+
+    // Simulate block-boundary check: memtable surrogate range is [10, 50];
+    // bitmap range is [20, 40] — they intersect, so block is NOT skipped.
+    let surrogates_slice = engine.memtable_surrogates();
+    let (mt_min, mt_max) = surrogates_slice
+        .iter()
+        .flatten()
+        .fold((u32::MAX, u32::MIN), |(lo, hi), s| {
+            (lo.min(s.0), hi.max(s.0))
+        });
+    assert_eq!(mt_min, 10);
+    assert_eq!(mt_max, 50);
+    let bm_min = bitmap.0.min().unwrap();
+    let bm_max = bitmap.0.max().unwrap();
+    // Ranges overlap — block must NOT be skipped.
+    assert!(!(bm_max < mt_min || bm_min > mt_max));
+
+    // Row-boundary: count rows that pass the bitmap membership check.
+    let passing: Vec<_> = engine
+        .scan_memtable_rows_with_surrogates()
+        .filter(|(sur, _)| sur.is_some_and(|s| bitmap.contains(s)))
+        .collect();
+    assert_eq!(passing.len(), 2);
+    // The two matched rows should be at surrogate positions 20 and 40 (indices 1 and 3).
+    assert!(passing[0].0 == Some(Surrogate(20)));
+    assert!(passing[1].0 == Some(Surrogate(40)));
+}
+
+#[test]
+fn prefilter_block_boundary_skip() {
+    // Insert rows with surrogates 100, 200, 300.
+    // A prefilter bitmap containing only {10, 20} (below the memtable range)
+    // should cause the block-boundary check to flag a skip.
+    let mut engine = MutationEngine::new("col".into(), test_schema());
+
+    for (i, s) in [100u32, 200, 300].iter().enumerate() {
+        engine
+            .insert_with_surrogate(
+                &[
+                    Value::Integer(i as i64),
+                    Value::String(format!("r{i}")),
+                    Value::Null,
+                ],
+                Surrogate(*s),
+            )
+            .expect("insert_with_surrogate");
+    }
+
+    let surrogates_slice = engine.memtable_surrogates();
+    let (mt_min, mt_max) = surrogates_slice
+        .iter()
+        .flatten()
+        .fold((u32::MAX, u32::MIN), |(lo, hi), s| {
+            (lo.min(s.0), hi.max(s.0))
+        });
+    assert_eq!(mt_min, 100);
+    assert_eq!(mt_max, 300);
+
+    let bitmap = SurrogateBitmap::from_iter([Surrogate(10), Surrogate(20)]);
+    let bm_min = bitmap.0.min().unwrap();
+    let bm_max = bitmap.0.max().unwrap();
+
+    // bm_max (20) < mt_min (100) → disjoint ranges → block MUST be skipped.
+    assert!(bm_max < mt_min || bm_min > mt_max);
+}
+
+#[test]
+fn insert_without_surrogate_stores_none() {
+    let mut engine = MutationEngine::new("col".into(), test_schema());
+    engine
+        .insert(&[Value::Integer(1), Value::String("x".into()), Value::Null])
+        .expect("insert");
+    assert_eq!(engine.memtable_surrogates(), &[None]);
+}
+
+#[test]
+fn flush_clears_surrogate_table() {
+    let mut engine = MutationEngine::new("col".into(), test_schema());
+    engine
+        .insert_with_surrogate(
+            &[Value::Integer(1), Value::String("x".into()), Value::Null],
+            Surrogate(42),
+        )
+        .expect("insert");
+    assert_eq!(engine.memtable_surrogates().len(), 1);
+    engine.on_memtable_flushed(1);
+    assert!(engine.memtable_surrogates().is_empty());
 }
 
 #[test]

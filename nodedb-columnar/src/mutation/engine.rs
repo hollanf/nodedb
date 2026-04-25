@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use nodedb_types::columnar::ColumnarSchema;
+use nodedb_types::surrogate::Surrogate;
 use nodedb_types::value::Value;
 
 use crate::delete_bitmap::DeleteBitmap;
@@ -31,6 +32,12 @@ pub struct MutationEngine {
     pub(super) memtable_segment_id: u32,
     /// Row counter within the current memtable (resets on flush).
     pub(super) memtable_row_counter: u32,
+    /// Per-row surrogate identities, parallel to the memtable rows.
+    ///
+    /// Entry `i` is the surrogate assigned to memtable row `i` at insert
+    /// time, or `None` if no surrogate was supplied (test fixtures, legacy
+    /// inserts). The vec is drained alongside the memtable on flush.
+    pub(super) memtable_surrogates: Vec<Option<Surrogate>>,
 }
 
 /// Result of a mutation operation, including the WAL record to persist.
@@ -64,6 +71,7 @@ impl MutationEngine {
             next_segment_id: 1,
             memtable_segment_id,
             memtable_row_counter: 0,
+            memtable_surrogates: Vec::new(),
         }
     }
 
@@ -132,6 +140,14 @@ impl MutationEngine {
         self.memtable.should_flush()
     }
 
+    /// Access the per-row surrogate table for the memtable.
+    ///
+    /// Index matches memtable row order; `None` entries indicate rows
+    /// inserted without a surrogate (test fixtures, legacy paths).
+    pub fn memtable_surrogates(&self) -> &[Option<Surrogate>] {
+        &self.memtable_surrogates
+    }
+
     /// Iterate non-deleted rows in the memtable as `Vec<Value>`.
     ///
     /// Skips rows marked as deleted in the memtable's virtual segment
@@ -147,6 +163,28 @@ impl MutationEngine {
                 } else {
                     Some(row)
                 }
+            })
+    }
+
+    /// Iterate non-deleted rows paired with their surrogate identity.
+    ///
+    /// Yields `(Option<Surrogate>, Vec<Value>)`. The surrogate is `None`
+    /// for rows inserted without one (test fixtures, legacy paths). Deleted
+    /// rows are filtered out exactly as in [`Self::scan_memtable_rows`].
+    pub fn scan_memtable_rows_with_surrogates(
+        &self,
+    ) -> impl Iterator<Item = (Option<Surrogate>, Vec<Value>)> + '_ {
+        let deletes = self.delete_bitmaps.get(&self.memtable_segment_id);
+        let surrogates = &self.memtable_surrogates;
+        self.memtable
+            .iter_rows()
+            .enumerate()
+            .filter_map(move |(row_idx, row)| {
+                if deletes.is_some_and(|bm| bm.is_deleted(row_idx as u32)) {
+                    return None;
+                }
+                let surrogate = surrogates.get(row_idx).copied().flatten();
+                Some((surrogate, row))
             })
     }
 
