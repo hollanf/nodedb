@@ -38,6 +38,9 @@ impl ErrorCode {
     pub const FAN_OUT_EXCEEDED: Self = Self(1201);
     pub const SQL_NOT_ENABLED: Self = Self(1202);
 
+    // Engine ops (1300–1399)
+    pub const ARRAY: Self = Self(1300);
+
     // Auth / Security (2000–2099)
     pub const AUTHORIZATION_DENIED: Self = Self(2000);
     pub const AUTH_EXPIRED: Self = Self(2001);

@@ -195,6 +195,18 @@ impl NodeDbError {
         }
     }
 
+    // ── Engine: Array ──
+
+    pub fn array(array: impl Into<String>, detail: impl fmt::Display) -> Self {
+        let array = array.into();
+        Self {
+            code: ErrorCode::ARRAY,
+            message: format!("array engine error on '{array}': {detail}"),
+            details: ErrorDetails::Array { array },
+            cause: None,
+        }
+    }
+
     // ── Bridge / Dispatch / Internal ──
 
     pub fn bridge(detail: impl fmt::Display) -> Self {

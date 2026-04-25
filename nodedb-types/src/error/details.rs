@@ -138,6 +138,11 @@ pub enum ErrorDetails {
     // Encryption
     Encryption,
 
+    // Engine ops
+    Array {
+        array: String,
+    },
+
     // Bridge / Dispatch / Internal
     Bridge,
     Dispatch,
