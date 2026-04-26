@@ -150,6 +150,23 @@ fn remove_node_edges_all() {
 }
 
 #[test]
+fn surrogate_reverse_lookup_resolves_node_name() {
+    use nodedb_types::Surrogate;
+    let mut csr = CsrIndex::new();
+    csr.add_edge("alice", "KNOWS", "bob").unwrap();
+    csr.add_edge("alice", "KNOWS", "carol").unwrap();
+    csr.set_node_surrogate("alice", Surrogate(101));
+    csr.set_node_surrogate("bob", Surrogate(102));
+
+    assert_eq!(csr.node_id_for_surrogate(Surrogate(101)), Some("alice"));
+    assert_eq!(csr.node_id_for_surrogate(Surrogate(102)), Some("bob"));
+    // ZERO sentinel never resolves.
+    assert_eq!(csr.node_id_for_surrogate(Surrogate(0)), None);
+    // Unbound surrogate (carol was never assigned) does not resolve.
+    assert_eq!(csr.node_id_for_surrogate(Surrogate(999)), None);
+}
+
+#[test]
 fn add_node_idempotent() {
     let mut csr = CsrIndex::new();
     let id1 = csr.add_node("x");

@@ -189,6 +189,7 @@ impl CsrIndex {
             // Surrogates are runtime-only and not persisted. After checkpoint
             // restore they start at zero and are repopulated by subsequent EdgePuts.
             node_surrogates: vec![0; node_count],
+            surrogate_to_local: HashMap::new(),
             access_counts,
             query_epoch: 0,
             partition_tag: crate::csr::local_node_id::next_partition_tag(),
@@ -250,6 +251,7 @@ impl CsrIndex {
             // Surrogates are runtime-only and not persisted. After checkpoint
             // restore they start at zero and are repopulated by subsequent EdgePuts.
             node_surrogates: vec![0; node_count],
+            surrogate_to_local: HashMap::new(),
             access_counts,
             query_epoch: 0,
             partition_tag: crate::csr::local_node_id::next_partition_tag(),

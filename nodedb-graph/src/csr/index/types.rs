@@ -87,6 +87,11 @@ pub struct CsrIndex {
     /// is zero was inserted without surrogate plumbing (e.g. legacy paths or tests)
     /// and is treated as "not in any prefilter bitmap" when a bitmap is active.
     pub(crate) node_surrogates: Vec<u32>,
+    /// Reverse map: `Surrogate.as_u32()` → CSR-local node id. Maintained
+    /// in step with `node_surrogates` by `set_node_surrogate`. Excludes the
+    /// zero sentinel. Used by cross-engine fusion (graph RAG) to resolve a
+    /// vector-side surrogate to the corresponding graph node name.
+    pub(crate) surrogate_to_local: HashMap<u32, u32>,
 
     // ── Hot/cold access tracking ──
     /// Per-node access counter: incremented on each neighbor/BFS/path query.
@@ -133,6 +138,7 @@ impl CsrIndex {
             node_label_to_id: HashMap::new(),
             node_label_names: Vec::new(),
             node_surrogates: Vec::new(),
+            surrogate_to_local: HashMap::new(),
             access_counts: Vec::new(),
             query_epoch: 0,
             partition_tag: crate::csr::local_node_id::next_partition_tag(),

@@ -66,13 +66,15 @@ impl CsrIndex {
     /// with the correct surrogate will set it). Calling with `Surrogate::ZERO`
     /// is a no-op — the zero sentinel is the initial state and has no meaning.
     pub fn set_node_surrogate(&mut self, node: &str, surrogate: nodedb_types::Surrogate) {
-        if surrogate.as_u32() == 0 {
+        let raw = surrogate.as_u32();
+        if raw == 0 {
             return;
         }
         if let Some(&id) = self.node_to_id.get(node)
             && let Some(slot) = self.node_surrogates.get_mut(id as usize)
         {
-            *slot = surrogate.as_u32();
+            *slot = raw;
+            self.surrogate_to_local.insert(raw, id);
         }
     }
 
@@ -84,6 +86,21 @@ impl CsrIndex {
             .get(local_id as usize)
             .copied()
             .unwrap_or(0)
+    }
+
+    /// Look up the user-visible node name bound to a `Surrogate`.
+    ///
+    /// Returns `None` for `Surrogate::ZERO` and for surrogates that have
+    /// never been bound to a node in this partition. Used by cross-engine
+    /// fusion (graph RAG) to translate a vector-side surrogate into a
+    /// graph BFS seed name.
+    pub fn node_id_for_surrogate(&self, surrogate: nodedb_types::Surrogate) -> Option<&str> {
+        let raw = surrogate.as_u32();
+        if raw == 0 {
+            return None;
+        }
+        let local_id = *self.surrogate_to_local.get(&raw)?;
+        self.id_to_node.get(local_id as usize).map(String::as_str)
     }
 
     // ── Node label methods ──
