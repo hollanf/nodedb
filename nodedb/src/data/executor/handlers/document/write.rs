@@ -1,7 +1,7 @@
 //! Document write handlers: PointPut, BatchInsert, Upsert, Register, IndexLookup, DropIndex.
 
 use sonic_rs;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
@@ -14,6 +14,7 @@ impl CoreLoop {
         tid: u32,
         collection: &str,
         documents: &[(String, Vec<u8>)],
+        surrogates: &[nodedb_types::Surrogate],
     ) -> Response {
         debug!(core = self.core_id, %collection, count = documents.len(), "document batch insert");
         let converted: Vec<(String, Vec<u8>)> = documents
@@ -29,6 +30,20 @@ impl CoreLoop {
             .iter()
             .map(|(id, val)| (id.as_str(), val.as_slice()))
             .collect();
+        // FTS indexing requires a valid Surrogate per document. When `surrogates`
+        // is parallel to `documents` (same length), each entry can be used. When
+        // the field is absent/mismatched (legacy callers), FTS indexing is skipped
+        // — surface this loudly so missing search results are diagnosable.
+        let fts_enabled = surrogates.len() == documents.len();
+        if !fts_enabled && !documents.is_empty() {
+            warn!(
+                core = self.core_id,
+                %collection,
+                doc_count = documents.len(),
+                surrogate_count = surrogates.len(),
+                "document batch insert without parallel surrogates: FTS indexing skipped"
+            );
+        }
         match self.sparse.batch_put(tid, collection, &refs) {
             Ok(()) => {
                 // Auto-index text fields for full-text search (same as PointPut).
@@ -39,17 +54,27 @@ impl CoreLoop {
                     .get(&config_key)
                     .map(|c| c.index_paths.clone())
                     .unwrap_or_default();
-                for (doc_id, val) in documents {
+                for (i, (doc_id, val)) in documents.iter().enumerate() {
                     if let Some(doc) = super::super::super::doc_format::decode_document(val) {
                         // Full-text inverted index (includes nested block content).
-                        let text_content = super::text_extract::extract_indexable_text(&doc);
-                        if !text_content.is_empty() {
-                            let _ = self.inverted.index_document(
-                                crate::types::TenantId::new(tid),
-                                collection,
-                                doc_id,
-                                &text_content,
-                            );
+                        // Only index when a valid Surrogate is available.
+                        if fts_enabled {
+                            let surrogate = surrogates[i];
+                            // Surrogate::ZERO is the "unassigned" sentinel — the
+                            // upstream allocator hasn't assigned a real id, so we
+                            // must not write it into the FTS index.
+                            if surrogate != nodedb_types::Surrogate::ZERO {
+                                let text_content =
+                                    super::text_extract::extract_indexable_text(&doc);
+                                if !text_content.is_empty() {
+                                    let _ = self.inverted.index_document(
+                                        crate::types::TenantId::new(tid),
+                                        collection,
+                                        surrogate,
+                                        &text_content,
+                                    );
+                                }
+                            }
                         }
 
                         // Secondary index extraction.

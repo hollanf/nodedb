@@ -329,13 +329,21 @@ impl CoreLoop {
                 .flatten()
                 .is_some()
             {
-                // Cascade: inverted index.
-                if let Err(e) = self.inverted.remove_document(
-                    crate::types::TenantId::new(tid),
-                    collection,
-                    doc_id,
-                ) {
-                    warn!(core = self.core_id, %collection, %doc_id, error = %e, "bulk delete: inverted index removal failed");
+                // Cascade: inverted index. doc_id is the hex-encoded surrogate
+                // (the redb storage key). Parse back for FTS removal.
+                match crate::engine::document::store::doc_id_to_surrogate(doc_id) {
+                    Some(surrogate) => {
+                        if let Err(e) = self.inverted.remove_document(
+                            crate::types::TenantId::new(tid),
+                            collection,
+                            surrogate,
+                        ) {
+                            warn!(core = self.core_id, %collection, %doc_id, error = %e, "bulk delete: inverted index removal failed");
+                        }
+                    }
+                    None => {
+                        warn!(core = self.core_id, %collection, %doc_id, "bulk delete: doc_id is not a valid surrogate; FTS entry may be orphaned");
+                    }
                 }
                 // Cascade: secondary indexes.
                 if let Err(e) = self
