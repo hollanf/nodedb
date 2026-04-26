@@ -11,6 +11,7 @@ use crate::types::TileId;
 use crate::types::coord::value::CoordValue;
 
 /// Result of a Ceiling resolution for a single cell coordinate.
+#[derive(Debug, Clone, PartialEq)]
 pub enum CeilingResult {
     /// A live (non-sentinel) payload whose valid-time bounds satisfy the query.
     Live(CellPayload),
@@ -127,17 +128,6 @@ mod tests {
         match result {
             CeilingResult::Live(p) => assert_eq!(p.attrs[0], CellValue::Int64(2)),
             other => panic!("expected Live(2), got {other:?}"),
-        }
-    }
-
-    impl std::fmt::Debug for CeilingResult {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            match self {
-                CeilingResult::Live(_) => write!(f, "Live(..)"),
-                CeilingResult::Tombstoned => write!(f, "Tombstoned"),
-                CeilingResult::Erased => write!(f, "Erased"),
-                CeilingResult::NotFound => write!(f, "NotFound"),
-            }
         }
     }
 

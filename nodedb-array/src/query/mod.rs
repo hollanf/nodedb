@@ -12,6 +12,7 @@ pub mod ceiling;
 pub mod elementwise;
 pub mod project;
 pub mod rechunk;
+pub mod retention;
 pub mod slice;
 
 pub use aggregate::{AggregateResult, GroupAggregate, Reducer, aggregate_attr, group_by_dim};
@@ -19,4 +20,5 @@ pub use ceiling::{CeilingParams, CeilingResult, ceiling_resolve_cell};
 pub use elementwise::{BinaryOp, elementwise};
 pub use project::{Projection, project_sparse};
 pub use rechunk::rechunk_sparse;
+pub use retention::{RetentionMergeResult, merge_for_retention};
 pub use slice::{DimRange, Slice, slice_sparse, tile_overlaps_slice};
