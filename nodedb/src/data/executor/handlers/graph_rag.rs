@@ -62,16 +62,23 @@ impl CoreLoop {
             return self.response_with_payload(task, b"[]".to_vec());
         }
 
-        // Translate vector local-hnsw IDs to surrogate-hex node IDs so the
-        // BFS seed set lines up with the canonical surrogate-keyed node IDs
-        // used by surrogate-bound graph collections. Headless vector rows
-        // (no surrogate binding) cannot match any graph node — emit a
-        // sentinel that BFS will treat as a missing seed.
+        // Translate vector local-hnsw IDs to graph node names via
+        // Surrogate. Path: local_hnsw_id -> Surrogate (vector collection)
+        // -> graph node name (CSR partition reverse map). This works for
+        // any graph node ID — surrogate-hex or user-defined — because
+        // both engines bind the same Surrogate to the same logical row.
+        // Vectors without a surrogate binding, or surrogates not bound
+        // to any graph node, emit a non-matching sentinel that BFS will
+        // skip as a missing seed.
+        let csr = self.csr_partition(tenant_id);
         let mut vector_scores: HashMap<String, (usize, f32)> = HashMap::new();
         for (rank, result) in vector_results.iter().enumerate() {
             let node_id = index
                 .get_surrogate(result.id)
-                .map(crate::engine::document::store::surrogate_to_doc_id)
+                .and_then(|s| {
+                    csr.and_then(|c| c.node_id_for_surrogate(s))
+                        .map(str::to_string)
+                })
                 .unwrap_or_else(|| format!("__local_{}", result.id));
             vector_scores.insert(node_id, (rank, result.distance));
         }
