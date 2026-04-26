@@ -247,6 +247,7 @@ impl CoreLoop {
                 id: s.as_u32(),
                 distance: *score,
                 doc_id: None,
+                body: None,
             })
             .collect();
 

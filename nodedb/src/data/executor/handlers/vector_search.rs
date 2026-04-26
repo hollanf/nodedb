@@ -29,6 +29,7 @@ fn build_search_hit(
         id,
         distance,
         doc_id: None,
+        body: None,
     }
 }
 
@@ -108,21 +109,28 @@ pub(in crate::data::executor) struct VectorMultiSearchParams<'a> {
 }
 
 impl CoreLoop {
-    /// RLS post-filter check: fetch the document body via the sparse engine
-    /// (keyed by surrogate-hex) and evaluate the compiled predicate against
-    /// it. Returns `true` when `rls_filters` is empty (no filtering active),
-    /// or the document passes the predicate. Returns `false` when the row
-    /// cannot be fetched, the body is missing, or the predicate rejects it.
+    /// When RLS filters are active, fetch the document body via the
+    /// sparse engine (keyed by surrogate-hex) and attach it to the hit so
+    /// the Control Plane response translator can evaluate the predicate
+    /// at the security boundary. The Data Plane does not interpret the
+    /// filter — it only ferries bytes. When `rls_filters` is empty the
+    /// hit is returned unchanged.
     #[inline]
-    fn rls_check_hit(&self, tid: u32, collection: &str, rls_filters: &[u8], hit_id: u32) -> bool {
+    fn attach_body_for_rls(
+        &self,
+        tid: u32,
+        collection: &str,
+        rls_filters: &[u8],
+        mut hit: super::super::response_codec::VectorSearchHit,
+    ) -> super::super::response_codec::VectorSearchHit {
         if rls_filters.is_empty() {
-            return true;
+            return hit;
         }
-        let hex = format!("{:08x}", hit_id);
-        matches!(
-            self.sparse.get(tid, collection, &hex),
-            Ok(Some(bytes)) if super::rls_eval::rls_check_msgpack_bytes(rls_filters, &bytes)
-        )
+        let hex = format!("{:08x}", hit.id);
+        if let Ok(Some(bytes)) = self.sparse.get(tid, collection, &hex) {
+            hit.body = Some(bytes);
+        }
+        hit
     }
 
     pub(in crate::data::executor) fn execute_vector_search(
@@ -213,14 +221,20 @@ impl CoreLoop {
             None => collection_ref.search(query_vector, fetch_k, ef),
         };
 
-        // RLS post-filter: drop candidates that fail the predicate against
-        // their document body (looked up via sparse engine, surrogate-keyed).
-        // Mirrors the pattern in text_search/kv/spatial handlers.
+        // RLS evaluation lives at the Control-Plane response boundary
+        // (`response_translate::vector`). DP attaches the document body
+        // when filters are active so CP can run the predicate without
+        // a follow-up round-trip; CP applies the filter and truncates to
+        // `top_k`. Data Plane stays pure SIMD + sparse-fetch.
         let hits: Vec<_> = results
             .iter()
             .map(|r| build_search_hit(Some(collection_ref), r.id, r.distance))
-            .filter(|hit| self.rls_check_hit(tid, collection, rls_filters, hit.id))
-            .take(top_k)
+            .map(|hit| self.attach_body_for_rls(tid, collection, rls_filters, hit))
+            .take(if rls_filters.is_empty() {
+                top_k
+            } else {
+                fetch_k
+            })
             .collect();
         if let Some(ref m) = self.metrics {
             m.record_vector_search(0);
@@ -264,9 +278,14 @@ impl CoreLoop {
             hits.retain(|h| surrogate_bm.0.contains(h.id));
         }
         if !rls_filters.is_empty() {
-            hits.retain(|h| self.rls_check_hit(tid, collection, rls_filters, h.id));
+            // CP-side translator runs the predicate; DP only attaches body.
+            hits = hits
+                .into_iter()
+                .map(|h| self.attach_body_for_rls(tid, collection, rls_filters, h))
+                .collect();
+        } else {
+            hits.truncate(top_k);
         }
-        hits.truncate(top_k);
 
         if let Some(ref m) = self.metrics {
             m.record_vector_search(0);
@@ -298,6 +317,14 @@ impl CoreLoop {
         // A named-field key looks like `"{collection}:{field_name}"` in the String part.
         let field_prefix = format!("{collection}:");
 
+        // Over-fetch when RLS is active so the CP-side post-filter has
+        // headroom to still return `top_k` after rejecting candidates.
+        let fetch_k = if rls_filters.is_empty() {
+            top_k
+        } else {
+            top_k.saturating_mul(2).max(20)
+        };
+
         let mut all_results: Vec<Vec<crate::engine::vector::hnsw::SearchResult>> = Vec::new();
 
         for (key, coll) in &self.vector_collections {
@@ -308,18 +335,18 @@ impl CoreLoop {
                 if coll.is_empty() || coll.dim() != query_vector.len() {
                     continue;
                 }
-                let ef = effective_ef(ef_search, top_k);
+                let ef = effective_ef(ef_search, fetch_k);
                 let results = match filter_bitmap {
                     Some(surrogate_bm) => {
                         let local_bm = surrogate_bitmap_to_global_ids(coll, surrogate_bm);
                         let mut buf = Vec::with_capacity(local_bm.serialized_size());
                         if local_bm.serialize_into(&mut buf).is_ok() {
-                            coll.search_with_bitmap_bytes(query_vector, top_k, ef, &buf)
+                            coll.search_with_bitmap_bytes(query_vector, fetch_k, ef, &buf)
                         } else {
-                            coll.search(query_vector, top_k, ef)
+                            coll.search(query_vector, fetch_k, ef)
                         }
                     }
-                    None => coll.search(query_vector, top_k, ef),
+                    None => coll.search(query_vector, fetch_k, ef),
                 };
                 all_results.push(results);
             }
@@ -338,8 +365,8 @@ impl CoreLoop {
             let hits: Vec<_> = results
                 .iter()
                 .map(|r| build_search_hit(doc_source, r.id, r.distance))
-                .filter(|hit| self.rls_check_hit(tid, collection, rls_filters, hit.id))
-                .take(top_k)
+                .map(|hit| self.attach_body_for_rls(tid, collection, rls_filters, hit))
+                .take(fetch_k)
                 .collect();
             if let Some(ref m) = self.metrics {
                 m.record_vector_search(0);
@@ -369,8 +396,8 @@ impl CoreLoop {
 
         let fused = reciprocal_rank_fusion(&ranked_lists, None, top_k);
 
-        // Surface fused results with surrogate-as-id; CP fills doc_id.
-        // RLS post-filter on the fused output via the shared helper.
+        // Surface fused results with surrogate-as-id; CP fills doc_id and
+        // applies the RLS predicate at the response boundary.
         let hits: Vec<_> = fused
             .iter()
             .filter_map(|f| {
@@ -385,8 +412,7 @@ impl CoreLoop {
                         .next()
                 });
                 let hit = build_search_hit(source, local_id, f.rrf_score as f32);
-                self.rls_check_hit(tid, collection, rls_filters, hit.id)
-                    .then_some(hit)
+                Some(self.attach_body_for_rls(tid, collection, rls_filters, hit))
             })
             .collect();
         if let Some(ref m) = self.metrics {

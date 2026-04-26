@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::VectorOp;
+use crate::bridge::scan_filter::ScanFilter;
 use crate::control::state::SharedState;
 
 #[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
@@ -26,6 +27,39 @@ struct Hit {
     distance: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     doc_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<Vec<u8>>,
+}
+
+/// Apply RLS post-filter at the Control-Plane security boundary, then
+/// truncate to `top_k` and strip the body bytes that the Data Plane
+/// attached purely for the predicate evaluation. A no-op when
+/// `rls_filters` is empty.
+fn apply_rls_filter(hits: &mut Vec<Hit>, rls_filters: &[u8], top_k: usize) {
+    // When filters are empty the Data Plane never attaches a body, so there
+    // is nothing to evaluate or strip — return immediately.
+    if rls_filters.is_empty() {
+        return;
+    }
+    let filters: Vec<ScanFilter> = match zerompk::from_msgpack(rls_filters) {
+        Ok(f) => f,
+        Err(_) => {
+            // fail-closed: drop everything if filters are corrupt.
+            tracing::warn!("RLS filter decode failed at CP boundary — denying all hits");
+            hits.clear();
+            return;
+        }
+    };
+    hits.retain(|h| match h.body.as_deref() {
+        Some(body) => filters.iter().all(|f| f.matches_binary(body)),
+        None => false,
+    });
+    if hits.len() > top_k {
+        hits.truncate(top_k);
+    }
+    for h in hits.iter_mut() {
+        h.body = None;
+    }
 }
 
 /// Decode the DP-side msgpack array of `VectorSearchHit`, fill each
@@ -35,12 +69,12 @@ pub fn translate_vector_search_payload(
     payload: &[u8],
     state: &SharedState,
     collection: &str,
+    rls_filters: &[u8],
+    top_k: usize,
 ) -> Vec<u8> {
     if payload.is_empty() {
         return payload.to_vec();
     }
-    // Already-JSON payloads (e.g. empty literal `[]`) skip the round-
-    // trip — there's nothing to enrich.
     let first = payload[0];
     if first == b'[' || first == b'{' || first == b'"' {
         return payload.to_vec();
@@ -51,19 +85,19 @@ pub fn translate_vector_search_payload(
         Err(_) => return payload.to_vec(),
     };
 
-    let catalog = match state.credentials.catalog().as_ref() {
-        Some(c) => c,
-        None => return payload.to_vec(),
-    };
+    apply_rls_filter(&mut hits, rls_filters, top_k);
 
-    for hit in &mut hits {
-        if hit.doc_id.is_some() {
-            continue;
-        }
-        if let Ok(Some(pk_bytes)) = catalog.get_pk_for_surrogate(collection, Surrogate::new(hit.id))
-            && let Ok(s) = String::from_utf8(pk_bytes)
-        {
-            hit.doc_id = Some(s);
+    if let Some(catalog) = state.credentials.catalog().as_ref() {
+        for hit in &mut hits {
+            if hit.doc_id.is_some() {
+                continue;
+            }
+            if let Ok(Some(pk_bytes)) =
+                catalog.get_pk_for_surrogate(collection, Surrogate::new(hit.id))
+                && let Ok(s) = String::from_utf8(pk_bytes)
+            {
+                hit.doc_id = Some(s);
+            }
         }
     }
 
@@ -74,11 +108,23 @@ pub fn translate_vector_search_payload(
 /// vector hits, apply surrogate→PK translation. Otherwise return the
 /// payload untouched.
 pub fn translate_if_vector(payload: &[u8], plan: &PhysicalPlan, state: &SharedState) -> Vec<u8> {
-    let collection = match plan {
-        PhysicalPlan::Vector(VectorOp::Search { collection, .. })
-        | PhysicalPlan::Vector(VectorOp::MultiSearch { collection, .. })
-        | PhysicalPlan::Vector(VectorOp::MultiVectorScoreSearch { collection, .. }) => collection,
+    let (collection, rls_filters, top_k): (&str, &[u8], usize) = match plan {
+        PhysicalPlan::Vector(VectorOp::Search {
+            collection,
+            rls_filters,
+            top_k,
+            ..
+        }) => (collection.as_str(), rls_filters.as_slice(), *top_k),
+        PhysicalPlan::Vector(VectorOp::MultiSearch {
+            collection,
+            rls_filters,
+            top_k,
+            ..
+        }) => (collection.as_str(), rls_filters.as_slice(), *top_k),
+        PhysicalPlan::Vector(VectorOp::MultiVectorScoreSearch {
+            collection, top_k, ..
+        }) => (collection.as_str(), &[][..], *top_k),
         _ => return payload.to_vec(),
     };
-    translate_vector_search_payload(payload, state, collection)
+    translate_vector_search_payload(payload, state, collection, rls_filters, top_k)
 }

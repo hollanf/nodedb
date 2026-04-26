@@ -489,6 +489,13 @@ pub(super) struct VectorSearchHit {
     pub distance: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doc_id: Option<String>,
+    /// Raw msgpack body of the document, populated by the Data Plane only
+    /// when `rls_filters` is non-empty so the Control Plane response
+    /// translator can evaluate the predicate at the security boundary.
+    /// Always `None` for non-RLS queries and stripped before the payload
+    /// reaches the client.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<Vec<u8>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -591,11 +598,13 @@ mod tests {
                 id: 1,
                 distance: 0.5,
                 doc_id: None,
+                body: None,
             },
             VectorSearchHit {
                 id: 2,
                 distance: 0.8,
                 doc_id: None,
+                body: None,
             },
         ];
         let bytes = encode(&hits).unwrap();

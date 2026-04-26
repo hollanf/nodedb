@@ -135,6 +135,7 @@ impl CoreLoop {
                 id: r.internal_id,
                 distance: r.score,
                 doc_id: r.doc_id.clone(),
+                body: None,
             })
             .collect();
 
