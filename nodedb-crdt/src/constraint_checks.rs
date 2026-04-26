@@ -134,3 +134,59 @@ impl Validator {
         }
     }
 }
+
+#[cfg(test)]
+mod bitemporal_fk_tests {
+    use super::*;
+    use crate::constraint::ConstraintKind;
+    use crate::validator::Validator;
+    use loro::LoroValue;
+
+    fn make_btfk_constraint(ref_collection: &str, ref_key: &str) -> Constraint {
+        Constraint {
+            name: "test_btfk".to_string(),
+            collection: "referrer".to_string(),
+            field: "ref_id".to_string(),
+            kind: ConstraintKind::BiTemporalFK {
+                ref_collection: ref_collection.to_string(),
+                ref_key: ref_key.to_string(),
+            },
+        }
+    }
+
+    fn make_change(ref_value: &str) -> ProposedChange {
+        ProposedChange {
+            collection: "referrer".to_string(),
+            row_id: "row1".to_string(),
+            surrogate: nodedb_types::Surrogate::ZERO,
+            fields: vec![("ref_id".to_string(), LoroValue::String(ref_value.into()))],
+        }
+    }
+
+    #[test]
+    fn bitemporal_fk_passes_when_array_surrogate_exists() {
+        let mut state = CrdtState::new(1).unwrap();
+        state.register_array_surrogate("surr-42".to_string());
+
+        let validator = Validator::new(Default::default(), 16);
+        let constraint = make_btfk_constraint("variants", "id");
+        let change = make_change("surr-42");
+
+        let violation = validator.check_foreign_key(&state, &change, &constraint, "variants", "id");
+        assert!(violation.is_none());
+    }
+
+    #[test]
+    fn bitemporal_fk_fails_when_array_surrogate_missing() {
+        let state = CrdtState::new(1).unwrap();
+        let validator = Validator::new(Default::default(), 16);
+        let constraint = make_btfk_constraint("variants", "id");
+        let change = make_change("surr-99");
+
+        let violation = validator.check_foreign_key(&state, &change, &constraint, "variants", "id");
+        assert!(violation.is_some());
+        let v = violation.unwrap();
+        assert_eq!(v.constraint_name, "test_btfk");
+        assert!(v.reason.contains("surr-99"));
+    }
+}

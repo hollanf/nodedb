@@ -1,5 +1,7 @@
 //! CrdtState core: document handle, row CRUD, uniqueness probes.
 
+use std::collections::HashSet;
+
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
 use crate::error::{CrdtError, Result};
@@ -22,6 +24,12 @@ fn row_is_live(row: &LoroMap) -> bool {
 pub struct CrdtState {
     pub(super) doc: LoroDoc,
     pub(super) peer_id: u64,
+    /// Array surrogate IDs that are considered "live" referents for
+    /// `BiTemporalFK` / `ForeignKey` constraint checks. Populated by the
+    /// caller from the array catalog before validation. Empty by default,
+    /// which means array-surrogate references are invisible to the constraint
+    /// checker — callers must register them for cross-engine FK validation.
+    array_surrogate_ids: HashSet<String>,
 }
 
 impl CrdtState {
@@ -30,7 +38,22 @@ impl CrdtState {
         let doc = LoroDoc::new();
         doc.set_peer_id(peer_id)
             .map_err(|e| CrdtError::Loro(format!("failed to set peer_id {peer_id}: {e}")))?;
-        Ok(Self { doc, peer_id })
+        Ok(Self {
+            doc,
+            peer_id,
+            array_surrogate_ids: HashSet::new(),
+        })
+    }
+
+    /// Register an array-engine surrogate ID as a valid referent for FK checks.
+    ///
+    /// Call this before running constraint validation whenever the referent
+    /// collection is backed by the array engine rather than the document/graph
+    /// engines. The ID must be the string form of the surrogate (e.g., the
+    /// decimal representation of the `Surrogate` value or the composite key
+    /// used by the array catalog).
+    pub fn register_array_surrogate(&mut self, id: String) {
+        self.array_surrogate_ids.insert(id);
     }
 
     /// Insert or update a row in a collection.
@@ -110,9 +133,17 @@ impl CrdtState {
     }
 
     /// Check if a row exists in a collection.
+    ///
+    /// Checks the Loro-backed document/graph collections first. If not found
+    /// there, falls back to the registered array surrogate set so that
+    /// `BiTemporalFK` and `ForeignKey` constraints can reference array-engine
+    /// cells as valid referents without requiring a full cross-engine query.
     pub fn row_exists(&self, collection: &str, row_id: &str) -> bool {
         let coll = self.doc.get_map(collection);
-        coll.get(row_id).is_some()
+        if coll.get(row_id).is_some() {
+            return true;
+        }
+        self.array_surrogate_ids.contains(row_id)
     }
 
     /// List all collection names (top-level map keys in the Loro doc).
