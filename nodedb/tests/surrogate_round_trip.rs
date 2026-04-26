@@ -317,6 +317,7 @@ fn surrogate_round_trip_all_engines() {
                 array_id: aid.clone(),
                 schema_msgpack: schema_bytes,
                 schema_hash: 1,
+                prefix_bits: 8,
             }),
         );
 
@@ -603,6 +604,7 @@ fn surrogate_round_trip_all_engines() {
                 attr_projection: vec![],
                 limit: 100,
                 cell_filter: None,
+                hilbert_range: None,
             }),
         );
         // Unfiltered: should see all ARR_SURS cells.
@@ -622,6 +624,7 @@ fn surrogate_round_trip_all_engines() {
                 attr_projection: vec![],
                 limit: 100,
                 cell_filter: Some(intersection.clone()),
+                hilbert_range: None,
             }),
         );
         // Filtered: intersection ∩ ARR_SURS = {10}.  Surrogate 10 is at

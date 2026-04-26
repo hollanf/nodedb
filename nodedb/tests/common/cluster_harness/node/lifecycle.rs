@@ -114,7 +114,7 @@ impl TestClusterNode {
         let wal = Arc::new(WalManager::open_for_testing(
             &data_dir_path.join("test.wal"),
         )?);
-        let (dispatcher, data_sides) = Dispatcher::new(1, 64);
+        let (dispatcher, data_sides) = Dispatcher::new(1, 1024);
         let (event_producers, event_consumers) = create_event_bus(1);
 
         // Credential store backed by the system catalog — required for
@@ -154,14 +154,16 @@ impl TestClusterNode {
         let event_producer = event_producers.into_iter().next().expect("event producer");
         let core_dir = data_dir_path.clone();
         let core_metrics = shared.system_metrics.clone();
+        let core_array_catalog = shared.array_catalog.clone();
         let (core_stop_tx, core_stop_rx) = std::sync::mpsc::channel::<()>();
         let core_handle = tokio::task::spawn_blocking(move || {
-            let mut core = CoreLoop::open(
+            let mut core = CoreLoop::open_with_array_catalog(
                 0,
                 data_side.request_rx,
                 data_side.response_tx,
                 &core_dir,
                 std::sync::Arc::new(nodedb_types::OrdinalClock::new()),
+                core_array_catalog,
             )
             .expect("core open");
             core.set_event_producer(event_producer);
