@@ -39,7 +39,12 @@ pub struct ArrayCatalogEntry {
     pub prefix_bits: u8,
     /// Bitemporal audit retention window in milliseconds. Compaction may
     /// discard superseded tile versions older than `now - audit_retain_ms`.
-    /// `None` means retain all versions forever (default).
+    /// `None` means retain all versions forever (default, non-bitemporal).
     #[serde(default)]
     pub audit_retain_ms: Option<i64>,
+    /// Compliance floor for `audit_retain_ms`. When set, the purge engine
+    /// rejects any runtime attempt to shorten `audit_retain_ms` below this
+    /// value. `None` means no floor (default).
+    #[serde(default)]
+    pub minimum_audit_retain_ms: Option<u64>,
 }

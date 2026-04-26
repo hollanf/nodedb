@@ -39,7 +39,10 @@ impl CoreLoop {
             ArrayOp::Flush { array_id, wal_lsn } => {
                 self.handle_array_flush(task, array_id, *wal_lsn)
             }
-            ArrayOp::Compact { array_id } => self.handle_array_compact(task, array_id),
+            ArrayOp::Compact {
+                array_id,
+                audit_retain_ms,
+            } => self.handle_array_compact(task, array_id, *audit_retain_ms),
             ArrayOp::DropArray { array_id } => self.handle_array_drop(task, array_id),
             ArrayOp::Slice {
                 array_id,

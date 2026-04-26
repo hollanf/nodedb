@@ -523,6 +523,40 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Hydrate the bitemporal retention registry from the array catalog loaded
+    // above. Arrays with `audit_retain_ms.is_some()` participate in the
+    // audit-retention enforcement loop. Arrays are globally-scoped, so they
+    // register under `TenantId::new(0)`.
+    {
+        let guard = array_catalog
+            .read()
+            .expect("array catalog lock poisoned at startup");
+        for entry in guard.all_entries() {
+            if let Some(audit_ms) = entry.audit_retain_ms {
+                if audit_ms < 0 {
+                    continue; // defensive: negative retention is a no-op
+                }
+                let retention = nodedb_types::config::BitemporalRetention {
+                    data_retain_ms: 0,
+                    audit_retain_ms: audit_ms as u64,
+                    minimum_audit_retain_ms: entry.minimum_audit_retain_ms.unwrap_or(0),
+                };
+                if let Err(e) = shared.bitemporal_retention_registry.register(
+                    nodedb::types::TenantId::new(0),
+                    entry.name.clone(),
+                    nodedb::engine::bitemporal::BitemporalEngineKind::Array,
+                    retention,
+                ) {
+                    tracing::warn!(
+                        array = %entry.name,
+                        error = %e,
+                        "failed to register array bitemporal retention at startup"
+                    );
+                }
+            }
+        }
+    }
+
     // Bootstrap credentials.
     let auth_mode = config.auth.mode.clone();
     match config.auth.resolve_superuser_password() {

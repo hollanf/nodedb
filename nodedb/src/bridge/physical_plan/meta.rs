@@ -172,6 +172,21 @@ pub enum MetaOp {
         cutoff_system_ms: i64,
     },
 
+    /// Bitemporal audit-retention purge for the array engine.
+    ///
+    /// Drops superseded tile versions (those with `system_from_ms <
+    /// cutoff_system_ms` where a newer version of the same tile key
+    /// exists) from the array's bitemporal storage. The single surviving
+    /// (latest) version of each tile is never removed. Arrays are
+    /// globally-scoped — `tenant_id` carries the sentinel value `0`.
+    TemporalPurgeArray {
+        tenant_id: u32,
+        /// Global array id from `ArrayCatalogEntry::name`. Arrays are
+        /// not yet tenant-scoped.
+        array_id: String,
+        cutoff_system_ms: i64,
+    },
+
     /// Apply retention to continuous aggregate buckets managed by
     /// the aggregate manager. Drops materialized buckets older than
     /// each aggregate's configured retention_period_ms.

@@ -117,6 +117,13 @@ async fn run_one(state: &Arc<SharedState>, entry: &Entry) {
             collection: entry.collection.clone(),
             cutoff_system_ms,
         }),
+        // For Array entries `entry.collection` carries the array_id (see
+        // hydration in main.rs — registered under the catalog `name` field).
+        BitemporalEngineKind::Array => PhysicalPlan::Meta(MetaOp::TemporalPurgeArray {
+            tenant_id: tenant_id.as_u32(),
+            array_id: entry.collection.clone(),
+            cutoff_system_ms,
+        }),
     };
 
     match crate::control::server::pgwire::ddl::sync_dispatch::dispatch_async(
@@ -179,7 +186,8 @@ fn parse_count_from_payload(engine: BitemporalEngineKind, payload: &[u8]) -> u64
     match engine {
         BitemporalEngineKind::EdgeStore
         | BitemporalEngineKind::Columnar
-        | BitemporalEngineKind::Crdt => {
+        | BitemporalEngineKind::Crdt
+        | BitemporalEngineKind::Array => {
             if payload.len() >= 8 {
                 u64::from_le_bytes(payload[..8].try_into().unwrap_or([0; 8]))
             } else {
@@ -228,6 +236,15 @@ mod tests {
         assert_eq!(
             parse_count_from_payload(BitemporalEngineKind::DocumentStrict, &payload),
             16
+        );
+    }
+
+    #[test]
+    fn parse_count_array_8_bytes() {
+        let payload = 17u64.to_le_bytes().to_vec();
+        assert_eq!(
+            parse_count_from_payload(BitemporalEngineKind::Array, &payload),
+            17
         );
     }
 

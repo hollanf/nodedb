@@ -100,6 +100,7 @@ mod tests {
             created_at_ms: 1_700_000_000_000,
             prefix_bits: 8,
             audit_retain_ms: None,
+            minimum_audit_retain_ms: None,
         }
     }
 

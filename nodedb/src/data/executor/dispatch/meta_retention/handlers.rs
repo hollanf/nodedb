@@ -57,6 +57,11 @@ impl CoreLoop {
                 collection,
                 cutoff_system_ms,
             } => self.meta_temporal_purge_crdt(task, *tenant_id, collection, *cutoff_system_ms),
+            MetaOp::TemporalPurgeArray {
+                tenant_id,
+                array_id,
+                cutoff_system_ms,
+            } => self.meta_temporal_purge_array(task, *tenant_id, array_id, *cutoff_system_ms),
             other => self.response_error(
                 task,
                 ErrorCode::Internal {
@@ -328,6 +333,43 @@ impl CoreLoop {
         }
         let payload = purged.to_le_bytes().to_vec();
         self.response_with_payload(task, payload)
+    }
+
+    /// `MetaOp::TemporalPurgeArray`: drop superseded tile-versions older than
+    /// `cutoff_system_ms` from the array engine. The latest version of each
+    /// tile is always preserved so bitemporal AS-OF reads remain coherent.
+    ///
+    /// Returns an 8-byte little-endian u64 count of tile-versions dropped.
+    pub(in crate::data::executor::dispatch) fn meta_temporal_purge_array(
+        &mut self,
+        task: &ExecutionTask,
+        tenant_id: u32,
+        array_id: &str,
+        cutoff_system_ms: i64,
+    ) -> Response {
+        let tenant = TenantId::new(tenant_id);
+        match self
+            .array_engine
+            .temporal_purge(tenant, array_id, cutoff_system_ms)
+        {
+            Ok(count) => {
+                if count > 0 {
+                    tracing::info!(
+                        array = array_id,
+                        purged = count,
+                        cutoff_ms = cutoff_system_ms,
+                        "array: temporal purge complete"
+                    );
+                }
+                self.response_with_payload(task, count.to_le_bytes().to_vec())
+            }
+            Err(e) => self.response_error(
+                task,
+                ErrorCode::Internal {
+                    detail: format!("array temporal purge: {e}"),
+                },
+            ),
+        }
     }
 
     /// `MetaOp::TemporalPurgeColumnar`: bitemporal audit purge for columnar

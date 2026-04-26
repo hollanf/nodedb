@@ -114,8 +114,16 @@ impl CoreLoop {
         &mut self,
         task: &ExecutionTask,
         array_id: &ArrayId,
+        audit_retain_ms: Option<i64>,
     ) -> Response {
-        let merged = match self.array_engine.maybe_compact(array_id) {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let merged = match self
+            .array_engine
+            .maybe_compact(array_id, audit_retain_ms, now_ms)
+        {
             Ok(m) => m,
             Err(e) => {
                 return self.response_error(

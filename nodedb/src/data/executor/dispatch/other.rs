@@ -343,7 +343,8 @@ impl CoreLoop {
                 op @ (MetaOp::TemporalPurgeEdgeStore { .. }
                 | MetaOp::TemporalPurgeDocumentStrict { .. }
                 | MetaOp::TemporalPurgeColumnar { .. }
-                | MetaOp::TemporalPurgeCrdt { .. }),
+                | MetaOp::TemporalPurgeCrdt { .. }
+                | MetaOp::TemporalPurgeArray { .. }),
             ) => self.dispatch_temporal_purge(task, op),
 
             PhysicalPlan::Meta(MetaOp::RawResponse { payload }) => {

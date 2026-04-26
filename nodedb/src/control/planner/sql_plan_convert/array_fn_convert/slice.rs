@@ -229,6 +229,7 @@ mod tests {
             created_at_ms: 0,
             prefix_bits: 8,
             audit_retain_ms: None,
+            minimum_audit_retain_ms: None,
         };
         {
             let mut cat = handle.write().expect("write lock");

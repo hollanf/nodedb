@@ -192,7 +192,13 @@ pub enum ArrayOp {
 
     /// Trigger compaction if the picker selects one. Response
     /// indicates whether a merge happened.
-    Compact { array_id: ArrayId },
+    ///
+    /// `audit_retain_ms` is the array's retention window in milliseconds
+    /// (from `ArrayCatalogEntry`). `None` means retain all versions.
+    Compact {
+        array_id: ArrayId,
+        audit_retain_ms: Option<i64>,
+    },
 
     /// Coord-range slice that emits one document-shaped row per matching
     /// cell, where the row's `id` is the cell's bound `Surrogate` formatted
@@ -231,7 +237,7 @@ impl ArrayOp {
             | ArrayOp::Project { array_id, .. }
             | ArrayOp::Aggregate { array_id, .. }
             | ArrayOp::Flush { array_id, .. }
-            | ArrayOp::Compact { array_id }
+            | ArrayOp::Compact { array_id, .. }
             | ArrayOp::DropArray { array_id } => array_id,
             ArrayOp::Elementwise { left, .. } => left,
         }

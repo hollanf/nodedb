@@ -23,6 +23,8 @@
 
 use std::sync::Arc;
 
+use nodedb_types::config::retention::BitemporalRetention;
+
 use nodedb_array::coord::encode::encode_hilbert_prefix;
 use nodedb_array::schema::{
     ArraySchema, ArraySchemaBuilder, AttrSpec, AttrType as EngineAttrType, CellOrder, DimSpec,
@@ -56,6 +58,8 @@ pub(super) struct CreateArrayArgs<'a> {
     pub cell_order: ArrayCellOrderAst,
     pub tile_order: ArrayTileOrderAst,
     pub prefix_bits: u8,
+    pub audit_retain_ms: Option<u64>,
+    pub minimum_audit_retain_ms: Option<u64>,
     pub tenant_id: TenantId,
     pub ctx: &'a ConvertContext,
 }
@@ -69,6 +73,8 @@ pub(super) fn convert_create_array(args: CreateArrayArgs<'_>) -> crate::Result<V
         cell_order,
         tile_order,
         prefix_bits,
+        audit_retain_ms,
+        minimum_audit_retain_ms,
         tenant_id,
         ctx,
     } = args;
@@ -84,6 +90,18 @@ pub(super) fn convert_create_array(args: CreateArrayArgs<'_>) -> crate::Result<V
         .ok_or_else(|| crate::Error::PlanError {
             detail: "CREATE ARRAY: no credential store wired into convert context".into(),
         })?;
+
+    // 1a. Validate retention policy before touching shared state.
+    if audit_retain_ms.is_some() || minimum_audit_retain_ms.is_some() {
+        let retention = BitemporalRetention {
+            data_retain_ms: 0,
+            audit_retain_ms: audit_retain_ms.unwrap_or(0),
+            minimum_audit_retain_ms: minimum_audit_retain_ms.unwrap_or(0),
+        };
+        retention.validate().map_err(|e| crate::Error::PlanError {
+            detail: format!("CREATE ARRAY {name}: {e}"),
+        })?;
+    }
 
     // 1. Build typed schema.
     let schema = build_schema(name, dims, attrs, tile_extents, cell_order, tile_order)?;
@@ -111,7 +129,8 @@ pub(super) fn convert_create_array(args: CreateArrayArgs<'_>) -> crate::Result<V
         schema_hash,
         created_at_ms: now_epoch_ms(),
         prefix_bits,
-        audit_retain_ms: None,
+        audit_retain_ms: audit_retain_ms.map(|ms| ms as i64),
+        minimum_audit_retain_ms,
     };
     {
         let mut cat = array_catalog.write().map_err(|_| crate::Error::PlanError {

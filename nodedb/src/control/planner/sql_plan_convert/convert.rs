@@ -376,6 +376,8 @@ pub(super) fn convert_one(
             cell_order,
             tile_order,
             prefix_bits,
+            audit_retain_ms,
+            minimum_audit_retain_ms,
         } => super::array_convert::convert_create_array(super::array_convert::CreateArrayArgs {
             name,
             dims,
@@ -384,6 +386,8 @@ pub(super) fn convert_one(
             cell_order: *cell_order,
             tile_order: *tile_order,
             prefix_bits: *prefix_bits,
+            audit_retain_ms: *audit_retain_ms,
+            minimum_audit_retain_ms: *minimum_audit_retain_ms,
             tenant_id,
             ctx,
         }),

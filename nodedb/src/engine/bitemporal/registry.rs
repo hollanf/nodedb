@@ -38,6 +38,11 @@ pub enum BitemporalEngineKind {
     /// from the per-collection bitemporal history sibling map while
     /// preserving the live row.
     Crdt,
+    /// Array engine — global by `array_id`. Registered with
+    /// `tenant_id = TenantId::new(0)` because the array catalog is
+    /// currently global; per-tenant array isolation is a separate
+    /// initiative.
+    Array,
 }
 
 impl BitemporalEngineKind {
@@ -48,6 +53,7 @@ impl BitemporalEngineKind {
             BitemporalEngineKind::DocumentStrict => TemporalPurgeEngine::DocumentStrict,
             BitemporalEngineKind::Columnar => TemporalPurgeEngine::Columnar,
             BitemporalEngineKind::Crdt => TemporalPurgeEngine::Crdt,
+            BitemporalEngineKind::Array => TemporalPurgeEngine::Array,
         }
     }
 }
@@ -228,5 +234,25 @@ mod tests {
             BitemporalEngineKind::Crdt.wire_tag(),
             TemporalPurgeEngine::Crdt
         );
+        assert_eq!(
+            BitemporalEngineKind::Array.wire_tag(),
+            TemporalPurgeEngine::Array
+        );
+    }
+
+    #[test]
+    fn register_accepts_array_kind() {
+        let r = BitemporalRetentionRegistry::new();
+        r.register(
+            TenantId::new(0),
+            "my_array",
+            BitemporalEngineKind::Array,
+            ret(86_400_000, 0),
+        )
+        .unwrap();
+        assert_eq!(r.len(), 1);
+        let snap = r.snapshot();
+        assert_eq!(snap[0].engine, BitemporalEngineKind::Array);
+        assert_eq!(snap[0].collection, "my_array");
     }
 }
