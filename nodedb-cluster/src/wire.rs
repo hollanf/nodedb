@@ -105,6 +105,28 @@ pub enum VShardMessageType {
     NotifyBroadcast = 72,
     /// Acknowledgement for a NOTIFY broadcast.
     NotifyBroadcastAck = 73,
+
+    // ── Distributed Array (Hilbert-sharded sparse arrays) ──
+    /// Scatter: coordinator sends a coord-range slice query to a shard.
+    ArrayShardSliceReq = 80,
+    /// Gather: shard responds with matching row bytes.
+    ArrayShardSliceResp = 81,
+    /// Scatter: coordinator sends an aggregate query to a shard.
+    ArrayShardAggReq = 82,
+    /// Gather: shard responds with partial aggregate(s).
+    ArrayShardAggResp = 83,
+    /// Coordinator forwards a cell write batch to the owning shard.
+    ArrayShardPutReq = 84,
+    /// Shard acknowledges a cell write batch.
+    ArrayShardPutResp = 85,
+    /// Coordinator forwards a coord-based delete to the owning shard.
+    ArrayShardDeleteReq = 86,
+    /// Shard acknowledges a coord-based delete.
+    ArrayShardDeleteResp = 87,
+    /// Scatter: coordinator requests a surrogate bitmap scan from a shard.
+    ArrayShardSurrogateBitmapReq = 88,
+    /// Gather: shard returns the surrogate bitmap for matching cells.
+    ArrayShardSurrogateBitmapResp = 89,
 }
 
 /// Current wire protocol version.
@@ -192,6 +214,16 @@ impl VShardEnvelope {
             71 => VShardMessageType::CrossShardEventAck,
             72 => VShardMessageType::NotifyBroadcast,
             73 => VShardMessageType::NotifyBroadcastAck,
+            80 => VShardMessageType::ArrayShardSliceReq,
+            81 => VShardMessageType::ArrayShardSliceResp,
+            82 => VShardMessageType::ArrayShardAggReq,
+            83 => VShardMessageType::ArrayShardAggResp,
+            84 => VShardMessageType::ArrayShardPutReq,
+            85 => VShardMessageType::ArrayShardPutResp,
+            86 => VShardMessageType::ArrayShardDeleteReq,
+            87 => VShardMessageType::ArrayShardDeleteResp,
+            88 => VShardMessageType::ArrayShardSurrogateBitmapReq,
+            89 => VShardMessageType::ArrayShardSurrogateBitmapResp,
             _ => return None,
         };
 
@@ -254,6 +286,16 @@ mod tests {
             VShardMessageType::CrossShardEventAck,
             VShardMessageType::NotifyBroadcast,
             VShardMessageType::NotifyBroadcastAck,
+            VShardMessageType::ArrayShardSliceReq,
+            VShardMessageType::ArrayShardSliceResp,
+            VShardMessageType::ArrayShardAggReq,
+            VShardMessageType::ArrayShardAggResp,
+            VShardMessageType::ArrayShardPutReq,
+            VShardMessageType::ArrayShardPutResp,
+            VShardMessageType::ArrayShardDeleteReq,
+            VShardMessageType::ArrayShardDeleteResp,
+            VShardMessageType::ArrayShardSurrogateBitmapReq,
+            VShardMessageType::ArrayShardSurrogateBitmapResp,
         ];
 
         for msg_type in types {

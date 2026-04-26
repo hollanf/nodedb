@@ -29,3 +29,17 @@ pub const RPC_METADATA_PROPOSE_REQ: u8 = 16;
 pub const RPC_METADATA_PROPOSE_RESP: u8 = 17;
 pub const RPC_EXECUTE_REQ: u8 = 18;
 pub const RPC_EXECUTE_RESP: u8 = 19;
+
+// VShardMessageType discriminants for distributed array ops (u16, range 80-89).
+// These mirror `crate::wire::VShardMessageType` repr values and are declared
+// here so external code can reference them without importing the full enum.
+pub const VSHARD_ARRAY_SHARD_SLICE_REQ: u16 = 80;
+pub const VSHARD_ARRAY_SHARD_SLICE_RESP: u16 = 81;
+pub const VSHARD_ARRAY_SHARD_AGG_REQ: u16 = 82;
+pub const VSHARD_ARRAY_SHARD_AGG_RESP: u16 = 83;
+pub const VSHARD_ARRAY_SHARD_PUT_REQ: u16 = 84;
+pub const VSHARD_ARRAY_SHARD_PUT_RESP: u16 = 85;
+pub const VSHARD_ARRAY_SHARD_DELETE_REQ: u16 = 86;
+pub const VSHARD_ARRAY_SHARD_DELETE_RESP: u16 = 87;
+pub const VSHARD_ARRAY_SHARD_SURROGATE_BITMAP_REQ: u16 = 88;
+pub const VSHARD_ARRAY_SHARD_SURROGATE_BITMAP_RESP: u16 = 89;

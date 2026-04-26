@@ -3810,6 +3810,7 @@ version = "0.0.6"
 dependencies = [
  "async-trait",
  "crc32c",
+ "futures",
  "hmac 0.12.1",
  "nexar",
  "nodedb-raft",

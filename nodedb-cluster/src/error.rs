@@ -42,4 +42,23 @@ pub enum ClusterError {
 
     #[error("conf change commit timeout on group {group_id} (waited for index {log_index})")]
     JoinCommitTimeout { group_id: u64, log_index: u64 },
+
+    /// A shard RPC was routed to a node that no longer owns the target vShard.
+    ///
+    /// This surfaces when vShard ownership has transferred (rebalance or split
+    /// cut-over) after the coordinator computed its routing plan. The coordinator
+    /// must refresh its routing table and retry against the new owner.
+    ///
+    /// `expected_owner_node` is `Some` when the receiving shard knows who the
+    /// current owner is, and `None` when it does not (e.g. during a brief
+    /// transition window). Either way, the coordinator should re-derive the owner
+    /// from its local routing table — `expected_owner_node` is advisory only.
+    #[error(
+        "vshard {vshard_id} misrouted: this node is no longer the owner\
+         {}", if let Some(n) = expected_owner_node { format!("; current owner may be node {n}") } else { String::new() }
+    )]
+    WrongOwner {
+        vshard_id: u16,
+        expected_owner_node: Option<u64>,
+    },
 }

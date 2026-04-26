@@ -7,6 +7,7 @@ pub mod cluster_info;
 pub mod conf_change;
 pub mod cross_shard_txn;
 pub mod decommission;
+pub mod distributed_array;
 pub mod distributed_document;
 pub mod distributed_graph;
 pub mod distributed_join;

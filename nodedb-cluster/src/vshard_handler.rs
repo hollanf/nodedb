@@ -84,6 +84,18 @@ pub fn dispatch_by_type(envelope: &VShardEnvelope) -> DispatchTarget {
         VShardMessageType::CrossShardEventAck => DispatchTarget::EventPlane,
         VShardMessageType::NotifyBroadcast => DispatchTarget::EventPlane,
         VShardMessageType::NotifyBroadcastAck => DispatchTarget::EventPlane,
+
+        // Distributed array (Hilbert-sharded sparse arrays)
+        VShardMessageType::ArrayShardSliceReq => DispatchTarget::ArrayShard,
+        VShardMessageType::ArrayShardSliceResp => DispatchTarget::ArrayCoordinator,
+        VShardMessageType::ArrayShardAggReq => DispatchTarget::ArrayShard,
+        VShardMessageType::ArrayShardAggResp => DispatchTarget::ArrayCoordinator,
+        VShardMessageType::ArrayShardPutReq => DispatchTarget::ArrayShard,
+        VShardMessageType::ArrayShardPutResp => DispatchTarget::ArrayCoordinator,
+        VShardMessageType::ArrayShardDeleteReq => DispatchTarget::ArrayShard,
+        VShardMessageType::ArrayShardDeleteResp => DispatchTarget::ArrayCoordinator,
+        VShardMessageType::ArrayShardSurrogateBitmapReq => DispatchTarget::ArrayShard,
+        VShardMessageType::ArrayShardSurrogateBitmapResp => DispatchTarget::ArrayCoordinator,
     }
 }
 
@@ -118,6 +130,10 @@ pub enum DispatchTarget {
     SpatialCoordinator,
     /// Event Plane cross-shard delivery (trigger DML, CDC events).
     EventPlane,
+    /// Array shard: executes slice/agg/put/delete/surrogate-scan locally.
+    ArrayShard,
+    /// Array coordinator: receives shard responses and merges them.
+    ArrayCoordinator,
 }
 
 /// Build a response envelope for a timeseries scatter response.
@@ -216,6 +232,16 @@ mod tests {
             VShardMessageType::CrossShardEventAck,
             VShardMessageType::NotifyBroadcast,
             VShardMessageType::NotifyBroadcastAck,
+            VShardMessageType::ArrayShardSliceReq,
+            VShardMessageType::ArrayShardSliceResp,
+            VShardMessageType::ArrayShardAggReq,
+            VShardMessageType::ArrayShardAggResp,
+            VShardMessageType::ArrayShardPutReq,
+            VShardMessageType::ArrayShardPutResp,
+            VShardMessageType::ArrayShardDeleteReq,
+            VShardMessageType::ArrayShardDeleteResp,
+            VShardMessageType::ArrayShardSurrogateBitmapReq,
+            VShardMessageType::ArrayShardSurrogateBitmapResp,
         ];
         for msg_type in all_types {
             let env = VShardEnvelope::new(msg_type, 1, 2, 0, vec![]);
