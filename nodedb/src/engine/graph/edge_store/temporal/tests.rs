@@ -169,3 +169,45 @@ fn reverse_index_is_versioned_symmetrically() {
     let p = EdgeValuePayload::new(0, i64::MAX, b"x".to_vec());
     assert_eq!(p.encode().unwrap()[0], 0x93);
 }
+
+#[test]
+fn close_referrer_edge_appends_closed_version() {
+    let (store, _dir) = make_store();
+    store
+        .put_edge_versioned(e("a", "L", "b"), b"props", 100, 100, i64::MAX)
+        .unwrap();
+
+    // Close at system=200, valid_until=500.
+    let closed = store
+        .close_referrer_edge(e("a", "L", "b"), 200, 500)
+        .unwrap();
+    assert!(closed);
+
+    // Read inside the closed valid interval still returns the props.
+    assert_eq!(
+        store
+            .ceiling_resolve_edge(e("a", "L", "b"), 1_000, Some(300))
+            .unwrap(),
+        Some(b"props".to_vec())
+    );
+}
+
+#[test]
+fn close_referrer_edge_noop_when_already_closed_or_absent() {
+    let (store, _dir) = make_store();
+    // No prior version → false.
+    let r = store
+        .close_referrer_edge(e("missing", "L", "x"), 100, 200)
+        .unwrap();
+    assert!(!r);
+
+    // Tombstoned referent → false.
+    store
+        .put_edge_versioned(e("a", "L", "b"), b"p", 50, 50, i64::MAX)
+        .unwrap();
+    store.soft_delete_edge(e("a", "L", "b"), 60).unwrap();
+    let r = store
+        .close_referrer_edge(e("a", "L", "b"), 200, 100)
+        .unwrap();
+    assert!(!r);
+}

@@ -2,7 +2,8 @@
 //! `put_edge_versioned`, `soft_delete_edge`, `gdpr_erase_edge`.
 
 use super::keys::{
-    EdgeRef, GDPR_ERASURE_SENTINEL, TOMBSTONE_SENTINEL, is_sentinel, versioned_edge_key,
+    EdgeRef, GDPR_ERASURE_SENTINEL, TOMBSTONE_SENTINEL, edge_version_prefix, is_sentinel,
+    versioned_edge_key,
 };
 use super::payload::EdgeValuePayload;
 use crate::engine::graph::edge_store::store::{EDGES, EdgeStore, REVERSE_EDGES, redb_err};
@@ -50,6 +51,69 @@ impl EdgeStore {
         }
         write_txn.commit().map_err(|e| redb_err("commit", e))?;
         Ok(())
+    }
+
+    /// BiTemporalFK enforcement: close a referrer edge by appending a new
+    /// version that copies the latest live version's properties and
+    /// `valid_from_ms`, but bounds `valid_until_ms` to `now`. Preserves
+    /// historical truth — the edge existed in valid time `[valid_from, now)`.
+    ///
+    /// Returns `Ok(false)` when no live version exists (already closed,
+    /// tombstoned, GDPR-erased, or never written) — the caller may treat
+    /// this as a no-op.
+    pub fn close_referrer_edge(
+        &self,
+        edge: EdgeRef<'_>,
+        system_from: i64,
+        now_valid_ms: i64,
+    ) -> crate::Result<bool> {
+        let prefix = edge_version_prefix(edge.collection, edge.src, edge.label, edge.dst);
+        let upper =
+            versioned_edge_key(edge.collection, edge.src, edge.label, edge.dst, system_from)?;
+        let t = edge.tid.as_u32();
+
+        let prior = {
+            let read_txn = self
+                .db
+                .begin_read()
+                .map_err(|e| redb_err("begin_read", e))?;
+            let table = read_txn
+                .open_table(EDGES)
+                .map_err(|e| redb_err("open edges", e))?;
+            let range = table
+                .range((t, prefix.as_str())..=(t, upper.as_str()))
+                .map_err(|e| redb_err("close referrer range", e))?;
+            let mut found: Option<EdgeValuePayload> = None;
+            for entry in range.rev() {
+                let (k, v) = entry.map_err(|e| redb_err("close referrer iter", e))?;
+                let (kt, composite) = k.value();
+                if kt != t || !composite.starts_with(&prefix) {
+                    break;
+                }
+                let bytes = v.value();
+                if is_sentinel(bytes) {
+                    return Ok(false);
+                }
+                let payload = EdgeValuePayload::decode(bytes)?;
+                if payload.valid_from_ms <= now_valid_ms && now_valid_ms < payload.valid_until_ms {
+                    found = Some(payload);
+                    break;
+                }
+            }
+            match found {
+                Some(p) => p,
+                None => return Ok(false),
+            }
+        };
+
+        self.put_edge_versioned(
+            edge,
+            &prior.properties,
+            system_from,
+            prior.valid_from_ms,
+            now_valid_ms,
+        )?;
+        Ok(true)
     }
 
     /// Append a tombstone version at `system_from`.
