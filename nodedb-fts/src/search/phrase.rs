@@ -9,6 +9,8 @@
 
 use std::collections::HashMap;
 
+use nodedb_types::Surrogate;
+
 use crate::posting::Posting;
 
 /// Maximum phrase boost multiplier for a full consecutive phrase match.
@@ -78,13 +80,13 @@ fn has_consecutive_positions(a: &[u32], b: &[u32]) -> bool {
 pub(crate) fn collect_doc_postings<'a>(
     query_tokens: &[String],
     term_postings: &'a [(Vec<Posting>, bool)],
-) -> HashMap<String, HashMap<usize, &'a Posting>> {
-    let mut doc_map: HashMap<String, HashMap<usize, &Posting>> = HashMap::new();
+) -> HashMap<Surrogate, HashMap<usize, &'a Posting>> {
+    let mut doc_map: HashMap<Surrogate, HashMap<usize, &Posting>> = HashMap::new();
 
     for (token_idx, (postings, _is_fuzzy)) in term_postings.iter().enumerate() {
         for posting in postings {
             doc_map
-                .entry(posting.doc_id.clone())
+                .entry(posting.doc_id)
                 .or_default()
                 .insert(token_idx, posting);
         }
@@ -102,9 +104,10 @@ pub(crate) fn collect_doc_postings<'a>(
 mod tests {
     use super::*;
 
-    fn make_posting(doc_id: &str, positions: Vec<u32>) -> Posting {
+    fn make_posting(doc_id: u32, positions: Vec<u32>) -> Posting {
+        use nodedb_types::Surrogate;
         Posting {
-            doc_id: doc_id.to_string(),
+            doc_id: Surrogate(doc_id),
             term_freq: positions.len() as u32,
             positions,
         }
@@ -113,8 +116,8 @@ mod tests {
     #[test]
     fn full_phrase_match() {
         let tokens = vec!["hello".into(), "world".into()];
-        let p0 = make_posting("d1", vec![0, 5]);
-        let p1 = make_posting("d1", vec![1, 8]);
+        let p0 = make_posting(1, vec![0, 5]);
+        let p1 = make_posting(1, vec![1, 8]);
         let mut doc = HashMap::new();
         doc.insert(0, &p0);
         doc.insert(1, &p1);
@@ -126,8 +129,8 @@ mod tests {
     #[test]
     fn no_phrase_match() {
         let tokens = vec!["hello".into(), "world".into()];
-        let p0 = make_posting("d1", vec![0]);
-        let p1 = make_posting("d1", vec![5]); // Not consecutive with 0
+        let p0 = make_posting(1, vec![0]);
+        let p1 = make_posting(1, vec![5]); // Not consecutive with 0
         let mut doc = HashMap::new();
         doc.insert(0, &p0);
         doc.insert(1, &p1);
@@ -139,9 +142,9 @@ mod tests {
     #[test]
     fn partial_phrase_match() {
         let tokens = vec!["the".into(), "quick".into(), "brown".into()];
-        let p0 = make_posting("d1", vec![0]);
-        let p1 = make_posting("d1", vec![1]); // consecutive with p0
-        let p2 = make_posting("d1", vec![5]); // NOT consecutive with p1
+        let p0 = make_posting(1, vec![0]);
+        let p1 = make_posting(1, vec![1]); // consecutive with p0
+        let p2 = make_posting(1, vec![5]); // NOT consecutive with p1
         let mut doc = HashMap::new();
         doc.insert(0, &p0);
         doc.insert(1, &p1);

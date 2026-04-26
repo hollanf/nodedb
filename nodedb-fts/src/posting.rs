@@ -3,6 +3,8 @@
 //! These types are shared between Origin (redb-backed) and Lite (in-memory)
 //! deployments, ensuring identical scoring semantics across all tiers.
 
+use nodedb_types::Surrogate;
+
 /// A single posting entry for a term in a document.
 ///
 /// Records the document ID, how many times the term appears, and the
@@ -16,7 +18,7 @@
     Debug,
 )]
 pub struct Posting {
-    pub doc_id: String,
+    pub doc_id: Surrogate,
     pub term_freq: u32,
     pub positions: Vec<u32>,
 }
@@ -34,7 +36,7 @@ pub enum QueryMode {
 /// A scored search result from the inverted index.
 #[derive(Debug, Clone)]
 pub struct TextSearchResult {
-    pub doc_id: String,
+    pub doc_id: Surrogate,
     pub score: f32,
     /// Whether any result came from fuzzy matching.
     pub fuzzy: bool,
@@ -82,11 +84,11 @@ mod tests {
     #[test]
     fn posting_fields() {
         let posting = Posting {
-            doc_id: "doc1".into(),
+            doc_id: Surrogate(1),
             term_freq: 3,
             positions: vec![0, 5, 12],
         };
-        assert_eq!(posting.doc_id, "doc1");
+        assert_eq!(posting.doc_id, Surrogate(1));
         assert_eq!(posting.term_freq, 3);
         assert_eq!(posting.positions, vec![0, 5, 12]);
     }

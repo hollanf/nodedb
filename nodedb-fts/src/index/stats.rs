@@ -23,6 +23,7 @@ impl<B: FtsBackend> FtsIndex<B> {
 mod tests {
     use crate::backend::memory::MemoryBackend;
     use crate::index::FtsIndex;
+    use nodedb_types::Surrogate;
 
     const T: u32 = 1;
 
@@ -37,9 +38,10 @@ mod tests {
     #[test]
     fn stats_after_indexing() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(T, "docs", "d1", "hello world greeting")
+        idx.index_document(T, "docs", Surrogate(1), "hello world greeting")
             .unwrap();
-        idx.index_document(T, "docs", "d2", "hello rust").unwrap();
+        idx.index_document(T, "docs", Surrogate(2), "hello rust")
+            .unwrap();
 
         let (count, avg) = idx.index_stats(T, "docs").unwrap();
         assert_eq!(count, 2);

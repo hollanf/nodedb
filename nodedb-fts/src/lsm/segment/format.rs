@@ -21,7 +21,7 @@
 pub const MAGIC: &[u8; 4] = b"FTSS";
 
 /// Current segment format version.
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 
 /// Size of the fixed header (magic + version + num_terms + offsets).
 pub const HEADER_SIZE: usize = 4 + 2 + 4 + 8 + 8; // 26 bytes
@@ -71,6 +71,11 @@ pub fn parse_header(buf: &[u8]) -> Option<SegmentHeader> {
     }
     let version = u16::from_le_bytes([buf[4], buf[5]]);
     if version != VERSION {
+        tracing::warn!(
+            segment_version = version,
+            current_version = VERSION,
+            "FTS segment format v{version} is no longer supported; rebuild the FTS index"
+        );
         return None;
     }
     let num_terms = u32::from_le_bytes([buf[6], buf[7], buf[8], buf[9]]);

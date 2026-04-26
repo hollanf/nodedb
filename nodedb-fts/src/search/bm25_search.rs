@@ -97,8 +97,7 @@ impl<B: FtsBackend> FtsIndex<B> {
             let penalized: Vec<TextSearchResult> = bmw_results
                 .into_iter()
                 .map(|mut r| {
-                    let matched =
-                        self.count_term_matches(tid, collection, &query_tokens, &r.doc_id);
+                    let matched = self.count_term_matches(tid, collection, &query_tokens, r.doc_id);
                     let coverage = matched as f32 / num_query_terms as f32;
                     r.score *= coverage;
                     r
@@ -115,13 +114,6 @@ impl<B: FtsBackend> FtsIndex<B> {
         }
 
         // Fallback: exhaustive BM25 scoring reading directly from the backend.
-        // Load the docmap once for surrogate prefilter lookups.
-        let fallback_doc_map = if prefilter.is_some() {
-            Some(self.load_doc_id_map(tid, collection)?)
-        } else {
-            None
-        };
-
         let mut term_postings: Vec<(Vec<Posting>, bool)> = Vec::with_capacity(num_query_terms);
         for (i, token) in query_tokens.iter().enumerate() {
             let postings = self.backend.read_postings(tid, collection, token)?;
@@ -139,7 +131,7 @@ impl<B: FtsBackend> FtsIndex<B> {
             }
         }
 
-        let mut doc_scores: HashMap<String, (f32, bool, usize)> = HashMap::new();
+        let mut doc_scores: HashMap<Surrogate, (f32, bool, usize)> = HashMap::new();
 
         for (token_idx, (postings, is_fuzzy)) in term_postings.iter().enumerate() {
             if postings.is_empty() {
@@ -149,17 +141,15 @@ impl<B: FtsBackend> FtsIndex<B> {
 
             for posting in postings {
                 // Prefilter: skip surrogates not present in the bitmap.
-                if let (Some(bm), Some(dm)) = (prefilter, fallback_doc_map.as_ref()) {
-                    match dm.to_u32(&posting.doc_id).map(Surrogate) {
-                        Some(s) if !bm.contains(s) => continue,
-                        None => continue,
-                        _ => {}
-                    }
+                if let Some(bm) = prefilter
+                    && !bm.contains(posting.doc_id)
+                {
+                    continue;
                 }
 
                 let doc_len = self
                     .backend
-                    .read_doc_length(tid, collection, &posting.doc_id)?
+                    .read_doc_length(tid, collection, posting.doc_id)?
                     .unwrap_or(1);
 
                 let mut score = bm25_score(
@@ -175,9 +165,7 @@ impl<B: FtsBackend> FtsIndex<B> {
                     score *= crate::fuzzy::fuzzy_discount(1);
                 }
 
-                let entry = doc_scores
-                    .entry(posting.doc_id.clone())
-                    .or_insert((0.0, false, 0));
+                let entry = doc_scores.entry(posting.doc_id).or_insert((0.0, false, 0));
                 entry.0 += score;
                 if *is_fuzzy {
                     entry.1 = true;
@@ -190,7 +178,7 @@ impl<B: FtsBackend> FtsIndex<B> {
         if num_query_terms >= 2 {
             let doc_postings_map = phrase::collect_doc_postings(&query_tokens, &term_postings);
             for (doc_id, token_postings) in &doc_postings_map {
-                if let Some(entry) = doc_scores.get_mut(doc_id.as_str()) {
+                if let Some(entry) = doc_scores.get_mut(doc_id) {
                     let boost = phrase::phrase_boost(&query_tokens, token_postings);
                     entry.0 *= boost;
                 }
@@ -198,10 +186,10 @@ impl<B: FtsBackend> FtsIndex<B> {
         }
 
         if mode == QueryMode::And && num_query_terms > 1 {
-            let and_results: HashMap<String, (f32, bool, usize)> = doc_scores
+            let and_results: HashMap<Surrogate, (f32, bool, usize)> = doc_scores
                 .iter()
                 .filter(|(_, (_, _, match_count))| *match_count >= num_query_terms)
-                .map(|(k, v)| (k.clone(), *v))
+                .map(|(k, v)| (*k, *v))
                 .collect();
 
             if !and_results.is_empty() {
@@ -225,7 +213,6 @@ impl<B: FtsBackend> FtsIndex<B> {
         candidates: &[TextSearchResult],
         num_terms: usize,
     ) -> Result<Vec<TextSearchResult>, B::Error> {
-        let doc_map = self.load_doc_id_map(tid, collection)?;
         let term_blocks = crate::lsm::query::collect_merged_term_blocks(
             &self.backend,
             tid,
@@ -236,12 +223,10 @@ impl<B: FtsBackend> FtsIndex<B> {
 
         let mut results = Vec::new();
         for candidate in candidates {
-            let surrogate = doc_map.to_u32(&candidate.doc_id).map(Surrogate);
+            let surrogate = candidate.doc_id;
             let matched = term_blocks
                 .iter()
-                .filter(|tb| {
-                    surrogate.is_some_and(|sid| tb.blocks.iter().any(|b| b.doc_ids.contains(&sid)))
-                })
+                .filter(|tb| tb.blocks.iter().any(|b| b.doc_ids.contains(&surrogate)))
                 .count();
             if matched >= num_terms {
                 results.push(candidate.clone());
@@ -255,16 +240,8 @@ impl<B: FtsBackend> FtsIndex<B> {
         tid: u32,
         collection: &str,
         query_tokens: &[String],
-        doc_id: &str,
+        doc_id: Surrogate,
     ) -> usize {
-        let doc_map = match self.load_doc_id_map(tid, collection) {
-            Ok(m) => m,
-            Err(_) => return 0,
-        };
-        let Some(int_id) = doc_map.to_u32(doc_id) else {
-            return 0;
-        };
-        let surrogate = Surrogate(int_id);
         let term_blocks = match crate::lsm::query::collect_merged_term_blocks(
             &self.backend,
             tid,
@@ -277,12 +254,12 @@ impl<B: FtsBackend> FtsIndex<B> {
         };
         term_blocks
             .iter()
-            .filter(|tb| tb.blocks.iter().any(|b| b.doc_ids.contains(&surrogate)))
+            .filter(|tb| tb.blocks.iter().any(|b| b.doc_ids.contains(&doc_id)))
             .count()
     }
 
     fn to_sorted_results(
-        doc_scores: HashMap<String, (f32, bool, usize)>,
+        doc_scores: HashMap<Surrogate, (f32, bool, usize)>,
         top_k: usize,
     ) -> Vec<TextSearchResult> {
         let mut results: Vec<TextSearchResult> = doc_scores
@@ -305,24 +282,24 @@ impl<B: FtsBackend> FtsIndex<B> {
 
 #[cfg(test)]
 mod tests {
+    use nodedb_types::{Surrogate, SurrogateBitmap};
+
     use crate::backend::memory::MemoryBackend;
     use crate::index::FtsIndex;
     use crate::posting::QueryMode;
 
     const T: u32 = 1;
+    const D1: Surrogate = Surrogate(1);
+    const D2: Surrogate = Surrogate(2);
+    const D3: Surrogate = Surrogate(3);
 
     fn make_index() -> FtsIndex<MemoryBackend> {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(
-            T,
-            "docs",
-            "d1",
-            "The quick brown fox jumps over the lazy dog",
-        )
-        .unwrap();
-        idx.index_document(T, "docs", "d2", "A fast brown dog runs across the field")
+        idx.index_document(T, "docs", D1, "The quick brown fox jumps over the lazy dog")
             .unwrap();
-        idx.index_document(T, "docs", "d3", "Rust programming language for systems")
+        idx.index_document(T, "docs", D2, "A fast brown dog runs across the field")
+            .unwrap();
+        idx.index_document(T, "docs", D3, "Rust programming language for systems")
             .unwrap();
         idx
     }
@@ -332,22 +309,22 @@ mod tests {
         let idx = make_index();
         let results = idx.search(T, "docs", "brown fox", 10, false, None).unwrap();
         assert!(!results.is_empty());
-        assert_eq!(results[0].doc_id, "d1");
+        assert_eq!(results[0].doc_id, D1);
     }
 
     #[test]
     fn search_with_stemming() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(T, "docs", "d1", "running distributed databases")
+        idx.index_document(T, "docs", D1, "running distributed databases")
             .unwrap();
-        idx.index_document(T, "docs", "d2", "the cat sat on a mat")
+        idx.index_document(T, "docs", D2, "the cat sat on a mat")
             .unwrap();
 
         let results = idx
             .search(T, "docs", "database distribution", 10, false, None)
             .unwrap();
         assert!(!results.is_empty());
-        assert_eq!(results[0].doc_id, "d1");
+        assert_eq!(results[0].doc_id, D1);
     }
 
     #[test]
@@ -362,9 +339,9 @@ mod tests {
     #[test]
     fn and_mode_filters() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(T, "docs", "d1", "Rust programming language")
+        idx.index_document(T, "docs", D1, "Rust programming language")
             .unwrap();
-        idx.index_document(T, "docs", "d2", "Python programming language")
+        idx.index_document(T, "docs", D2, "Python programming language")
             .unwrap();
 
         let results = idx
@@ -379,15 +356,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].doc_id, "d1");
+        assert_eq!(results[0].doc_id, D1);
     }
 
     #[test]
     fn and_fallback_to_or() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(T, "docs", "d1", "rust programming language")
+        idx.index_document(T, "docs", D1, "rust programming language")
             .unwrap();
-        idx.index_document(T, "docs", "d2", "python programming language")
+        idx.index_document(T, "docs", D2, "python programming language")
             .unwrap();
 
         let results = idx
@@ -402,16 +379,16 @@ mod tests {
     #[test]
     fn and_no_fallback_when_results_exist() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(T, "docs", "d1", "rust programming language")
+        idx.index_document(T, "docs", D1, "rust programming language")
             .unwrap();
-        idx.index_document(T, "docs", "d2", "python programming language")
+        idx.index_document(T, "docs", D2, "python programming language")
             .unwrap();
 
         let results = idx
             .search(T, "docs", "rust programming", 10, false, None)
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].doc_id, "d1");
+        assert_eq!(results[0].doc_id, D1);
     }
 
     #[test]
@@ -424,9 +401,9 @@ mod tests {
     #[test]
     fn collections_isolated() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(T, "col_a", "d1", "alpha bravo charlie")
+        idx.index_document(T, "col_a", D1, "alpha bravo charlie")
             .unwrap();
-        idx.index_document(T, "col_b", "d1", "delta echo foxtrot")
+        idx.index_document(T, "col_b", D1, "delta echo foxtrot")
             .unwrap();
 
         assert_eq!(
@@ -445,7 +422,7 @@ mod tests {
     #[test]
     fn fuzzy_search() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(T, "docs", "d1", "distributed database systems")
+        idx.index_document(T, "docs", D1, "distributed database systems")
             .unwrap();
 
         let results = idx.search(T, "docs", "databse", 10, true, None).unwrap();
@@ -456,22 +433,22 @@ mod tests {
     #[test]
     fn phrase_boost_consecutive() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(T, "docs", "d1", "the quick brown fox jumped")
+        idx.index_document(T, "docs", D1, "the quick brown fox jumped")
             .unwrap();
-        idx.index_document(T, "docs", "d2", "a brown dog chased a fox")
+        idx.index_document(T, "docs", D2, "a brown dog chased a fox")
             .unwrap();
 
         let results = idx
             .search_with_mode(T, "docs", "brown fox", 10, false, QueryMode::Or, None)
             .unwrap();
         assert!(results.len() >= 2);
-        assert_eq!(results[0].doc_id, "d1");
+        assert_eq!(results[0].doc_id, D1);
     }
 
     #[test]
     fn phrase_boost_no_effect_single_term() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(T, "docs", "d1", "hello world").unwrap();
+        idx.index_document(T, "docs", D1, "hello world").unwrap();
 
         let results = idx.search(T, "docs", "hello", 10, false, None).unwrap();
         assert_eq!(results.len(), 1);
@@ -480,9 +457,8 @@ mod tests {
     #[test]
     fn tenants_isolated() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(1, "docs", "d1", "alpha bravo").unwrap();
-        idx.index_document(2, "docs", "d1", "charlie delta")
-            .unwrap();
+        idx.index_document(1, "docs", D1, "alpha bravo").unwrap();
+        idx.index_document(2, "docs", D1, "charlie delta").unwrap();
 
         let r1 = idx.search(1, "docs", "alpha", 10, false, None).unwrap();
         let r2 = idx.search(2, "docs", "alpha", 10, false, None).unwrap();
@@ -492,61 +468,42 @@ mod tests {
 
     #[test]
     fn prefilter_excludes_non_member_surrogates() {
-        use nodedb_types::{Surrogate, SurrogateBitmap};
-
         let idx = FtsIndex::new(MemoryBackend::new());
 
-        // d1 → surrogate 0, d2 → surrogate 1, d3 → surrogate 2.
         // All three documents contain the query term "rust" to ensure
-        // d2 and d3 would score highly without a prefilter.
-        idx.index_document(T, "docs", "d1", "rust language system")
+        // D2 and D3 would score highly without a prefilter.
+        idx.index_document(T, "docs", D1, "rust language system")
             .unwrap();
-        idx.index_document(T, "docs", "d2", "rust rust rust rust rust")
+        idx.index_document(T, "docs", D2, "rust rust rust rust rust")
             .unwrap();
-        idx.index_document(T, "docs", "d3", "rust rust rust rust rust rust")
+        idx.index_document(T, "docs", D3, "rust rust rust rust rust rust")
             .unwrap();
 
-        // Confirm surrogates assigned in insertion order.
-        let doc_map = idx.load_doc_id_map(T, "docs").unwrap();
-        let s1 = doc_map
-            .to_u32("d1")
-            .map(Surrogate)
-            .expect("d1 has surrogate");
-        let s2 = doc_map
-            .to_u32("d2")
-            .map(Surrogate)
-            .expect("d2 has surrogate");
-        let s3 = doc_map
-            .to_u32("d3")
-            .map(Surrogate)
-            .expect("d3 has surrogate");
-
-        // Prefilter: only d1 is eligible.
+        // Prefilter: only D1 is eligible.
         let mut bm = SurrogateBitmap::new();
-        bm.insert(s1);
+        bm.insert(D1);
 
         let results = idx.search(T, "docs", "rust", 10, false, Some(&bm)).unwrap();
 
-        // d2 and d3 score higher without prefilter, but must be absent with it.
-        assert_eq!(results.len(), 1, "only d1 should be returned");
-        assert_eq!(results[0].doc_id, "d1");
+        // D2 and D3 score higher without prefilter, but must be absent with it.
+        assert_eq!(results.len(), 1, "only D1 should be returned");
+        assert_eq!(results[0].doc_id, D1);
 
-        // Also verify that d2 and d3 are absent (not just that count is 1).
         assert!(
-            !results.iter().any(|r| r.doc_id == "d2"),
-            "d2 must be excluded"
+            !results.iter().any(|r| r.doc_id == D2),
+            "D2 must be excluded"
         );
         assert!(
-            !results.iter().any(|r| r.doc_id == "d3"),
-            "d3 must be excluded"
+            !results.iter().any(|r| r.doc_id == D3),
+            "D3 must be excluded"
         );
 
-        // Verify that without prefilter, d2/d3 would dominate.
+        // Verify that without prefilter, D2/D3 would dominate.
         let all_results = idx.search(T, "docs", "rust", 10, false, None).unwrap();
         assert_eq!(all_results.len(), 3, "all docs returned without prefilter");
         assert!(
-            all_results[0].doc_id == "d2" || all_results[0].doc_id == "d3",
-            "d2 or d3 should lead without prefilter (higher tf)"
+            all_results[0].doc_id == D2 || all_results[0].doc_id == D3,
+            "D2 or D3 should lead without prefilter (higher tf)"
         );
 
         // Prefilter with empty bitmap: no results.
@@ -556,14 +513,14 @@ mod tests {
             .unwrap();
         assert!(empty_results.is_empty(), "empty prefilter → no results");
 
-        // Bitmap containing only s2 and s3 excludes d1.
+        // Bitmap containing only D2 and D3 excludes D1.
         let mut bm23 = SurrogateBitmap::new();
-        bm23.insert(s2);
-        bm23.insert(s3);
+        bm23.insert(D2);
+        bm23.insert(D3);
         let results23 = idx
             .search(T, "docs", "rust", 10, false, Some(&bm23))
             .unwrap();
         assert_eq!(results23.len(), 2);
-        assert!(!results23.iter().any(|r| r.doc_id == "d1"));
+        assert!(!results23.iter().any(|r| r.doc_id == D1));
     }
 }

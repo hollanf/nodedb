@@ -32,7 +32,6 @@ impl<B: FtsBackend> FtsIndex<B> {
                 return Ok((postings, true));
             }
 
-            let doc_map = self.load_doc_id_map(tid, collection)?;
             let tokens = vec![best_term.to_string()];
             let term_blocks = lsm_query::collect_merged_term_blocks(
                 &self.backend,
@@ -45,13 +44,11 @@ impl<B: FtsBackend> FtsIndex<B> {
                 let mut postings = Vec::new();
                 for block in &term_blocks[0].blocks {
                     for i in 0..block.doc_ids.len() {
-                        if let Some(doc_str) = doc_map.to_string(block.doc_ids[i].0) {
-                            postings.push(Posting {
-                                doc_id: doc_str.to_string(),
-                                term_freq: block.term_freqs[i],
-                                positions: block.positions[i].clone(),
-                            });
-                        }
+                        postings.push(Posting {
+                            doc_id: block.doc_ids[i],
+                            term_freq: block.term_freqs[i],
+                            positions: block.positions[i].clone(),
+                        });
                     }
                 }
                 if !postings.is_empty() {
@@ -68,13 +65,14 @@ impl<B: FtsBackend> FtsIndex<B> {
 mod tests {
     use crate::backend::memory::MemoryBackend;
     use crate::index::FtsIndex;
+    use nodedb_types::Surrogate;
 
     const T: u32 = 1;
 
     #[test]
     fn fuzzy_lookup_finds_close_term() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(T, "docs", "d1", "distributed database systems")
+        idx.index_document(T, "docs", Surrogate(1), "distributed database systems")
             .unwrap();
 
         let (postings, is_fuzzy) = idx.fuzzy_lookup(T, "docs", "databse").unwrap();
@@ -85,7 +83,8 @@ mod tests {
     #[test]
     fn fuzzy_lookup_no_match() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        idx.index_document(T, "docs", "d1", "hello world").unwrap();
+        idx.index_document(T, "docs", Surrogate(1), "hello world")
+            .unwrap();
 
         let (postings, is_fuzzy) = idx.fuzzy_lookup(T, "docs", "zzzzzzz").unwrap();
         assert!(postings.is_empty());

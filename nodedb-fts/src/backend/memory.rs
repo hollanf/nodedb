@@ -11,6 +11,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 
+use nodedb_types::Surrogate;
+
 use crate::backend::FtsBackend;
 use crate::posting::Posting;
 
@@ -25,6 +27,7 @@ impl fmt::Display for MemoryError {
 }
 
 type TripleKey = (u32, String, String);
+type DocLenKey = (u32, String, Surrogate);
 type PairKey = (u32, String);
 
 /// In-memory FTS backend backed by HashMaps keyed by `(tid, collection, …)`
@@ -37,7 +40,7 @@ pub struct MemoryBackend {
     /// `(tid, collection, term) → posting list`.
     postings: RefCell<HashMap<TripleKey, Vec<Posting>>>,
     /// `(tid, collection, doc_id) → token count`.
-    doc_lengths: RefCell<HashMap<TripleKey, u32>>,
+    doc_lengths: RefCell<HashMap<DocLenKey, u32>>,
     /// `(tid, collection) → (doc_count, total_token_sum)`.
     stats: RefCell<HashMap<PairKey, (u32, u64)>>,
     /// `(tid, collection, subkey) → blob` for docmap, fieldnorms, analyzer, language.
@@ -54,6 +57,10 @@ impl MemoryBackend {
 
 fn triple(tid: u32, collection: &str, sub: &str) -> TripleKey {
     (tid, collection.to_string(), sub.to_string())
+}
+
+fn doc_len_key(tid: u32, collection: &str, doc_id: Surrogate) -> DocLenKey {
+    (tid, collection.to_string(), doc_id)
 }
 
 fn pair(tid: u32, collection: &str) -> PairKey {
@@ -105,12 +112,12 @@ impl FtsBackend for MemoryBackend {
         &self,
         tid: u32,
         collection: &str,
-        doc_id: &str,
+        doc_id: Surrogate,
     ) -> Result<Option<u32>, Self::Error> {
         Ok(self
             .doc_lengths
             .borrow()
-            .get(&triple(tid, collection, doc_id))
+            .get(&doc_len_key(tid, collection, doc_id))
             .copied())
     }
 
@@ -118,12 +125,12 @@ impl FtsBackend for MemoryBackend {
         &self,
         tid: u32,
         collection: &str,
-        doc_id: &str,
+        doc_id: Surrogate,
         length: u32,
     ) -> Result<(), Self::Error> {
         self.doc_lengths
             .borrow_mut()
-            .insert(triple(tid, collection, doc_id), length);
+            .insert(doc_len_key(tid, collection, doc_id), length);
         Ok(())
     }
 
@@ -131,11 +138,11 @@ impl FtsBackend for MemoryBackend {
         &self,
         tid: u32,
         collection: &str,
-        doc_id: &str,
+        doc_id: Surrogate,
     ) -> Result<(), Self::Error> {
         self.doc_lengths
             .borrow_mut()
-            .remove(&triple(tid, collection, doc_id));
+            .remove(&doc_len_key(tid, collection, doc_id));
         Ok(())
     }
 
@@ -292,7 +299,7 @@ mod tests {
     fn roundtrip_postings() {
         let backend = MemoryBackend::new();
         let postings = vec![Posting {
-            doc_id: "d1".into(),
+            doc_id: Surrogate(1),
             term_freq: 2,
             positions: vec![0, 5],
         }];
@@ -302,17 +309,25 @@ mod tests {
 
         let read = backend.read_postings(T, "col", "hello").unwrap();
         assert_eq!(read.len(), 1);
-        assert_eq!(read[0].doc_id, "d1");
+        assert_eq!(read[0].doc_id, Surrogate(1));
     }
 
     #[test]
     fn roundtrip_doc_lengths() {
         let backend = MemoryBackend::new();
-        backend.write_doc_length(T, "col", "d1", 42).unwrap();
-        assert_eq!(backend.read_doc_length(T, "col", "d1").unwrap(), Some(42));
+        backend
+            .write_doc_length(T, "col", Surrogate(1), 42)
+            .unwrap();
+        assert_eq!(
+            backend.read_doc_length(T, "col", Surrogate(1)).unwrap(),
+            Some(42)
+        );
 
-        backend.remove_doc_length(T, "col", "d1").unwrap();
-        assert_eq!(backend.read_doc_length(T, "col", "d1").unwrap(), None);
+        backend.remove_doc_length(T, "col", Surrogate(1)).unwrap();
+        assert_eq!(
+            backend.read_doc_length(T, "col", Surrogate(1)).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -337,14 +352,16 @@ mod tests {
     fn purge_clears_stats_and_isolates_collections() {
         let backend = MemoryBackend::new();
         backend.increment_stats(T, "col", 10).unwrap();
-        backend.write_doc_length(T, "col", "d1", 10).unwrap();
+        backend
+            .write_doc_length(T, "col", Surrogate(1), 10)
+            .unwrap();
         backend
             .write_postings(
                 T,
                 "col",
                 "hello",
                 &[Posting {
-                    doc_id: "d1".into(),
+                    doc_id: Surrogate(1),
                     term_freq: 1,
                     positions: vec![0],
                 }],
@@ -352,14 +369,16 @@ mod tests {
             .unwrap();
 
         backend.increment_stats(T, "other", 7).unwrap();
-        backend.write_doc_length(T, "other", "d1", 7).unwrap();
+        backend
+            .write_doc_length(T, "other", Surrogate(1), 7)
+            .unwrap();
         backend
             .write_postings(
                 T,
                 "other",
                 "world",
                 &[Posting {
-                    doc_id: "d1".into(),
+                    doc_id: Surrogate(1),
                     term_freq: 1,
                     positions: vec![0],
                 }],
@@ -369,11 +388,17 @@ mod tests {
         backend.purge_collection(T, "col").unwrap();
         assert_eq!(backend.collection_stats(T, "col").unwrap(), (0, 0));
         assert!(backend.read_postings(T, "col", "hello").unwrap().is_empty());
-        assert_eq!(backend.read_doc_length(T, "col", "d1").unwrap(), None);
+        assert_eq!(
+            backend.read_doc_length(T, "col", Surrogate(1)).unwrap(),
+            None
+        );
 
         assert_eq!(backend.collection_stats(T, "other").unwrap(), (1, 7));
         assert_eq!(backend.read_postings(T, "other", "world").unwrap().len(), 1);
-        assert_eq!(backend.read_doc_length(T, "other", "d1").unwrap(), Some(7));
+        assert_eq!(
+            backend.read_doc_length(T, "other", Surrogate(1)).unwrap(),
+            Some(7)
+        );
     }
 
     #[test]
@@ -385,7 +410,7 @@ mod tests {
                 "col",
                 "hello",
                 &[Posting {
-                    doc_id: "d1".into(),
+                    doc_id: Surrogate(1),
                     term_freq: 1,
                     positions: vec![0],
                 }],
@@ -397,7 +422,7 @@ mod tests {
                 "col",
                 "world",
                 &[Posting {
-                    doc_id: "d1".into(),
+                    doc_id: Surrogate(1),
                     term_freq: 1,
                     positions: vec![1],
                 }],
@@ -466,7 +491,7 @@ mod tests {
                 "col",
                 "t",
                 &[Posting {
-                    doc_id: "d".into(),
+                    doc_id: Surrogate(1),
                     term_freq: 1,
                     positions: vec![0],
                 }],
@@ -478,7 +503,7 @@ mod tests {
                 "col",
                 "t",
                 &[Posting {
-                    doc_id: "d".into(),
+                    doc_id: Surrogate(1),
                     term_freq: 1,
                     positions: vec![0],
                 }],

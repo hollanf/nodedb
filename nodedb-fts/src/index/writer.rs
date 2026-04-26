@@ -8,7 +8,6 @@ use tracing::debug;
 
 use crate::backend::FtsBackend;
 use crate::block::CompactPosting;
-use crate::codec::DocIdMap;
 use crate::codec::smallfloat;
 use crate::lsm::compaction;
 use crate::lsm::memtable::{Memtable, MemtableConfig};
@@ -68,36 +67,18 @@ impl<B: FtsBackend> FtsIndex<B> {
         &self.memtable
     }
 
-    /// Load the DocIdMap for a collection from backend metadata.
-    pub fn load_doc_id_map(&self, tid: u32, collection: &str) -> Result<DocIdMap, B::Error> {
-        match self.backend.read_meta(tid, collection, "docmap")? {
-            Some(bytes) => Ok(DocIdMap::from_bytes(&bytes).unwrap_or_default()),
-            None => Ok(DocIdMap::new()),
-        }
-    }
-
-    /// Persist the DocIdMap for a collection to backend metadata.
-    fn save_doc_id_map(&self, tid: u32, collection: &str, map: &DocIdMap) -> Result<(), B::Error> {
-        self.backend
-            .write_meta(tid, collection, "docmap", &map.to_bytes())
-    }
-
     /// Index a document's text content.
     pub fn index_document(
         &self,
         tid: u32,
         collection: &str,
-        doc_id: &str,
+        doc_id: Surrogate,
         text: &str,
     ) -> Result<(), B::Error> {
         let tokens = self.analyze_for_collection(tid, collection, text)?;
         if tokens.is_empty() {
             return Ok(());
         }
-
-        let mut doc_map = self.load_doc_id_map(tid, collection)?;
-        let int_id = doc_map.get_or_assign(doc_id);
-        self.save_doc_id_map(tid, collection, &doc_map)?;
 
         let mut term_data: HashMap<&str, (u32, Vec<u32>)> = HashMap::new();
         for (pos, token) in tokens.iter().enumerate() {
@@ -108,10 +89,9 @@ impl<B: FtsBackend> FtsIndex<B> {
 
         let doc_len = tokens.len() as u32;
 
-        let surrogate = Surrogate(int_id);
         for (term, (freq, positions)) in &term_data {
             let compact = CompactPosting {
-                doc_id: surrogate,
+                doc_id,
                 term_freq: *freq,
                 fieldnorm: smallfloat::encode(doc_len),
                 positions: positions.clone(),
@@ -119,19 +99,19 @@ impl<B: FtsBackend> FtsIndex<B> {
             let scoped_term = memtable_key(tid, collection, term);
             self.memtable.insert(&scoped_term, compact);
         }
-        self.memtable.record_doc(surrogate, doc_len);
+        self.memtable.record_doc(doc_id, doc_len);
 
         // Write document length, fieldnorm, and update incremental stats.
         self.backend
             .write_doc_length(tid, collection, doc_id, doc_len)?;
-        self.write_fieldnorm(tid, collection, surrogate, doc_len)?;
+        self.write_fieldnorm(tid, collection, doc_id, doc_len)?;
         self.backend.increment_stats(tid, collection, doc_len)?;
 
         if self.memtable.should_flush() {
             self.flush_memtable(tid, collection)?;
         }
 
-        debug!(tid, %collection, %doc_id, int_id, tokens = tokens.len(), terms = term_data.len(), "indexed document");
+        debug!(tid, %collection, doc_id = doc_id.0, tokens = tokens.len(), terms = term_data.len(), "indexed document");
         Ok(())
     }
 
@@ -157,17 +137,11 @@ impl<B: FtsBackend> FtsIndex<B> {
         &self,
         tid: u32,
         collection: &str,
-        doc_id: &str,
+        doc_id: Surrogate,
     ) -> Result<(), B::Error> {
         let doc_len = self.backend.read_doc_length(tid, collection, doc_id)?;
 
-        let mut doc_map = self.load_doc_id_map(tid, collection)?;
-        if let Some(int_id) = doc_map.to_u32(doc_id) {
-            self.memtable.remove_doc(Surrogate(int_id));
-        }
-        doc_map.remove(doc_id);
-        self.save_doc_id_map(tid, collection, &doc_map)?;
-
+        self.memtable.remove_doc(doc_id);
         self.backend.remove_doc_length(tid, collection, doc_id)?;
 
         if let Some(len) = doc_len {
@@ -211,6 +185,8 @@ pub(crate) fn memtable_tenant_prefix(tid: u32) -> String {
 
 #[cfg(test)]
 mod tests {
+    use nodedb_types::Surrogate;
+
     use crate::backend::memory::MemoryBackend;
 
     use super::*;
@@ -224,7 +200,7 @@ mod tests {
     #[test]
     fn index_writes_to_memtable() {
         let idx = make_index();
-        idx.index_document(T, "docs", "d1", "hello world greeting")
+        idx.index_document(T, "docs", Surrogate(1), "hello world greeting")
             .unwrap();
 
         assert!(!idx.memtable.is_empty());
@@ -244,8 +220,13 @@ mod tests {
             next_segment_id: AtomicU64::new(1),
         };
 
-        idx.index_document(T, "docs", "d1", "alpha bravo charlie delta echo foxtrot")
-            .unwrap();
+        idx.index_document(
+            T,
+            "docs",
+            Surrogate(1),
+            "alpha bravo charlie delta echo foxtrot",
+        )
+        .unwrap();
 
         assert!(idx.memtable.is_empty());
         let segments = idx.backend.list_segments(T, "docs").unwrap();
@@ -253,37 +234,37 @@ mod tests {
     }
 
     #[test]
-    fn index_assigns_doc_ids() {
+    fn index_surrogate_stored() {
         let idx = make_index();
-        idx.index_document(T, "docs", "d1", "hello world greeting")
+        idx.index_document(T, "docs", Surrogate(0), "hello world greeting")
             .unwrap();
-        idx.index_document(T, "docs", "d2", "hello rust language")
+        idx.index_document(T, "docs", Surrogate(1), "hello rust language")
             .unwrap();
 
-        let map = idx.load_doc_id_map(T, "docs").unwrap();
-        assert_eq!(map.to_u32("d1"), Some(0));
-        assert_eq!(map.to_u32("d2"), Some(1));
+        let (count, _) = idx.backend.collection_stats(T, "docs").unwrap();
+        assert_eq!(count, 2);
     }
 
     #[test]
-    fn remove_tombstones_docmap() {
+    fn remove_decrements_stats() {
         let idx = make_index();
-        idx.index_document(T, "docs", "d1", "hello world").unwrap();
-        idx.index_document(T, "docs", "d2", "hello rust").unwrap();
+        idx.index_document(T, "docs", Surrogate(0), "hello world")
+            .unwrap();
+        idx.index_document(T, "docs", Surrogate(1), "hello rust")
+            .unwrap();
 
-        idx.remove_document(T, "docs", "d1").unwrap();
+        idx.remove_document(T, "docs", Surrogate(0)).unwrap();
 
-        let map = idx.load_doc_id_map(T, "docs").unwrap();
-        assert_eq!(map.to_u32("d1"), None);
-        assert_eq!(map.to_u32("d2"), Some(1));
+        let (count, _) = idx.backend.collection_stats(T, "docs").unwrap();
+        assert_eq!(count, 1);
     }
 
     #[test]
     fn index_updates_stats() {
         let idx = make_index();
-        idx.index_document(T, "docs", "d1", "hello world greeting")
+        idx.index_document(T, "docs", Surrogate(0), "hello world greeting")
             .unwrap();
-        idx.index_document(T, "docs", "d2", "hello rust language")
+        idx.index_document(T, "docs", Surrogate(1), "hello rust language")
             .unwrap();
 
         let (count, total) = idx.backend.collection_stats(T, "docs").unwrap();
@@ -292,22 +273,12 @@ mod tests {
     }
 
     #[test]
-    fn remove_decrements_stats() {
-        let idx = make_index();
-        idx.index_document(T, "docs", "d1", "hello world").unwrap();
-        idx.index_document(T, "docs", "d2", "hello rust").unwrap();
-
-        idx.remove_document(T, "docs", "d1").unwrap();
-
-        let (count, _) = idx.backend.collection_stats(T, "docs").unwrap();
-        assert_eq!(count, 1);
-    }
-
-    #[test]
     fn purge_collection_preserves_others() {
         let idx = make_index();
-        idx.index_document(T, "col_a", "d1", "alpha bravo").unwrap();
-        idx.index_document(T, "col_b", "d1", "delta echo").unwrap();
+        idx.index_document(T, "col_a", Surrogate(1), "alpha bravo")
+            .unwrap();
+        idx.index_document(T, "col_b", Surrogate(1), "delta echo")
+            .unwrap();
 
         idx.purge_collection(T, "col_a").unwrap();
         assert_eq!(idx.backend.collection_stats(T, "col_a").unwrap(), (0, 0));
@@ -328,7 +299,8 @@ mod tests {
     #[test]
     fn empty_text_is_noop() {
         let idx = make_index();
-        idx.index_document(T, "docs", "d1", "the a is").unwrap();
+        idx.index_document(T, "docs", Surrogate(1), "the a is")
+            .unwrap();
         assert_eq!(idx.backend.collection_stats(T, "docs").unwrap(), (0, 0));
         assert!(idx.memtable.is_empty());
     }

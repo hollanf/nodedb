@@ -1,3 +1,5 @@
+use nodedb_types::Surrogate;
+
 use crate::posting::Posting;
 
 /// Storage backend abstraction for the full-text search engine.
@@ -45,7 +47,7 @@ pub trait FtsBackend {
         &self,
         tid: u32,
         collection: &str,
-        doc_id: &str,
+        doc_id: Surrogate,
     ) -> Result<Option<u32>, Self::Error>;
 
     /// Write/replace the document length for a document.
@@ -53,7 +55,7 @@ pub trait FtsBackend {
         &self,
         tid: u32,
         collection: &str,
-        doc_id: &str,
+        doc_id: Surrogate,
         length: u32,
     ) -> Result<(), Self::Error>;
 
@@ -62,7 +64,7 @@ pub trait FtsBackend {
         &self,
         tid: u32,
         collection: &str,
-        doc_id: &str,
+        doc_id: Surrogate,
     ) -> Result<(), Self::Error>;
 
     /// Get all term names in a collection (for fuzzy matching).
