@@ -52,6 +52,9 @@ pub fn project_sparse(tile: &SparseTile, proj: &Projection) -> ArrayResult<Spars
         dim_dicts: tile.dim_dicts.clone(),
         attr_cols,
         surrogates: tile.surrogates.clone(),
+        valid_from_ms: tile.valid_from_ms.clone(),
+        valid_until_ms: tile.valid_until_ms.clone(),
+        row_kinds: tile.row_kinds.clone(),
         mbr,
     })
 }

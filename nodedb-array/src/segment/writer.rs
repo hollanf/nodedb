@@ -35,16 +35,14 @@ impl SegmentWriter {
         let payload = zerompk::to_msgpack_vec(tile).map_err(|e| ArrayError::SegmentCorruption {
             detail: format!("sparse tile encode failed: {e}"),
         })?;
-        self.append_framed(tile_id, TileKind::Sparse, &payload, tile.mbr.clone());
-        Ok(())
+        self.append_framed(tile_id, TileKind::Sparse, &payload, tile.mbr.clone())
     }
 
     pub fn append_dense(&mut self, tile_id: TileId, tile: &DenseTile) -> ArrayResult<()> {
         let payload = zerompk::to_msgpack_vec(tile).map_err(|e| ArrayError::SegmentCorruption {
             detail: format!("dense tile encode failed: {e}"),
         })?;
-        self.append_framed(tile_id, TileKind::Dense, &payload, tile.mbr.clone());
-        Ok(())
+        self.append_framed(tile_id, TileKind::Dense, &payload, tile.mbr.clone())
     }
 
     fn append_framed(
@@ -53,7 +51,21 @@ impl SegmentWriter {
         kind: TileKind,
         payload: &[u8],
         mbr: crate::tile::mbr::TileMBR,
-    ) {
+    ) -> ArrayResult<()> {
+        if let Some(last) = self.entries.last()
+            && tile_id <= last.tile_id
+        {
+            return Err(ArrayError::SegmentCorruption {
+                detail: format!(
+                    "tile IDs not strictly monotonic ascending: \
+                     prev=({},{}) new=({},{})",
+                    last.tile_id.hilbert_prefix,
+                    last.tile_id.system_from_ms,
+                    tile_id.hilbert_prefix,
+                    tile_id.system_from_ms,
+                ),
+            });
+        }
         let offset = self.buf.len() as u64;
         let framed_len = BlockFraming::encode(payload, &mut self.buf);
         self.entries.push(TileEntry::new(
@@ -63,6 +75,7 @@ impl SegmentWriter {
             framed_len as u32,
             mbr,
         ));
+        Ok(())
     }
 
     pub fn tile_count(&self) -> usize {
@@ -154,5 +167,35 @@ mod tests {
         let bytes = w.finish().unwrap();
         let h = SegmentHeader::decode(&bytes).unwrap();
         assert_eq!(h.schema_hash, 0xAA);
+    }
+
+    #[test]
+    fn writer_rejects_non_monotonic_tile_ids() {
+        let s = schema();
+        let mut w = SegmentWriter::new(0x1234);
+        w.append_sparse(TileId::new(2, 100), &sparse_tile(&s))
+            .unwrap();
+        let err = w
+            .append_sparse(TileId::new(1, 100), &sparse_tile(&s))
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::error::ArrayError::SegmentCorruption { .. }),
+            "expected SegmentCorruption, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn writer_allows_same_prefix_different_system_times() {
+        let s = schema();
+        let mut w = SegmentWriter::new(0x1234);
+        w.append_sparse(TileId::new(5, 100), &sparse_tile(&s))
+            .unwrap();
+        w.append_sparse(TileId::new(5, 200), &sparse_tile(&s))
+            .unwrap();
+        let bytes = w.finish().unwrap();
+        let footer = SegmentFooter::decode(&bytes).unwrap();
+        assert_eq!(footer.tiles.len(), 2);
+        assert_eq!(footer.tiles[0].tile_id, TileId::new(5, 100));
+        assert_eq!(footer.tiles[1].tile_id, TileId::new(5, 200));
     }
 }

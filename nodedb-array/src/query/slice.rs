@@ -13,7 +13,7 @@
 
 use crate::error::ArrayResult;
 use crate::schema::ArraySchema;
-use crate::tile::sparse_tile::{SparseTile, SparseTileBuilder};
+use crate::tile::sparse_tile::{SparseRow, SparseTile, SparseTileBuilder};
 use crate::types::cell_value::value::CellValue;
 use crate::types::coord::value::CoordValue;
 use crate::types::domain::DomainBound;
@@ -92,24 +92,50 @@ pub fn slice_sparse(
     tile: &SparseTile,
     slice: &Slice,
 ) -> ArrayResult<SparseTile> {
+    use crate::tile::sparse_tile::RowKind;
     let mut b = SparseTileBuilder::new(schema);
-    let n = tile.nnz() as usize;
+    let n = tile.row_count();
+    let mut live_idx = 0usize;
     for row in 0..n {
+        // Sentinel rows carry no payload and must not be emitted into slice results.
+        if tile.row_kind(row)? != RowKind::Live {
+            continue;
+        }
         let coord: Vec<CoordValue> = tile
             .dim_dicts
             .iter()
             .map(|d| d.values[d.indices[row] as usize].clone())
             .collect();
         if !cell_in_slice(&coord, slice) {
+            live_idx += 1;
             continue;
         }
-        let attrs: Vec<CellValue> = tile.attr_cols.iter().map(|col| col[row].clone()).collect();
+        let attr_row = live_idx;
+        live_idx += 1;
+        let attrs: Vec<CellValue> = tile
+            .attr_cols
+            .iter()
+            .map(|col| col[attr_row].clone())
+            .collect();
         let surrogate = tile
             .surrogates
             .get(row)
             .copied()
             .unwrap_or(nodedb_types::Surrogate::ZERO);
-        b.push_with_surrogate(&coord, &attrs, surrogate)?;
+        let valid_from_ms = tile.valid_from_ms.get(row).copied().unwrap_or(0);
+        let valid_until_ms = tile
+            .valid_until_ms
+            .get(row)
+            .copied()
+            .unwrap_or(nodedb_types::OPEN_UPPER);
+        b.push_row(SparseRow {
+            coord: &coord,
+            attrs: &attrs,
+            surrogate,
+            valid_from_ms,
+            valid_until_ms,
+            kind: crate::tile::sparse_tile::RowKind::Live,
+        })?;
     }
     Ok(b.build())
 }

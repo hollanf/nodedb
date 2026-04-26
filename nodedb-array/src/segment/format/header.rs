@@ -20,7 +20,7 @@ use crate::error::{ArrayError, ArrayResult};
 pub const HEADER_MAGIC: [u8; 8] = *b"NDAS\0\0\0\x01";
 
 /// On-disk format version. Bump on layout-incompatible changes.
-pub const FORMAT_VERSION: u16 = 1;
+pub const FORMAT_VERSION: u16 = 4;
 
 pub const HEADER_SIZE: usize = 24;
 
@@ -86,11 +86,7 @@ impl SegmentHeader {
         u64_buf.copy_from_slice(&bytes[12..20]);
         let schema_hash = u64::from_le_bytes(u64_buf);
         if version != FORMAT_VERSION {
-            return Err(ArrayError::SegmentCorruption {
-                detail: format!(
-                    "unsupported segment version {version} (expected {FORMAT_VERSION})"
-                ),
-            });
+            return Err(ArrayError::UnsupportedSegmentFormat { version });
         }
         Ok(Self {
             version,
@@ -134,5 +130,66 @@ mod tests {
     #[test]
     fn header_rejects_truncated() {
         assert!(SegmentHeader::decode(&[0u8; 10]).is_err());
+    }
+
+    #[test]
+    fn header_rejects_v1_segment() {
+        // Craft a synthetic v1 header bytestream: magic + version=1 + flags=0 + schema_hash=0.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&HEADER_MAGIC);
+        buf.extend_from_slice(&1u16.to_le_bytes()); // version = 1
+        buf.extend_from_slice(&0u16.to_le_bytes()); // flags
+        buf.extend_from_slice(&0u64.to_le_bytes()); // schema_hash
+        let crc = crc32c::crc32c(&buf[..20]);
+        buf.extend_from_slice(&crc.to_le_bytes());
+        let err = SegmentHeader::decode(&buf).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                crate::error::ArrayError::UnsupportedSegmentFormat { version: 1 }
+            ),
+            "expected UnsupportedSegmentFormat {{version: 1}}, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn header_rejects_v2_segment() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&HEADER_MAGIC);
+        buf.extend_from_slice(&2u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        let crc = crc32c::crc32c(&buf[..20]);
+        buf.extend_from_slice(&crc.to_le_bytes());
+        let err = SegmentHeader::decode(&buf).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                crate::error::ArrayError::UnsupportedSegmentFormat { version: 2 }
+            ),
+            "expected UnsupportedSegmentFormat {{version: 2}}, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn header_rejects_v3_segment() {
+        // v3 segments lack the per-row `row_kinds` column in SparseTile.
+        // Reject them so callers receive a structured error rather than
+        // silent Live classification for tombstone / erasure rows.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&HEADER_MAGIC);
+        buf.extend_from_slice(&3u16.to_le_bytes()); // version = 3
+        buf.extend_from_slice(&0u16.to_le_bytes()); // flags
+        buf.extend_from_slice(&0u64.to_le_bytes()); // schema_hash
+        let crc = crc32c::crc32c(&buf[..20]);
+        buf.extend_from_slice(&crc.to_le_bytes());
+        let err = SegmentHeader::decode(&buf).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                crate::error::ArrayError::UnsupportedSegmentFormat { version: 3 }
+            ),
+            "expected UnsupportedSegmentFormat {{version: 3}}, got {err:?}"
+        );
     }
 }

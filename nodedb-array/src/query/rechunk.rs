@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use crate::error::ArrayResult;
 use crate::schema::ArraySchema;
 use crate::tile::layout::tile_id_for_cell;
-use crate::tile::sparse_tile::{SparseTile, SparseTileBuilder};
+use crate::tile::sparse_tile::{RowKind, SparseRow, SparseTile, SparseTileBuilder};
 use crate::types::TileId;
 use crate::types::cell_value::value::CellValue;
 use crate::types::coord::value::CoordValue;
@@ -26,25 +26,50 @@ pub fn rechunk_sparse(
     target_schema: &ArraySchema,
     tile: &SparseTile,
 ) -> ArrayResult<Vec<(TileId, SparseTile)>> {
-    let n = tile.nnz() as usize;
+    let n = tile.row_count();
+    let mut live_idx = 0usize;
     let mut buckets: BTreeMap<TileId, SparseTileBuilder<'_>> = BTreeMap::new();
     for row in 0..n {
+        // Sentinel rows are not re-bucketed; rechunk is a purely spatial
+        // operation on live cell data.
+        if tile.row_kind(row)? != RowKind::Live {
+            continue;
+        }
+        let attr_row = live_idx;
+        live_idx += 1;
         let coord: Vec<CoordValue> = tile
             .dim_dicts
             .iter()
             .map(|d| d.values[d.indices[row] as usize].clone())
             .collect();
-        let attrs: Vec<CellValue> = tile.attr_cols.iter().map(|col| col[row].clone()).collect();
+        let attrs: Vec<CellValue> = tile
+            .attr_cols
+            .iter()
+            .map(|col| col[attr_row].clone())
+            .collect();
         let surrogate = tile
             .surrogates
             .get(row)
             .copied()
             .unwrap_or(nodedb_types::Surrogate::ZERO);
+        let valid_from_ms = tile.valid_from_ms.get(row).copied().unwrap_or(0);
+        let valid_until_ms = tile
+            .valid_until_ms
+            .get(row)
+            .copied()
+            .unwrap_or(nodedb_types::OPEN_UPPER);
         let tid = tile_id_for_cell(target_schema, &coord, 0)?;
         let entry = buckets
             .entry(tid)
             .or_insert_with(|| SparseTileBuilder::new(target_schema));
-        entry.push_with_surrogate(&coord, &attrs, surrogate)?;
+        entry.push_row(SparseRow {
+            coord: &coord,
+            attrs: &attrs,
+            surrogate,
+            valid_from_ms,
+            valid_until_ms,
+            kind: crate::tile::sparse_tile::RowKind::Live,
+        })?;
     }
     Ok(buckets.into_iter().map(|(k, v)| (k, v.build())).collect())
 }

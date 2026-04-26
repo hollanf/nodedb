@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use crate::tile::sparse_tile::SparseTile;
+use crate::tile::sparse_tile::{RowKind, SparseTile};
 use crate::types::cell_value::value::CellValue;
 use crate::types::coord::value::CoordValue;
 
@@ -176,7 +176,6 @@ pub fn group_by_dim(
     attr_idx: usize,
     reducer: Reducer,
 ) -> Vec<GroupAggregate> {
-    let n = tile.nnz() as usize;
     let Some(dict) = tile.dim_dicts.get(dim_idx) else {
         return Vec::new();
     };
@@ -185,7 +184,22 @@ pub fn group_by_dim(
     };
     let mut order: Vec<CoordValue> = Vec::new();
     let mut by_key: HashMap<CoordValue, AggregateResult> = HashMap::new();
-    for (row, cell) in col.iter().enumerate().take(n) {
+    // Iterate physical rows; track live_idx separately because attr_cols only
+    // has entries for Live rows — sentinel rows carry no attr payload.
+    let mut live_idx = 0usize;
+    for row in 0..tile.row_count() {
+        let kind = match tile.row_kind(row) {
+            Ok(k) => k,
+            Err(_) => break,
+        };
+        if kind != RowKind::Live {
+            continue;
+        }
+        let cell = match col.get(live_idx) {
+            Some(c) => c,
+            None => break,
+        };
+        live_idx += 1;
         let key = dict.values[dict.indices[row] as usize].clone();
         let one = single_cell(cell, reducer);
         match by_key.get_mut(&key) {

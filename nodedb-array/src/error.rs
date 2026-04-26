@@ -60,6 +60,12 @@ pub enum ArrayError {
 
     #[error("segment corruption: {detail}")]
     SegmentCorruption { detail: String },
+
+    #[error("unsupported WAL format version: {version}")]
+    UnsupportedFormat { version: u8 },
+
+    #[error("unsupported segment format version: {version}")]
+    UnsupportedSegmentFormat { version: u16 },
 }
 
 impl ArrayError {
@@ -73,7 +79,9 @@ impl ArrayError {
             | ArrayError::CoordArityMismatch { array, .. }
             | ArrayError::CoordOutOfDomain { array, .. }
             | ArrayError::CellTypeMismatch { array, .. } => array,
-            ArrayError::SegmentCorruption { .. } => "",
+            ArrayError::SegmentCorruption { .. }
+            | ArrayError::UnsupportedFormat { .. }
+            | ArrayError::UnsupportedSegmentFormat { .. } => "",
         }
     }
 }

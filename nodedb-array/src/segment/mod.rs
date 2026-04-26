@@ -7,5 +7,5 @@ pub use format::{
     FOOTER_MAGIC, FORMAT_VERSION, HEADER_MAGIC, SegmentFooter, SegmentHeader, TileEntry, TileKind,
 };
 pub use mbr_index::{HilbertPackedRTree, MbrQueryPredicate};
-pub use reader::{SegmentReader, TilePayload};
+pub use reader::{SegmentReader, TilePayload, extract_cell_bytes};
 pub use writer::SegmentWriter;
