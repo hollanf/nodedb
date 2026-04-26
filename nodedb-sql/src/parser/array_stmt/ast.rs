@@ -25,6 +25,14 @@ pub struct CreateArrayAst {
     /// Number of Hilbert-prefix bits used for vShard routing.
     /// Accepted via optional `WITH (prefix_bits = N)` clause; default 8.
     pub prefix_bits: u8,
+    /// Audit-retention horizon in milliseconds. `Some(0)` means "retain
+    /// forever"; `None` means non-bitemporal (no purge runs). Maps to
+    /// `ArrayCatalogEntry::audit_retain_ms`.
+    pub audit_retain_ms: Option<u64>,
+    /// Minimum allowed `audit_retain_ms` — compliance floor. `None`
+    /// defaults to 0 (no floor). Validated via `BitemporalRetention::validate()`
+    /// in the planner.
+    pub minimum_audit_retain_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

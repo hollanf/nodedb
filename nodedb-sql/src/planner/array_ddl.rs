@@ -108,6 +108,8 @@ pub fn plan_create_array(ast: &CreateArrayAst) -> Result<SqlPlan> {
         cell_order: ast.cell_order,
         tile_order: ast.tile_order,
         prefix_bits: ast.prefix_bits,
+        audit_retain_ms: ast.audit_retain_ms,
+        minimum_audit_retain_ms: ast.minimum_audit_retain_ms,
     })
 }
 
@@ -183,6 +185,8 @@ mod tests {
             cell_order: Default::default(),
             tile_order: Default::default(),
             prefix_bits: 8,
+            audit_retain_ms: None,
+            minimum_audit_retain_ms: None,
         }
     }
 

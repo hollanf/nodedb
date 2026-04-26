@@ -301,6 +301,10 @@ pub enum SqlPlan {
         tile_order: crate::types_array::ArrayTileOrderAst,
         /// Hilbert-prefix bits for vShard routing (1–16, default 8).
         prefix_bits: u8,
+        /// Audit-retention horizon in milliseconds. `None` = non-bitemporal.
+        audit_retain_ms: Option<u64>,
+        /// Compliance floor for `audit_retain_ms`. `None` = no floor.
+        minimum_audit_retain_ms: Option<u64>,
     },
     /// `DROP ARRAY [IF EXISTS] <name>` — pure Control-Plane catalog
     /// mutation. Per-core array store cleanup happens lazily.

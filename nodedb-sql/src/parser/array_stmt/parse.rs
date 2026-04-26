@@ -166,22 +166,52 @@ impl<'a> Parser<'a> {
             tile_order = self.parse_tile_order()?;
         }
 
-        // Optional `WITH (prefix_bits = N)` clause.
+        // Optional `WITH (key = value, ...)` clause.
         let mut prefix_bits: u8 = 8;
+        let mut audit_retain_ms: Option<u64> = None;
+        let mut minimum_audit_retain_ms: Option<u64> = None;
         if self.match_kw("WITH") {
             self.expect(&Tok::LParen)?;
-            let key = self.expect_ident()?;
-            if !key.eq_ignore_ascii_case("prefix_bits") {
-                return Err(self.err(format!(
-                    "WITH: unknown option `{key}`; expected `prefix_bits`"
-                )));
+            loop {
+                let key = self.expect_ident()?;
+                self.expect(&Tok::Eq)?;
+                match key.to_ascii_lowercase().as_str() {
+                    "prefix_bits" => {
+                        let n = self.expect_int()?;
+                        if !(1..=16).contains(&n) {
+                            return Err(self.err(format!("WITH (prefix_bits = {n}): must be 1–16")));
+                        }
+                        prefix_bits = n as u8;
+                    }
+                    "audit_retain_ms" => {
+                        let n = self.expect_int()?;
+                        if n < 0 {
+                            return Err(
+                                self.err(format!("WITH (audit_retain_ms = {n}): must be >= 0"))
+                            );
+                        }
+                        audit_retain_ms = Some(n as u64);
+                    }
+                    "minimum_audit_retain_ms" => {
+                        let n = self.expect_int()?;
+                        if n < 0 {
+                            return Err(self.err(format!(
+                                "WITH (minimum_audit_retain_ms = {n}): must be >= 0"
+                            )));
+                        }
+                        minimum_audit_retain_ms = Some(n as u64);
+                    }
+                    other => {
+                        return Err(self.err(format!(
+                            "WITH: unknown option `{other}`; expected one of \
+                             `prefix_bits`, `audit_retain_ms`, `minimum_audit_retain_ms`"
+                        )));
+                    }
+                }
+                if !self.match_token(&Tok::Comma) {
+                    break;
+                }
             }
-            self.expect(&Tok::Eq)?;
-            let n = self.expect_int()?;
-            if !(1..=16).contains(&n) {
-                return Err(self.err(format!("WITH (prefix_bits = {n}): must be 1–16")));
-            }
-            prefix_bits = n as u8;
             self.expect(&Tok::RParen)?;
         }
 
@@ -200,6 +230,8 @@ impl<'a> Parser<'a> {
             cell_order,
             tile_order,
             prefix_bits,
+            audit_retain_ms,
+            minimum_audit_retain_ms,
         })
     }
 
@@ -525,6 +557,62 @@ mod tests {
     #[test]
     fn create_rejects_unknown_dim_type() {
         let sql = "CREATE ARRAY g DIMS (x BOGUS [0..10]) ATTRS (v INT64) TILE_EXTENTS (1)";
+        assert!(try_parse_array_statement(sql).is_err());
+    }
+
+    #[test]
+    fn parse_create_array_with_audit_retain() {
+        let sql = "CREATE ARRAY g \
+                   DIMS (x INT64 [0..100]) \
+                   ATTRS (v INT64) \
+                   TILE_EXTENTS (10) \
+                   WITH (audit_retain_ms = 86400000)";
+        let stmt = try_parse_array_statement(sql).unwrap().unwrap();
+        match stmt {
+            ArrayStatement::Create(c) => {
+                assert_eq!(c.audit_retain_ms, Some(86_400_000));
+                assert_eq!(c.minimum_audit_retain_ms, None);
+                assert_eq!(c.prefix_bits, 8);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn parse_create_array_with_all_retention_keys() {
+        let sql = "CREATE ARRAY genomes \
+                   DIMS (variant_id INT64 [0..1000000000], sample_id INT64 [0..100000]) \
+                   ATTRS (gt INT64, dp INT64) \
+                   TILE_EXTENTS (1024, 256) \
+                   WITH (prefix_bits = 8, audit_retain_ms = 86400000, minimum_audit_retain_ms = 3600000)";
+        let stmt = try_parse_array_statement(sql).unwrap().unwrap();
+        match stmt {
+            ArrayStatement::Create(c) => {
+                assert_eq!(c.prefix_bits, 8);
+                assert_eq!(c.audit_retain_ms, Some(86_400_000));
+                assert_eq!(c.minimum_audit_retain_ms, Some(3_600_000));
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn parse_create_array_unknown_with_key_rejected() {
+        let sql = "CREATE ARRAY g \
+                   DIMS (x INT64 [0..10]) \
+                   ATTRS (v INT64) \
+                   TILE_EXTENTS (1) \
+                   WITH (bogus_key = 42)";
+        assert!(try_parse_array_statement(sql).is_err());
+    }
+
+    #[test]
+    fn parse_create_array_negative_retain_rejected() {
+        let sql = "CREATE ARRAY g \
+                   DIMS (x INT64 [0..10]) \
+                   ATTRS (v INT64) \
+                   TILE_EXTENTS (1) \
+                   WITH (audit_retain_ms = -1)";
         assert!(try_parse_array_statement(sql).is_err());
     }
 }
