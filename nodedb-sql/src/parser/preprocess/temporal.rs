@@ -4,9 +4,15 @@
 //! Supported forms (case-insensitive, whitespace-tolerant):
 //!
 //! ```sql
+//! -- Table scan style (existing):
 //! SELECT ... FROM t FOR SYSTEM_TIME AS OF 1700000000000 WHERE ...
 //! SELECT ... FROM t FOR VALID_TIME CONTAINS 1700000000000 WHERE ...
 //! SELECT ... FROM t FOR VALID_TIME FROM 1700000000000 TO 1700001000000 WHERE ...
+//!
+//! -- Array read style (CockroachDB-inspired, two orthogonal clauses):
+//! SELECT ... FROM ndarray_slice(...) AS OF SYSTEM TIME 1700000000000
+//! SELECT ... FROM ndarray_slice(...) AS OF VALID TIME 1700000000000
+//! SELECT ... FROM ndarray_slice(...) AS OF SYSTEM TIME 1700000000000 AS OF VALID TIME 1700000001000
 //! ```
 //!
 //! A function-form escape hatch is also accepted, anywhere in the statement,
@@ -16,11 +22,17 @@
 //! SELECT __system_as_of__(1700000000000) FROM t WHERE ...
 //! ```
 //!
-//! All three canonical clauses are recognised once per statement. Repeated
-//! clauses return `Err`; conflicting valid-time forms (CONTAINS + FROM/TO)
-//! return `Err`.
+//! All recognised clauses are extracted once per statement. Repeated clauses
+//! of the same kind return `Err`; conflicting valid-time forms (CONTAINS +
+//! FROM/TO) return `Err`.
 //!
-//! Timestamps are **milliseconds since Unix epoch**.
+//! Timestamps are **milliseconds since Unix epoch**. Accepted expression forms:
+//! - Integer literal (milliseconds since epoch)
+//! - `NOW()` — resolved to the current wall-clock millisecond
+//! - ISO-8601 / RFC-3339 timestamp string `'2024-01-15T00:00:00Z'`
+//!
+//! Any other expression form is rejected with a typed `TemporalParseError`
+//! naming the unsupported form.
 
 use crate::temporal::{TemporalScope, ValidTime};
 
@@ -44,11 +56,13 @@ pub fn extract(sql: &str) -> Result<Option<Extracted>, TemporalParseError> {
     let mut working = sql.to_string();
     let mut any = false;
 
+    // FOR SYSTEM_TIME AS OF (table-scan style)
     if let Some((rewritten, ms)) = strip_system_time_as_of(&working)? {
         working = rewritten;
         scope.system_as_of_ms = Some(ms);
         any = true;
     }
+    // __system_as_of__(<int>) function escape hatch
     if let Some((rewritten, ms)) = strip_system_as_of_function(&working)? {
         if scope.system_as_of_ms.is_some() {
             return Err(TemporalParseError(
@@ -59,9 +73,37 @@ pub fn extract(sql: &str) -> Result<Option<Extracted>, TemporalParseError> {
         scope.system_as_of_ms = Some(ms);
         any = true;
     }
+    // AS OF SYSTEM TIME <expr> (array read style, CockroachDB-inspired)
+    if let Some((rewritten, ms)) = strip_as_of_system_time(&working)? {
+        if scope.system_as_of_ms.is_some() {
+            return Err(TemporalParseError(
+                "multiple system-time AS OF clauses in one statement".into(),
+            ));
+        }
+        working = rewritten;
+        scope.system_as_of_ms = Some(ms);
+        any = true;
+        if strip_as_of_system_time(&working)?.is_some() {
+            return Err(TemporalParseError(
+                "multiple system-time AS OF clauses in one statement".into(),
+            ));
+        }
+    }
+    // FOR VALID_TIME CONTAINS/FROM…TO (table-scan style)
     if let Some((rewritten, vt)) = strip_valid_time(&working)? {
         working = rewritten;
         scope.valid_time = vt;
+        any = true;
+    }
+    // AS OF VALID TIME <expr> (array read style)
+    if let Some((rewritten, ms)) = strip_as_of_valid_time(&working)? {
+        if !matches!(scope.valid_time, ValidTime::Any) {
+            return Err(TemporalParseError(
+                "multiple valid-time AS OF clauses in one statement".into(),
+            ));
+        }
+        working = rewritten;
+        scope.valid_time = ValidTime::At(ms);
         any = true;
     }
 
@@ -179,6 +221,179 @@ fn strip_valid_time(sql: &str) -> Result<Option<(String, ValidTime)>, TemporalPa
     ))
 }
 
+/// Resolve a temporal expression token to milliseconds since Unix epoch.
+///
+/// Supported forms:
+/// - Integer literal — interpreted directly as milliseconds.
+/// - `NOW()` — resolved to the current wall-clock millisecond via
+///   `std::time::SystemTime`. This is evaluated once at parse time, not
+///   deferred, so the resolved value is stable for the duration of the query.
+/// - ISO-8601 / RFC-3339 string literal `'2024-01-15T00:00:00Z'` — parsed
+///   with [`chrono`]'s `DateTime::parse_from_rfc3339`.
+///
+/// Any other expression form is rejected with a descriptive error rather than
+/// silently defaulting, so callers always get exactly the version they asked for.
+fn parse_temporal_expr(token: &str) -> Result<i64, TemporalParseError> {
+    let t = token.trim();
+
+    // Integer literal
+    if let Ok(v) = t.parse::<i64>() {
+        return Ok(v);
+    }
+
+    // NOW() — case-insensitive
+    if t.to_uppercase() == "NOW()" {
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        return Ok(ms);
+    }
+
+    // ISO-8601 string literal: 'YYYY-MM-DDTHH:MM:SSZ' (with surrounding quotes)
+    if (t.starts_with('\'') && t.ends_with('\'')) || (t.starts_with('"') && t.ends_with('"')) {
+        let inner = &t[1..t.len() - 1];
+        // Try RFC-3339 first (most common).
+        if let Ok(dt) = inner.parse::<chrono::DateTime<chrono::Utc>>() {
+            return Ok(dt.timestamp_millis());
+        }
+        // Also try NaiveDateTime + assume UTC.
+        if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(inner, "%Y-%m-%dT%H:%M:%S") {
+            use chrono::TimeZone as _;
+            return Ok(chrono::Utc.from_utc_datetime(&ndt).timestamp_millis());
+        }
+        return Err(TemporalParseError(format!(
+            "AS OF temporal expression: cannot parse timestamp string '{inner}'; \
+             expected RFC-3339 / ISO-8601 (e.g. '2024-01-15T00:00:00Z')"
+        )));
+    }
+
+    Err(TemporalParseError(format!(
+        "AS OF temporal expression '{t}' is not supported; \
+         use an integer (ms since epoch), NOW(), or an ISO-8601 string literal \
+         (e.g. '2024-01-15T00:00:00Z')"
+    )))
+}
+
+/// Match `AS OF SYSTEM TIME <expr>` (case-insensitive) anywhere in `sql` and
+/// strip it. The expression may be an integer literal, `NOW()`, or an ISO-8601
+/// timestamp string. Returns `None` if the clause is absent.
+///
+/// This is the CockroachDB-inspired form used on array read queries. It is
+/// parsed by NodeDB's pre-processor (option b — string-based extraction before
+/// sqlparser-rs sees the statement) because sqlparser-rs does not natively
+/// support the `AS OF VALID TIME` variant that the array engine also needs.
+/// Using the same pre-processor approach for both keeps the two clauses
+/// consistent and avoids mixing native sqlparser AS-OF support with custom
+/// preprocessing in the same pipeline.
+fn strip_as_of_system_time(sql: &str) -> Result<Option<(String, i64)>, TemporalParseError> {
+    let upper = sql.to_uppercase();
+    let keyword = "AS OF SYSTEM TIME";
+    let Some(start) = upper.find(keyword) else {
+        return Ok(None);
+    };
+    let after_kw = start + keyword.len();
+    let (ms, end_abs) = parse_as_of_expr(sql, after_kw)?;
+    let mut out = String::with_capacity(sql.len());
+    out.push_str(sql[..start].trim_end());
+    out.push(' ');
+    out.push_str(sql[end_abs..].trim_start());
+    Ok(Some((out.trim().to_string(), ms)))
+}
+
+/// Match `AS OF VALID TIME <expr>` (case-insensitive) anywhere in `sql` and
+/// strip it. Same expression forms as `strip_as_of_system_time`. Returns `None`
+/// if the clause is absent.
+fn strip_as_of_valid_time(sql: &str) -> Result<Option<(String, i64)>, TemporalParseError> {
+    let upper = sql.to_uppercase();
+    let keyword = "AS OF VALID TIME";
+    let Some(start) = upper.find(keyword) else {
+        return Ok(None);
+    };
+    let after_kw = start + keyword.len();
+    let (ms, end_abs) = parse_as_of_expr(sql, after_kw)?;
+    let mut out = String::with_capacity(sql.len());
+    out.push_str(sql[..start].trim_end());
+    out.push(' ');
+    out.push_str(sql[end_abs..].trim_start());
+    Ok(Some((out.trim().to_string(), ms)))
+}
+
+/// Extract the temporal expression that follows an AS-OF keyword at `offset`
+/// in `sql`. Returns `(resolved_ms, end_offset_exclusive)`.
+///
+/// The expression is delimited by end-of-string or the next keyword-boundary
+/// token (a subsequent `AS OF`, or certain SQL keywords that cannot appear
+/// inside a temporal expression). Quoted string literals are consumed whole.
+fn parse_as_of_expr(sql: &str, offset: usize) -> Result<(i64, usize), TemporalParseError> {
+    let rest = &sql[offset..];
+    let trimmed = rest.trim_start();
+    let leading = rest.len() - trimmed.len();
+    let abs_start = offset + leading;
+
+    // If the next non-whitespace character opens a quoted string, consume
+    // through the closing quote.
+    if trimmed.starts_with('\'') || trimmed.starts_with('"') {
+        let quote = trimmed.chars().next().unwrap();
+        let inner_start = 1;
+        let close = trimmed[inner_start..].find(quote).ok_or_else(|| {
+            TemporalParseError(format!(
+                "AS OF temporal expression: unterminated string literal at offset {abs_start}"
+            ))
+        })?;
+        let end_rel = inner_start + close + 1; // include closing quote
+        let token = &trimmed[..end_rel];
+        let ms = parse_temporal_expr(token)?;
+        return Ok((ms, abs_start + end_rel));
+    }
+
+    // Otherwise scan to the next whitespace-delimited boundary. We stop at:
+    // a) another `AS OF` sequence (another clause),
+    // b) certain SQL delimiter tokens: WHERE, LIMIT, ORDER, GROUP, HAVING,
+    //    UNION, EXCEPT, INTERSECT, FETCH, FOR, OFFSET, semicolon.
+    let stop_tokens = [
+        "AS OF",
+        "WHERE",
+        "LIMIT",
+        "ORDER",
+        "GROUP",
+        "HAVING",
+        "UNION",
+        "EXCEPT",
+        "INTERSECT",
+        "FETCH",
+        "OFFSET",
+        ";",
+    ];
+    let upper_trimmed = trimmed.to_uppercase();
+    let mut end_rel = trimmed.len();
+    for stop in &stop_tokens {
+        // Only match at a word boundary (preceded by whitespace or start).
+        let mut search_from = 0;
+        while let Some(pos) = upper_trimmed[search_from..].find(stop) {
+            let abs_pos = search_from + pos;
+            let at_boundary = abs_pos == 0
+                || upper_trimmed[..abs_pos].ends_with(|c: char| c.is_ascii_whitespace());
+            if at_boundary {
+                end_rel = end_rel.min(abs_pos);
+                break;
+            }
+            search_from = abs_pos + 1;
+        }
+    }
+    // Trim trailing whitespace from the extracted token.
+    let token = trimmed[..end_rel].trim();
+    if token.is_empty() {
+        return Err(TemporalParseError(format!(
+            "AS OF clause at offset {abs_start} has no expression"
+        )));
+    }
+    let ms = parse_temporal_expr(token)?;
+    // Advance past the expression (including trailing whitespace that was trimmed).
+    let raw_end = abs_start + end_rel;
+    Ok((ms, raw_end))
+}
+
 /// Parse an optionally-signed integer starting at `offset` in `sql`, skipping
 /// leading whitespace. Returns `(value, end_offset_exclusive)`.
 fn parse_trailing_i64(sql: &str, offset: usize) -> Result<(i64, usize), TemporalParseError> {
@@ -265,5 +480,82 @@ mod tests {
     #[test]
     fn valid_time_missing_verb() {
         assert!(extract("SELECT * FROM t FOR VALID_TIME 100").is_err());
+    }
+
+    #[test]
+    fn as_of_system_time_integer() {
+        let ex = extract("SELECT * FROM ndarray_slice('g', '{}') AS OF SYSTEM TIME 1700000000000")
+            .unwrap()
+            .unwrap();
+        assert_eq!(ex.temporal.system_as_of_ms, Some(1_700_000_000_000));
+        assert!(!ex.sql.to_uppercase().contains("AS OF SYSTEM TIME"));
+    }
+
+    #[test]
+    fn as_of_valid_time_integer() {
+        let ex = extract("SELECT * FROM ndarray_slice('g', '{}') AS OF VALID TIME 1700000000001")
+            .unwrap()
+            .unwrap();
+        assert_eq!(ex.temporal.valid_time, ValidTime::At(1_700_000_000_001));
+        assert!(!ex.sql.to_uppercase().contains("AS OF VALID TIME"));
+    }
+
+    #[test]
+    fn as_of_system_time_iso8601() {
+        let ex = extract(
+            "SELECT * FROM ndarray_slice('g', '{}') AS OF SYSTEM TIME '2024-01-15T00:00:00Z'",
+        )
+        .unwrap()
+        .unwrap();
+        // 2024-01-15T00:00:00Z in ms
+        assert_eq!(ex.temporal.system_as_of_ms, Some(1_705_276_800_000));
+        assert!(!ex.sql.to_uppercase().contains("AS OF SYSTEM TIME"));
+    }
+
+    #[test]
+    fn as_of_both_clauses() {
+        let ex = extract(
+            "SELECT * FROM ndarray_slice('g', '{}') AS OF SYSTEM TIME 500 AS OF VALID TIME 250",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(ex.temporal.system_as_of_ms, Some(500));
+        assert_eq!(ex.temporal.valid_time, ValidTime::At(250));
+    }
+
+    #[test]
+    fn as_of_system_time_now() {
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let ex = extract("SELECT * FROM ndarray_slice('g', '{}') AS OF SYSTEM TIME NOW()")
+            .unwrap()
+            .unwrap();
+        let after = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let ts = ex.temporal.system_as_of_ms.unwrap();
+        assert!(
+            ts >= before && ts <= after,
+            "NOW() ts {ts} not in [{before}, {after}]"
+        );
+    }
+
+    #[test]
+    fn as_of_system_time_unsupported_expr_rejected() {
+        let err = extract(
+            "SELECT * FROM ndarray_slice('g', '{}') AS OF SYSTEM TIME NOW() - INTERVAL '1 day'",
+        );
+        assert!(err.is_err(), "INTERVAL expression should be rejected");
+    }
+
+    #[test]
+    fn as_of_duplicate_system_time_rejected() {
+        assert!(
+            extract("SELECT * FROM t AS OF SYSTEM TIME 100 AS OF SYSTEM TIME 200").is_err(),
+            "duplicate AS OF SYSTEM TIME should be rejected"
+        );
     }
 }

@@ -11,6 +11,7 @@
 use sqlparser::ast;
 
 use crate::error::Result;
+use crate::temporal::TemporalScope;
 use crate::types::{SqlCatalog, SqlPlan};
 
 /// If `rel` is a `NDARRAY_*(...)` TVF call, return the corresponding
@@ -19,6 +20,7 @@ use crate::types::{SqlCatalog, SqlPlan};
 pub(super) fn try_plan_relation(
     rel: &ast::TableFactor,
     catalog: &dyn SqlCatalog,
+    temporal: TemporalScope,
 ) -> Result<Option<SqlPlan>> {
     let name = match rel {
         ast::TableFactor::Table {
@@ -42,7 +44,7 @@ pub(super) fn try_plan_relation(
         relation: rel.clone(),
         joins: Vec::new(),
     };
-    super::super::array_fn::try_plan_array_table_fn(std::slice::from_ref(&twj), catalog)
+    super::super::array_fn::try_plan_array_table_fn(std::slice::from_ref(&twj), catalog, temporal)
 }
 
 fn is_array_tvf(name: &str) -> bool {

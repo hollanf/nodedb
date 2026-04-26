@@ -19,7 +19,9 @@ pub(super) fn plan_select(
 ) -> Result<SqlPlan> {
     // 0. Intercept array table-valued functions before catalog resolution
     //    so a name like `NDARRAY_SLICE` is not looked up as a collection.
-    if let Some(plan) = crate::planner::array_fn::try_plan_array_table_fn(&select.from, catalog)? {
+    if let Some(plan) =
+        crate::planner::array_fn::try_plan_array_table_fn(&select.from, catalog, temporal)?
+    {
         return Ok(plan);
     }
 

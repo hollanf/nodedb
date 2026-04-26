@@ -20,22 +20,24 @@ pub fn plan_join_from_select(
     let from = &select.from[0];
 
     // Left side: either an NDARRAY_* TVF or a named table.
-    let left_plan = if let Some(plan) = array_arm::try_plan_relation(&from.relation, catalog)? {
-        plan
-    } else {
-        scan_for_relation(&from.relation, scope)?
-    };
+    let left_plan =
+        if let Some(plan) = array_arm::try_plan_relation(&from.relation, catalog, temporal)? {
+            plan
+        } else {
+            scan_for_relation(&from.relation, scope)?
+        };
 
     let mut current_plan = left_plan;
 
     for join_item in &from.joins {
         // Right side: array TVF or named table.
-        let right_plan =
-            if let Some(plan) = array_arm::try_plan_relation(&join_item.relation, catalog)? {
-                plan
-            } else {
-                scan_for_relation(&join_item.relation, scope)?
-            };
+        let right_plan = if let Some(plan) =
+            array_arm::try_plan_relation(&join_item.relation, catalog, temporal)?
+        {
+            plan
+        } else {
+            scan_for_relation(&join_item.relation, scope)?
+        };
 
         let (join_type, on_keys, condition) = extract_join_spec(&join_item.join_operator)?;
 

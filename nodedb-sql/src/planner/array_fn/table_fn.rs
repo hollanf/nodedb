@@ -11,6 +11,7 @@ use super::helpers::{
 };
 use crate::error::{Result, SqlError};
 use crate::parser::object_literal::parse_object_literal;
+use crate::temporal::TemporalScope;
 use crate::types::{SqlCatalog, SqlPlan};
 use crate::types_array::{ArrayBinaryOpAst, ArrayReducerAst, ArraySliceAst, NamedDimRange};
 
@@ -18,9 +19,17 @@ use crate::types_array::{ArrayBinaryOpAst, ArrayReducerAst, ArraySliceAst, Named
 /// function call. Returns `Ok(Some(plan))` on a match, `Ok(None)` if
 /// the FROM is not an array function (caller falls through to normal
 /// catalog resolution).
+///
+/// `temporal` carries any `AS OF SYSTEM TIME` / `AS OF VALID TIME` qualifiers
+/// extracted by the pre-processor. It is propagated verbatim into
+/// `SqlPlan::NdArraySlice` and `SqlPlan::NdArrayAgg` so the planner-to-physical
+/// conversion can populate the corresponding `ArrayOp` fields. When neither
+/// clause was present, `temporal` is `TemporalScope::default()`, which maps to
+/// the live-state fast path in the Data Plane handler.
 pub fn try_plan_array_table_fn(
     from: &[ast::TableWithJoins],
     catalog: &dyn SqlCatalog,
+    temporal: TemporalScope,
 ) -> Result<Option<SqlPlan>> {
     if from.len() != 1 {
         return Ok(None);
@@ -40,15 +49,19 @@ pub fn try_plan_array_table_fn(
     let fn_name = crate::parser::normalize::normalize_object_name(name);
     let arg_exprs = collect_args(&args.args);
     match fn_name.as_str() {
-        "ndarray_slice" => Ok(Some(plan_slice(&arg_exprs, catalog)?)),
+        "ndarray_slice" => Ok(Some(plan_slice(&arg_exprs, catalog, temporal)?)),
         "ndarray_project" => Ok(Some(plan_project(&arg_exprs, catalog)?)),
-        "ndarray_agg" => Ok(Some(plan_agg(&arg_exprs, catalog)?)),
+        "ndarray_agg" => Ok(Some(plan_agg(&arg_exprs, catalog, temporal)?)),
         "ndarray_elementwise" => Ok(Some(plan_elementwise(&arg_exprs, catalog)?)),
         _ => Ok(None),
     }
 }
 
-fn plan_slice(args: &[ast::Expr], catalog: &dyn SqlCatalog) -> Result<SqlPlan> {
+fn plan_slice(
+    args: &[ast::Expr],
+    catalog: &dyn SqlCatalog,
+    temporal: TemporalScope,
+) -> Result<SqlPlan> {
     if args.len() < 2 || args.len() > 4 {
         return Err(SqlError::Unsupported {
             detail: format!(
@@ -123,6 +136,7 @@ fn plan_slice(args: &[ast::Expr], catalog: &dyn SqlCatalog) -> Result<SqlPlan> {
         slice: ArraySliceAst { dim_ranges },
         attr_projection,
         limit,
+        temporal,
     })
 }
 
@@ -160,7 +174,11 @@ fn plan_project(args: &[ast::Expr], catalog: &dyn SqlCatalog) -> Result<SqlPlan>
     })
 }
 
-fn plan_agg(args: &[ast::Expr], catalog: &dyn SqlCatalog) -> Result<SqlPlan> {
+fn plan_agg(
+    args: &[ast::Expr],
+    catalog: &dyn SqlCatalog,
+    temporal: TemporalScope,
+) -> Result<SqlPlan> {
     if args.len() < 3 || args.len() > 4 {
         return Err(SqlError::Unsupported {
             detail: format!(
@@ -207,6 +225,7 @@ fn plan_agg(args: &[ast::Expr], catalog: &dyn SqlCatalog) -> Result<SqlPlan> {
         attr,
         reducer,
         group_by_dim,
+        temporal,
     })
 }
 

@@ -96,6 +96,7 @@ fn slice_happy() {
             slice,
             attr_projection,
             limit,
+            ..
         } => {
             assert_eq!(name, "g");
             assert_eq!(slice.dim_ranges.len(), 2);
@@ -143,6 +144,7 @@ fn agg_scalar() {
             attr,
             reducer,
             group_by_dim,
+            ..
         } => {
             assert_eq!(name, "g");
             assert_eq!(attr, "qual");

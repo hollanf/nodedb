@@ -323,6 +323,10 @@ pub enum SqlPlan {
         attr_projection: Vec<String>,
         /// 0 = unlimited.
         limit: u32,
+        /// Bitemporal qualifier. When both axes are `None` / `Any`, the Data
+        /// Plane returns the live (current) state — the default fast path.
+        /// Populated from `AS OF SYSTEM TIME` / `AS OF VALID TIME` clauses.
+        temporal: crate::temporal::TemporalScope,
     },
     /// `SELECT * FROM NDARRAY_PROJECT(name, [attrs])`.
     NdArrayProject {
@@ -337,6 +341,10 @@ pub enum SqlPlan {
         reducer: crate::types_array::ArrayReducerAst,
         /// `None` = scalar fold; `Some(name)` = group by that dim.
         group_by_dim: Option<String>,
+        /// Bitemporal qualifier. When both axes are `None` / `Any`, the Data
+        /// Plane aggregates against the live (current) state — the default
+        /// fast path. Populated from `AS OF SYSTEM TIME` / `AS OF VALID TIME`.
+        temporal: crate::temporal::TemporalScope,
     },
     /// `SELECT * FROM NDARRAY_ELEMENTWISE(left, right, op, attr)`.
     NdArrayElementwise {
