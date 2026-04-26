@@ -47,13 +47,15 @@ impl CoreLoop {
         {
             Ok(results) => {
                 // RLS post-score filtering: look up each candidate's document.
-                let hits: Vec<_> = results
+                // r.doc_id is Surrogate; convert to hex for the sparse engine key.
+                let hits_data: Vec<(String, f32, bool)> = results
                     .iter()
                     .filter(|r| {
                         if rls_filters.is_empty() {
                             return true;
                         }
-                        match self.sparse.get(tid, collection, &r.doc_id) {
+                        let hex_key = crate::engine::document::store::surrogate_to_doc_id(r.doc_id);
+                        match self.sparse.get(tid, collection, &hex_key) {
                             Ok(Some(bytes)) => {
                                 super::rls_eval::rls_check_msgpack_bytes(rls_filters, &bytes)
                             }
@@ -61,11 +63,23 @@ impl CoreLoop {
                         }
                     })
                     .take(top_k)
-                    .map(|r| super::super::response_codec::TextSearchHit {
-                        doc_id: &r.doc_id,
-                        score: r.score,
-                        fuzzy: r.fuzzy,
+                    .map(|r| {
+                        (
+                            crate::engine::document::store::surrogate_to_doc_id(r.doc_id),
+                            r.score,
+                            r.fuzzy,
+                        )
                     })
+                    .collect();
+                let hits: Vec<_> = hits_data
+                    .iter()
+                    .map(
+                        |(hex_key, score, fuzzy)| super::super::response_codec::TextSearchHit {
+                            doc_id: hex_key,
+                            score: *score,
+                            fuzzy: *fuzzy,
+                        },
+                    )
                     .collect();
                 if let Some(ref m) = self.metrics {
                     m.record_text_search(0);
@@ -135,7 +149,8 @@ impl CoreLoop {
 
         // 1. Vector search.
         let index_key = CoreLoop::vector_index_key(tid, collection, "");
-        let vector_results = if let Some(index) = self.vector_collections.get(&index_key) {
+        let vector_collection = self.vector_collections.get(&index_key);
+        let vector_results = if let Some(index) = vector_collection {
             if index.is_empty() {
                 Vec::new()
             } else {
@@ -182,14 +197,24 @@ impl CoreLoop {
             base_k * 100.0
         };
 
+        // Translate vector local-hnsw IDs to surrogate-hex doc_ids so the
+        // vector and text legs share the same RRF key space. Headless rows
+        // (no surrogate binding) fall back to a non-fusable sentinel —
+        // they cannot match any FTS doc_id, which is the correct behavior.
         let vector_ranked: Vec<RankedResult> = vector_results
             .iter()
             .enumerate()
-            .map(|(rank, r)| RankedResult {
-                document_id: r.id.to_string(),
-                rank,
-                score: r.distance,
-                source: "vector",
+            .map(|(rank, r)| {
+                let document_id = vector_collection
+                    .and_then(|c| c.get_surrogate(r.id))
+                    .map(crate::engine::document::store::surrogate_to_doc_id)
+                    .unwrap_or_else(|| format!("__local_{}", r.id));
+                RankedResult {
+                    document_id,
+                    rank,
+                    score: r.distance,
+                    source: "vector",
+                }
             })
             .collect();
 
@@ -197,7 +222,7 @@ impl CoreLoop {
             .iter()
             .enumerate()
             .map(|(rank, r)| RankedResult {
-                document_id: r.doc_id.clone(),
+                document_id: crate::engine::document::store::surrogate_to_doc_id(r.doc_id),
                 rank,
                 score: r.score,
                 source: "text",
@@ -226,10 +251,16 @@ impl CoreLoop {
                 }
             })
             .map(|f| {
-                let vector_rank = vector_results
-                    .iter()
-                    .position(|r| r.id.to_string() == f.document_id);
-                let text_rank = text_results.iter().position(|r| r.doc_id == f.document_id);
+                let vector_rank = vector_results.iter().position(|r| {
+                    let doc_id = vector_collection
+                        .and_then(|c| c.get_surrogate(r.id))
+                        .map(crate::engine::document::store::surrogate_to_doc_id)
+                        .unwrap_or_else(|| format!("__local_{}", r.id));
+                    doc_id == f.document_id
+                });
+                let text_rank = text_results.iter().position(|r| {
+                    crate::engine::document::store::surrogate_to_doc_id(r.doc_id) == f.document_id
+                });
 
                 super::super::response_codec::HybridSearchHit {
                     doc_id: &f.document_id,

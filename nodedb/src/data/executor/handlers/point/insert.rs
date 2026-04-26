@@ -77,7 +77,7 @@ impl CoreLoop {
         // `apply_point_put` returns prior bytes if any — for PointInsert this
         // must be `None` because the probe above already rejected the
         // conflict case. We intentionally drop it.
-        if let Err(e) = self.apply_point_put(&txn, tid, collection, row_key, value) {
+        if let Err(e) = self.apply_point_put(&txn, tid, collection, row_key, surrogate, value) {
             return self.response_error(task, e);
         }
 

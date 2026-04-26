@@ -36,7 +36,7 @@ impl CoreLoop {
             }
         };
 
-        let prior = match self.apply_point_put(&txn, tid, collection, row_key, value) {
+        let prior = match self.apply_point_put(&txn, tid, collection, row_key, surrogate, value) {
             Ok(p) => p,
             Err(e) => {
                 return self.response_error(

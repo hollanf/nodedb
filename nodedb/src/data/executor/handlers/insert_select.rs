@@ -71,7 +71,19 @@ impl CoreLoop {
 
         let mut inserted = 0usize;
         for (source_id, value) in &source_docs {
-            if let Err(e) = self.apply_point_put(&txn, tid, target_collection, source_id, value) {
+            // source_id is the hex-encoded surrogate from the source collection.
+            // Parse it back; if it's not a valid surrogate key, fall back to ZERO
+            // (FTS indexing will be skipped for that document).
+            let source_surrogate = crate::engine::document::store::doc_id_to_surrogate(source_id)
+                .unwrap_or(nodedb_types::Surrogate::ZERO);
+            if let Err(e) = self.apply_point_put(
+                &txn,
+                tid,
+                target_collection,
+                source_id,
+                source_surrogate,
+                value,
+            ) {
                 return self.response_error(
                     task,
                     ErrorCode::Internal {

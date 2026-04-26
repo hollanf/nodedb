@@ -126,7 +126,8 @@ impl CoreLoop {
             DocumentOp::BatchInsert {
                 collection,
                 documents,
-            } => self.execute_document_batch_insert(task, tid, collection, documents),
+                surrogates,
+            } => self.execute_document_batch_insert(task, tid, collection, documents, surrogates),
 
             DocumentOp::RangeScan {
                 collection,

@@ -33,7 +33,7 @@ pub(crate) fn build_plan(
         OpCode::PointPut => document::build_point_put(ctx, fields, collection),
         OpCode::PointDelete => document::build_point_delete(ctx, fields, collection),
         OpCode::RangeScan => document::build_range_scan(fields, collection),
-        OpCode::DocumentBatchInsert => document::build_batch_insert(fields, collection),
+        OpCode::DocumentBatchInsert => document::build_batch_insert(ctx, fields, collection),
         OpCode::DocumentUpdate => document::build_update(ctx, fields, collection),
         OpCode::DocumentScan => document::build_scan(fields, collection),
         OpCode::DocumentUpsert => document::build_upsert(ctx, fields, collection),

@@ -44,11 +44,16 @@ impl CoreLoop {
                 .flatten()
                 .is_some()
             {
-                if let Err(e) = self.inverted.remove_document(
-                    crate::types::TenantId::new(tid),
-                    collection,
-                    doc_id,
-                ) {
+                // doc_id is the hex-encoded surrogate (the redb storage key).
+                // Parse back to Surrogate for FTS removal. Non-hex keys
+                // (legacy non-surrogate docs) produce None and skip FTS.
+                if let Some(surrogate) = crate::engine::document::store::doc_id_to_surrogate(doc_id)
+                    && let Err(e) = self.inverted.remove_document(
+                        crate::types::TenantId::new(tid),
+                        collection,
+                        surrogate,
+                    )
+                {
                     warn!(core = self.core_id, %collection, %doc_id, error = %e, "truncate: inverted removal failed");
                 }
                 if let Err(e) = self

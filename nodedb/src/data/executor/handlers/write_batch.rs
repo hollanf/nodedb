@@ -89,7 +89,7 @@ impl CoreLoop {
             let tid = task.request.tenant_id.as_u32();
             let row_key = crate::engine::document::store::surrogate_to_doc_id(*surrogate);
             results.push(
-                self.apply_point_put(&txn, tid, collection, &row_key, value)
+                self.apply_point_put(&txn, tid, collection, &row_key, *surrogate, value)
                     .map_err(|e| {
                         self.response_error(
                             task,

@@ -62,9 +62,17 @@ impl CoreLoop {
             return self.response_with_payload(task, b"[]".to_vec());
         }
 
+        // Translate vector local-hnsw IDs to surrogate-hex node IDs so the
+        // BFS seed set lines up with the canonical surrogate-keyed node IDs
+        // used by surrogate-bound graph collections. Headless vector rows
+        // (no surrogate binding) cannot match any graph node — emit a
+        // sentinel that BFS will treat as a missing seed.
         let mut vector_scores: HashMap<String, (usize, f32)> = HashMap::new();
         for (rank, result) in vector_results.iter().enumerate() {
-            let node_id = result.id.to_string();
+            let node_id = index
+                .get_surrogate(result.id)
+                .map(crate::engine::document::store::surrogate_to_doc_id)
+                .unwrap_or_else(|| format!("__local_{}", result.id));
             vector_scores.insert(node_id, (rank, result.distance));
         }
 

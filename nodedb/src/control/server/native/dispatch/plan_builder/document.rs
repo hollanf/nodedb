@@ -165,6 +165,7 @@ pub(crate) fn build_range_scan(
 }
 
 pub(crate) fn build_batch_insert(
+    ctx: &DispatchCtx<'_>,
     fields: &TextFields,
     collection: &str,
 ) -> crate::Result<PhysicalPlan> {
@@ -179,20 +180,24 @@ pub(crate) fn build_batch_insert(
             detail: "documents array is empty".to_string(),
         });
     }
-    let documents: Vec<(String, Vec<u8>)> = batch_docs
-        .iter()
-        .map(|d| {
-            let value_bytes =
-                sonic_rs::to_vec(&d.fields).map_err(|e| crate::Error::Serialization {
-                    format: "json".into(),
-                    detail: format!("failed to serialize document '{}': {e}", d.id),
-                })?;
-            Ok((d.id.clone(), value_bytes))
-        })
-        .collect::<crate::Result<Vec<_>>>()?;
+    let mut documents: Vec<(String, Vec<u8>)> = Vec::with_capacity(batch_docs.len());
+    let mut surrogates: Vec<nodedb_types::Surrogate> = Vec::with_capacity(batch_docs.len());
+    for d in batch_docs {
+        let value_bytes = sonic_rs::to_vec(&d.fields).map_err(|e| crate::Error::Serialization {
+            format: "json".into(),
+            detail: format!("failed to serialize document '{}': {e}", d.id),
+        })?;
+        let surrogate = ctx
+            .state
+            .surrogate_assigner
+            .assign(collection, d.id.as_bytes())?;
+        documents.push((d.id.clone(), value_bytes));
+        surrogates.push(surrogate);
+    }
     Ok(PhysicalPlan::Document(DocumentOp::BatchInsert {
         collection: collection.to_string(),
         documents,
+        surrogates,
     }))
 }
 

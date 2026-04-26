@@ -8,7 +8,10 @@ pub(in crate::data::executor) enum UndoEntry {
     /// Undo a PointPut by deleting the document (or restoring the old value).
     PutDocument {
         collection: String,
+        /// Hex-encoded surrogate (the redb storage key).
         document_id: String,
+        /// Numeric surrogate for FTS index rollback.
+        surrogate: nodedb_types::Surrogate,
         /// `None` if the document didn't exist before (inserted); `Some(bytes)`
         /// if it was overwritten (updated).
         old_value: Option<Vec<u8>>,
@@ -16,6 +19,7 @@ pub(in crate::data::executor) enum UndoEntry {
     /// Undo a PointDelete by re-inserting the document.
     DeleteDocument {
         collection: String,
+        /// Hex-encoded surrogate (the redb storage key).
         document_id: String,
         old_value: Vec<u8>,
     },
@@ -56,6 +60,7 @@ impl CoreLoop {
                 UndoEntry::PutDocument {
                     collection,
                     document_id,
+                    surrogate,
                     old_value,
                 } => {
                     if let Some(old) = old_value {
@@ -69,7 +74,7 @@ impl CoreLoop {
                     let _ = self.inverted.remove_document(
                         crate::types::TenantId::new(tid),
                         &collection,
-                        &document_id,
+                        surrogate,
                     );
                 }
                 UndoEntry::DeleteDocument {
@@ -190,6 +195,7 @@ impl CoreLoop {
                 collection,
                 document_id,
                 old_value: None, // Only new inserts, not updates.
+                ..
             } = entry
             {
                 // Read the current stored value to extract balanced fields.

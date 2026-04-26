@@ -228,17 +228,18 @@ impl CoreLoop {
                 // existence probe just above found none, and apply_point_put
                 // is the only writer on this core — prior must be None. We
                 // pass it straight through so the emit resolves to Insert.
-                let prior = match self.apply_point_put(&txn, tid, collection, row_key, value) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        return self.response_error(
-                            task,
-                            ErrorCode::Internal {
-                                detail: e.to_string(),
-                            },
-                        );
-                    }
-                };
+                let prior =
+                    match self.apply_point_put(&txn, tid, collection, row_key, surrogate, value) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            return self.response_error(
+                                task,
+                                ErrorCode::Internal {
+                                    detail: e.to_string(),
+                                },
+                            );
+                        }
+                    };
 
                 if let Err(e) = txn.commit() {
                     return self.response_error(

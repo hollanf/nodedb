@@ -400,7 +400,7 @@ impl CoreLoop {
                         let _ = self.inverted.index_document(
                             crate::types::TenantId::new(tid),
                             collection,
-                            row_key,
+                            surrogate,
                             &text_content,
                         );
                     }
@@ -409,6 +409,7 @@ impl CoreLoop {
                 undo_log.push(UndoEntry::PutDocument {
                     collection: collection.to_string(),
                     document_id: row_key.to_string(),
+                    surrogate,
                     old_value: old_value.clone(),
                 });
 
@@ -431,6 +432,11 @@ impl CoreLoop {
                             undo_log.push(UndoEntry::PutDocument {
                                 collection: tw.collection,
                                 document_id: tw.document_id,
+                                // Materialized sum targets are numeric aggregate
+                                // rows — they are not text-indexed. Surrogate::ZERO
+                                // causes the FTS rollback to be a no-op (no entry
+                                // at slot 0 for these system-internal documents).
+                                surrogate: nodedb_types::Surrogate::ZERO,
                                 old_value: tw.old_value,
                             });
                         }
@@ -492,11 +498,13 @@ impl CoreLoop {
         match self.sparse.delete(tid, collection, row_key) {
             Ok(_) => {
                 // Cascade: inverted index, secondary indexes, graph edges.
-                let _ = self.inverted.remove_document(
-                    crate::types::TenantId::new(tid),
-                    collection,
-                    row_key,
-                );
+                if let Some(s) = crate::engine::document::store::doc_id_to_surrogate(row_key) {
+                    let _ = self.inverted.remove_document(
+                        crate::types::TenantId::new(tid),
+                        collection,
+                        s,
+                    );
+                }
                 let _ = self
                     .sparse
                     .delete_indexes_for_document(tid, collection, row_key);

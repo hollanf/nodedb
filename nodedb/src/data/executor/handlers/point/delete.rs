@@ -89,7 +89,7 @@ impl CoreLoop {
                 if let Err(e) = self.inverted.remove_document(
                     crate::types::TenantId::new(tid),
                     collection,
-                    row_key,
+                    surrogate,
                 ) {
                     warn!(core = self.core_id, %collection, %document_id, error = %e, "inverted index removal failed");
                 }

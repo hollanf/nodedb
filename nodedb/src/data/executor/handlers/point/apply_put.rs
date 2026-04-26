@@ -7,12 +7,17 @@ use redb::WriteTransaction;
 use tracing::warn;
 
 use crate::data::executor::core_loop::CoreLoop;
+use nodedb_types::Surrogate;
 
 impl CoreLoop {
     /// Apply a PointPut within an externally-owned WriteTransaction.
     ///
     /// Stores the document, auto-indexes text fields, updates column stats,
     /// and populates the document cache. Does NOT commit the transaction.
+    ///
+    /// `surrogate` is the stable numeric identity for this document, used
+    /// to key the inverted index. `document_id` is the hex-encoded form of
+    /// the surrogate (the redb storage key).
     ///
     /// Returns the prior stored bytes when this put replaced an existing row,
     /// or `None` when it was a fresh insert. The caller threads the prior
@@ -24,6 +29,7 @@ impl CoreLoop {
         tid: u32,
         collection: &str,
         document_id: &str,
+        surrogate: Surrogate,
         value: &[u8],
     ) -> crate::Result<Option<Vec<u8>>> {
         // Evaluate generated columns before encoding.
@@ -120,7 +126,7 @@ impl CoreLoop {
                         txn,
                         crate::types::TenantId::new(tid),
                         collection,
-                        document_id,
+                        surrogate,
                         &text_content,
                     )
                 {
