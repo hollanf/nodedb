@@ -21,6 +21,10 @@ impl Validator {
             ConstraintKind::ForeignKey {
                 ref_collection,
                 ref_key,
+            }
+            | ConstraintKind::BiTemporalFK {
+                ref_collection,
+                ref_key,
             } => self.check_foreign_key(state, change, constraint, ref_collection, ref_key),
             ConstraintKind::NotNull => self.check_not_null(change, constraint),
             ConstraintKind::Check { .. } => {

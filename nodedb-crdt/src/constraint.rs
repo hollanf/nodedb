@@ -22,6 +22,16 @@ pub enum ConstraintKind {
         ref_key: String,
     },
 
+    /// Bitemporal foreign key. Write-side semantics match `ForeignKey`
+    /// (referent must exist live), but on referent delete the referrer
+    /// row/edge is *closed* by appending a new version with
+    /// `valid_until_ms = now` rather than being cascade-deleted. This
+    /// preserves the historical truth that the relationship existed.
+    BiTemporalFK {
+        ref_collection: String,
+        ref_key: String,
+    },
+
     /// The value must not be null/empty.
     /// Analogous to SQL `NOT NULL`.
     NotNull,
@@ -93,6 +103,26 @@ impl ConstraintSet {
         });
     }
 
+    /// Add a BITEMPORAL FOREIGN KEY constraint.
+    pub fn add_bitemporal_fk(
+        &mut self,
+        name: &str,
+        collection: &str,
+        field: &str,
+        ref_collection: &str,
+        ref_key: &str,
+    ) {
+        self.add(Constraint {
+            name: name.to_string(),
+            collection: collection.to_string(),
+            field: field.to_string(),
+            kind: ConstraintKind::BiTemporalFK {
+                ref_collection: ref_collection.to_string(),
+                ref_key: ref_key.to_string(),
+            },
+        });
+    }
+
     /// Add a NOT NULL constraint.
     pub fn add_not_null(&mut self, name: &str, collection: &str, field: &str) {
         self.add(Constraint {
@@ -136,10 +166,15 @@ mod tests {
         cs.add_unique("users_email_unique", "users", "email");
         cs.add_not_null("users_name_nn", "users", "name");
         cs.add_foreign_key("posts_author_fk", "posts", "author_id", "users", "id");
+        cs.add_bitemporal_fk("orders_user_btfk", "orders", "user_id", "users", "id");
 
-        assert_eq!(cs.len(), 3);
+        assert_eq!(cs.len(), 4);
         assert_eq!(cs.for_collection("users").len(), 2);
         assert_eq!(cs.for_collection("posts").len(), 1);
+        assert_eq!(cs.for_collection("orders").len(), 1);
         assert_eq!(cs.for_collection("missing").len(), 0);
+
+        let btfk = cs.for_collection("orders")[0];
+        assert!(matches!(btfk.kind, ConstraintKind::BiTemporalFK { .. }));
     }
 }

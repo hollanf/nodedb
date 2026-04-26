@@ -137,7 +137,8 @@ impl CollectionPolicy {
     pub fn for_kind(&self, kind: &crate::constraint::ConstraintKind) -> &ConflictPolicy {
         match kind {
             crate::constraint::ConstraintKind::Unique => &self.unique,
-            crate::constraint::ConstraintKind::ForeignKey { .. } => &self.foreign_key,
+            crate::constraint::ConstraintKind::ForeignKey { .. }
+            | crate::constraint::ConstraintKind::BiTemporalFK { .. } => &self.foreign_key,
             crate::constraint::ConstraintKind::NotNull => &self.not_null,
             crate::constraint::ConstraintKind::Check { .. } => &self.check,
         }
@@ -178,7 +179,8 @@ impl PolicyRegistry {
         let mut coll_policy = self.get_owned(collection);
         match kind {
             crate::constraint::ConstraintKind::Unique => coll_policy.unique = policy,
-            crate::constraint::ConstraintKind::ForeignKey { .. } => {
+            crate::constraint::ConstraintKind::ForeignKey { .. }
+            | crate::constraint::ConstraintKind::BiTemporalFK { .. } => {
                 coll_policy.foreign_key = policy
             }
             crate::constraint::ConstraintKind::NotNull => coll_policy.not_null = policy,
