@@ -14,6 +14,7 @@ members = [
   "nodedb-spatial",
   "nodedb-graph",
   "nodedb-vector",
+  "nodedb-vector-gpu",
   "nodedb-fts",
   "nodedb-strict",
   "nodedb-columnar",
@@ -47,6 +48,7 @@ nodedb-codec = { path = "nodedb-codec", version = "0" }
 nodedb-spatial = { path = "nodedb-spatial", version = "0" }
 nodedb-graph = { path = "nodedb-graph", version = "0" }
 nodedb-vector = { path = "nodedb-vector", version = "0" }
+nodedb-vector-gpu = { path = "nodedb-vector-gpu", version = "0" }
 nodedb-fts = { path = "nodedb-fts", version = "0" }
 nodedb-strict = { path = "nodedb-strict", version = "0" }
 nodedb-columnar = { path = "nodedb-columnar", version = "0" }

@@ -1,0 +1,21 @@
+[package]
+name = "nodedb-vector-gpu"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "GPU-accelerated vector index build (cuVS / CAGRA) for NodeDB Origin"
+
+[features]
+default = []
+# Enables cuVS / CAGRA integration. Requires CUDA toolkit + nvcc on the build host.
+cuvs = []
+
+[dependencies]
+nodedb-vector = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]

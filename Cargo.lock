@@ -4043,6 +4043,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nodedb-vector-gpu"
+version = "0.0.6"
+dependencies = [
+ "nodedb-vector",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "nodedb-wal"
 version = "0.0.6"
 dependencies = [
