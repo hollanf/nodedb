@@ -41,6 +41,28 @@ pub struct CollectionPurgedEvent {
 /// without interior mutability ceremony at every call site.
 pub type CollectionPurgedHandler = Arc<dyn Fn(CollectionPurgedEvent) + Send + Sync + 'static>;
 
+/// Marker bound for `NodeDb` and the futures it returns.
+///
+/// On native targets the bound is `Send + Sync` — matching the multi-thread
+/// Tokio runtime that backs both Origin and the desktop / mobile-FFI Lite
+/// callers. On `wasm32` the bound is empty: JS is single-threaded, so
+/// requiring `Send` on futures returned by the trait would force every
+/// `!Send` engine internal (redb transactions, `Rc<...>`, etc.) to be
+/// rewritten for no benefit.
+///
+/// The `#[async_trait]` attribute on the trait + each impl is correspondingly
+/// cfg-swapped between the default (`Send` futures) and `?Send` (no `Send`
+/// bound) variants.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait NodeDbMarker: Send + Sync {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send + Sync + ?Sized> NodeDbMarker for T {}
+
+#[cfg(target_arch = "wasm32")]
+pub trait NodeDbMarker {}
+#[cfg(target_arch = "wasm32")]
+impl<T: ?Sized> NodeDbMarker for T {}
+
 /// Unified database interface for NodeDB.
 ///
 /// Two implementations:
@@ -51,8 +73,9 @@ pub type CollectionPurgedHandler = Arc<dyn Fn(CollectionPurgedEvent) + Send + Sy
 ///
 /// The developer writes agent logic once. Switching between local and cloud
 /// is a one-line configuration change.
-#[async_trait]
-pub trait NodeDb: Send + Sync {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait NodeDb: NodeDbMarker {
     // ─── Vector Operations ───────────────────────────────────────────
 
     /// Search for the `k` nearest vectors to `query` in `collection`.
@@ -397,7 +420,8 @@ mod tests {
     /// can be used as `Arc<dyn NodeDb>`.
     struct MockDb;
 
-    #[async_trait]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     impl NodeDb for MockDb {
         async fn vector_search(
             &self,

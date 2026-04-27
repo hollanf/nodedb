@@ -110,7 +110,8 @@ use super::remote_parse::{
     value_as_u32, value_as_u64,
 };
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl NodeDb for NodeDbRemote {
     async fn vector_search(
         &self,
