@@ -43,6 +43,10 @@ pub enum Namespace {
     Kv = 8,
     /// Array engine: ND sparse arrays, catalog, manifests, segment bytes.
     Array = 9,
+    /// Array CRDT op-log: append-only ops awaiting sync + GC.
+    ArrayOpLog = 10,
+    /// Array sync pending queue: ops waiting for transport delivery.
+    ArrayDelta = 11,
 }
 
 impl Namespace {
@@ -59,6 +63,8 @@ impl Namespace {
             7 => Some(Self::Columnar),
             8 => Some(Self::Kv),
             9 => Some(Self::Array),
+            10 => Some(Self::ArrayOpLog),
+            11 => Some(Self::ArrayDelta),
             _ => None,
         }
     }
@@ -70,10 +76,10 @@ mod tests {
 
     #[test]
     fn namespace_roundtrip() {
-        for v in 0u8..=9 {
+        for v in 0u8..=11 {
             let ns = Namespace::from_u8(v).unwrap();
             assert_eq!(ns as u8, v);
         }
-        assert!(Namespace::from_u8(10).is_none());
+        assert!(Namespace::from_u8(12).is_none());
     }
 }

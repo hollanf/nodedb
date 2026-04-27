@@ -43,6 +43,22 @@ pub enum SyncMessageType {
     PresenceBroadcast = 0x81,
     /// Presence leave (server → all subscribers, 0x82).
     PresenceLeave = 0x82,
+    /// Array CRDT delta (single op, client → server, 0x90).
+    ArrayDelta = 0x90,
+    /// Array CRDT delta batch (multiple ops, client → server, 0x91).
+    ArrayDeltaBatch = 0x91,
+    /// Array snapshot header (server → client, 0x92).
+    ArraySnapshot = 0x92,
+    /// Array snapshot chunk (server → client, 0x93).
+    ArraySnapshotChunk = 0x93,
+    /// Array schema CRDT sync (bidirectional, 0x94).
+    ArraySchema = 0x94,
+    /// Array ack — advances GC frontier (client → server, 0x95).
+    ArrayAck = 0x95,
+    /// Array reject (server → client, 0x96). Compensation hint.
+    ArrayReject = 0x96,
+    /// Array catchup request (client → server, 0x97).
+    ArrayCatchupRequest = 0x97,
     PingPong = 0xFF,
 }
 
@@ -70,6 +86,14 @@ impl SyncMessageType {
             0x80 => Some(Self::PresenceUpdate),
             0x81 => Some(Self::PresenceBroadcast),
             0x82 => Some(Self::PresenceLeave),
+            0x90 => Some(Self::ArrayDelta),
+            0x91 => Some(Self::ArrayDeltaBatch),
+            0x92 => Some(Self::ArraySnapshot),
+            0x93 => Some(Self::ArraySnapshotChunk),
+            0x94 => Some(Self::ArraySchema),
+            0x95 => Some(Self::ArrayAck),
+            0x96 => Some(Self::ArrayReject),
+            0x97 => Some(Self::ArrayCatchupRequest),
             0xFF => Some(Self::PingPong),
             _ => None,
         }
@@ -124,16 +148,26 @@ impl SyncFrame {
         Some(Self { msg_type, body })
     }
 
-    /// Create a frame from a serializable value, falling back to an empty
-    /// body if serialization fails.
-    pub fn encode_or_empty<T: zerompk::ToMessagePack>(
+    /// Try to encode a value into a SyncFrame body.
+    ///
+    /// Returns `None` and logs an error on serialization failure — callers
+    /// should propagate via `?`. The protocol must never ship a frame
+    /// whose body did not serialize successfully.
+    pub fn try_encode<T: zerompk::ToMessagePack>(
         msg_type: SyncMessageType,
         value: &T,
-    ) -> Self {
-        Self::new_msgpack(msg_type, value).unwrap_or(Self {
-            msg_type,
-            body: Vec::new(),
-        })
+    ) -> Option<Self> {
+        match zerompk::to_msgpack_vec(value) {
+            Ok(body) => Some(Self { msg_type, body }),
+            Err(e) => {
+                tracing::error!(
+                    msg_type = msg_type as u8,
+                    error = %e,
+                    "failed to encode sync frame body; dropping response"
+                );
+                None
+            }
+        }
     }
 
     /// Deserialize the body from MessagePack.

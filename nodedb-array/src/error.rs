@@ -66,6 +66,26 @@ pub enum ArrayError {
 
     #[error("unsupported segment format version: {version}")]
     UnsupportedSegmentFormat { version: u16 },
+
+    /// A replica-id string could not be parsed from hex.
+    #[error("invalid replica_id: {detail}")]
+    InvalidReplicaId { detail: String },
+
+    /// An HLC value is invalid (physical_ms overflow, logical overflow, etc.).
+    #[error("invalid HLC: {detail}")]
+    InvalidHlc { detail: String },
+
+    /// The HLC generator's internal mutex was poisoned.
+    #[error("HLC generator lock poisoned")]
+    HlcLockPoisoned,
+
+    /// An `ArrayOp` violates the shape contract (e.g. `Put` without attrs).
+    #[error("invalid array op: {detail}")]
+    InvalidOp { detail: String },
+
+    /// An error returned by the Loro CRDT library.
+    #[error("loro error: {detail}")]
+    LoroError { detail: String },
 }
 
 impl ArrayError {
@@ -81,7 +101,12 @@ impl ArrayError {
             | ArrayError::CellTypeMismatch { array, .. } => array,
             ArrayError::SegmentCorruption { .. }
             | ArrayError::UnsupportedFormat { .. }
-            | ArrayError::UnsupportedSegmentFormat { .. } => "",
+            | ArrayError::UnsupportedSegmentFormat { .. }
+            | ArrayError::InvalidReplicaId { .. }
+            | ArrayError::InvalidHlc { .. }
+            | ArrayError::HlcLockPoisoned
+            | ArrayError::InvalidOp { .. }
+            | ArrayError::LoroError { .. } => "",
         }
     }
 }

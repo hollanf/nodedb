@@ -11,6 +11,7 @@ pub mod error;
 pub mod query;
 pub mod schema;
 pub mod segment;
+pub mod sync;
 pub mod tile;
 pub mod types;
 
@@ -25,6 +26,11 @@ pub use schema::{
 pub use segment::{
     FOOTER_MAGIC, FORMAT_VERSION, HEADER_MAGIC, HilbertPackedRTree, MbrQueryPredicate,
     SegmentFooter, SegmentHeader, SegmentReader, SegmentWriter, TileEntry, TileKind, TilePayload,
+};
+pub use sync::{
+    AckVector, ApplyEngine, ApplyOutcome, ApplyRejection, ArrayOp, ArrayOpHeader, ArrayOpKind,
+    CoordRange, GcReport, Hlc, HlcGenerator, OpLog, ReplicaId, SchemaDoc, SnapshotChunk,
+    SnapshotHeader, SnapshotSink, TileSnapshot,
 };
 pub use tile::{
     AttrStats, DENSE_PROMOTION_THRESHOLD, DenseTile, SparseTile, TileMBR, should_promote_to_dense,

@@ -3766,12 +3766,14 @@ name = "nodedb-array"
 version = "0.0.6"
 dependencies = [
  "crc32c",
+ "loro",
  "nodedb-codec",
  "nodedb-types",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tracing",
+ "uuid",
  "zerompk",
 ]
 
@@ -4016,6 +4018,7 @@ dependencies = [
  "sonic-rs",
  "thiserror 2.0.18",
  "toml",
+ "tracing",
  "ulid",
  "uuid",
  "zerompk",
