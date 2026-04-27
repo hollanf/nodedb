@@ -154,6 +154,28 @@ pub(super) fn convert_create_array(args: CreateArrayArgs<'_>) -> crate::Result<V
         })?;
     }
 
+    // Register with the bitemporal retention registry so retention policy is
+    // enforced at runtime (mirrors the catalog-hydration path used at boot).
+    if let Some(registry) = &ctx.bitemporal_retention_registry
+        && let Some(retain_ms) = audit_retain_ms
+    {
+        let retention = BitemporalRetention {
+            data_retain_ms: 0,
+            audit_retain_ms: retain_ms,
+            minimum_audit_retain_ms: minimum_audit_retain_ms.unwrap_or(0),
+        };
+        registry
+            .register(
+                TenantId::new(0),
+                name,
+                crate::engine::bitemporal::BitemporalEngineKind::Array,
+                retention,
+            )
+            .map_err(|e| crate::Error::PlanError {
+                detail: format!("CREATE ARRAY {name}: registry register: {e}"),
+            })?;
+    }
+
     // 4. Emit OpenArray so the Data Plane opens the engine side.
     let vshard = VShardId::from_collection(name);
     Ok(vec![PhysicalTask {

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::control::array_catalog::ArrayCatalogHandle;
 use crate::control::security::credential::CredentialStore;
 use crate::control::surrogate::SurrogateAssigner;
+use crate::engine::bitemporal::BitemporalRetentionRegistry;
 use crate::engine::timeseries::retention_policy::RetentionPolicyRegistry;
 use crate::types::TenantId;
 use crate::wal::WalManager;
@@ -39,6 +40,10 @@ pub struct ConvertContext {
     /// topology. Array DML/query converters emit `ClusterArray` variants
     /// when this flag is set; single-node mode emits local `Array` variants.
     pub cluster_enabled: bool,
+    /// Bitemporal retention registry — required by `ALTER NDARRAY` to
+    /// update the purge-scheduler's view of the array's retention policy.
+    /// `None` for sub-planners that don't own array DDL.
+    pub bitemporal_retention_registry: Option<Arc<BitemporalRetentionRegistry>>,
 }
 
 /// Convert a list of SqlPlans to PhysicalTasks.
@@ -395,6 +400,18 @@ pub(super) fn convert_one(
         SqlPlan::DropArray { name, if_exists } => {
             super::array_convert::convert_drop_array(name, *if_exists, tenant_id, ctx)
         }
+
+        SqlPlan::AlterArray {
+            name,
+            audit_retain_ms,
+            minimum_audit_retain_ms,
+        } => super::array_alter_convert::convert_alter_array(
+            name,
+            *audit_retain_ms,
+            *minimum_audit_retain_ms,
+            tenant_id,
+            ctx,
+        ),
 
         SqlPlan::InsertArray { name, rows } => {
             super::array_convert::convert_insert_array(name, rows, tenant_id, ctx)

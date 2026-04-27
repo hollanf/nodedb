@@ -62,6 +62,11 @@ pub struct QueryContext {
     /// topology. Passed into `ConvertContext` so array converters can
     /// emit `ClusterArray` variants instead of local `Array` variants.
     cluster_enabled: bool,
+    /// Bitemporal retention registry — forwarded to `ConvertContext` so
+    /// `ALTER NDARRAY` can update the purge-scheduler's view of the
+    /// array's retention policy. `None` for sub-planners.
+    bitemporal_retention_registry:
+        Option<Arc<crate::engine::bitemporal::BitemporalRetentionRegistry>>,
 }
 
 /// Inputs needed to construct an `OriginCatalog` per plan call.
@@ -108,6 +113,7 @@ impl QueryContext {
             wal: None,
             surrogate_assigner: None,
             cluster_enabled: false,
+            bitemporal_retention_registry: None,
         }
     }
 
@@ -127,6 +133,7 @@ impl QueryContext {
         );
         ctx.surrogate_assigner = Some(Arc::clone(&state.surrogate_assigner));
         ctx.cluster_enabled = state.cluster_topology.is_some();
+        ctx.bitemporal_retention_registry = Some(Arc::clone(&state.bitemporal_retention_registry));
         ctx
     }
 
@@ -148,6 +155,7 @@ impl QueryContext {
             wal: Some(Arc::clone(&state.wal)),
             surrogate_assigner: Some(Arc::clone(&state.surrogate_assigner)),
             cluster_enabled: state.cluster_topology.is_some(),
+            bitemporal_retention_registry: Some(Arc::clone(&state.bitemporal_retention_registry)),
         }
     }
 
@@ -178,6 +186,7 @@ impl QueryContext {
             wal: None,
             surrogate_assigner: None,
             cluster_enabled: false,
+            bitemporal_retention_registry: None,
         }
     }
 
@@ -249,6 +258,7 @@ impl QueryContext {
             wal: self.wal.clone(),
             surrogate_assigner: self.surrogate_assigner.clone(),
             cluster_enabled: self.cluster_enabled,
+            bitemporal_retention_registry: self.bitemporal_retention_registry.clone(),
         };
         let tasks = super::sql_plan_convert::convert(&plans, tenant_id, &ctx)?;
         Ok((tasks, version_set))
@@ -352,6 +362,7 @@ impl QueryContext {
             wal: self.wal.clone(),
             surrogate_assigner: self.surrogate_assigner.clone(),
             cluster_enabled: self.cluster_enabled,
+            bitemporal_retention_registry: self.bitemporal_retention_registry.clone(),
         };
         let mut tasks = super::sql_plan_convert::convert(&plans, tenant_id, &ctx)?;
 

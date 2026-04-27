@@ -187,6 +187,26 @@ pub enum MetaOp {
         cutoff_system_ms: i64,
     },
 
+    /// Alter the bitemporal retention policy of an array.
+    ///
+    /// All real work (catalog rewrite + registry update) is done on the
+    /// Control Plane before this op is emitted. The Data Plane handler
+    /// returns an 8-byte LE u64 acknowledgement (new `audit_retain_ms`
+    /// if set, or 0). This variant exists so the alter command travels
+    /// through the standard plan dispatch path and its permission is
+    /// classified as `Admin`.
+    ///
+    /// Double-`Option` semantics:
+    /// - `None`          = field omitted from SET clause; do not change.
+    /// - `Some(None)`    = SET to NULL (unregister from retention registry).
+    /// - `Some(Some(v))` = SET to v.
+    AlterArray {
+        /// Global array id (name). Arrays are not yet tenant-scoped.
+        array_id: String,
+        audit_retain_ms: Option<Option<i64>>,
+        minimum_audit_retain_ms: Option<Option<u64>>,
+    },
+
     /// Apply retention to continuous aggregate buckets managed by
     /// the aggregate manager. Drops materialized buckets older than
     /// each aggregate's configured retention_period_ms.

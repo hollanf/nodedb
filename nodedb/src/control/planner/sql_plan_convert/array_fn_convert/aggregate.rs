@@ -140,6 +140,7 @@ mod tests {
             wal: None,
             surrogate_assigner: None,
             cluster_enabled,
+            bitemporal_retention_registry: None,
         }
     }
 

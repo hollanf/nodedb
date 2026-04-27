@@ -339,6 +339,20 @@ impl CoreLoop {
                 collection,
                 series_id,
             }) => self.meta_query_last_value(task, collection, *series_id),
+            PhysicalPlan::Meta(MetaOp::AlterArray {
+                audit_retain_ms, ..
+            }) => {
+                // All catalog + registry mutations are performed on the
+                // Control Plane before this op is dispatched. The Data
+                // Plane simply echoes an 8-byte LE u64 acknowledgement
+                // (the new audit_retain_ms, or 0 when set to NULL).
+                let ack: u64 = (*audit_retain_ms)
+                    .and_then(|inner| inner)
+                    .map(|ms| ms as u64)
+                    .unwrap_or(0);
+                self.response_with_payload(task, ack.to_le_bytes().to_vec())
+            }
+
             PhysicalPlan::Meta(
                 op @ (MetaOp::TemporalPurgeEdgeStore { .. }
                 | MetaOp::TemporalPurgeDocumentStrict { .. }
