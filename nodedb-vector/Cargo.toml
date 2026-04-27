@@ -19,6 +19,9 @@ ivf = []
 # Full VectorCollection with segment lifecycle, mmap NVMe tier, background builder.
 # Implies simd + ivf.
 collection = ["simd", "ivf", "dep:memmap2", "dep:libc"]
+# Retains ACORN-1 as a feature-flagged baseline for benchmarking against NaviX.
+# Off by default; not intended for production use.
+acorn-baseline = []
 
 [dependencies]
 nodedb-types = { workspace = true }

@@ -1,14 +1,28 @@
 pub mod batch_distance;
+pub mod delta;
 pub mod distance;
 pub mod error;
 pub mod hnsw;
+pub mod hybrid;
+pub mod matryoshka;
+pub mod multivec;
 pub mod quantize;
+pub mod vamana;
 
 pub use distance::DistanceMetric;
 pub use error::VectorError;
 pub use hnsw::{HnswIndex, HnswParams, SearchResult};
 pub use nodedb_types::Surrogate;
 pub use quantize::Sq8Codec;
+
+// NaviX adaptive-local filtered traversal (VLDB 2025).
+pub mod navix;
+
+// SIEVE workload-driven subindex collection for stable predicates (SIEVE 2025).
+pub mod sieve;
+
+// Cost-based multidimensional vector query planner (Tier 10).
+pub mod planner;
 
 // Origin-only modules (always compiled for native targets).
 pub mod adaptive_filter;
