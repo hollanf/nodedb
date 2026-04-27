@@ -1,5 +1,6 @@
 //! Shared helpers for integration tests.
 
+pub mod array_sync;
 pub mod cluster_harness;
 pub mod pgwire_auth_helpers;
 pub mod pgwire_harness;
