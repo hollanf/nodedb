@@ -275,6 +275,8 @@ pub(super) fn convert_one(
             filters,
             array_prefilter,
             ann_options,
+            skip_payload_fetch,
+            payload_filters,
         } => super::scan::convert_vector_search(super::scan_params::VectorSearchParams {
             collection,
             field,
@@ -286,6 +288,8 @@ pub(super) fn convert_one(
             ann_options,
             tenant_id,
             ctx,
+            skip_payload_fetch: *skip_payload_fetch,
+            payload_filters,
         }),
 
         SqlPlan::TextSearch {
@@ -474,6 +478,22 @@ pub(super) fn convert_one(
         SqlPlan::NdArrayCompact { name } => {
             super::array_fn_convert::convert_compact(name, tenant_id, ctx)
         }
+
+        SqlPlan::VectorPrimaryInsert {
+            collection,
+            field,
+            quantization,
+            payload_indexes,
+            rows,
+        } => super::dml::convert_vector_primary_insert(
+            collection,
+            field,
+            *quantization,
+            payload_indexes,
+            rows,
+            tenant_id,
+            ctx,
+        ),
 
         SqlPlan::MultiVectorSearch { .. } | SqlPlan::RangeScan { .. } => {
             Err(crate::Error::PlanError {

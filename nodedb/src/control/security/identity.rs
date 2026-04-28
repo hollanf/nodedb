@@ -232,7 +232,8 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
             | VectorOp::SparseInsert { .. }
             | VectorOp::SparseDelete { .. }
             | VectorOp::MultiVectorInsert { .. }
-            | VectorOp::MultiVectorDelete { .. },
+            | VectorOp::MultiVectorDelete { .. }
+            | VectorOp::DirectUpsert { .. },
         ) => Permission::Write,
 
         PhysicalPlan::Document(

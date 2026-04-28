@@ -608,6 +608,8 @@ fn vector_search_with_array_surrogate_prefilter() {
             },
         ))),
         ann_options: Default::default(),
+        skip_payload_fetch: false,
+        payload_filters: Vec::new(),
     }));
     assert_eq!(r.status, Status::Ok, "vector+prefilter failed: {r:?}");
 

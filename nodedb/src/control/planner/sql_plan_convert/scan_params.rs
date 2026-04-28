@@ -76,6 +76,12 @@ pub(super) struct VectorSearchParams<'a> {
     pub ann_options: &'a nodedb_sql::types::VectorAnnOptions,
     pub tenant_id: TenantId,
     pub ctx: &'a ConvertContext,
+    /// Propagated from `SqlPlan::VectorSearch::skip_payload_fetch`.
+    pub skip_payload_fetch: bool,
+    /// Predicate atoms (Eq / In / Range) against payload-indexed columns.
+    /// Translated to `nodedb_types::PayloadAtom` and emitted as
+    /// `VectorOp::Search::payload_filters`.
+    pub payload_filters: &'a [nodedb_sql::types::SqlPayloadAtom],
 }
 
 /// Parameters for `convert_hybrid_search`.

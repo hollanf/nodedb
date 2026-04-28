@@ -68,6 +68,8 @@ impl CoreLoop {
                 rls_filters,
                 inline_prefilter_plan,
                 ann_options,
+                skip_payload_fetch,
+                payload_filters,
             } => self.execute_vector_search(
                 super::super::handlers::vector_search::VectorSearchParams {
                     task,
@@ -81,6 +83,8 @@ impl CoreLoop {
                     rls_filters,
                     inline_prefilter_plan: inline_prefilter_plan.as_deref(),
                     ann_options,
+                    skip_payload_fetch: *skip_payload_fetch,
+                    payload_filters: payload_filters.as_slice(),
                 },
             ),
 
@@ -207,6 +211,26 @@ impl CoreLoop {
                 *top_k,
                 *ef_search,
                 mode,
+            ),
+
+            VectorOp::DirectUpsert {
+                collection,
+                field,
+                surrogate,
+                vector,
+                payload,
+                quantization,
+                payload_indexes,
+            } => self.execute_vector_direct_upsert(
+                task,
+                tid,
+                collection,
+                field,
+                *surrogate,
+                vector,
+                payload,
+                *quantization,
+                payload_indexes,
             ),
         }
     }

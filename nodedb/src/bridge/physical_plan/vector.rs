@@ -42,6 +42,18 @@ pub enum VectorOp {
         inline_prefilter_plan: Option<Box<PhysicalPlan>>,
         /// ANN tuning knobs from the SQL caller. Defaults to no overrides.
         ann_options: nodedb_types::VectorAnnOptions,
+        /// When `true`, the SELECT projection contains only `id` and/or
+        /// `vector_distance(...)` — no payload fields. The handler skips
+        /// the document-body fetch. Ignored (treated as `false`) when RLS
+        /// filters are active, as body fetch is required for RLS evaluation.
+        skip_payload_fetch: bool,
+        /// Optional payload bitmap pre-filter for vector-primary collections.
+        /// Each atom is `Eq` / `In` / `Range` — the handler ANDs all atoms
+        /// and intersects the resulting bitmap with the HNSW candidate set
+        /// before walking. The planner only emits atoms whose field has a
+        /// registered payload index of the matching kind. Empty means no
+        /// payload pre-filter.
+        payload_filters: Vec<nodedb_types::PayloadAtom>,
     },
 
     /// Insert a vector into the HNSW index (write path).
@@ -203,5 +215,42 @@ pub enum VectorOp {
         ef_search: usize,
         /// Aggregation mode: "max_sim", "avg_sim", "sum_sim".
         mode: String,
+    },
+
+    /// Direct vector upsert for vector-primary collections.
+    ///
+    /// Bypasses MessagePack document encoding — the Data Plane inserts the
+    /// vector into HNSW directly and updates payload bitmap indexes from
+    /// `payload`. No full-document blob is written.
+    ///
+    /// Ordering invariant (enforced by the handler):
+    ///   1. Validate dim.
+    ///   2. Decode `payload` bytes.
+    ///   3. Insert into HNSW (surrogate bound).
+    ///   4. Update payload bitmap indexes.
+    ///
+    /// If step 3 fails, step 4 is not reached — no partial state.
+    /// If step 4 fails (should not happen — pure in-memory), the handler
+    /// attempts to delete the just-inserted HNSW node and returns an error.
+    DirectUpsert {
+        collection: String,
+        /// Vector column name. Used to compute the vector index key so the
+        /// SELECT path (which keys by `(tid, collection, field)`) finds the
+        /// same index this insert wrote into.
+        field: String,
+        /// Global surrogate allocated by the Control Plane.
+        surrogate: Surrogate,
+        /// FP32 vector values.
+        vector: Vec<f32>,
+        /// Pre-encoded MessagePack of only the payload-indexed fields.
+        /// Empty when the collection has no payload indexes configured.
+        payload: Vec<u8>,
+        /// Collection-level quantization. Applied via `set_quantization` on
+        /// first insert so subsequent seals trigger codec-dispatch rebuilds
+        /// against the configured codec (RaBitQ / BBQ).
+        quantization: nodedb_types::VectorQuantization,
+        /// Payload field bitmap indexes (name + kind). Registered via
+        /// `payload.add_index` on the first insert into a new collection.
+        payload_indexes: Vec<(String, nodedb_types::PayloadIndexKind)>,
     },
 }

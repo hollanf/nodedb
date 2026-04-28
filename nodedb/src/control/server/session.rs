@@ -286,6 +286,8 @@ impl Session {
                     // primitive top_k field today. Tier 10 ANN tuning is
                     // SQL-only; defaulting keeps the wire shape uniform.
                     ann_options: Default::default(),
+                    skip_payload_fetch: false,
+                    payload_filters: Vec::new(),
                 })
             }
             "range_scan" => {

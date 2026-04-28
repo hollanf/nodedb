@@ -115,6 +115,69 @@ pub fn create_collection(
         _ => None,
     };
 
+    // Parse vector-primary options from the WITH clause.
+    let (primary, vector_primary) = {
+        match nodedb_sql::ddl_ast::parse::vector_primary::parse_vector_primary_options(sql) {
+            Ok(Some(mut vp_cfg)) => {
+                // Column-level validation: vector_field must be a VECTOR(n) column
+                // and payload_indexes fields must be bitmap-eligible.
+                // If `fields` is empty (e.g. `TYPE VECTOR (...)` syntax that
+                // does not flow through the strict / columnar / KV branches),
+                // fall back to parsing the parenthesised column list directly.
+                if fields.is_empty()
+                    && let Ok(schema) = super::super::helpers::parse_typed_schema(sql)
+                {
+                    fields = schema
+                        .columns
+                        .iter()
+                        .map(|c| (c.name.clone(), c.column_type.to_string()))
+                        .collect();
+                }
+                let col_list: Vec<(String, String)> = fields.clone();
+                nodedb_sql::ddl_ast::parse::vector_primary::validate_vector_field(
+                    &vp_cfg, &col_list,
+                )
+                .map_err(|e| sqlstate_error("42601", &e.to_string()))?;
+                nodedb_sql::ddl_ast::parse::vector_primary::validate_payload_indexes(
+                    &mut vp_cfg,
+                    &col_list,
+                )
+                .map_err(|e| sqlstate_error("42601", &e.to_string()))?;
+                // Resolve dim against the VECTOR(n) column type. Infer when
+                // not supplied; reject when both are present and disagree.
+                if let Some((_, type_str)) = col_list
+                    .iter()
+                    .find(|(n, _)| n.eq_ignore_ascii_case(&vp_cfg.vector_field))
+                {
+                    let upper_t = type_str.to_uppercase();
+                    if let Some(inner) = upper_t
+                        .strip_prefix("VECTOR(")
+                        .and_then(|s| s.strip_suffix(')'))
+                        && let Ok(d) = inner.trim().parse::<u32>()
+                    {
+                        if vp_cfg.dim == 0 {
+                            vp_cfg.dim = d;
+                        } else if vp_cfg.dim != d {
+                            return Err(sqlstate_error(
+                                "42601",
+                                &format!(
+                                    "vector dim mismatch: WITH clause specifies {}, column type VECTOR({}) specifies {}",
+                                    vp_cfg.dim, d, d
+                                ),
+                            ));
+                        }
+                    }
+                }
+                (nodedb_types::PrimaryEngine::Vector, Some(vp_cfg))
+            }
+            Ok(None) => (
+                nodedb_types::PrimaryEngine::infer_from_collection_type(&collection_type),
+                None,
+            ),
+            Err(e) => return Err(sqlstate_error("42601", &e.to_string())),
+        }
+    };
+
     // Parse enforcement options: WITH APPEND_ONLY, WITH HASH_CHAIN, WITH BALANCED ON (...).
     let append_only = upper.contains("APPEND_ONLY");
     let hash_chain = upper.contains("HASH_CHAIN");
@@ -159,6 +222,8 @@ pub fn create_collection(
         permission_tree_def: None,
         indexes: Vec::new(),
         size_bytes_estimate: 0,
+        primary,
+        vector_primary,
     };
 
     // Persist through the replicated metadata Raft group (group 0).

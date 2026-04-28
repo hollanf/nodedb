@@ -367,6 +367,16 @@ pub struct StoredCollection {
     /// invalidation.
     #[msgpack(default)]
     pub indexes: Vec<StoredIndex>,
+    /// Primary engine hint — which engine is the hot access path.
+    ///
+    /// Defaults to `PrimaryEngine::Document` on deserialization so
+    /// catalog entries written before this field was added continue to
+    /// behave as schemaless-document collections.
+    #[msgpack(default)]
+    pub primary: nodedb_types::PrimaryEngine,
+    /// Vector-primary configuration, present only when `primary == Vector`.
+    #[msgpack(default)]
+    pub vector_primary: Option<nodedb_types::VectorPrimaryConfig>,
     /// Best-effort estimate of this collection's on-core data size in
     /// bytes. Summed across every engine's in-memory state for the
     /// `(tenant, collection)` pair on the node that most recently
@@ -424,6 +434,8 @@ impl StoredCollection {
             permission_tree_def: None,
             indexes: Vec::new(),
             size_bytes_estimate: 0,
+            primary: nodedb_types::PrimaryEngine::Document,
+            vector_primary: None,
         }
     }
 

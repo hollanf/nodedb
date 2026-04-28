@@ -1,6 +1,6 @@
 //! DML plan conversions (INSERT, UPDATE, DELETE).
 
-use nodedb_sql::types::{EngineType, Filter, KvInsertIntent, SqlExpr, SqlValue};
+use nodedb_sql::types::{EngineType, Filter, KvInsertIntent, SqlExpr, SqlValue, VectorPrimaryRow};
 use nodedb_types::Surrogate;
 
 use crate::bridge::envelope::PhysicalPlan;
@@ -13,8 +13,8 @@ use super::convert::ConvertContext;
 use super::filter::serialize_filters;
 use super::value::{
     assignments_to_update_values, row_to_msgpack, rows_to_msgpack_array, sql_value_to_bytes,
-    sql_value_to_msgpack, sql_value_to_string, write_msgpack_map_header, write_msgpack_str,
-    write_msgpack_value,
+    sql_value_to_msgpack, sql_value_to_nodedb_value, sql_value_to_string, write_msgpack_map_header,
+    write_msgpack_str, write_msgpack_value,
 };
 
 /// Assign a surrogate for `(collection, pk_string)` via the context's
@@ -514,4 +514,64 @@ fn nodedb_value_to_sql(val: nodedb_types::Value) -> SqlValue {
         nodedb_types::Value::Null => SqlValue::Null,
         _ => SqlValue::String(format!("{val:?}")),
     }
+}
+
+/// Convert `SqlPlan::VectorPrimaryInsert` rows to `VectorOp::DirectUpsert` tasks.
+///
+/// For each row:
+///  1. Assign a surrogate via the context's assigner.
+///  2. Encode only the payload-indexed fields to MessagePack.
+///  3. Emit a `VectorOp::DirectUpsert` task.
+pub(super) fn convert_vector_primary_insert(
+    collection: &str,
+    field: &str,
+    quantization: nodedb_types::VectorQuantization,
+    payload_indexes: &[(String, nodedb_types::PayloadIndexKind)],
+    rows: &[VectorPrimaryRow],
+    tenant_id: TenantId,
+    ctx: &ConvertContext,
+) -> crate::Result<Vec<PhysicalTask>> {
+    let vshard = VShardId::from_collection(collection);
+    let mut tasks = Vec::with_capacity(rows.len());
+    for row in rows {
+        // Assign surrogate — use the vector itself as the PK bytes (first 16
+        // bytes of the f32 data, zero-padded). For real usage the Control Plane
+        // will provide a proper surrogate via `SurrogateAssigner`.
+        let pk_bytes: Vec<u8> = row
+            .vector
+            .iter()
+            .take(4)
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+        let surrogate = assign_for_pk(ctx, collection, &pk_bytes)?;
+
+        // Encode payload fields (only the indexed fields) as MessagePack.
+        // The handler will decode them to update bitmap indexes.
+        let payload = if row.payload_fields.is_empty() {
+            Vec::new()
+        } else {
+            let value_map: std::collections::HashMap<String, nodedb_types::Value> = row
+                .payload_fields
+                .iter()
+                .map(|(k, v)| (k.clone(), sql_value_to_nodedb_value(v)))
+                .collect();
+            zerompk::to_msgpack_vec(&value_map).unwrap_or_default()
+        };
+
+        tasks.push(PhysicalTask {
+            tenant_id,
+            vshard_id: vshard,
+            plan: PhysicalPlan::Vector(VectorOp::DirectUpsert {
+                collection: collection.to_string(),
+                field: field.to_string(),
+                surrogate,
+                vector: row.vector.clone(),
+                payload,
+                quantization,
+                payload_indexes: payload_indexes.to_vec(),
+            }),
+            post_set_op: PostSetOp::None,
+        });
+    }
+    Ok(tasks)
 }

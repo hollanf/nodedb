@@ -270,6 +270,8 @@ impl SqlCatalog for OriginCatalog {
             has_auto_tier: auto_tier,
             indexes,
             bitemporal: stored.bitemporal,
+            primary: stored.primary,
+            vector_primary: stored.vector_primary,
         }))
     }
 

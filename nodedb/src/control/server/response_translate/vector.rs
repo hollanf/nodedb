@@ -101,6 +101,41 @@ pub fn translate_vector_search_payload(
         }
     }
 
+    // Slow-path column projection: when `body` is a msgpack-encoded payload
+    // map, decode it and surface fields alongside `id` / `distance` so client
+    // SQL projections like `SELECT id, label, vector_distance(...)` see the
+    // payload columns. The base hit fields stay top-level; payload fields are
+    // serialized as JSON-style siblings.
+    use std::collections::BTreeMap;
+    let flattened: Vec<BTreeMap<String, serde_json::Value>> = hits
+        .iter()
+        .map(|h| {
+            let mut obj: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+            obj.insert("id".into(), serde_json::json!(h.id));
+            obj.insert("distance".into(), serde_json::json!(h.distance));
+            if let Some(ref doc) = h.doc_id {
+                obj.insert("doc_id".into(), serde_json::json!(doc));
+            }
+            if let Some(ref body) = h.body
+                && let Ok(map) = zerompk::from_msgpack::<
+                    std::collections::HashMap<String, nodedb_types::Value>,
+                >(body)
+            {
+                for (k, v) in map {
+                    if obj.contains_key(&k) {
+                        continue;
+                    }
+                    if let Ok(j) = serde_json::to_value(&v) {
+                        obj.insert(k, j);
+                    }
+                }
+            }
+            obj
+        })
+        .collect();
+    if let Ok(s) = sonic_rs::to_string(&flattened) {
+        return s.into_bytes();
+    }
     zerompk::to_msgpack_vec(&hits).unwrap_or_else(|_| payload.to_vec())
 }
 

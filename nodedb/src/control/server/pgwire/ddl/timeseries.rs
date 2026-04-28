@@ -89,6 +89,8 @@ pub fn create_timeseries(
         permission_tree_def: None,
         indexes: Vec::new(),
         size_bytes_estimate: 0,
+        primary: nodedb_types::PrimaryEngine::Columnar,
+        vector_primary: None,
     };
 
     if let Some(catalog) = state.credentials.catalog() {

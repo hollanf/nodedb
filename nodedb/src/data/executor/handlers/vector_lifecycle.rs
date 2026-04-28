@@ -50,6 +50,7 @@ impl CoreLoop {
                     dimensions: ivf.dim(),
                     seal_threshold: 0,
                     mmap_segment_count: 0,
+                    arena_bytes: None,
                 };
                 return match zerompk::to_msgpack_vec(&stats) {
                     Ok(bytes) => self.response_with_payload(task, bytes),
@@ -64,7 +65,16 @@ impl CoreLoop {
             return self.response_error(task, ErrorCode::NotFound);
         };
 
-        let stats = coll.stats();
+        let mut stats = coll.stats();
+        // Populate arena_bytes from the per-collection arena registry.
+        // Only set when the collection was assigned a dedicated arena
+        // (vector-primary collections) and the registry is wired.
+        if coll.arena_index.is_some()
+            && let Some(ref reg) = self.collection_arena_registry
+            && let Some(handle) = reg.get(tid, collection)
+        {
+            stats.arena_bytes = handle.resident_bytes();
+        }
         match zerompk::to_msgpack_vec(&stats) {
             Ok(bytes) => self.response_with_payload(task, bytes),
             Err(e) => self.response_error(

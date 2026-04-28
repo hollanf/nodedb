@@ -525,6 +525,11 @@ pub(super) fn convert_vector_search(p: VectorSearchParams<'_>) -> crate::Result<
         None => None,
     };
     let ann_options = p.ann_options.to_runtime();
+    let payload_filters: Vec<nodedb_types::PayloadAtom> = p
+        .payload_filters
+        .iter()
+        .map(sql_atom_to_value_atom)
+        .collect();
     Ok(vec![PhysicalTask {
         tenant_id: p.tenant_id,
         vshard_id: vshard,
@@ -538,9 +543,36 @@ pub(super) fn convert_vector_search(p: VectorSearchParams<'_>) -> crate::Result<
             rls_filters: filter_bytes,
             inline_prefilter_plan,
             ann_options,
+            skip_payload_fetch: p.skip_payload_fetch,
+            payload_filters,
         }),
         post_set_op: PostSetOp::None,
     }])
+}
+
+use super::value::sql_value_to_nodedb_value as sql_value_to_value;
+
+fn sql_atom_to_value_atom(a: &nodedb_sql::types::SqlPayloadAtom) -> nodedb_types::PayloadAtom {
+    use nodedb_sql::types::SqlPayloadAtom;
+    match a {
+        SqlPayloadAtom::Eq(f, v) => nodedb_types::PayloadAtom::Eq(f.clone(), sql_value_to_value(v)),
+        SqlPayloadAtom::In(f, vs) => {
+            nodedb_types::PayloadAtom::In(f.clone(), vs.iter().map(sql_value_to_value).collect())
+        }
+        SqlPayloadAtom::Range {
+            field,
+            low,
+            low_inclusive,
+            high,
+            high_inclusive,
+        } => nodedb_types::PayloadAtom::Range {
+            field: field.clone(),
+            low: low.as_ref().map(sql_value_to_value),
+            low_inclusive: *low_inclusive,
+            high: high.as_ref().map(sql_value_to_value),
+            high_inclusive: *high_inclusive,
+        },
+    }
 }
 
 /// Lower an `NdArrayPrefilter` (array name + slice AST) into the

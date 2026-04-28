@@ -96,6 +96,14 @@ pub(in crate::data::executor) struct VectorSearchParams<'a> {
     pub inline_prefilter_plan: Option<&'a crate::bridge::envelope::PhysicalPlan>,
     /// ANN tuning knobs from the SQL caller.
     pub ann_options: &'a nodedb_types::VectorAnnOptions,
+    /// Projection fast-path: when `true` and RLS is inactive, skip document
+    /// body fetch and return only `{id, distance}` per hit.
+    pub skip_payload_fetch: bool,
+    /// Payload bitmap pre-filter atoms (Eq / In / Range) for vector-primary
+    /// collections. The handler ANDs all atoms and intersects the resulting
+    /// bitmap with the HNSW candidate set before walking. Empty = no
+    /// payload pre-filter.
+    pub payload_filters: &'a [nodedb_types::PayloadAtom],
 }
 
 /// Parameters for multi-vector search (all named fields, RRF fusion).
@@ -112,21 +120,21 @@ pub(in crate::data::executor) struct VectorMultiSearchParams<'a> {
 }
 
 impl CoreLoop {
-    /// When RLS filters are active, fetch the document body via the
-    /// sparse engine (keyed by surrogate-hex) and attach it to the hit so
-    /// the Control Plane response translator can evaluate the predicate
-    /// at the security boundary. The Data Plane does not interpret the
-    /// filter — it only ferries bytes. When `rls_filters` is empty the
-    /// hit is returned unchanged.
+    /// Fetch the document body via the sparse engine (keyed by
+    /// surrogate-hex) and attach it to the hit. Used both by the RLS path
+    /// (the Control Plane evaluates the predicate against `body`) and by
+    /// the slow-path SELECT (the Control Plane response translator flattens
+    /// the body's fields into the hit JSON so payload columns surface to
+    /// the client). When `attach == false` the hit is returned unchanged.
     #[inline]
-    fn attach_body_for_rls(
+    fn attach_body(
         &self,
         tid: u32,
         collection: &str,
-        rls_filters: &[u8],
+        attach: bool,
         mut hit: super::super::response_codec::VectorSearchHit,
     ) -> super::super::response_codec::VectorSearchHit {
-        if rls_filters.is_empty() {
+        if !attach {
             return hit;
         }
         let hex = format!("{:08x}", hit.id);
@@ -152,7 +160,22 @@ impl CoreLoop {
             rls_filters,
             inline_prefilter_plan,
             ann_options,
+            skip_payload_fetch,
+            payload_filters,
         } = params;
+        // RLS requires body fetch regardless of projection. If RLS filters are
+        // active, ignore the skip flag and record why at debug level.
+        let skip_payload_fetch = if skip_payload_fetch && !rls_filters.is_empty() {
+            debug!(
+                core = self.core_id,
+                %collection,
+                reason = "rls",
+                "skip_payload_fetch suppressed: RLS filters present"
+            );
+            false
+        } else {
+            skip_payload_fetch
+        };
 
         let ResolvedAnnOptions {
             ef_search,
@@ -236,9 +259,63 @@ impl CoreLoop {
             top_k.saturating_mul(2).saturating_mul(oversample).max(20)
         };
         let ef = effective_ef(ef_search, fetch_k);
-        let results = match filter_bitmap {
-            Some(surrogate_bm) => {
-                let local_bm = surrogate_bitmap_to_global_ids(collection_ref, surrogate_bm);
+
+        // Derive payload bitmap (node-id space) from `(field, value)`
+        // equalities by intersecting per-field equality bitmaps. Returns
+        // `None` when no payload filters were requested or any filter
+        // references a field with no registered payload index.
+        let payload_bm: Option<RoaringBitmap> = if payload_filters.is_empty() {
+            None
+        } else {
+            let preds: Vec<nodedb_vector::collection::FilterPredicate> = payload_filters
+                .iter()
+                .map(|atom| match atom {
+                    nodedb_types::PayloadAtom::Eq(f, v) => {
+                        nodedb_vector::collection::FilterPredicate::Eq {
+                            field: f.to_ascii_lowercase(),
+                            value: v.clone(),
+                        }
+                    }
+                    nodedb_types::PayloadAtom::In(f, vs) => {
+                        nodedb_vector::collection::FilterPredicate::In {
+                            field: f.to_ascii_lowercase(),
+                            values: vs.clone(),
+                        }
+                    }
+                    nodedb_types::PayloadAtom::Range {
+                        field,
+                        low,
+                        low_inclusive,
+                        high,
+                        high_inclusive,
+                    } => nodedb_vector::collection::FilterPredicate::Range {
+                        field: field.to_ascii_lowercase(),
+                        low: low.clone(),
+                        low_inclusive: *low_inclusive,
+                        high: high.clone(),
+                        high_inclusive: *high_inclusive,
+                    },
+                })
+                .collect();
+            let conj = nodedb_vector::collection::FilterPredicate::And(preds);
+            collection_ref.payload.pre_filter(&conj)
+        };
+
+        let combined_bm: Option<RoaringBitmap> = match (filter_bitmap, payload_bm) {
+            (Some(surrogate_bm), Some(pbm)) => {
+                let mut bm = surrogate_bitmap_to_global_ids(collection_ref, surrogate_bm);
+                bm &= pbm;
+                Some(bm)
+            }
+            (Some(surrogate_bm), None) => {
+                Some(surrogate_bitmap_to_global_ids(collection_ref, surrogate_bm))
+            }
+            (None, Some(pbm)) => Some(pbm),
+            (None, None) => None,
+        };
+
+        let results = match combined_bm {
+            Some(local_bm) => {
                 let mut buf = Vec::with_capacity(local_bm.serialized_size());
                 if local_bm.serialize_into(&mut buf).is_ok() {
                     collection_ref.search_with_bitmap_bytes(query_vector, fetch_k, ef, &buf)
@@ -249,15 +326,34 @@ impl CoreLoop {
             None => collection_ref.search(query_vector, fetch_k, ef),
         };
 
+        // Pure-vector fast path: projection contains only id/distance.
+        // Skip the sparse-store body fetch entirely.
+        if skip_payload_fetch {
+            let hits: Vec<_> = results
+                .iter()
+                .take(top_k)
+                .map(|r| build_search_hit(Some(collection_ref), r.id, r.distance))
+                .collect();
+            if let Some(ref m) = self.metrics {
+                m.record_vector_search(0);
+                m.record_query_by_engine("vector");
+            }
+            return encode_hits_response(self, task, &hits);
+        }
+
         // RLS evaluation lives at the Control-Plane response boundary
         // (`response_translate::vector`). DP attaches the document body
         // when filters are active so CP can run the predicate without
         // a follow-up round-trip; CP applies the filter and truncates to
         // `top_k`. Data Plane stays pure SIMD + sparse-fetch.
+        // Attach body bytes whenever skip_payload_fetch is false (slow path)
+        // OR when RLS filters need them; the CP response translator flattens
+        // the bytes' fields into the hit JSON for client column projection.
+        let attach = !skip_payload_fetch || !rls_filters.is_empty();
         let hits: Vec<_> = results
             .iter()
             .map(|r| build_search_hit(Some(collection_ref), r.id, r.distance))
-            .map(|hit| self.attach_body_for_rls(tid, collection, rls_filters, hit))
+            .map(|hit| self.attach_body(tid, collection, attach, hit))
             .take(if rls_filters.is_empty() {
                 top_k
             } else {
@@ -309,7 +405,7 @@ impl CoreLoop {
             // CP-side translator runs the predicate; DP only attaches body.
             hits = hits
                 .into_iter()
-                .map(|h| self.attach_body_for_rls(tid, collection, rls_filters, h))
+                .map(|h| self.attach_body(tid, collection, true, h))
                 .collect();
         } else {
             hits.truncate(top_k);
@@ -393,7 +489,7 @@ impl CoreLoop {
             let hits: Vec<_> = results
                 .iter()
                 .map(|r| build_search_hit(doc_source, r.id, r.distance))
-                .map(|hit| self.attach_body_for_rls(tid, collection, rls_filters, hit))
+                .map(|hit| self.attach_body(tid, collection, !rls_filters.is_empty(), hit))
                 .take(fetch_k)
                 .collect();
             if let Some(ref m) = self.metrics {
@@ -440,7 +536,7 @@ impl CoreLoop {
                         .next()
                 });
                 let hit = build_search_hit(source, local_id, f.rrf_score as f32);
-                Some(self.attach_body_for_rls(tid, collection, rls_filters, hit))
+                Some(self.attach_body(tid, collection, !rls_filters.is_empty(), hit))
             })
             .collect();
         if let Some(ref m) = self.metrics {

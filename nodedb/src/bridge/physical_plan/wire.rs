@@ -64,6 +64,8 @@ mod tests {
             rls_filters: vec![],
             inline_prefilter_plan: None,
             ann_options: Default::default(),
+            skip_payload_fetch: false,
+            payload_filters: Vec::new(),
         }));
     }
 

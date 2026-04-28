@@ -32,6 +32,8 @@ pub(crate) fn build_search(fields: &TextFields, collection: &str) -> crate::Resu
         // default-valued struct keeps the wire shape uniform until the
         // native fields gain matching options.
         ann_options: Default::default(),
+        skip_payload_fetch: false,
+        payload_filters: Vec::new(),
     }))
 }
 

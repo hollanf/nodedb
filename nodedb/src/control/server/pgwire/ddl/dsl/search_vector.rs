@@ -95,6 +95,8 @@ pub async fn search_vector(
         // DSL `SEARCH VECTOR …` shorthand has no syntax for Tier 10 knobs;
         // callers that need them should use `SELECT … vector_distance(…, …, '{…}')`.
         ann_options: Default::default(),
+        skip_payload_fetch: false,
+        payload_filters: Vec::new(),
     });
 
     let payload = crate::control::server::pgwire::ddl::sync_dispatch::dispatch_async(

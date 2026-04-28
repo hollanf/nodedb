@@ -272,6 +272,15 @@ pub struct CoreLoop {
     /// Memory governor for per-engine budget enforcement.
     pub(in crate::data::executor) governor: Option<Arc<nodedb_mem::MemoryGovernor>>,
 
+    /// Per-collection jemalloc arena registry.
+    ///
+    /// Shared with the Control Plane for stats queries. Vector-primary
+    /// collections request a dedicated arena via `get_or_create`; other
+    /// collections use the per-core arena from `nodedb_mem::arena`.
+    /// `None` until wired by the server bootstrap or test harness.
+    pub(in crate::data::executor) collection_arena_registry:
+        Option<std::sync::Arc<nodedb_mem::CollectionArenaRegistry>>,
+
     /// Shared system metrics — Arc is safe for `!Send` since all fields are atomic.
     pub(in crate::data::executor) metrics: Option<Arc<crate::control::metrics::SystemMetrics>>,
 
@@ -421,6 +430,7 @@ impl CoreLoop {
             array_catalog,
             uring_reader: crate::data::io::uring_reader::UringReader::new(),
             governor: None,
+            collection_arena_registry: None,
             metrics: None,
             event_producer: None,
             event_sequence: 0,

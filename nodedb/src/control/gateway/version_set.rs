@@ -188,7 +188,8 @@ pub fn touched_collections(plan: &PhysicalPlan) -> Vec<String> {
                 | SparseDelete { collection, .. }
                 | MultiVectorInsert { collection, .. }
                 | MultiVectorDelete { collection, .. }
-                | MultiVectorScoreSearch { collection, .. } => out.push(collection.clone()),
+                | MultiVectorScoreSearch { collection, .. }
+                | DirectUpsert { collection, .. } => out.push(collection.clone()),
             }
         }
 
