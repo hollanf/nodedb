@@ -4077,6 +4077,7 @@ dependencies = [
 name = "nodedb-vector"
 version = "0.0.6"
 dependencies = [
+ "crc32c",
  "libc",
  "memmap2",
  "nodedb-codec",
