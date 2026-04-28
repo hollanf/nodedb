@@ -102,7 +102,7 @@ LIMIT 10;
 
 ## WASM Deployment
 
-NodeDB-Lite compiles to WebAssembly (4.5 MB gzip'd). Run semantic search in the browser with no backend.
+NodeDB-Lite compiles to WebAssembly. Run semantic search in the browser with no backend.
 
 ```javascript
 // Load NodeDB-Lite WASM module
