@@ -69,10 +69,17 @@ Vectors are indexed in the HNSW graph at full precision to maintain structural i
 
 When a query includes metadata filters (e.g., `WHERE category = 'ml'`), the engine builds a Roaring Bitmap of matching document IDs and selects the optimal filtering strategy automatically — if the filter is highly selective, it pre-filters before HNSW traversal; if broad, it post-filters after.
 
+## Temporal Vector Search
+
+The Vector engine is an index. It points at records; it does not carry temporal columns itself. To query embeddings at a point in time, attach a Vector index to a Document collection that has `bitemporal = true`. The Document collection holds the embedding payload and temporal columns; the Vector index returns candidate IDs; `AS OF` filtering happens at the Document layer.
+
+See [Bitemporal Queries — Bitemporal Vector Search](bitemporal.md#bitemporal-vector-search) for a worked example.
+
 ## Related
 
 - [Graph](graph.md) — GraphRAG combines vector similarity with graph traversal
 - [Full-Text Search](full-text-search.md) — Hybrid vector + BM25 fusion
 - [Spatial](spatial.md) — Hybrid spatial-vector search
+- [Bitemporal Queries](bitemporal.md) — Temporal composition pattern
 
 [Back to docs](README.md)

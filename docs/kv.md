@@ -235,9 +235,16 @@ SELECT RATE_RESET('attack_cooldown', 'player-123');
 CONVERT COLLECTION cache TO kv;
 ```
 
+## Temporal Key-Value Patterns
+
+The KV engine does not carry temporal columns. It is designed for current-state O(1) point lookups. For temporal semantics on key-value-shaped data — versioned configuration, auditable flags, time-stamped tokens — use a Document strict collection with a unique-key index. The unique index preserves O(1) key lookup; the Document layer adds full `AS OF SYSTEM TIME` and `AS OF VALID TIME` history.
+
+See [Bitemporal Queries — Temporal Key-Value: Use Document Strict](bitemporal.md#temporal-key-value-use-document-strict) for a worked example.
+
 ## Related
 
-- [Documents](documents.md) — For richer document structures
+- [Documents](documents.md) — For richer document structures and temporal patterns
 - [Real-Time](real-time.md) — KV changes appear in CDC, LIVE SELECT, pub/sub
+- [Bitemporal Queries](bitemporal.md) — Temporal composition pattern
 
 [Back to docs](README.md)

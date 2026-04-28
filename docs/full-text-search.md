@@ -143,9 +143,16 @@ The most powerful feature is combining BM25 with vector search. This handles the
 
 NodeDB fuses both result sets using Reciprocal Rank Fusion (RRF) — no application-level merging needed. The fusion happens inside the query engine in a single pass.
 
+## Temporal Full-Text Search
+
+The FTS engine is an index. It points at records; it does not carry temporal columns itself. To search text at a point in time, attach an FTS index to a Document collection that has `bitemporal = true`. The Document collection holds the text fields and temporal columns; the FTS index resolves candidate IDs; `AS OF` filtering happens at the Document layer.
+
+See [Bitemporal Queries — Bitemporal Full-Text Search](bitemporal.md#bitemporal-full-text-search) for a worked example.
+
 ## Related
 
 - [Vector Search](vectors.md) — Hybrid vector + text fusion
 - [Graph](graph.md) — Graph context can further refine search results (GraphRAG)
+- [Bitemporal Queries](bitemporal.md) — Temporal composition pattern
 
 [Back to docs](README.md)

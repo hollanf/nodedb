@@ -19,7 +19,7 @@ Bitemporal databases track data along two time dimensions: **system time** (when
 | [Columnar (Timeseries)](timeseries.md) | Yes         | Yes        | Forecast corrections, data repair |
 | [Array](array.md)                      | Yes         | Yes        | Historical spatial snapshots      |
 
-**Not supported:** Vector, Full-Text Search, Key-Value, Spatial. These engines are optimized for current state, not historical queries.
+**Index engines — temporal by composition, not natively:** Vector, Full-Text Search, Key-Value, Spatial. These engines are indexes over records; the records carry time, not the indexes. See [Index engines and temporal composition](#index-engines-and-temporal-composition).
 
 ## SQL Syntax
 
@@ -159,6 +159,128 @@ AS OF SYSTEM TIME NULL  -- special: returns all versions in system time order
 ORDER BY system_time ASC;
 ```
 
+## Index Engines and Temporal Composition
+
+Vector, FTS, KV, and Spatial do not carry temporal columns. This is not an oversight — it is the correct architectural decomposition. These four are **index engines**: they point at records that live in data-bearing engines. Indexes don't have time; the records they point to do.
+
+To query any of these engines at a point in time, attach the index to a data-bearing collection with `bitemporal=true`. The collection holds the payload and temporal columns. The index returns candidate IDs. `AS OF` filtering happens at the collection layer.
+
+### Bitemporal Vector Search
+
+```sql
+-- 1. Create a Document collection with temporal tracking enabled
+CREATE COLLECTION product_embeddings STRICT (
+    id UUID DEFAULT gen_uuid_v7(),
+    product_id UUID,
+    description TEXT,
+    embedding FLOAT[384],
+    updated_at TIMESTAMP DEFAULT now()
+) WITH (bitemporal = true);
+
+-- 2. Attach a Vector index — the index points at rows in the collection
+CREATE VECTOR INDEX idx_product_vec ON product_embeddings METRIC cosine DIM 384;
+
+-- 3. Bitemporal vector search: find nearest neighbors as of 30 days ago
+--    The Vector index returns candidate IDs; the Document layer filters by time
+SELECT p.product_id, p.description,
+       vector_distance(p.embedding, $query_vec) AS score
+FROM product_embeddings p
+AS OF SYSTEM TIME (extract(epoch from now()) * 1000 - 2592000000)
+WHERE p.id IN (
+    SEARCH product_embeddings USING VECTOR(embedding, $query_vec, 20)
+)
+ORDER BY score
+LIMIT 10;
+```
+
+The `AS OF SYSTEM TIME` clause is evaluated against `product_embeddings`. The Vector index is used to narrow the candidate set; temporal filtering removes candidates that did not exist at the target system time.
+
+### Bitemporal Full-Text Search
+
+```sql
+-- 1. Create a Document collection with bitemporal tracking
+CREATE COLLECTION articles STRICT (
+    id UUID DEFAULT gen_uuid_v7(),
+    title VARCHAR,
+    body TEXT,
+    published_at TIMESTAMP
+) WITH (bitemporal = true);
+
+-- 2. Attach an FTS index
+CREATE SEARCH INDEX ON articles FIELDS title, body ANALYZER 'english';
+
+-- 3. Bitemporal FTS: search the index state as it existed yesterday
+SELECT id, title
+FROM articles
+AS OF SYSTEM TIME (extract(epoch from now()) * 1000 - 86400000)
+WHERE text_match(body, 'distributed consensus raft')
+ORDER BY bm25_score(body, 'distributed consensus raft') DESC
+LIMIT 20;
+```
+
+To query what was valid at a past business date (rather than what was in the database):
+
+```sql
+SELECT id, title
+FROM articles
+AS OF VALID TIME 1711953600000
+WHERE text_match(body, 'distributed consensus raft')
+LIMIT 20;
+```
+
+### Bitemporal Spatial Queries
+
+```sql
+-- 1. Create a Document collection with bitemporal tracking and a geometry column
+CREATE COLLECTION store_locations STRICT (
+    id UUID DEFAULT gen_uuid_v7(),
+    name VARCHAR,
+    location GEOMETRY,
+    opened_at TIMESTAMP,
+    closed_at TIMESTAMP
+) WITH (bitemporal = true);
+
+-- 2. Attach a Spatial index
+CREATE SPATIAL INDEX ON store_locations FIELDS location;
+
+-- 3. Bitemporal spatial query: which stores existed within 5km at a past date?
+SELECT id, name, ST_Distance(location, ST_Point(-73.990, 40.750)) AS dist_m
+FROM store_locations
+AS OF SYSTEM TIME 1704067200000
+WHERE ST_DWithin(location, ST_Point(-73.990, 40.750), 5000)
+ORDER BY dist_m;
+```
+
+The Spatial index narrows by geometry. `AS OF SYSTEM TIME` filters rows to those present in the database at that timestamp.
+
+### Temporal Key-Value: Use Document Strict
+
+The KV engine is designed for O(1) point lookups. It does not carry temporal columns. If you need temporal semantics on key-value-shaped data — versioned configuration, auditable feature flags, time-stamped session state — use a Document strict collection with a unique-key index instead:
+
+```sql
+-- Temporal key-value: Document strict with a unique-key constraint
+CREATE COLLECTION config_entries STRICT (
+    id UUID DEFAULT gen_uuid_v7(),
+    key VARCHAR UNIQUE,
+    value TEXT,
+    updated_at TIMESTAMP DEFAULT now()
+) WITH (bitemporal = true);
+
+-- Set a value
+INSERT INTO config_entries (key, value) VALUES ('feature_x_enabled', 'true')
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+
+-- Point-lookup (fast — unique index on key)
+SELECT value FROM config_entries WHERE key = 'feature_x_enabled';
+
+-- Audit: what was the value 7 days ago?
+SELECT value FROM config_entries
+AS OF SYSTEM TIME (extract(epoch from now()) * 1000 - 604800000)
+WHERE key = 'feature_x_enabled';
+```
+
+O(1) lookup is preserved by the unique index. Temporal history comes from the Document layer.
+
 ## GDPR and Data Minimization
 
 Use `audit_retain_ms` to enforce automatic purge of old versions:
@@ -196,5 +318,9 @@ For large collections with many corrections, consider:
 - [Documents (strict)](documents.md) — Row-level system time tracking
 - [Columnar](columnar.md) — Bitemporal profiles
 - [Timeseries](timeseries.md) — Continuous data with valid-time semantics
+- [Vector Search](vectors.md) — Temporal vector search via composition
+- [Full-Text Search](full-text-search.md) — Temporal FTS via composition
+- [Spatial](spatial.md) — Temporal spatial queries via composition
+- [Key-Value](kv.md) — For temporal KV patterns, use Document strict
 
 [Back to docs](README.md)

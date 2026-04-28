@@ -111,10 +111,17 @@ WHERE ST_DWithin(geom, ST_Point(-73.98, 40.75), 500)
 ORDER BY dist;
 ```
 
+## Temporal Spatial Queries
+
+The Spatial engine is an index. It points at records; it does not carry temporal columns itself. To query geometry at a point in time, attach a Spatial index to a Document collection that has `bitemporal = true`. The Document collection holds the geometry column and temporal columns; the R*-tree narrows candidates by location; `AS OF` filtering happens at the Document layer.
+
+See [Bitemporal Queries — Bitemporal Spatial Queries](bitemporal.md#bitemporal-spatial-queries) for a worked example.
+
 ## Related
 
 - [Vector Search](vectors.md) — Hybrid spatial-vector queries
 - [Timeseries](timeseries.md) — Combine location with time (fleet tracking)
 - [Columnar](columnar.md) — Spatial is a columnar profile
+- [Bitemporal Queries](bitemporal.md) — Temporal composition pattern
 
 [Back to docs](README.md)
