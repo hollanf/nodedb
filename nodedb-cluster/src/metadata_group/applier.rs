@@ -7,6 +7,8 @@ use std::sync::{Arc, RwLock};
 use tracing::{error, warn};
 use uuid;
 
+use crate::auth::raft_backed_store::apply_token_transition_to_mirror;
+use crate::auth::token_state::SharedTokenStateMirror;
 use crate::metadata_group::cache::{
     MetadataCache, apply_migration_abort, apply_migration_checkpoint,
 };
@@ -52,6 +54,12 @@ pub struct CacheApplier {
     /// table in place. Missing handle is NOT an error — tests and
     /// subsystems that don't manage migrations omit it.
     migration_state: Option<SharedMigrationStateTable>,
+    /// Optional token state mirror. When set, committed
+    /// `JoinTokenTransition` entries mutate the mirror so that
+    /// `RaftBackedTokenStore` reads see the post-apply state immediately
+    /// after `propose_and_wait` returns. Missing handle is NOT an error
+    /// — tests and subsystems that don't manage join tokens omit it.
+    token_state: Option<SharedTokenStateMirror>,
 }
 
 impl CacheApplier {
@@ -61,6 +69,7 @@ impl CacheApplier {
             live_topology: None,
             live_routing: None,
             migration_state: None,
+            token_state: None,
         }
     }
 
@@ -86,6 +95,17 @@ impl CacheApplier {
     /// don't manage migrations can omit this.
     pub fn with_migration_state(mut self, migration_state: SharedMigrationStateTable) -> Self {
         self.migration_state = Some(migration_state);
+        self
+    }
+
+    /// Attach a token state mirror so that committed
+    /// `JoinTokenTransition` entries are reflected into the shared
+    /// mirror immediately after apply. The same `Arc` must be passed to
+    /// `RaftBackedTokenStore::new` so both sides share the same table.
+    /// Backward-compatible: existing callers that don't use join tokens
+    /// omit this.
+    pub fn with_token_state(mut self, token_state: SharedTokenStateMirror) -> Self {
+        self.token_state = Some(token_state);
         self
     }
 
@@ -192,6 +212,15 @@ impl CacheApplier {
                         );
                         panic!("migration abort compensation failed: {e}");
                     }
+                }
+            }
+            MetadataEntry::JoinTokenTransition {
+                token_hash,
+                transition,
+                ts_ms,
+            } => {
+                if let Some(mirror) = &self.token_state {
+                    apply_token_transition_to_mirror(mirror, *token_hash, transition, *ts_ms);
                 }
             }
             _ => {}

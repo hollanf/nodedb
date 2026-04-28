@@ -120,7 +120,11 @@ impl<B: TokenStateBackend, A: AuditWriter> BootstrapHandler for StatefulBootstra
             // Step 2: check token state machine.
             // Use a dummy addr since we don't have the remote addr here.
             let dummy_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
-            match self.token_store.begin_inflight(&token_hash, dummy_addr) {
+            match self
+                .token_store
+                .begin_inflight(&token_hash, dummy_addr)
+                .await
+            {
                 Ok(()) => {}
                 Err(TokenStateError::AlreadyConsumed) => {
                     self.audit
@@ -144,17 +148,20 @@ impl<B: TokenStateBackend, A: AuditWriter> BootstrapHandler for StatefulBootstra
                 }
                 Err(TokenStateError::NotFound) => {
                     // Token not registered in state machine — treat as first-use,
-                    // register it and begin in-flight.
+                    // register it and begin in-flight (registration-on-first-sight).
                     let expires_at_ms = expiry_secs * 1000;
-                    self.token_store.register(JoinTokenState {
-                        token_hash,
-                        lifecycle: JoinTokenLifecycle::Issued,
-                        expires_at_ms,
-                        attempt: 0,
-                    });
+                    self.token_store
+                        .register(JoinTokenState {
+                            token_hash,
+                            lifecycle: JoinTokenLifecycle::Issued,
+                            expires_at_ms,
+                            attempt: 0,
+                        })
+                        .await;
                     if self
                         .token_store
                         .begin_inflight(&token_hash, dummy_addr)
+                        .await
                         .is_err()
                     {
                         return BootstrapCredsResponse::error("token state conflict");
@@ -176,7 +183,7 @@ impl<B: TokenStateBackend, A: AuditWriter> BootstrapHandler for StatefulBootstra
             let resp = match self.issue(req.node_id) {
                 Ok(r) => r,
                 Err(e) => {
-                    let _ = self.token_store.revert_inflight(&token_hash);
+                    let _ = self.token_store.revert_inflight(&token_hash).await;
                     return BootstrapCredsResponse::error(e);
                 }
             };
@@ -184,7 +191,8 @@ impl<B: TokenStateBackend, A: AuditWriter> BootstrapHandler for StatefulBootstra
             // Step 4: transition to Consumed — persist audit BEFORE returning.
             let _ = self
                 .token_store
-                .mark_consumed(&token_hash, dummy_addr, epoch_ms());
+                .mark_consumed(&token_hash, dummy_addr, epoch_ms())
+                .await;
             self.audit
                 .append(nodedb_cluster::auth::audit::AuditEvent::new(
                     token_hash,
@@ -408,76 +416,84 @@ fn bundle_mac_wrong_token_hash_rejected() {
 
 // ── State machine unit tests ─────────────────────────────────────────────────
 
-#[test]
-fn token_state_issued_to_consumed() {
+#[tokio::test]
+async fn token_state_issued_to_consumed() {
     use nodedb_cluster::auth::token_state::JoinTokenLifecycle;
     let store = InMemoryTokenStore::new();
     let hash = [0x55u8; 32];
     let addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
-    store.register(JoinTokenState {
-        token_hash: hash,
-        lifecycle: JoinTokenLifecycle::Issued,
-        expires_at_ms: epoch_ms() + 60_000,
-        attempt: 0,
-    });
-    store.begin_inflight(&hash, addr).unwrap();
-    store.mark_consumed(&hash, addr, epoch_ms()).unwrap();
+    store
+        .register(JoinTokenState {
+            token_hash: hash,
+            lifecycle: JoinTokenLifecycle::Issued,
+            expires_at_ms: epoch_ms() + 60_000,
+            attempt: 0,
+        })
+        .await;
+    store.begin_inflight(&hash, addr).await.unwrap();
+    store.mark_consumed(&hash, addr, epoch_ms()).await.unwrap();
     let s = store.get(&hash).unwrap();
     assert!(matches!(s.lifecycle, JoinTokenLifecycle::Consumed { .. }));
 }
 
-#[test]
-fn token_state_replay_on_consumed_returns_error() {
+#[tokio::test]
+async fn token_state_replay_on_consumed_returns_error() {
     use nodedb_cluster::auth::token_state::{JoinTokenLifecycle, TokenStateError};
     let store = InMemoryTokenStore::new();
     let hash = [0x66u8; 32];
     let addr: SocketAddr = "127.0.0.1:9001".parse().unwrap();
-    store.register(JoinTokenState {
-        token_hash: hash,
-        lifecycle: JoinTokenLifecycle::Issued,
-        expires_at_ms: epoch_ms() + 60_000,
-        attempt: 0,
-    });
-    store.begin_inflight(&hash, addr).unwrap();
-    store.mark_consumed(&hash, addr, epoch_ms()).unwrap();
+    store
+        .register(JoinTokenState {
+            token_hash: hash,
+            lifecycle: JoinTokenLifecycle::Issued,
+            expires_at_ms: epoch_ms() + 60_000,
+            attempt: 0,
+        })
+        .await;
+    store.begin_inflight(&hash, addr).await.unwrap();
+    store.mark_consumed(&hash, addr, epoch_ms()).await.unwrap();
     assert_eq!(
-        store.begin_inflight(&hash, addr).unwrap_err(),
+        store.begin_inflight(&hash, addr).await.unwrap_err(),
         TokenStateError::AlreadyConsumed
     );
 }
 
-#[test]
-fn token_state_expired_token_rejected() {
+#[tokio::test]
+async fn token_state_expired_token_rejected() {
     use nodedb_cluster::auth::token_state::{JoinTokenLifecycle, TokenStateError};
     let store = InMemoryTokenStore::new();
     let hash = [0x77u8; 32];
     let addr: SocketAddr = "127.0.0.1:9002".parse().unwrap();
-    store.register(JoinTokenState {
-        token_hash: hash,
-        lifecycle: JoinTokenLifecycle::Issued,
-        expires_at_ms: 1, // far in the past
-        attempt: 0,
-    });
+    store
+        .register(JoinTokenState {
+            token_hash: hash,
+            lifecycle: JoinTokenLifecycle::Issued,
+            expires_at_ms: 1, // far in the past
+            attempt: 0,
+        })
+        .await;
     assert_eq!(
-        store.begin_inflight(&hash, addr).unwrap_err(),
+        store.begin_inflight(&hash, addr).await.unwrap_err(),
         TokenStateError::Expired
     );
 }
 
-#[test]
-fn token_state_inflight_reverts_on_timeout() {
+#[tokio::test]
+async fn token_state_inflight_reverts_on_timeout() {
     use nodedb_cluster::auth::token_state::JoinTokenLifecycle;
     let store = InMemoryTokenStore::new();
     let hash = [0x88u8; 32];
     let addr: SocketAddr = "127.0.0.1:9003".parse().unwrap();
-    store.register(JoinTokenState {
-        token_hash: hash,
-        lifecycle: JoinTokenLifecycle::Issued,
-        expires_at_ms: epoch_ms() + 60_000,
-        attempt: 0,
-    });
-    store.begin_inflight(&hash, addr).unwrap();
-    store.revert_inflight(&hash).unwrap();
+    store
+        .register(JoinTokenState {
+            token_hash: hash,
+            lifecycle: JoinTokenLifecycle::Issued,
+            expires_at_ms: epoch_ms() + 60_000,
+            attempt: 0,
+        })
+        .await;
+    store.begin_inflight(&hash, addr).await.unwrap();
+    store.revert_inflight(&hash).await.unwrap();
     let s = store.get(&hash).unwrap();
     assert_eq!(s.lifecycle, JoinTokenLifecycle::Issued);
     assert_eq!(s.attempt, 1);

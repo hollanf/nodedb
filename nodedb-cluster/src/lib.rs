@@ -133,8 +133,9 @@ pub use swim::{
 
 pub use auth::{
     AuditEvent, AuditWriter, AuthenticatedJoinBundle, BundleError, InMemoryTokenStore, JoinOutcome,
-    JoinTokenLifecycle, JoinTokenState, NoopAuditWriter, TokenError, TokenStateBackend,
-    TokenStateError, VecAuditWriter, derive_mac_key, issue_token, open_bundle, seal_bundle,
+    JoinTokenLifecycle, JoinTokenState, NoopAuditWriter, RaftBackedTokenStore,
+    SharedTokenStateMirror, TokenError, TokenStateBackend, TokenStateError, VecAuditWriter,
+    apply_token_transition_to_mirror, derive_mac_key, issue_token, open_bundle, seal_bundle,
     spawn_inflight_timeout, token_hash, verify_token,
 };
 

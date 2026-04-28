@@ -2,18 +2,30 @@
 //!
 //! The `JoinTokenStore` tracks every issued token's lifecycle from
 //! `Issued` through `InFlight` to `Consumed` (or `Expired`/`Aborted`).
-//! In a full distributed deployment this state would be proposed through
+//! In a full distributed deployment this state is proposed through
 //! the metadata Raft group (as `MetadataEntry::JoinTokenTransition`) so
 //! all nodes reject a replayed token even after a crash-restart.
 //!
 //! The trait [`TokenStateBackend`] abstracts the storage so the
 //! bootstrap-listener handler can be tested with the in-memory backend
 //! and wired to the Raft-backed backend in production.
+//!
+//! # Async trait
+//!
+//! `TokenStateBackend` is async (via `async_trait`) because the
+//! production [`crate::auth::raft_backed_store::RaftBackedTokenStore`]
+//! must call `MetadataProposer::propose_and_wait` which is inherently
+//! async. Using `block_in_place` to bridge async→sync at the trait
+//! boundary would couple the trait to Tokio internals and make it
+//! untestable without a runtime. An async trait is the clean solution;
+//! `InMemoryTokenStore` simply uses immediate `async { }` bodies.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use async_trait::async_trait;
 
 /// Lifecycle states for a join token.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,7 +72,17 @@ pub enum TokenStateError {
     NotFound,
     #[error("unexpected lifecycle state for this transition")]
     InvalidTransition,
+    /// The Raft proposer returned an error. The transition was not
+    /// replicated; single-use enforcement may be incomplete.
+    #[error("raft proposer error: {detail}")]
+    ProposerError { detail: String },
 }
+
+/// Shared read-side mirror of token lifecycle state, updated only by the
+/// Raft apply path. The `RaftBackedTokenStore` and `CacheApplier` share
+/// this handle so the applier can write apply-path updates and the store
+/// can read post-apply state without a second round-trip.
+pub type SharedTokenStateMirror = Arc<Mutex<HashMap<[u8; 32], JoinTokenState>>>;
 
 /// Abstraction over where token state is persisted.
 ///
@@ -69,27 +91,32 @@ pub enum TokenStateError {
 /// single-use guarantees. Production deployments wire a Raft-backed
 /// implementation that proposes each transition through the metadata
 /// group.
+///
+/// The trait is async so the Raft-backed implementation can call
+/// `MetadataProposer::propose_and_wait` directly. `InMemoryTokenStore`
+/// uses immediate `async { }` bodies — zero overhead.
+#[async_trait]
 pub trait TokenStateBackend: Send + Sync + 'static {
     /// Register a freshly issued token with `Issued` state.
-    fn register(&self, state: JoinTokenState);
+    async fn register(&self, state: JoinTokenState);
     /// Attempt to transition from `Issued` → `InFlight`.
     /// Returns `Err(AlreadyConsumed)` / `Err(Expired)` / `Err(Aborted)`
     /// if the token is already in a terminal or conflicting state.
-    fn begin_inflight(
+    async fn begin_inflight(
         &self,
         token_hash: &[u8; 32],
         node_addr: SocketAddr,
     ) -> Result<(), TokenStateError>;
     /// Transition from `InFlight` → `Consumed`. Called after the bundle
     /// has been sent and the peer has acknowledged receipt.
-    fn mark_consumed(
+    async fn mark_consumed(
         &self,
         token_hash: &[u8; 32],
         node_addr: SocketAddr,
         ts_ms: u64,
     ) -> Result<(), TokenStateError>;
     /// Revert `InFlight` → `Issued` (joiner timed out before ACK).
-    fn revert_inflight(&self, token_hash: &[u8; 32]) -> Result<(), TokenStateError>;
+    async fn revert_inflight(&self, token_hash: &[u8; 32]) -> Result<(), TokenStateError>;
     /// Look up the current state.
     fn get(&self, token_hash: &[u8; 32]) -> Option<JoinTokenState>;
 }
@@ -111,13 +138,14 @@ impl InMemoryTokenStore {
     }
 }
 
+#[async_trait]
 impl TokenStateBackend for InMemoryTokenStore {
-    fn register(&self, state: JoinTokenState) {
+    async fn register(&self, state: JoinTokenState) {
         let mut map = self.inner.lock().expect("token store lock poisoned");
         map.insert(state.token_hash, state);
     }
 
-    fn begin_inflight(
+    async fn begin_inflight(
         &self,
         token_hash: &[u8; 32],
         node_addr: SocketAddr,
@@ -151,7 +179,7 @@ impl TokenStateBackend for InMemoryTokenStore {
         }
     }
 
-    fn mark_consumed(
+    async fn mark_consumed(
         &self,
         token_hash: &[u8; 32],
         node_addr: SocketAddr,
@@ -169,7 +197,7 @@ impl TokenStateBackend for InMemoryTokenStore {
         }
     }
 
-    fn revert_inflight(&self, token_hash: &[u8; 32]) -> Result<(), TokenStateError> {
+    async fn revert_inflight(&self, token_hash: &[u8; 32]) -> Result<(), TokenStateError> {
         let mut map = self.inner.lock().expect("token store lock poisoned");
         let entry = map.get_mut(token_hash).ok_or(TokenStateError::NotFound)?;
         match &entry.lifecycle {
@@ -198,7 +226,7 @@ pub fn spawn_inflight_timeout<B: TokenStateBackend>(
     tokio::spawn(async move {
         tokio::time::sleep(timeout).await;
         // If still InFlight, revert — the joiner timed out.
-        let _ = backend.revert_inflight(&token_hash);
+        let _ = backend.revert_inflight(&token_hash).await;
     });
 }
 
@@ -228,14 +256,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn issued_to_inflight_to_consumed() {
+    #[tokio::test]
+    async fn issued_to_inflight_to_consumed() {
         let store = InMemoryTokenStore::new();
         let hash = [0x01u8; 32];
-        store.register(make_state(hash, 60));
+        store.register(make_state(hash, 60)).await;
 
         let addr = dummy_addr();
-        store.begin_inflight(&hash, addr).unwrap();
+        store.begin_inflight(&hash, addr).await.unwrap();
         {
             let s = store.get(&hash).unwrap();
             assert_eq!(
@@ -246,7 +274,7 @@ mod tests {
         }
 
         let ts = epoch_ms();
-        store.mark_consumed(&hash, addr, ts).unwrap();
+        store.mark_consumed(&hash, addr, ts).await.unwrap();
         let s = store.get(&hash).unwrap();
         assert_eq!(
             s.lifecycle,
@@ -257,40 +285,40 @@ mod tests {
         );
     }
 
-    #[test]
-    fn replay_on_consumed_token_returns_error() {
+    #[tokio::test]
+    async fn replay_on_consumed_token_returns_error() {
         let store = InMemoryTokenStore::new();
         let hash = [0x02u8; 32];
-        store.register(make_state(hash, 60));
+        store.register(make_state(hash, 60)).await;
         let addr = dummy_addr();
-        store.begin_inflight(&hash, addr).unwrap();
-        store.mark_consumed(&hash, addr, epoch_ms()).unwrap();
+        store.begin_inflight(&hash, addr).await.unwrap();
+        store.mark_consumed(&hash, addr, epoch_ms()).await.unwrap();
 
         // Second begin_inflight must be rejected.
         assert_eq!(
-            store.begin_inflight(&hash, addr).unwrap_err(),
+            store.begin_inflight(&hash, addr).await.unwrap_err(),
             TokenStateError::AlreadyConsumed
         );
     }
 
-    #[test]
-    fn inflight_reverts_to_issued_on_timeout() {
+    #[tokio::test]
+    async fn inflight_reverts_to_issued_on_timeout() {
         let store = InMemoryTokenStore::new();
         let hash = [0x03u8; 32];
-        store.register(make_state(hash, 60));
+        store.register(make_state(hash, 60)).await;
         let addr = dummy_addr();
-        store.begin_inflight(&hash, addr).unwrap();
-        store.revert_inflight(&hash).unwrap();
+        store.begin_inflight(&hash, addr).await.unwrap();
+        store.revert_inflight(&hash).await.unwrap();
         let s = store.get(&hash).unwrap();
         assert_eq!(s.lifecycle, JoinTokenLifecycle::Issued);
         // Second attempt is allowed after revert.
-        store.begin_inflight(&hash, addr).unwrap();
+        store.begin_inflight(&hash, addr).await.unwrap();
         let s = store.get(&hash).unwrap();
         assert_eq!(s.attempt, 2);
     }
 
-    #[test]
-    fn expired_token_rejected() {
+    #[tokio::test]
+    async fn expired_token_rejected() {
         let store = InMemoryTokenStore::new();
         let hash = [0x04u8; 32];
         // expires_at_ms in the past
@@ -300,9 +328,9 @@ mod tests {
             expires_at_ms: 1, // Jan 1, 1970 — long expired
             attempt: 0,
         };
-        store.register(state);
+        store.register(state).await;
         assert_eq!(
-            store.begin_inflight(&hash, dummy_addr()).unwrap_err(),
+            store.begin_inflight(&hash, dummy_addr()).await.unwrap_err(),
             TokenStateError::Expired
         );
         // State machine must have transitioned to Expired.
@@ -310,28 +338,28 @@ mod tests {
         assert_eq!(s.lifecycle, JoinTokenLifecycle::Expired);
     }
 
-    #[test]
-    fn aborted_token_rejected() {
+    #[tokio::test]
+    async fn aborted_token_rejected() {
         let store = InMemoryTokenStore::new();
         let hash = [0x05u8; 32];
         let mut state = make_state(hash, 60);
         state.lifecycle = JoinTokenLifecycle::Aborted;
-        store.register(state);
+        store.register(state).await;
         assert_eq!(
-            store.begin_inflight(&hash, dummy_addr()).unwrap_err(),
+            store.begin_inflight(&hash, dummy_addr()).await.unwrap_err(),
             TokenStateError::Aborted
         );
     }
 
-    #[test]
-    fn inflight_same_addr_is_idempotent() {
+    #[tokio::test]
+    async fn inflight_same_addr_is_idempotent() {
         let store = InMemoryTokenStore::new();
         let hash = [0x06u8; 32];
-        store.register(make_state(hash, 60));
+        store.register(make_state(hash, 60)).await;
         let addr = dummy_addr();
-        store.begin_inflight(&hash, addr).unwrap();
+        store.begin_inflight(&hash, addr).await.unwrap();
         // Same addr: idempotent
-        store.begin_inflight(&hash, addr).unwrap();
+        store.begin_inflight(&hash, addr).await.unwrap();
         let s = store.get(&hash).unwrap();
         // attempt incremented only on the first begin_inflight
         assert_eq!(s.attempt, 1);
