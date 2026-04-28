@@ -193,6 +193,17 @@ async fn surrogate_hwm_survives_leader_failover() {
     // ── Step 5: assert hwm agreement on surviving nodes ───────────────────
     // The hwm must survive failover: neither surviving node may have an hwm
     // lower than the pre-failover value, and the two survivors must agree.
+    //
+    // Wait for hwm convergence first — leader election (step 4b) is
+    // independent of log catchup, so the new leader's tail entries may
+    // still be replicating to the other survivor when this step starts.
+    wait_for(
+        "surviving nodes converge on the same hwm",
+        Duration::from_secs(20),
+        Duration::from_millis(50),
+        || catalog_hwm(&cluster.nodes[0].shared) == catalog_hwm(&cluster.nodes[1].shared),
+    )
+    .await;
     let hwm_survivor_0 = catalog_hwm(&cluster.nodes[0].shared);
     let hwm_survivor_1 = catalog_hwm(&cluster.nodes[1].shared);
     assert_eq!(

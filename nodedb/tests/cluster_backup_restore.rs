@@ -8,9 +8,11 @@ mod common;
 use common::cluster_harness::TestCluster;
 
 use bytes::Bytes;
+use common::cluster_harness::wait::wait_for_async;
 use futures::SinkExt;
 use futures::StreamExt;
 use nodedb_types::backup_envelope::{DEFAULT_MAX_TOTAL_BYTES, parse as parse_envelope};
+use std::time::Duration;
 
 const TENANT: u32 = 1;
 
@@ -141,19 +143,31 @@ async fn three_node_roundtrip_preserves_data() {
         .await
         .expect("RESTORE");
 
-    // Pre-restore baseline: capture which values are visible from
-    // node 1 today. The exact row count is engine-dependent
-    // (broadcast scans currently return per-vshard views) — what we
-    // care about is that *every* value the test inserted survives
-    // the backup→restore roundtrip.
-    let pre = unique_contents(&cluster.nodes[1].client).await;
-    for i in 0..6u32 {
-        let needle = format!("\"v{i}\"");
-        assert!(
-            pre.iter().any(|s| s.contains(&needle)),
-            "pre-restore missing v{i}; rows={pre:?}"
-        );
-    }
+    // Capture which values are visible from node 1 after the restore.
+    // The exact row count is engine-dependent (broadcast scans
+    // currently return per-vshard views) — what we care about is that
+    // *every* value the test inserted survives the backup→restore
+    // roundtrip.
+    //
+    // Wait until all six values are visible from node 1 before
+    // asserting. After a restore, the rows propagate to each vShard's
+    // Raft group leader and then are applied to its state machine; a
+    // cross-node SELECT served from a leader that has committed but
+    // not yet applied the latest entry will momentarily miss a row.
+    // The window is small but real, so poll until convergence.
+    wait_for_async(
+        "node 1 sees all 6 inserted values via broadcast scan",
+        Duration::from_secs(20),
+        Duration::from_millis(50),
+        || async {
+            let rows = unique_contents(&cluster.nodes[1].client).await;
+            (0..6u32).all(|i| {
+                let needle = format!("\"v{i}\"");
+                rows.iter().any(|s| s.contains(&needle))
+            })
+        },
+    )
+    .await;
     let post = unique_contents(&cluster.nodes[1].client).await;
     for i in 0..6u32 {
         let needle = format!("\"v{i}\"");

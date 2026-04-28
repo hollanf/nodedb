@@ -21,4 +21,4 @@ pub mod wait;
 
 pub use cluster::TestCluster;
 pub use node::TestClusterNode;
-pub use wait::wait_for;
+pub use wait::{wait_for, wait_for_async};
