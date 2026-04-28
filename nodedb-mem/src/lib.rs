@@ -42,6 +42,7 @@ pub mod overflow;
 pub mod pressure;
 pub mod spill;
 
+pub use arena::{bind_thread_to_local_numa, current_thread_arena, pin_thread_arena};
 pub use budget::Budget;
 pub use collection_arena::{CollectionArenaHandle, CollectionArenaRegistry};
 pub use engine::EngineId;

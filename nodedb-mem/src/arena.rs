@@ -13,6 +13,82 @@
 
 use crate::error::{MemError, Result};
 
+/// Bind the calling thread's memory allocation policy to its local NUMA node.
+///
+/// Uses `set_mempolicy(MPOL_BIND)` so all subsequent allocations on this
+/// thread are served from local NUMA memory. On a single-node host there is
+/// only node 0 — `MPOL_BIND` to node 0 is a no-op from the kernel's
+/// perspective and returns `Ok(())` normally.
+///
+/// Non-Linux targets always return `Ok(())`.
+pub fn bind_thread_to_local_numa() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        // Determine which NUMA node the calling CPU belongs to.
+        let numa_node = local_numa_node()?;
+        tracing::debug!(numa_node, "binding Data Plane thread to NUMA node");
+
+        // Build a nodemask with bit `numa_node` set. The nodemask is an array
+        // of `unsigned long`; one word covers nodes 0-63 which is sufficient
+        // for all practical hardware.
+        let mut nodemask: libc::c_ulong =
+            1 << (numa_node as usize % (8 * std::mem::size_of::<libc::c_ulong>()));
+        let maxnode: libc::c_ulong = numa_node as libc::c_ulong + 2;
+
+        // SAFETY: set_mempolicy is a pure kernel policy syscall — it does not
+        // dereference `nodemask` past `maxnode` bits and has no UB on any valid
+        // (node < 63) input. MPOL_BIND = 2.
+        let ret = unsafe {
+            libc::syscall(
+                libc::SYS_set_mempolicy,
+                2i64, // MPOL_BIND
+                &mut nodemask as *mut libc::c_ulong,
+                maxnode,
+            )
+        };
+
+        if ret != 0 {
+            let errno = unsafe { *libc::__errno_location() };
+            // ENOSYS: kernel was built without NUMA support. Treat as single-node.
+            // EPERM:  insufficient privilege. Degrade gracefully.
+            if errno == libc::ENOSYS || errno == libc::EPERM {
+                tracing::debug!(errno, "set_mempolicy not available; using default policy");
+                return Ok(());
+            }
+            return Err(MemError::Jemalloc(format!(
+                "set_mempolicy(MPOL_BIND, node={numa_node}) failed: errno={errno}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Return the NUMA node index for the CPU the calling thread is currently
+/// running on. Falls back to node 0 when the kernel interface is unavailable.
+#[cfg(target_os = "linux")]
+fn local_numa_node() -> Result<u32> {
+    let mut cpu: u32 = 0;
+    let mut node: u32 = 0;
+
+    // SAFETY: getcpu writes into the two u32 outputs; the third argument
+    // (tcache pointer) is unused when null.
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_getcpu,
+            &mut cpu as *mut u32,
+            &mut node as *mut u32,
+            std::ptr::null_mut::<libc::c_void>(),
+        )
+    };
+
+    if ret != 0 {
+        // getcpu is a vDSO call and should never fail; treat failure as
+        // single-node (node 0).
+        return Ok(0);
+    }
+    Ok(node)
+}
+
 /// Pin the calling thread to a dedicated jemalloc arena.
 ///
 /// Call this once at Data Plane core startup, before any allocations.
