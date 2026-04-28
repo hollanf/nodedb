@@ -1,5 +1,7 @@
 pub mod budget;
 pub mod checkpoint;
+pub mod codec_build;
+pub mod codec_dispatch;
 pub mod lifecycle;
 pub mod quantize;
 pub mod search;

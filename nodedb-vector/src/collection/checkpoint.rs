@@ -238,6 +238,7 @@ impl VectorCollection {
                 .collect::<HashMap<_, _>>(),
             seal_threshold: DEFAULT_SEAL_THRESHOLD,
             index_config,
+            codec_dispatch: None,
         })
     }
 }

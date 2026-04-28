@@ -30,7 +30,13 @@ impl VectorCollection {
             0.0
         };
 
-        let quantization = if self.sealed.iter().any(|s| s.pq.is_some()) {
+        let quantization = if let Some(ref dispatch) = self.codec_dispatch {
+            match dispatch.quantization() {
+                "rabitq" => nodedb_types::VectorIndexQuantization::RaBitQ,
+                "bbq" => nodedb_types::VectorIndexQuantization::Bbq,
+                _ => nodedb_types::VectorIndexQuantization::None,
+            }
+        } else if self.sealed.iter().any(|s| s.pq.is_some()) {
             nodedb_types::VectorIndexQuantization::Pq
         } else if self.sealed.iter().any(|s| s.sq8.is_some()) {
             nodedb_types::VectorIndexQuantization::Sq8

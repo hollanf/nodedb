@@ -110,6 +110,45 @@ fn quantized_search(
 impl VectorCollection {
     /// Search across all segments, merging results by distance.
     pub fn search(&self, query: &[f32], top_k: usize, ef: usize) -> Vec<SearchResult> {
+        // Codec-dispatch fast path: if a collection-level HnswCodecIndex has
+        // been built (RaBitQ or BBQ), use it exclusively for sealed-segment
+        // results and fall back to the growing/building flat segments only.
+        if let Some(ref dispatch) = self.codec_dispatch {
+            let mut all: Vec<SearchResult> = Vec::new();
+
+            let codec_results = dispatch.search(query, top_k, ef);
+            for r in codec_results {
+                all.push(SearchResult {
+                    id: r.id,
+                    distance: r.distance,
+                });
+            }
+
+            // Growing segment (brute-force, not yet in codec index).
+            let growing_results = self.growing.search(query, top_k);
+            for mut r in growing_results {
+                r.id += self.growing_base_id;
+                all.push(r);
+            }
+
+            // Building segments (brute-force while codec index rebuilds).
+            for seg in &self.building {
+                let results = seg.flat.search(query, top_k);
+                for mut r in results {
+                    r.id += seg.base_id;
+                    all.push(r);
+                }
+            }
+
+            all.sort_by(|a, b| {
+                a.distance
+                    .partial_cmp(&b.distance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            all.truncate(top_k);
+            return all;
+        }
+
         let mut all: Vec<SearchResult> = Vec::new();
 
         // Search growing segment (brute-force).
@@ -380,6 +419,78 @@ mod tests {
         assert!(
             overlap >= 4,
             "SQ8 recall too low: {overlap}/5 results matched plain HNSW (need >=4)"
+        );
+    }
+
+    #[test]
+    fn codec_dispatch_bbq_search_returns_results_and_stats_report_bbq() {
+        let dim = 4;
+        let mut coll = VectorCollection::new(
+            dim,
+            HnswParams {
+                metric: DistanceMetric::L2,
+                m: 8,
+                ef_construction: 50,
+                ..HnswParams::default()
+            },
+        );
+
+        // Insert 50 vectors: vector i = [i as f32, 0, 0, 0].
+        for i in 0u32..50 {
+            coll.insert(vec![i as f32, 0.0, 0.0, 0.0]);
+        }
+
+        // Build the collection-level BBQ dispatch index over current vectors.
+        let dispatch = coll.build_codec_dispatch("bbq");
+        assert!(
+            dispatch.is_some(),
+            "build_codec_dispatch(bbq) should return Some"
+        );
+
+        // Query near id=25.
+        let query = [25.0f32, 0.0, 0.0, 0.0];
+        let results = coll.search(&query, 5, 32);
+        assert!(
+            !results.is_empty(),
+            "BBQ codec-dispatch search should return results"
+        );
+
+        // Stats should report Bbq quantization.
+        let stats = coll.stats();
+        assert_eq!(
+            stats.quantization,
+            nodedb_types::VectorIndexQuantization::Bbq,
+            "stats quantization should be Bbq after build_codec_dispatch(bbq)"
+        );
+    }
+
+    #[test]
+    fn codec_dispatch_rabitq_search_non_empty() {
+        let dim = 4;
+        let mut coll = VectorCollection::new(
+            dim,
+            HnswParams {
+                metric: DistanceMetric::L2,
+                m: 8,
+                ef_construction: 50,
+                ..HnswParams::default()
+            },
+        );
+        for i in 0u32..50 {
+            coll.insert(vec![i as f32, 0.0, 0.0, 0.0]);
+        }
+        coll.build_codec_dispatch("rabitq").unwrap();
+
+        let results = coll.search(&[10.0, 0.0, 0.0, 0.0], 3, 32);
+        assert!(
+            !results.is_empty(),
+            "RaBitQ dispatch search should return results"
+        );
+
+        let stats = coll.stats();
+        assert_eq!(
+            stats.quantization,
+            nodedb_types::VectorIndexQuantization::RaBitQ
         );
     }
 

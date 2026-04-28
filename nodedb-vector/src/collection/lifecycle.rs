@@ -17,6 +17,7 @@ use crate::flat::FlatIndex;
 use crate::hnsw::{HnswIndex, HnswParams};
 use crate::index_config::{IndexConfig, IndexType};
 
+use super::codec_dispatch::CollectionCodec;
 use super::segment::{BuildRequest, BuildingSegment, DEFAULT_SEAL_THRESHOLD, SealedSegment};
 
 /// Manages all vector segments for a single collection (one index key).
@@ -58,6 +59,11 @@ pub struct VectorCollection {
     pub(crate) seal_threshold: usize,
     /// Full index configuration (index type, PQ params, IVF params).
     pub(crate) index_config: IndexConfig,
+    /// Optional collection-level codec-dispatch index (RaBitQ or BBQ).
+    /// Present only when the collection was built with a non-Sq8 quantization.
+    /// Coexists with sealed segments — for codec-dispatched collections the
+    /// per-segment Sq8 builder is skipped and this index is used instead.
+    pub codec_dispatch: Option<CollectionCodec>,
 }
 
 impl VectorCollection {
@@ -105,6 +111,7 @@ impl VectorCollection {
             multi_doc_map: HashMap::new(),
             seal_threshold,
             index_config: config,
+            codec_dispatch: None,
         }
     }
 
