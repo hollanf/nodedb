@@ -118,6 +118,10 @@ pub struct VectorIndexStats {
     pub seal_threshold: usize,
     /// Number of sealed segments backed by mmap (L1 NVMe tier).
     pub mmap_segment_count: u32,
+    /// Resident memory of the dedicated per-collection jemalloc arena, in
+    /// bytes. `None` when the collection has no dedicated arena (e.g., it is
+    /// not vector-primary, or the runtime does not support per-arena stats).
+    pub arena_bytes: Option<u64>,
 }
 
 #[cfg(test)]
@@ -146,6 +150,7 @@ mod tests {
             dimensions: 768,
             seal_threshold: 65_536,
             mmap_segment_count: 1,
+            arena_bytes: Some(4 * 1024 * 1024),
         };
         let bytes = zerompk::to_msgpack_vec(&stats).unwrap();
         let restored: VectorIndexStats = zerompk::from_msgpack(&bytes).unwrap();

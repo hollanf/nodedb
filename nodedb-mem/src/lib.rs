@@ -33,6 +33,7 @@
 
 pub mod arena;
 pub mod budget;
+pub mod collection_arena;
 pub mod engine;
 pub mod error;
 pub mod governor;
@@ -42,6 +43,7 @@ pub mod pressure;
 pub mod spill;
 
 pub use budget::Budget;
+pub use collection_arena::{CollectionArenaHandle, CollectionArenaRegistry};
 pub use engine::EngineId;
 pub use error::{MemError, Result};
 pub use governor::MemoryGovernor;

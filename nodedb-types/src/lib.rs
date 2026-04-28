@@ -5,6 +5,7 @@ pub mod array_cell;
 pub mod backup_envelope;
 pub mod bbox;
 pub mod collection;
+pub mod collection_config;
 pub mod columnar;
 pub mod conversion;
 pub mod datetime;
@@ -44,6 +45,7 @@ pub use approx::{CountMinSketch, HyperLogLog, SpaceSaving, TDigest};
 pub use array_cell::ArrayCell;
 pub use bbox::{BoundingBox, geometry_bbox};
 pub use collection::CollectionType;
+pub use collection_config::{PayloadAtom, PayloadIndexKind, PrimaryEngine, VectorPrimaryConfig};
 pub use columnar::{
     ColumnDef, ColumnType, ColumnarProfile, ColumnarSchema, DocumentMode, SchemaError, StrictSchema,
 };
