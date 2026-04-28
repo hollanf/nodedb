@@ -92,8 +92,9 @@ pub async fn search_vector(
         field_name,
         rls_filters: Vec::new(),
         inline_prefilter_plan: None,
-        // DSL `SEARCH VECTOR …` shorthand has no syntax for Tier 10 knobs;
-        // callers that need them should use `SELECT … vector_distance(…, …, '{…}')`.
+        // DSL `SEARCH VECTOR …` shorthand has no syntax for advanced ANN
+        // knobs; callers that need them should use
+        // `SELECT … vector_distance(…, …, '{…}')`.
         ann_options: Default::default(),
         skip_payload_fetch: false,
         payload_filters: Vec::new(),

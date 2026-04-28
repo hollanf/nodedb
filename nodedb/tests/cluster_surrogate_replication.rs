@@ -48,10 +48,12 @@ fn pg_detail(e: &tokio_postgres::Error) -> String {
 /// post-snapshot new-node attach, so we exercise the learner-join path
 /// instead) and can INSERT + SELECT the same rows.
 ///
-/// Assertion 4 (rebalance): vshard rebalance API is not yet reachable
-/// from integration tests.
-// TODO(s5-rebalance-test): exercise vshard transfer preserving surrogate
-// mappings once the rebalance API is accessible from test harnesses.
+/// Assertion 4 (rebalance): the `REBALANCE` DDL today only computes
+/// and prints a plan; vshard transfer execution is not driven by SQL,
+/// so end-to-end "transfer preserves surrogate mappings" cannot be
+/// asserted from an integration test until an execute path exists.
+/// Tracked in resource/SQL_CLUSTER_CHECKLIST.md (F.2 / migration
+/// executor wiring), not in this file.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn surrogate_alloc_replicates_to_followers() {
     let cluster = TestCluster::spawn_three()
