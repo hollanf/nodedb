@@ -3,10 +3,19 @@
 //! Production implementation per Malkov & Yashunin (2018).
 //! FP32 construction for structural integrity; heuristic neighbor selection.
 
+use std::cell::RefCell;
+
 use crate::distance::distance;
+use crate::hnsw::arena::BeamSearchArena;
 
 // Re-export shared params from nodedb-types.
 pub use nodedb_types::hnsw::HnswParams;
+
+/// Initial arena capacity used when constructing a new [`HnswIndex`].
+///
+/// Sized to cover `ef_construction = 200` (the default) without needing a
+/// reallocation on the first insert or search.
+pub(crate) const ARENA_INITIAL_CAPACITY: usize = 256;
 
 /// Hard cap on the layer assigned to any node during insertion.
 /// Standard HNSW practice — prevents pathological RNG draws from inflating
@@ -48,6 +57,14 @@ pub struct HnswIndex {
     /// When present, `neighbors_at()` reads from here instead of per-node Vecs.
     /// Cleared on first mutation (insert/delete).
     pub(crate) flat_neighbors: Option<crate::hnsw::flat_neighbors::FlatNeighborStore>,
+    /// Per-invocation scratch arena for beam-search heaps.
+    ///
+    /// Wrapped in `RefCell` so search methods keep `&self` receivers without
+    /// forcing `&mut self` across all call sites.  The borrow is taken at the
+    /// start of `search_layer` and released before returning.  The arena must
+    /// never be borrowed twice simultaneously — it is a per-call scratch buffer
+    /// owned exclusively by one Data Plane core.
+    pub(crate) arena: RefCell<BeamSearchArena>,
 }
 
 impl HnswIndex {
@@ -130,6 +147,7 @@ impl Ord for Candidate {
 impl HnswIndex {
     /// Create a new empty HNSW index.
     pub fn new(dim: usize, params: HnswParams) -> Self {
+        let initial_capacity = params.ef_construction.max(ARENA_INITIAL_CAPACITY);
         Self {
             dim,
             nodes: Vec::new(),
@@ -137,12 +155,14 @@ impl HnswIndex {
             max_layer: 0,
             rng: Xorshift64::new(42),
             flat_neighbors: None,
+            arena: RefCell::new(BeamSearchArena::new(initial_capacity)),
             params,
         }
     }
 
     /// Create with a specific RNG seed (for deterministic testing).
     pub fn with_seed(dim: usize, params: HnswParams, seed: u64) -> Self {
+        let initial_capacity = params.ef_construction.max(ARENA_INITIAL_CAPACITY);
         Self {
             dim,
             nodes: Vec::new(),
@@ -150,6 +170,7 @@ impl HnswIndex {
             max_layer: 0,
             rng: Xorshift64::new(seed),
             flat_neighbors: None,
+            arena: RefCell::new(BeamSearchArena::new(initial_capacity)),
             params,
         }
     }

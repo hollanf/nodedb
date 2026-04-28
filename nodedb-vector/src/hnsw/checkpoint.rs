@@ -2,9 +2,12 @@
 //!
 //! Supports rkyv (current format) and legacy MessagePack for backward compat.
 
+use std::cell::RefCell;
+
 use crate::distance::DistanceMetric;
+use crate::hnsw::arena::BeamSearchArena;
 use crate::hnsw::flat_neighbors::FlatNeighborStore;
-use crate::hnsw::graph::{HnswIndex, Node, Xorshift64};
+use crate::hnsw::graph::{ARENA_INITIAL_CAPACITY, HnswIndex, Node, Xorshift64};
 
 /// Magic header for rkyv-serialized HNSW snapshots (6 bytes).
 const HNSW_RKYV_MAGIC: &[u8; 6] = b"RKHNS\0";
@@ -143,6 +146,7 @@ impl HnswIndex {
             })
             .collect();
 
+        let initial_capacity = snap.ef_construction.max(ARENA_INITIAL_CAPACITY);
         Some(Self {
             dim: snap.dim,
             params: HnswParams {
@@ -156,6 +160,7 @@ impl HnswIndex {
             max_layer: snap.max_layer,
             rng: Xorshift64::new(snap.rng_state),
             flat_neighbors: Some(flat),
+            arena: RefCell::new(BeamSearchArena::new(initial_capacity)),
         })
     }
 }

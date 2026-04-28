@@ -4,7 +4,28 @@
 //! pre-filtering for efficient filtered k-NN queries.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::BinaryHeap;
+
+/// Issue a non-faulting prefetch hint for the memory region starting at `ptr`
+/// into all cache levels (T0). No-op on architectures without a prefetch
+/// intrinsic.
+#[inline(always)]
+fn prefetch_t0(ptr: *const u8) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: _mm_prefetch is a pure hint — it never faults even on an
+        // invalid address, and it does not dereference the pointer.
+        unsafe {
+            core::arch::x86_64::_mm_prefetch::<{ core::arch::x86_64::_MM_HINT_T0 }>(
+                ptr as *const i8,
+            );
+        }
+    }
+    // aarch64 hardware prefetchers handle sequential + pointer-chasing patterns
+    // well without explicit hints. wasm32 and all other targets: intentional no-op.
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = ptr;
+}
 
 use roaring::RoaringBitmap;
 
@@ -137,6 +158,11 @@ impl HnswIndex {
 /// When `filter` is `None`, all non-deleted nodes enter the result set.
 /// When `filter` is `Some`, only nodes present in the bitmap enter results,
 /// but all nodes are still traversed for graph connectivity.
+///
+/// Scratch buffers are drawn from `index.arena` (a `RefCell`-guarded
+/// `BeamSearchArena`).  The arena is reset at entry and its `Vec`/`HashSet`
+/// capacity grows to the high-water mark over successive calls, giving
+/// amortised zero-allocation steady state.
 pub(crate) fn search_layer(
     index: &HnswIndex,
     query: &[f32],
@@ -146,8 +172,12 @@ pub(crate) fn search_layer(
     filter: Option<&RoaringBitmap>,
     id_offset: u32,
 ) -> Vec<Candidate> {
-    let mut visited: HashSet<u32> = HashSet::new();
-    visited.insert(entry_point);
+    let mut arena = index.arena.borrow_mut();
+
+    // Reset scratch buffers — retains Vec/HashSet capacity from prior calls.
+    arena.reset();
+
+    arena.visited.insert(entry_point);
 
     let ep_dist = index.dist_to_node(query, entry_point);
     let ep_candidate = Candidate {
@@ -155,10 +185,15 @@ pub(crate) fn search_layer(
         id: entry_point,
     };
 
-    let mut candidates: BinaryHeap<Reverse<Candidate>> = BinaryHeap::new();
-    candidates.push(Reverse(ep_candidate));
+    // Strategy (c): take the arena Vecs, build BinaryHeaps on them, do the
+    // search, then move the Vecs back.  The Vecs retain their allocated
+    // capacity across the take/into_vec round-trip, so steady-state searches
+    // incur zero heap allocation.
+    let mut cand_vec = std::mem::take(&mut arena.candidates);
+    cand_vec.push(Reverse(ep_candidate));
+    let mut candidates = BinaryHeap::from(cand_vec);
 
-    let mut results: BinaryHeap<Candidate> = BinaryHeap::new();
+    let mut res_vec = std::mem::take(&mut arena.results);
 
     let passes_filter = |id: u32| -> bool {
         if index.nodes[id as usize].deleted {
@@ -171,8 +206,9 @@ pub(crate) fn search_layer(
     };
 
     if passes_filter(entry_point) {
-        results.push(ep_candidate);
+        res_vec.push(ep_candidate);
     }
+    let mut results = BinaryHeap::from(res_vec);
 
     while let Some(Reverse(current)) = candidates.pop() {
         if let Some(worst) = results.peek()
@@ -182,13 +218,23 @@ pub(crate) fn search_layer(
             break;
         }
 
+        // Prefetch the vector of the next candidate before touching this
+        // iteration's neighbor list, so it lands in cache by the time the
+        // inner loop calls dist_to_node on it.
+        if let Some(Reverse(next)) = candidates.peek()
+            && let Some(node) = index.nodes.get(next.id as usize)
+            && let Some(v) = node.vector.first()
+        {
+            prefetch_t0(v as *const f32 as *const u8);
+        }
+
         let neighbors = index.neighbors_at(current.id, layer);
         if neighbors.is_empty() && layer >= index.node_num_layers(current.id) {
             continue;
         }
 
         for &neighbor_id in neighbors {
-            if !visited.insert(neighbor_id) {
+            if !arena.visited.insert(neighbor_id) {
                 continue;
             }
 
@@ -214,7 +260,13 @@ pub(crate) fn search_layer(
         }
     }
 
-    let mut result_vec: Vec<Candidate> = results.into_vec();
+    // Restore the candidates Vec to the arena before releasing the borrow.
+    arena.candidates = candidates.into_vec();
+
+    let mut result_vec = results.into_vec();
+    // arena.results stays empty — reset() will clear it on the next call.
+    drop(arena);
+
     result_vec.sort_unstable_by(|a, b| a.dist.total_cmp(&b.dist));
     result_vec
 }
