@@ -47,6 +47,7 @@ binary(/cluster/)
 | binary(sql_cluster_cross_node_dml)
 | binary(pgwire_gateway_migration)
 | binary(surrogate_raft)
+| binary(surrogate_vshard_transfer)
 '''
 test-group = 'cluster'
 threads-required = 'num-test-threads'
