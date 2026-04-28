@@ -2,6 +2,38 @@ use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, ClusterError>;
 
+/// Error emitted when applying or validating a `MigrationCheckpoint` entry.
+#[derive(Debug, Error)]
+pub enum MigrationCheckpointError {
+    #[error(
+        "crc32c mismatch on migration checkpoint for {migration_id}: expected {expected:#010x} got {actual:#010x}"
+    )]
+    Crc32cMismatch {
+        migration_id: uuid::Uuid,
+        expected: u32,
+        actual: u32,
+    },
+    #[error("codec error persisting migration checkpoint: {detail}")]
+    Codec { detail: String },
+    #[error("storage error persisting migration checkpoint: {detail}")]
+    Storage { detail: String },
+}
+
+/// Error emitted during in-flight migration recovery at startup.
+#[derive(Debug, Error)]
+pub enum MigrationRecoveryError {
+    #[error("compensation failed for migration {migration_id} step {step}: {detail}")]
+    CompensationFailed {
+        migration_id: uuid::Uuid,
+        step: usize,
+        detail: String,
+    },
+    #[error("storage error during migration recovery: {detail}")]
+    Storage { detail: String },
+    #[error("codec error during migration recovery: {detail}")]
+    Codec { detail: String },
+}
+
 #[derive(Debug, Error)]
 pub enum ClusterError {
     #[error("raft error: {0}")]
@@ -42,6 +74,12 @@ pub enum ClusterError {
 
     #[error("conf change commit timeout on group {group_id} (waited for index {log_index})")]
     JoinCommitTimeout { group_id: u64, log_index: u64 },
+
+    #[error("migration checkpoint error: {0}")]
+    MigrationCheckpoint(#[from] MigrationCheckpointError),
+
+    #[error("migration recovery error: {0}")]
+    MigrationRecovery(#[from] MigrationRecoveryError),
 
     /// A shard RPC was routed to a node that no longer owns the target vShard.
     ///

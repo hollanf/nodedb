@@ -24,6 +24,13 @@ pub(super) const METADATA_TABLE: TableDefinition<&str, &[u8]> =
 pub(super) const GHOST_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("_cluster.ghosts");
 
+/// Migration state table — keyed by `migration_id` (UUID as hyphenated string),
+/// value is zerompk-encoded `PersistedMigrationCheckpoint` (the latest checkpoint
+/// for that migration).  Rows are upserted on every `MigrationCheckpoint` commit
+/// and deleted when a `MigrationAbort` commits with all compensations applied.
+pub(super) const MIGRATION_STATE_TABLE: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("_cluster.migration_state");
+
 pub(super) const KEY_TOPOLOGY: &str = "topology";
 pub(super) const KEY_ROUTING: &str = "routing";
 pub(super) const KEY_CLUSTER_ID: &str = "cluster_id";

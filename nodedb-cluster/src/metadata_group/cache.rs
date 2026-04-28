@@ -13,10 +13,16 @@
 use std::collections::HashMap;
 
 use nodedb_types::Hlc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
+use crate::error::{ClusterError, MigrationCheckpointError};
+use crate::metadata_group::compensation::Compensation;
 use crate::metadata_group::descriptors::{DescriptorId, DescriptorLease};
 use crate::metadata_group::entry::{MetadataEntry, RoutingChange, TopologyChange};
+use crate::metadata_group::migration_state::{
+    MigrationPhaseTag, PersistedMigrationCheckpoint, SharedMigrationStateTable,
+};
+use crate::routing::RoutingTable;
 
 /// In-memory view of the committed metadata state.
 #[derive(Debug, Default)]
@@ -119,11 +125,134 @@ impl MetadataCache {
                 // applier calls `SurrogateRegistry::restore_hwm`. The
                 // cluster cache has no surrogate state to track.
             }
+            MetadataEntry::JoinTokenTransition { .. } => {
+                // Token lifecycle transitions are enforced by the bootstrap-
+                // listener handler at apply time. The cluster cache records
+                // the applied index but carries no per-token state — the
+                // host-side token store is authoritative.
+            }
             MetadataEntry::Batch { entries } => {
                 for sub in entries {
                     self.apply(index, sub);
                 }
             }
+            // Migration checkpoint/abort upserts are handled by the
+            // live-state applier (`CacheApplier`) which holds the
+            // `SharedMigrationStateTable` handle. The cache itself
+            // has no migration state to track beyond applied_index.
+            MetadataEntry::MigrationCheckpoint { .. } => {}
+            MetadataEntry::MigrationAbort { .. } => {}
         }
     }
+}
+
+// ── Migration live-state application helpers ─────────────────────────────────
+
+/// Apply a `MigrationCheckpoint` entry against the shared state table.
+///
+/// Returns `Err` on CRC32C mismatch (fatal — corruption is louder than data
+/// loss) and on storage failures. Idempotent: if
+/// `(migration_id, phase, attempt)` is already present, the call is a no-op.
+pub fn apply_migration_checkpoint(
+    table: &SharedMigrationStateTable,
+    migration_id: uuid::Uuid,
+    _phase: MigrationPhaseTag,
+    attempt: u32,
+    payload: crate::metadata_group::migration_state::MigrationCheckpointPayload,
+    expected_crc: u32,
+    ts_ms: u64,
+) -> Result<(), ClusterError> {
+    // Validate CRC32C against the encoded payload bytes.
+    let actual_crc = payload.crc32c()?;
+    if actual_crc != expected_crc {
+        return Err(ClusterError::MigrationCheckpoint(
+            MigrationCheckpointError::Crc32cMismatch {
+                migration_id,
+                expected: expected_crc,
+                actual: actual_crc,
+            },
+        ));
+    }
+
+    let row = PersistedMigrationCheckpoint {
+        migration_id: migration_id.hyphenated().to_string(),
+        attempt,
+        payload,
+        crc32c: actual_crc,
+        ts_ms,
+    };
+
+    let mut guard = table.lock().unwrap_or_else(|p| p.into_inner());
+    guard.upsert(row)
+}
+
+/// Apply a `MigrationAbort` entry against the shared state table and
+/// live routing table.
+///
+/// Applies each compensation in order; any failure is fatal (no
+/// warn-and-continue — a partial abort is as broken as a partial commit).
+/// On success, removes the migration row from the state table.
+pub fn apply_migration_abort(
+    table: &SharedMigrationStateTable,
+    routing: Option<&std::sync::Arc<std::sync::RwLock<RoutingTable>>>,
+    migration_id: uuid::Uuid,
+    reason: &str,
+    compensations: &[Compensation],
+) -> Result<(), ClusterError> {
+    info!(
+        migration_id = %migration_id,
+        reason,
+        steps = compensations.len(),
+        "applying migration abort"
+    );
+
+    for (step, comp) in compensations.iter().enumerate() {
+        apply_compensation(routing, step, migration_id, comp)?;
+    }
+
+    let mut guard = table.lock().unwrap_or_else(|p| p.into_inner());
+    guard.remove(&migration_id)
+}
+
+fn apply_compensation(
+    routing: Option<&std::sync::Arc<std::sync::RwLock<RoutingTable>>>,
+    step: usize,
+    migration_id: uuid::Uuid,
+    comp: &Compensation,
+) -> Result<(), ClusterError> {
+    let Some(live) = routing else {
+        // No routing handle attached — log and treat as success.
+        // This path is only reachable in unit tests without live state.
+        debug!(
+            migration_id = %migration_id,
+            step,
+            ?comp,
+            "compensation: no live routing handle, skipping"
+        );
+        return Ok(());
+    };
+
+    let mut rt = live.write().unwrap_or_else(|p| p.into_inner());
+    match comp {
+        Compensation::RemoveLearner { group_id, peer_id }
+        | Compensation::RemoveVoter { group_id, peer_id } => {
+            rt.remove_group_member(*group_id, *peer_id);
+        }
+        Compensation::RestoreLeaderHint { group_id, peer_id } => {
+            rt.set_leader(*group_id, *peer_id);
+        }
+        Compensation::RemoveGhostStub { vshard_id: _ } => {
+            // Ghost stub removal is handled by the caller's ghost_table;
+            // the routing table has no ghost state.
+        }
+    }
+    drop(rt);
+
+    debug!(
+        migration_id = %migration_id,
+        step,
+        ?comp,
+        "compensation applied"
+    );
+    Ok(())
 }

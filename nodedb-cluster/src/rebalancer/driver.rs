@@ -228,6 +228,12 @@ impl RebalancerLoop {
         );
         let dispatcher = Arc::clone(&self.dispatcher);
         let err_metrics = Arc::clone(&self.loop_metrics);
+        // PHASE-A-WIRE: recover_in_flight_migrations should be called in
+        // RebalancerSubsystem::start (after metadata-Raft-ready, before this
+        // loop begins) so stale migrations are resumed or aborted before new
+        // ones are dispatched.  The per-vshard dedup guard lives in
+        // MigrationExecutor::execute — duplicate dispatches for the same vshard
+        // are rejected with ClusterError::MigrationInProgress.
         for mv in plan {
             let dispatcher = Arc::clone(&dispatcher);
             let err_metrics = Arc::clone(&err_metrics);

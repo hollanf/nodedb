@@ -4,11 +4,15 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
-use tracing::warn;
+use tracing::{error, warn};
+use uuid;
 
-use crate::metadata_group::cache::MetadataCache;
+use crate::metadata_group::cache::{
+    MetadataCache, apply_migration_abort, apply_migration_checkpoint,
+};
 use crate::metadata_group::codec::decode_entry;
 use crate::metadata_group::entry::{MetadataEntry, RoutingChange, TopologyChange};
+use crate::metadata_group::migration_state::SharedMigrationStateTable;
 use crate::routing::RoutingTable;
 use crate::topology::{ClusterTopology, NodeInfo, NodeState};
 
@@ -43,6 +47,11 @@ pub struct CacheApplier {
     /// `RoutingChange` entries (leadership transfer, member removal,
     /// vshard reassignment) mutate this handle in place.
     live_routing: Option<Arc<RwLock<RoutingTable>>>,
+    /// Optional migration state table handle. When set, committed
+    /// `MigrationCheckpoint` and `MigrationAbort` entries mutate the
+    /// table in place. Missing handle is NOT an error — tests and
+    /// subsystems that don't manage migrations omit it.
+    migration_state: Option<SharedMigrationStateTable>,
 }
 
 impl CacheApplier {
@@ -51,6 +60,7 @@ impl CacheApplier {
             cache,
             live_topology: None,
             live_routing: None,
+            migration_state: None,
         }
     }
 
@@ -67,6 +77,15 @@ impl CacheApplier {
     ) -> Self {
         self.live_topology = Some(topology);
         self.live_routing = Some(routing);
+        self
+    }
+
+    /// Attach a migration state table so that committed
+    /// `MigrationCheckpoint` and `MigrationAbort` entries are
+    /// durably persisted. Backward-compatible: existing callers that
+    /// don't manage migrations can omit this.
+    pub fn with_migration_state(mut self, migration_state: SharedMigrationStateTable) -> Self {
+        self.migration_state = Some(migration_state);
         self
     }
 
@@ -117,6 +136,62 @@ impl CacheApplier {
             MetadataEntry::Batch { entries } => {
                 for sub in entries {
                     self.cascade_live_state(sub);
+                }
+            }
+            MetadataEntry::MigrationCheckpoint {
+                migration_id,
+                phase,
+                attempt,
+                payload,
+                crc32c,
+                ts_ms,
+            } => {
+                if let Some(table) = &self.migration_state {
+                    let parsed_id = migration_id
+                        .parse::<uuid::Uuid>()
+                        .unwrap_or_else(|_| uuid::Uuid::nil());
+                    if let Err(e) = apply_migration_checkpoint(
+                        table,
+                        parsed_id,
+                        *phase,
+                        *attempt,
+                        payload.clone(),
+                        *crc32c,
+                        *ts_ms,
+                    ) {
+                        // CRC32C mismatch is fatal — corruption must not be silenced.
+                        error!(
+                            migration_id = %migration_id,
+                            error = %e,
+                            "FATAL: migration checkpoint CRC32C mismatch — possible corruption"
+                        );
+                        panic!("migration checkpoint CRC32C mismatch: {e}");
+                    }
+                }
+            }
+            MetadataEntry::MigrationAbort {
+                migration_id,
+                reason,
+                compensations,
+            } => {
+                if let Some(table) = &self.migration_state {
+                    let parsed_id = migration_id
+                        .parse::<uuid::Uuid>()
+                        .unwrap_or_else(|_| uuid::Uuid::nil());
+                    if let Err(e) = apply_migration_abort(
+                        table,
+                        self.live_routing.as_ref(),
+                        parsed_id,
+                        reason,
+                        compensations,
+                    ) {
+                        error!(
+                            migration_id = %migration_id,
+                            error = %e,
+                            "FATAL: migration abort compensation failed"
+                        );
+                        panic!("migration abort compensation failed: {e}");
+                    }
                 }
             }
             _ => {}

@@ -14,7 +14,7 @@ use crate::error::Result;
 use super::migration::migrate_if_needed;
 use super::schema::{
     CATALOG_FORMAT_VERSION, GHOST_TABLE, KEY_CA_CERT, KEY_CLUSTER_ID, KEY_FORMAT_VERSION,
-    METADATA_TABLE, ROUTING_TABLE, TOPOLOGY_TABLE, catalog_err,
+    METADATA_TABLE, MIGRATION_STATE_TABLE, ROUTING_TABLE, TOPOLOGY_TABLE, catalog_err,
 };
 
 /// Persistent cluster catalog backed by redb.
@@ -47,6 +47,7 @@ impl ClusterCatalog {
             let _ = txn.open_table(ROUTING_TABLE).map_err(catalog_err)?;
             let _ = txn.open_table(METADATA_TABLE).map_err(catalog_err)?;
             let _ = txn.open_table(GHOST_TABLE).map_err(catalog_err)?;
+            let _ = txn.open_table(MIGRATION_STATE_TABLE).map_err(catalog_err)?;
         }
         txn.commit().map_err(catalog_err)?;
 

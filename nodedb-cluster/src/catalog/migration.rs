@@ -98,7 +98,9 @@ mod tests {
     use super::*;
 
     fn temp_db() -> (tempfile::TempDir, redb::Database) {
-        use super::super::schema::{GHOST_TABLE, METADATA_TABLE, ROUTING_TABLE, TOPOLOGY_TABLE};
+        use super::super::schema::{
+            GHOST_TABLE, METADATA_TABLE, MIGRATION_STATE_TABLE, ROUTING_TABLE, TOPOLOGY_TABLE,
+        };
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cluster.redb");
         let db = redb::Database::create(&path).unwrap();
@@ -108,6 +110,7 @@ mod tests {
             let _ = txn.open_table(ROUTING_TABLE).unwrap();
             let _ = txn.open_table(METADATA_TABLE).unwrap();
             let _ = txn.open_table(GHOST_TABLE).unwrap();
+            let _ = txn.open_table(MIGRATION_STATE_TABLE).unwrap();
         }
         txn.commit().unwrap();
         (dir, db)

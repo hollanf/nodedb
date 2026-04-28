@@ -1,4 +1,5 @@
 pub mod array_routing;
+pub mod auth;
 pub mod bootstrap;
 pub mod bootstrap_listener;
 pub mod catalog;
@@ -41,13 +42,18 @@ pub mod routing;
 pub mod routing_liveness;
 pub mod rpc_codec;
 pub mod shard_split;
+pub mod subsystem;
 pub mod swim;
+pub mod sync_frame_versioned;
 pub mod topology;
 pub mod transport;
 pub mod vshard_handler;
 pub mod wire;
+pub mod wire_version;
 
-pub use bootstrap::{ClusterConfig, ClusterState, JoinRetryPolicy, start_cluster};
+pub use bootstrap::{
+    ClusterConfig, ClusterState, JoinRetryPolicy, start_cluster, start_cluster_subsystems,
+};
 pub use catalog::ClusterCatalog;
 pub use circuit_breaker::BreakerSnapshot;
 pub use closed_timestamp::ClosedTimestampTracker;
@@ -59,7 +65,7 @@ pub use decommission::{
     DecommissionCoordinator, DecommissionObserver, DecommissionPlan, DecommissionRunResult,
     DecommissionSafetyError, MetadataProposer, check_can_decommission, plan_full_decommission,
 };
-pub use error::{ClusterError, Result};
+pub use error::{ClusterError, MigrationCheckpointError, MigrationRecoveryError, Result};
 pub use follower_read::{FollowerReadGate, ReadLevel};
 pub use forward::{NoopPlanExecutor, PlanExecutor};
 pub use ghost::{GhostStub, GhostTable};
@@ -96,11 +102,15 @@ pub use wire::VShardEnvelope;
 pub use cross_shard_txn::{
     CrossShardTransaction, ForwardEntry, GsiForwardEntry, TransactionCoordinator,
 };
+pub use metadata_group::entry::JoinTokenTransitionKind;
 pub use metadata_group::{
-    CacheApplier, DescriptorHeader, DescriptorId, DescriptorKind, DescriptorLease, DescriptorState,
-    METADATA_GROUP_ID, MetadataApplier, MetadataCache, MetadataEntry, NoopMetadataApplier,
-    RoutingChange, TopologyChange, decode_entry, encode_entry,
+    CacheApplier, Compensation, DescriptorHeader, DescriptorId, DescriptorKind, DescriptorLease,
+    DescriptorState, METADATA_GROUP_ID, MetadataApplier, MetadataCache, MetadataEntry,
+    MigrationCheckpointPayload, MigrationId, MigrationPhaseTag, NoopMetadataApplier,
+    PersistedMigrationCheckpoint, RoutingChange, SharedMigrationStateTable, TopologyChange,
+    apply_migration_abort, apply_migration_checkpoint, decode_entry, encode_entry, new_shared,
 };
+pub use migration_executor::recover_in_flight_migrations;
 pub use quic_transport::{QuicTransport, QuicTransportConfig};
 
 pub use array_routing::{tile_id_of_coord, vshard_for_array_coord, vshard_for_array_tile};
@@ -111,8 +121,25 @@ pub use lifecycle::{
 pub use rdma_transport::{RdmaConfig, RdmaTransport};
 pub use rebalance_scheduler::{NodeMetrics, RebalanceScheduler, RebalanceTrigger, SchedulerConfig};
 pub use shard_split::{SplitPlan, SplitStrategy, plan_graph_split, plan_vector_split};
+pub use subsystem::{
+    BootstrapCtx, BootstrapError, ClusterHealth, ClusterSubsystem, RunningCluster, ShutdownError,
+    SubsystemHandle, SubsystemHealth, SubsystemRegistry, TopoError, topo_sort,
+};
 pub use swim::bootstrap::spawn_with_subscribers as spawn_swim_with_subscribers;
 pub use swim::{
     Incarnation, Member, MemberState, MembershipList, MembershipSubscriber, SwimConfig, SwimError,
     SwimHandle, UdpTransport, spawn as spawn_swim,
+};
+
+pub use auth::{
+    AuditEvent, AuditWriter, AuthenticatedJoinBundle, BundleError, InMemoryTokenStore, JoinOutcome,
+    JoinTokenLifecycle, JoinTokenState, NoopAuditWriter, TokenError, TokenStateBackend,
+    TokenStateError, VecAuditWriter, derive_mac_key, issue_token, open_bundle, seal_bundle,
+    spawn_inflight_timeout, token_hash, verify_token,
+};
+
+pub use wire_version::{
+    VersionHandshake, VersionHandshakeAck, VersionRange, Versioned, WireVersion, WireVersionError,
+    WireVersionMetrics, decode_versioned, encode_versioned, negotiate, unwrap_bytes_versioned,
+    wrap_bytes_versioned,
 };

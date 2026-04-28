@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use nodedb_types::Hlc;
 
+use crate::metadata_group::compensation::Compensation;
 use crate::metadata_group::descriptors::{DescriptorId, DescriptorLease};
+use crate::metadata_group::migration_state::{MigrationCheckpointPayload, MigrationPhaseTag};
 
 /// An entry in the replicated metadata log.
 ///
@@ -150,6 +152,76 @@ pub enum MetadataEntry {
     SurrogateAlloc {
         hwm: u32,
     },
+
+    /// Join-token lifecycle transition (L.4). Proposed by the
+    /// bootstrap-listener handler on every state change so that all
+    /// Raft peers can enforce single-use token semantics even after a
+    /// crash-restart cycle.
+    ///
+    /// `token_hash` is the SHA-256 of the token hex string — the raw
+    /// token is never stored in the log. `transition` encodes the
+    /// direction: `Register` for first issuance, `BeginInFlight` when
+    /// a joiner presents the token, `MarkConsumed` when the bundle is
+    /// delivered, `RevertInFlight` when the dead-man timer fires, and
+    /// `MarkExpired` / `MarkAborted` for the terminal states.
+    JoinTokenTransition {
+        token_hash: [u8; 32],
+        transition: JoinTokenTransitionKind,
+        /// Unix-ms timestamp at the time of the proposal.
+        ts_ms: u64,
+    },
+
+    /// Crash-safe migration phase checkpoint. Persisted on every phase
+    /// transition; on coordinator restart, recovery scans the
+    /// `MigrationStateTable` and resumes from the latest committed
+    /// checkpoint. Apply is idempotent on `(migration_id, phase, attempt)`
+    /// — duplicate delivery is a no-op. CRC32C mismatch is fatal.
+    MigrationCheckpoint {
+        /// Hyphenated UUID string (zerompk does not serialize uuid::Uuid).
+        migration_id: String,
+        phase: MigrationPhaseTag,
+        attempt: u32,
+        payload: MigrationCheckpointPayload,
+        crc32c: u32,
+        ts_ms: u64,
+    },
+
+    /// Replicated migration abort with ordered compensations. Each
+    /// compensation is applied in order; any failure is fatal (no
+    /// warn-and-continue). On success, the migration's row in
+    /// `MigrationStateTable` is deleted.
+    MigrationAbort {
+        migration_id: String,
+        reason: String,
+        compensations: Vec<Compensation>,
+    },
+}
+
+/// The direction of a join-token lifecycle transition.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+pub enum JoinTokenTransitionKind {
+    /// New token registered (Issued state). Carries expiry so all nodes
+    /// can enforce the TTL independently.
+    Register { expires_at_ms: u64 },
+    /// Joiner presented the token; transitioning Issued → InFlight.
+    BeginInFlight { node_addr: String },
+    /// Bundle delivered; transitioning InFlight → Consumed.
+    MarkConsumed { node_addr: String },
+    /// Dead-man timer fired; transitioning InFlight → Issued.
+    RevertInFlight,
+    /// Token TTL elapsed without consumption.
+    MarkExpired,
+    /// Explicitly invalidated by an operator.
+    MarkAborted,
 }
 
 /// Topology mutations proposed through the metadata group.

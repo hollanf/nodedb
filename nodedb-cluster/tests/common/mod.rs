@@ -196,23 +196,34 @@ impl TestNode {
         };
 
         let lifecycle = ClusterLifecycleTracker::new();
-        let state = start_cluster(&config, &catalog, &transport, &lifecycle).await?;
+        let state = start_cluster(&config, &catalog, Arc::clone(&transport), &lifecycle).await?;
         // Match the main binary: the caller is responsible for the
         // final `Ready` transition once the node is wired up. The
         // node count is whatever the node observed at the moment of
         // transition.
-        lifecycle.to_ready(state.topology.node_count());
+        lifecycle.to_ready(state.topology.read().map(|t| t.node_count()).unwrap_or(0));
 
-        let topology = Arc::new(RwLock::new(state.topology));
+        // state.topology is already Arc<RwLock<ClusterTopology>>.
+        let topology = state.topology.clone();
         // Real in-memory metadata cache, driven by a `CacheApplier`
         // installed on the raft loop. Every test can read this
         // directly to assert DDL replication.
         let metadata_cache = Arc::new(RwLock::new(MetadataCache::new()));
         let metadata_applier: Arc<dyn nodedb_cluster::MetadataApplier> =
             Arc::new(CacheApplier::new(metadata_cache.clone()));
+        // `start_cluster` no longer spawns subsystems, so its
+        // `Arc<Mutex<MultiRaft>>` has exactly one strong owner here.
+        // `try_unwrap` succeeds; the test harness builds its own
+        // `RaftLoop` directly without the subsystem registry.
+        let multi_raft_value = Arc::try_unwrap(state.multi_raft)
+            .unwrap_or_else(|_| {
+                panic!("MultiRaft should have no extra strong Arc owners in test setup")
+            })
+            .into_inner()
+            .unwrap_or_else(|p| p.into_inner());
         let raft_loop = Arc::new(
             RaftLoop::new(
-                state.multi_raft,
+                multi_raft_value,
                 transport.clone(),
                 topology.clone(),
                 NoopApplier,
