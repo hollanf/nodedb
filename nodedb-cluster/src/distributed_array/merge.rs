@@ -1,9 +1,17 @@
 //! Merge functions for distributed array query results.
 //!
-//! Slice merges concatenate row sets from shards and re-sort by Hilbert
-//! prefix (Tier 8.1 fills in the sort key). Aggregate merges combine
-//! per-shard partial aggregates using reducer-specific arithmetic
-//! (SUM/COUNT/MIN/MAX — same Welford technique as the timeseries merger).
+//! Slice merges concatenate row sets from shards in arrival order and
+//! apply the coordinator-side limit. The output preserves each shard's
+//! intra-shard order; cross-shard ordering reflects arrival, since the
+//! wire response (`ArrayShardSliceResp::rows_msgpack`) is a flat opaque
+//! `Vec<Vec<u8>>` with no per-row sort key. A globally Hilbert-ordered
+//! merge would require carrying a parallel prefix column on the wire and
+//! a k-way merge here — that is a wire-format change, not a merger
+//! change, and lives outside this module.
+//!
+//! Aggregate merges combine per-shard partial aggregates using
+//! reducer-specific arithmetic (SUM/COUNT/MIN/MAX — same Welford
+//! technique as the timeseries merger).
 
 use serde::{Deserialize, Serialize};
 
