@@ -143,6 +143,17 @@ pub struct ClusterTransportTuning {
     pub election_timeout_min_secs: u64,
     #[serde(default = "default_election_timeout_max_secs")]
     pub election_timeout_max_secs: u64,
+    /// Sub-second override for `election_timeout_min_secs`. When non-zero,
+    /// this value (in milliseconds) is used instead of the seconds field.
+    /// Production deployments leave this 0 and use the seconds field;
+    /// integration tests set this to ~150ms so 3-node convergence completes
+    /// in under a second instead of 1–2 seconds per cluster spawn.
+    #[serde(default)]
+    pub election_timeout_min_ms: u64,
+    /// Sub-second override for `election_timeout_max_secs`. See
+    /// [`Self::election_timeout_min_ms`].
+    #[serde(default)]
+    pub election_timeout_max_ms: u64,
     #[serde(default = "default_rpc_timeout_secs")]
     pub rpc_timeout_secs: u64,
     #[serde(default = "default_quic_keep_alive_secs")]
@@ -197,12 +208,37 @@ pub struct ClusterTransportTuning {
     pub descriptor_lease_renewal_threshold_pct: u8,
 }
 
+impl ClusterTransportTuning {
+    /// Effective minimum election timeout. Returns `_ms` when non-zero,
+    /// otherwise `_secs * 1000`. Tests use `_ms` for sub-second values;
+    /// production leaves it 0 and the seconds field wins.
+    pub fn effective_election_timeout_min_ms(&self) -> u64 {
+        if self.election_timeout_min_ms > 0 {
+            self.election_timeout_min_ms
+        } else {
+            self.election_timeout_min_secs.saturating_mul(1000)
+        }
+    }
+
+    /// Effective maximum election timeout. See
+    /// [`Self::effective_election_timeout_min_ms`].
+    pub fn effective_election_timeout_max_ms(&self) -> u64 {
+        if self.election_timeout_max_ms > 0 {
+            self.election_timeout_max_ms
+        } else {
+            self.election_timeout_max_secs.saturating_mul(1000)
+        }
+    }
+}
+
 impl Default for ClusterTransportTuning {
     fn default() -> Self {
         Self {
             raft_tick_interval_ms: default_raft_tick_interval_ms(),
             election_timeout_min_secs: default_election_timeout_min_secs(),
             election_timeout_max_secs: default_election_timeout_max_secs(),
+            election_timeout_min_ms: 0,
+            election_timeout_max_ms: 0,
             rpc_timeout_secs: default_rpc_timeout_secs(),
             quic_keep_alive_secs: default_quic_keep_alive_secs(),
             quic_idle_timeout_secs: default_quic_idle_timeout_secs(),

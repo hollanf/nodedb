@@ -21,11 +21,14 @@ impl TestCluster {
             // Fast health pings so the HealthMonitor re-broadcasts
             // topology within ~1s if the initial join broadcast was missed.
             health_ping_interval_secs: 1,
-            // Fast election timeouts so the metadata Raft group elects a
-            // leader well within the 10s convergence deadline, even under
-            // heavy parallel test load.
-            election_timeout_min_secs: 1,
-            election_timeout_max_secs: 2,
+            // Sub-second election windows. Bootstrap defaults are 150/300ms;
+            // we allow a bit more headroom (200/500ms) because integration
+            // tests share the host CPU pool with hundreds of unit tests
+            // running in parallel and can starve the Raft tick loop briefly.
+            // Without these `_ms` overrides the seconds-granularity field
+            // floor at 1s/2s would dominate every cluster spawn.
+            election_timeout_min_ms: 200,
+            election_timeout_max_ms: 500,
             ..ClusterTransportTuning::default()
         })
         .await

@@ -659,8 +659,10 @@ mod tests {
         }
 
         let transport_tuning = ClusterTransportTuning::default();
-        let election_timeout_min = Duration::from_secs(transport_tuning.election_timeout_min_secs);
-        let election_timeout_max = Duration::from_secs(transport_tuning.election_timeout_max_secs);
+        let election_timeout_min =
+            Duration::from_millis(transport_tuning.effective_election_timeout_min_ms());
+        let election_timeout_max =
+            Duration::from_millis(transport_tuning.effective_election_timeout_max_ms());
 
         let dir2 = tempfile::tempdir().unwrap();
         let mut mr2 = MultiRaft::new(2, rt.clone(), dir2.path().to_path_buf())
