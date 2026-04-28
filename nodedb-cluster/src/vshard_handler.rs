@@ -75,6 +75,18 @@ pub fn dispatch_by_type(envelope: &VShardEnvelope) -> DispatchTarget {
         VShardMessageType::VectorScatterRequest => DispatchTarget::VectorSearch,
         VShardMessageType::VectorScatterResponse => DispatchTarget::VectorCoordinator,
 
+        // Compass coarse-routing phase
+        VShardMessageType::VectorCoarseRouteRequest => DispatchTarget::VectorCoarseRoute,
+        VShardMessageType::VectorCoarseRouteResponse => DispatchTarget::VectorCoordinator,
+
+        // SPIRE build-time centroid exchange
+        VShardMessageType::VectorBuildExchangeRequest => DispatchTarget::VectorBuildExchange,
+        VShardMessageType::VectorBuildExchangeResponse => DispatchTarget::VectorBuildExchange,
+
+        // CoTra-RDMA memory region registration
+        VShardMessageType::VectorMemRegionRequest => DispatchTarget::VectorMemRegion,
+        VShardMessageType::VectorMemRegionResponse => DispatchTarget::VectorMemRegion,
+
         // Spatial distributed queries
         VShardMessageType::SpatialScatterRequest => DispatchTarget::SpatialSearch,
         VShardMessageType::SpatialScatterResponse => DispatchTarget::SpatialCoordinator,
@@ -118,6 +130,13 @@ pub enum DispatchTarget {
     VectorSearch,
     /// Vector coordinator (receives shard search responses).
     VectorCoordinator,
+    /// Compass coarse-route handler: shard returns its coarse routing descriptor.
+    VectorCoarseRoute,
+    /// SPIRE build-time exchange: shard sends or receives IVF centroid tables.
+    VectorBuildExchange,
+    /// CoTra-RDMA memory region handler: shard registers or exposes a pinned
+    /// memory region for one-sided reads by a remote peer.
+    VectorMemRegion,
     /// Migration infrastructure.
     Migration,
     /// Ghost stub management.
@@ -226,6 +245,12 @@ mod tests {
             VShardMessageType::TsArchiveAck,
             VShardMessageType::VectorScatterRequest,
             VShardMessageType::VectorScatterResponse,
+            VShardMessageType::VectorCoarseRouteRequest,
+            VShardMessageType::VectorCoarseRouteResponse,
+            VShardMessageType::VectorBuildExchangeRequest,
+            VShardMessageType::VectorBuildExchangeResponse,
+            VShardMessageType::VectorMemRegionRequest,
+            VShardMessageType::VectorMemRegionResponse,
             VShardMessageType::SpatialScatterRequest,
             VShardMessageType::SpatialScatterResponse,
             VShardMessageType::CrossShardEvent,

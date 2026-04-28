@@ -90,6 +90,35 @@ pub enum VShardMessageType {
     /// Gather: shard responds with local top-K hits.
     VectorScatterResponse = 51,
 
+    // ── Compass: coarse-code routing ──
+    /// Phase 1 request: coordinator asks a shard for its coarse routing
+    /// descriptor (learned coarse codes, centroid summary, or equivalent).
+    /// The shard responds with `VectorCoarseRouteResponse` before the
+    /// coordinator selects the shard subset for the fine search phase.
+    VectorCoarseRouteRequest = 52,
+    /// Phase 1 response: shard returns its coarse routing descriptor so
+    /// the coordinator can decide whether to include it in phase 2.
+    VectorCoarseRouteResponse = 53,
+
+    // ── SPIRE: build-time centroid exchange ──
+    /// Build-time request: a shard sends its IVF centroid table to a peer
+    /// so the peer can build cross-shard centroid knowledge.
+    /// Sent shard-to-shard without coordinator involvement.
+    VectorBuildExchangeRequest = 54,
+    /// Build-time response: receiving shard acknowledges and optionally
+    /// echoes its own centroid summary back to the sender.
+    VectorBuildExchangeResponse = 55,
+
+    // ── CoTra-RDMA: one-sided read support ──
+    /// Registration request: a shard asks a peer to expose a named memory
+    /// region (e.g. a pinned HNSW graph segment) for one-sided reads.
+    /// The peer responds with `VectorMemRegionInfo` containing the address
+    /// and rkey, or indicates the region is unavailable.
+    VectorMemRegionRequest = 56,
+    /// Registration response: peer returns address/rkey for the requested
+    /// memory region, or `available = false` when not supported.
+    VectorMemRegionResponse = 57,
+
     // ── Distributed Spatial Queries ──
     /// Scatter: coordinator sends spatial predicate query to a shard.
     SpatialScatterRequest = 60,
@@ -208,6 +237,12 @@ impl VShardEnvelope {
             45 => VShardMessageType::TsArchiveAck,
             50 => VShardMessageType::VectorScatterRequest,
             51 => VShardMessageType::VectorScatterResponse,
+            52 => VShardMessageType::VectorCoarseRouteRequest,
+            53 => VShardMessageType::VectorCoarseRouteResponse,
+            54 => VShardMessageType::VectorBuildExchangeRequest,
+            55 => VShardMessageType::VectorBuildExchangeResponse,
+            56 => VShardMessageType::VectorMemRegionRequest,
+            57 => VShardMessageType::VectorMemRegionResponse,
             60 => VShardMessageType::SpatialScatterRequest,
             61 => VShardMessageType::SpatialScatterResponse,
             70 => VShardMessageType::CrossShardEvent,
@@ -280,6 +315,12 @@ mod tests {
             VShardMessageType::TsArchiveAck,
             VShardMessageType::VectorScatterRequest,
             VShardMessageType::VectorScatterResponse,
+            VShardMessageType::VectorCoarseRouteRequest,
+            VShardMessageType::VectorCoarseRouteResponse,
+            VShardMessageType::VectorBuildExchangeRequest,
+            VShardMessageType::VectorBuildExchangeResponse,
+            VShardMessageType::VectorMemRegionRequest,
+            VShardMessageType::VectorMemRegionResponse,
             VShardMessageType::SpatialScatterRequest,
             VShardMessageType::SpatialScatterResponse,
             VShardMessageType::CrossShardEvent,
