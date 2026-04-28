@@ -31,7 +31,8 @@ use super::dispatcher::{default_deadline_ms, dispatch_route};
 use super::fuser::fuse_payloads;
 use super::plan_cache::{PlanCache, PlanCacheKey, SqlKey, hash_placeholder_types, hash_sql};
 use super::retry::retry_not_leader;
-use super::router::route_plan;
+use super::route::TaskRoute;
+use super::router::{resolve_decision, route_plan};
 use super::version_set::GatewayVersionSet;
 
 /// Context passed to [`Gateway::execute`].
@@ -224,8 +225,10 @@ impl Gateway {
         let mut accumulated_bytes: usize = 0;
 
         for route in routes {
-            let decision = route.decision.clone();
+            let initial_decision = route.decision.clone();
             let vshard_id_for_retry = crate::types::VShardId::new(route.vshard_id);
+            let plan_for_retry = route.plan.clone();
+            let vshard_id_u16 = route.vshard_id;
 
             let routing_ref = self.shared.cluster_routing.as_deref();
 
@@ -236,12 +239,54 @@ impl Gateway {
                 if attempt > 0 {
                     retry_counter.fetch_add(1, Ordering::Relaxed);
                 }
-                let route = route.clone();
+                let plan = plan_for_retry.clone();
                 let shared = Arc::clone(&self.shared);
                 let tenant_id = ctx.tenant_id;
                 let trace_id = ctx.trace_id;
                 let version_set = version_set_for_route.clone();
                 async move {
+                    // Re-resolve the route decision against the *current*
+                    // routing table on every attempt. The retry loop updates
+                    // the table on `NotLeader` responses; without
+                    // re-resolution the retry would dispatch to the same
+                    // stale leader hint forever.
+                    let decision = {
+                        let routing_guard = shared
+                            .cluster_routing
+                            .as_ref()
+                            .map(|rw| rw.read().unwrap_or_else(|p| p.into_inner()));
+                        // Snapshot Raft group statuses once per resolution
+                        // so the live-leader lookup sees a consistent view.
+                        let raft_snapshot: Vec<nodedb_cluster::GroupStatus> = shared
+                            .raft_status_fn
+                            .as_ref()
+                            .map(|f| f())
+                            .unwrap_or_default();
+                        let live_leader = move |group_id: u64| -> u64 {
+                            raft_snapshot
+                                .iter()
+                                .find(|gs| gs.group_id == group_id)
+                                .map(|gs| gs.leader_id)
+                                .unwrap_or(0)
+                        };
+                        let live_lookup: Option<&dyn Fn(u64) -> u64> =
+                            if shared.raft_status_fn.is_some() {
+                                Some(&live_leader)
+                            } else {
+                                None
+                            };
+                        resolve_decision(
+                            vshard_id_u16,
+                            shared.node_id,
+                            routing_guard.as_deref(),
+                            live_lookup,
+                        )
+                    };
+                    let route = TaskRoute {
+                        plan,
+                        decision,
+                        vshard_id: vshard_id_u16,
+                    };
                     dispatch_route(
                         route,
                         &shared,
@@ -257,7 +302,7 @@ impl Gateway {
             .map_err(|e| {
                 debug!(
                     vshard_id = vshard_id_for_retry.as_u16(),
-                    decision = ?decision,
+                    decision = ?initial_decision,
                     error = %e,
                     "gateway: dispatch failed"
                 );

@@ -81,11 +81,11 @@ pub async fn init_cluster_with_transport(
         force_bootstrap: config.force_bootstrap,
         join_retry: join_retry_policy_from_env(),
         swim_udp_addr: None,
-        election_timeout_min: std::time::Duration::from_secs(
-            transport_tuning.election_timeout_min_secs,
+        election_timeout_min: std::time::Duration::from_millis(
+            transport_tuning.effective_election_timeout_min_ms(),
         ),
-        election_timeout_max: std::time::Duration::from_secs(
-            transport_tuning.election_timeout_max_secs,
+        election_timeout_max: std::time::Duration::from_millis(
+            transport_tuning.effective_election_timeout_max_ms(),
         ),
     };
 

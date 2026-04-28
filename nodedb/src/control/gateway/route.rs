@@ -34,6 +34,14 @@ pub enum RouteDecision {
     /// Used for broadcast scans (SCAN, aggregates, graph traversals)
     /// where data is distributed across all shards.
     Broadcast { vshards: Vec<u64> },
+    /// Cluster mode but no leader currently known for this vShard's Raft
+    /// group (routing table entry is `0`). Surfaced as `Error::NotLeader`
+    /// at dispatch so the gateway retry loop sleeps and re-resolves —
+    /// never silently served from a (possibly stale) local replica.
+    LeaderUnknown {
+        /// vShard whose leader is currently unknown.
+        vshard_id: u64,
+    },
 }
 
 #[cfg(test)]

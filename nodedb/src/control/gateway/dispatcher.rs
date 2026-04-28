@@ -65,6 +65,17 @@ pub async fn dispatch_route(
                     .into(),
             })
         }
+        RouteDecision::LeaderUnknown { vshard_id } => {
+            // Cluster mode with no leader currently known for this vShard.
+            // Surface as NotLeader so the gateway retry loop sleeps and
+            // re-resolves the routing table on the next attempt — never
+            // silently serve from a possibly-stale local replica.
+            Err(Error::NotLeader {
+                vshard_id: VShardId::new(vshard_id as u16),
+                leader_node: 0,
+                leader_addr: String::new(),
+            })
+        }
     }
 }
 

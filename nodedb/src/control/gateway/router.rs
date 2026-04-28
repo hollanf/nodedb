@@ -46,20 +46,73 @@ pub fn route_plan(
     }
 
     let vshard_id = primary_vshard(&plan);
-    let decision = match routing.leader_for_vshard(vshard_id) {
-        Ok(leader) if leader == local_node_id || leader == 0 => RouteDecision::Local,
-        Ok(leader) => RouteDecision::Remote {
-            node_id: leader,
-            vshard_id: vshard_id as u64,
-        },
-        Err(_) => RouteDecision::Local,
-    };
+    let decision = resolve_decision(vshard_id, local_node_id, Some(routing), None);
 
     vec![TaskRoute {
         plan,
         decision,
         vshard_id,
     }]
+}
+
+/// Resolve the `RouteDecision` for a single vShard.
+///
+/// The routing table is a *cached hint*. The authoritative source of
+/// truth is the live Raft group status. When `live_leader_for_group` is
+/// provided, it overrides the routing table's leader hint for the
+/// vShard's group — the routing table can be stale (especially with
+/// "leader is me" pointing at a former leader), while live Raft state
+/// always reflects the current term's actual leader on this node's view.
+///
+/// Decision rules (cluster mode):
+/// 1. If live Raft says this node is leader for the group → `Local`.
+/// 2. If live Raft names a *different* leader → `Remote { that node }`.
+/// 3. If neither live Raft nor the routing table know a leader →
+///    `LeaderUnknown` (surfaced as `Error::NotLeader` by dispatch so the
+///    gateway retry loop sleeps and re-resolves).
+///
+/// Single-node mode (`routing == None`) always routes locally.
+pub fn resolve_decision(
+    vshard_id: u16,
+    local_node_id: u64,
+    routing: Option<&RoutingTable>,
+    live_leader_for_group: Option<&dyn Fn(u64) -> u64>,
+) -> RouteDecision {
+    let Some(routing) = routing else {
+        return RouteDecision::Local;
+    };
+    let unknown = RouteDecision::LeaderUnknown {
+        vshard_id: vshard_id as u64,
+    };
+
+    // Prefer live Raft state over the routing-table hint when available.
+    if let Some(live) = live_leader_for_group
+        && let Ok(group_id) = routing.group_for_vshard(vshard_id)
+    {
+        let live_leader = live(group_id);
+        if live_leader == local_node_id {
+            return RouteDecision::Local;
+        }
+        if live_leader != 0 {
+            return RouteDecision::Remote {
+                node_id: live_leader,
+                vshard_id: vshard_id as u64,
+            };
+        }
+        // Live state has no leader for this group yet — fall through to
+        // routing-table hint (it may have a stale-but-usable forwarding
+        // target from the last term).
+    }
+
+    match routing.leader_for_vshard(vshard_id) {
+        Ok(0) => unknown,
+        Ok(leader) if leader == local_node_id => RouteDecision::Local,
+        Ok(leader) => RouteDecision::Remote {
+            node_id: leader,
+            vshard_id: vshard_id as u64,
+        },
+        Err(_) => unknown,
+    }
 }
 
 /// Build one route per vShard for broadcast-scan plans.
@@ -74,14 +127,7 @@ fn route_broadcast(
 
     let mut routes = Vec::with_capacity(VSHARD_COUNT as usize);
     for vshard_id in 0u16..VSHARD_COUNT {
-        let decision = match routing.leader_for_vshard(vshard_id) {
-            Ok(leader) if leader == local_node_id || leader == 0 => RouteDecision::Local,
-            Ok(leader) => RouteDecision::Remote {
-                node_id: leader,
-                vshard_id: vshard_id as u64,
-            },
-            Err(_) => RouteDecision::Local,
-        };
+        let decision = resolve_decision(vshard_id, local_node_id, Some(routing), None);
         routes.push(TaskRoute {
             plan: plan.clone(),
             decision,
