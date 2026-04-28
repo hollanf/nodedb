@@ -2,8 +2,16 @@
 //!
 //! Single-layer greedy traversal (Vamana has no upper layers unlike HNSW).
 //! The hot path calls `VectorCodec::exact_asymmetric_distance` against
-//! quantized vectors.  Full-precision rerank via `Shard::fetch_fp32` is
-//! available when the caller explicitly reranks after search.
+//! quantized vectors.  Full-precision rerank via `NodeFetcher::fetch_fp32`
+//! is available when the caller explicitly reranks after search.
+//!
+//! ## Pre-fetch contract
+//!
+//! Before computing distances for a candidate's neighbors, `beam_search`
+//! calls `NodeFetcher::prefetch_batch` with the neighbor index set.  On the
+//! in-memory path this is a no-op.  On the `IoUringNodeFetcher` path it
+//! submits `IORING_OP_READ` SQEs for all neighbor vectors in parallel so
+//! the TPC reactor is never blocked waiting for a major page fault.
 //!
 //! Reference: Algorithm 1 in "DiskANN: Fast Accurate Billion-point Nearest
 //! Neighbor Search on a Single Node", NeurIPS 2019.
@@ -14,7 +22,7 @@ use nodedb_codec::vector_quant::codec::VectorCodec;
 
 use crate::distance::scalar::l2_squared;
 use crate::vamana::graph::VamanaGraph;
-use crate::vamana::shard::Shard;
+use crate::vamana::node_fetcher::NodeFetcher;
 
 /// A single result from a beam-search query.
 #[derive(Debug, Clone, PartialEq)]
@@ -63,26 +71,27 @@ impl Ord for Candidate {
 /// * `query` — prepared query produced by `codec.prepare_query`.
 /// * `codec` — quantization codec used during index construction.
 /// * `quantized` — per-node quantized vectors in insertion order.
-/// * `shard` — provides full-precision FP32 vectors (used for rerank if
-///   the caller requests it; the base search uses only `quantized`).
+/// * `fetcher` — provides full-precision FP32 vectors; `prefetch_batch` is
+///   called for each frontier expansion so io_uring reads land before
+///   `rerank` touches the vectors.
 /// * `k` — number of nearest neighbors to return.
 /// * `l_search` — beam width (must be ≥ `k`).
 ///
 /// # Returns
 ///
 /// Up to `k` results sorted by ascending distance.
-pub fn beam_search<C, S>(
+pub fn beam_search<C, F>(
     graph: &VamanaGraph,
     query: &C::Query,
     codec: &C,
     quantized: &[C::Quantized],
-    _shard: &S,
+    fetcher: &mut F,
     k: usize,
     l_search: usize,
 ) -> Vec<BeamSearchResult>
 where
     C: VectorCodec,
-    S: Shard,
+    F: NodeFetcher,
 {
     if graph.is_empty() || quantized.is_empty() {
         return Vec::new();
@@ -109,6 +118,9 @@ where
     });
     visited.insert(entry_idx);
 
+    // Scratch buffer reused every iteration to avoid per-hop allocation.
+    let mut frontier_indices: Vec<u32> = Vec::new();
+
     // Greedy expansion.
     while let Some(current) = candidates.pop() {
         // Prune: if the current candidate is worse than our l-th result, stop.
@@ -125,16 +137,23 @@ where
             result.pop(); // drop farthest
         }
 
-        // Expand neighbors.
+        // Collect unvisited neighbors into frontier.
+        frontier_indices.clear();
         for &neighbor_idx in graph.neighbors(current.idx as usize) {
-            if visited.contains(&neighbor_idx) {
-                continue;
+            if !visited.contains(&neighbor_idx) && (neighbor_idx as usize) < quantized.len() {
+                frontier_indices.push(neighbor_idx);
             }
-            visited.insert(neighbor_idx);
+        }
 
-            if neighbor_idx as usize >= quantized.len() {
-                continue;
-            }
+        // Pre-fetch FP32 vectors for the frontier so io_uring reads complete
+        // asynchronously while we evaluate distances.  On the in-memory path
+        // this is a no-op; on the io_uring path it submits IORING_OP_READ SQEs
+        // without blocking.
+        fetcher.prefetch_batch(&frontier_indices);
+
+        // Expand neighbors.
+        for &neighbor_idx in &frontier_indices {
+            visited.insert(neighbor_idx);
             let d = codec.exact_asymmetric_distance(query, &quantized[neighbor_idx as usize]);
             candidates.push(Candidate {
                 dist: d,
@@ -160,17 +179,21 @@ where
         .collect()
 }
 
-/// Rerank a candidate list using full-precision FP32 vectors from `shard`.
+/// Rerank a candidate list using full-precision FP32 vectors from `fetcher`.
 ///
 /// Accepts `BeamSearchResult` items from `beam_search`, fetches their
 /// full-precision vectors, recomputes exact L2-squared distance, and
 /// returns the top-`k` results sorted ascending.
 ///
+/// On the `IoUringNodeFetcher` path the pre-fetch issued during `beam_search`
+/// expansion means completions are already queued; `fetch_fp32` collects
+/// them without re-submitting.
+///
 /// This is the "SSD fetch + rerank" step described in the DiskANN paper.
-pub fn rerank<S: Shard>(
+pub fn rerank<F: NodeFetcher>(
     candidates: Vec<BeamSearchResult>,
     query_fp32: &[f32],
-    shard: &S,
+    fetcher: &mut F,
     graph: &VamanaGraph,
     k: usize,
 ) -> Vec<BeamSearchResult> {
@@ -178,11 +201,18 @@ pub fn rerank<S: Shard>(
     let id_to_idx: std::collections::HashMap<u64, usize> =
         graph.iter().map(|(idx, node)| (node.id, idx)).collect();
 
+    // Pre-fetch all candidate vectors in one batch before iterating.
+    let candidate_indices: Vec<u32> = candidates
+        .iter()
+        .filter_map(|c| id_to_idx.get(&c.id).map(|&i| i as u32))
+        .collect();
+    fetcher.prefetch_batch(&candidate_indices);
+
     let mut reranked: Vec<BeamSearchResult> = candidates
         .into_iter()
         .filter_map(|c| {
             let idx = *id_to_idx.get(&c.id)?;
-            let vec = shard.fetch_fp32(idx)?;
+            let vec = fetcher.fetch_fp32(idx as u32)?;
             let d = l2_squared(query_fp32, &vec);
             Some(BeamSearchResult {
                 id: c.id,
@@ -204,7 +234,7 @@ pub fn rerank<S: Shard>(
 mod tests {
     use super::*;
     use crate::vamana::build::build_vamana;
-    use crate::vamana::shard::LocalShard;
+    use crate::vamana::node_fetcher::InMemoryFetcher;
 
     /// Minimal stub codec that uses exact L2 as both distance functions.
     struct L2Codec;
@@ -266,9 +296,9 @@ mod tests {
         // Query with the vector at index 7; it should be the nearest result.
         let query_vec = vecs[7].clone();
         let query = codec.prepare_query(&query_vec);
-        let shard = LocalShard::new(dim, vecs.clone());
+        let mut fetcher = InMemoryFetcher::new(dim, vecs.clone());
 
-        let results = beam_search(&graph, &query, &codec, &quantized, &shard, 5, 20);
+        let results = beam_search(&graph, &query, &codec, &quantized, &mut fetcher, 5, 20);
 
         assert!(
             !results.is_empty(),

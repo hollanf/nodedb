@@ -1,5 +1,6 @@
 pub mod build;
 pub mod graph;
+pub mod node_fetcher;
 pub mod prune;
 pub mod search;
 pub mod shard;
@@ -7,6 +8,7 @@ pub mod storage;
 
 pub use build::build_vamana;
 pub use graph::{VamanaGraph, VamanaNode};
+pub use node_fetcher::{InMemoryFetcher, NodeFetcher};
 pub use prune::alpha_prune;
 pub use search::{BeamSearchResult, beam_search, rerank};
 pub use shard::{LocalShard, Shard};
