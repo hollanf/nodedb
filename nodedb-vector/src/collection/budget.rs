@@ -51,9 +51,14 @@ impl VectorCollection {
     }
 
     /// Determine storage tier and optionally create mmap segment for a completed build.
+    ///
+    /// `base_id` is the global vector ID offset for the first vector in `index`.
+    /// Surrogate IDs are looked up from `self.surrogate_map` for rows
+    /// `[base_id, base_id + N)` and written into the segment's surrogate block.
     pub(crate) fn resolve_tier_for_build(
         &mut self,
         segment_id: u32,
+        base_id: u32,
         index: &HnswIndex,
     ) -> (StorageTier, Option<MmapVectorSegment>) {
         if !self.is_budget_exceeded() {
@@ -65,18 +70,36 @@ impl VectorCollection {
         };
 
         let seg_path = dir.join(format!("seg-{segment_id}.vseg"));
-        let refs: Vec<Vec<f32>> = (0..index.len())
+        let count = index.len();
+
+        let refs: Vec<Vec<f32>> = (0..count)
             .filter_map(|i| index.get_vector(i as u32).map(|v| v.to_vec()))
             .collect();
         let ref_slices: Vec<&[f32]> = refs.iter().map(|v| v.as_slice()).collect();
 
-        match MmapVectorSegment::create(&seg_path, self.dim, &ref_slices) {
+        // Build the parallel surrogate ID array (u64 per row).
+        let surrogate_ids: Vec<u64> = (0..count as u32)
+            .map(|local_id| {
+                let global_id = base_id + local_id;
+                self.surrogate_map
+                    .get(&global_id)
+                    .map(|s| s.as_u32() as u64)
+                    .unwrap_or(0)
+            })
+            .collect();
+
+        match MmapVectorSegment::create_with_surrogates(
+            &seg_path,
+            self.dim,
+            &ref_slices,
+            &surrogate_ids,
+        ) {
             Ok(mmap) => {
                 self.mmap_fallback_count += 1;
                 self.mmap_segment_count += 1;
                 tracing::info!(
                     segment_id,
-                    vectors = index.len(),
+                    vectors = count,
                     path = %seg_path.display(),
                     "vector segment spilled to mmap (L1 NVMe)"
                 );

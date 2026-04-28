@@ -23,42 +23,63 @@ impl SimdRuntime {
     pub fn detect() -> Self {
         #[cfg(target_arch = "x86_64")]
         {
+            let has_vpopcntdq = std::is_x86_feature_detected!("avx512vpopcntdq");
+
             if std::is_x86_feature_detected!("avx512f") {
-                return Self {
+                let name = if has_vpopcntdq {
+                    "avx512+vpopcntdq"
+                } else {
+                    "avx512"
+                };
+                let rt = Self {
                     l2_squared: avx512::l2_squared,
                     cosine_distance: avx512::cosine_distance,
                     neg_inner_product: avx512::neg_inner_product,
                     hamming: fast_hamming,
-                    name: "avx512",
+                    name,
                 };
+                tracing::info!(kernel = rt.name, "vector SIMD kernel selected");
+                debug_assert!(
+                    !has_vpopcntdq || rt.name == "avx512+vpopcntdq",
+                    "AVX-512 VPOPCNTDQ available but kernel did not select it"
+                );
+                return rt;
             }
             if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
-                return Self {
+                let rt = Self {
                     l2_squared: avx2::l2_squared,
                     cosine_distance: avx2::cosine_distance,
                     neg_inner_product: avx2::neg_inner_product,
                     hamming: fast_hamming,
                     name: "avx2+fma",
                 };
+                tracing::info!(kernel = rt.name, "vector SIMD kernel selected");
+                return rt;
             }
         }
         #[cfg(target_arch = "aarch64")]
         {
-            return Self {
+            let rt = Self {
                 l2_squared: neon::l2_squared,
                 cosine_distance: neon::cosine_distance,
                 neg_inner_product: neon::neg_inner_product,
                 hamming: fast_hamming,
                 name: "neon",
             };
+            tracing::info!(kernel = rt.name, "vector SIMD kernel selected");
+            return rt;
         }
         #[allow(unreachable_code)]
-        Self {
-            l2_squared: scalar_l2,
-            cosine_distance: scalar_cosine,
-            neg_inner_product: scalar_ip,
-            hamming: fast_hamming,
-            name: "scalar",
+        {
+            let rt = Self {
+                l2_squared: scalar_l2,
+                cosine_distance: scalar_cosine,
+                neg_inner_product: scalar_ip,
+                hamming: fast_hamming,
+                name: "scalar",
+            };
+            tracing::info!(kernel = rt.name, "vector SIMD kernel selected");
+            rt
         }
     }
 }

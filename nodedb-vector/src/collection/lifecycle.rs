@@ -338,7 +338,8 @@ impl VectorCollection {
             } else {
                 (Self::build_sq8_for_index(&index), None)
             };
-            let (tier, mmap_vectors) = self.resolve_tier_for_build(segment_id, &index);
+            let (tier, mmap_vectors) =
+                self.resolve_tier_for_build(segment_id, building.base_id, &index);
 
             self.sealed.push(SealedSegment {
                 index,

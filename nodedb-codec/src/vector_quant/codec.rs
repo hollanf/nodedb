@@ -53,6 +53,49 @@ impl AdcLut {
 /// `Quantized` is the on-disk / in-memory packed form (one per vector).
 /// `Query` is the prepared query — may be raw FP32, may be rotated, may
 /// hold a precomputed ADC LUT, depending on the codec.
+///
+/// # Extensibility audit — future algorithms
+///
+/// The following six algorithms can each be added as a new `impl VectorCodec`
+/// without changing the trait surface:
+///
+/// **TurboQuant** — learned rotation matrix applied before scalar quantization.
+/// The rotation is held in the codec struct (same pattern as `OpqCodec.rotation`)
+/// and applied inside `encode` and `prepare_query`. No trait change needed.
+/// `QuantMode::TurboQuant4b` already exists as a layout discriminant.
+///
+/// **PolarQuant** — encodes magnitude and direction as separate components.
+/// Both components are packed into a single `packed_bits` region whose layout
+/// the codec controls. The `encode` return type is `Vec<u8>` of arbitrary
+/// length via `UnifiedQuantizedVector::packed_bits`, so multi-component payloads
+/// fit without a trait change. `QuantMode::PolarQuant` is already reserved.
+///
+/// **ITQ3_S** — Iterative Quantization with 3-bit codes, learned via SVD.
+/// Requires a calibration/fitting step before encoding begins. Existing codecs
+/// expose this as a concrete static `calibrate` method (e.g. `Sq8Codec::calibrate`,
+/// `RaBitQCodec::calibrate`). The `train` method added below makes this fitting
+/// phase reachable through the trait for generic dispatchers that hold a
+/// `C: VectorCodec` without knowing the concrete type. The default impl is a
+/// no-op so all existing impls compile without change.
+///
+/// **OSAQ** — Optimized Symmetric/Asymmetric Quantization. Uses symmetric
+/// encoding for indexed vectors and asymmetric encoding for queries.
+/// The existing trait already separates these paths: `encode` is the index path,
+/// `prepare_query` is the query path, and `type Query` is a distinct associated
+/// type. No trait change needed.
+///
+/// **RaBiT** — Rotation + Binary quantization with full-precision query and
+/// 1-bit index. Exactly the pattern implemented by `RaBitQCodec`: `type Query`
+/// holds a full-precision `Vec<f32>`, `type Quantized` holds 1-bit sign codes,
+/// and `exact_asymmetric_distance` uses the full query against binary candidates.
+/// No trait change needed.
+///
+/// **LVQ** — Locally-adaptive Vector Quantization with per-vector scale/offset.
+/// The `QuantHeader` carries `global_scale` and `residual_norm` — two f32
+/// scalars sufficient for per-vector min/max parameters. If a codec needs
+/// additional per-vector state it can prepend a small structured header inside
+/// `packed_bits` (the codec controls that region's layout entirely). No trait
+/// change needed.
 pub trait VectorCodec: Send + Sync {
     /// The packed quantized form. Must be convertible to a `UnifiedQuantizedVector`
     /// reference via `AsRef`.
@@ -73,6 +116,24 @@ pub trait VectorCodec: Send + Sync {
     /// (RaBitQ, BBQ, ternary, binary).
     fn adc_lut(&self, _q: &Self::Query) -> Option<AdcLut> {
         None
+    }
+
+    /// Optional: fit the codec's learned parameters on a set of training vectors.
+    ///
+    /// Called once before encoding begins, typically at index-build time. Codecs
+    /// with no learnable parameters (binary sign-bit, ternary) can use the
+    /// default no-op. Codecs with an SVD- or k-means-based fitting phase
+    /// (ITQ3_S, OPQ, PQ, TurboQuant) override this to update their internal
+    /// rotation matrices or codebooks.
+    ///
+    /// Returns `Ok(())` on success. The error type is `CodecError` so callers
+    /// that drive training through a generic bound can propagate failures without
+    /// knowing the concrete codec.
+    ///
+    /// The default implementation is a no-op and always returns `Ok(())`.
+    #[allow(unused_variables)]
+    fn train(&mut self, samples: &[&[f32]]) -> Result<(), crate::error::CodecError> {
+        Ok(())
     }
 
     /// Fast symmetric distance — bitwise / heuristic. Used during HNSW
