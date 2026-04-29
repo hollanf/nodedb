@@ -108,9 +108,12 @@ impl CsrIndex {
 
     /// Add a node without any edges. Idempotent — returns the existing
     /// tagged id if the name is already present.
-    pub fn add_node(&mut self, name: &str) -> LocalNodeId {
-        let raw = self.ensure_node(name);
-        LocalNodeId::new(raw, self.partition_tag)
+    ///
+    /// Returns `Err(GraphError::NodeOverflow)` when the partition's node-id
+    /// space is exhausted (more than `MAX_NODES_PER_CSR` distinct nodes).
+    pub fn add_node(&mut self, name: &str) -> Result<LocalNodeId, crate::GraphError> {
+        let raw = self.ensure_node(name)?;
+        Ok(LocalNodeId::new(raw, self.partition_tag))
     }
 
     pub fn node_count(&self) -> usize {

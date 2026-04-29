@@ -10,6 +10,17 @@ use super::index::CsrIndex;
 
 /// Magic header for rkyv-serialized CSR snapshots (6 bytes).
 const RKYV_MAGIC: &[u8; 6] = b"RKCS2\0";
+/// Current format version for rkyv-serialized CSR snapshots.
+pub const CSR_FORMAT_VERSION: u8 = 1;
+
+/// Errors during CSR checkpoint operations.
+#[derive(Debug, thiserror::Error)]
+pub enum CsrCheckpointError {
+    #[error("unsupported CSR checkpoint version {found}; expected {expected}")]
+    UnsupportedVersion { found: u8, expected: u8 },
+    #[error("CSR checkpoint rkyv deserialization failed")]
+    RkyvDeserialize,
+}
 
 /// rkyv-serialized CSR snapshot for fast save/load.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
@@ -55,20 +66,34 @@ impl CsrIndex {
         };
         let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&snapshot)
             .expect("CSR rkyv serialization should not fail");
-        let mut buf = Vec::with_capacity(RKYV_MAGIC.len() + rkyv_bytes.len());
+        let mut buf = Vec::with_capacity(RKYV_MAGIC.len() + 1 + rkyv_bytes.len());
         buf.extend_from_slice(RKYV_MAGIC);
+        buf.push(CSR_FORMAT_VERSION);
         buf.extend_from_slice(&rkyv_bytes);
         buf
     }
 
-    /// Restore an index from a checkpoint snapshot. Rejects any buffer
-    /// that doesn't start with the `RKYV_MAGIC` header.
-    pub fn from_checkpoint(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() > RKYV_MAGIC.len() && &bytes[..RKYV_MAGIC.len()] == RKYV_MAGIC {
-            Self::from_rkyv_checkpoint(&bytes[RKYV_MAGIC.len()..])
-        } else {
-            None
+    /// Restore an index from a checkpoint snapshot.
+    ///
+    /// Returns:
+    /// - `Ok(Some(index))` — successfully decoded.
+    /// - `Ok(None)` — buffer does not start with the magic header (no legacy
+    ///   format exists for CSR; callers should treat this as an invalid buffer).
+    /// - `Err(CsrCheckpointError::UnsupportedVersion)` — magic matches but the
+    ///   version byte is not `CSR_FORMAT_VERSION`.
+    pub fn from_checkpoint(bytes: &[u8]) -> Result<Option<Self>, CsrCheckpointError> {
+        let header_len = RKYV_MAGIC.len() + 1; // magic + version byte
+        if bytes.len() > header_len && &bytes[..RKYV_MAGIC.len()] == RKYV_MAGIC {
+            let version = bytes[RKYV_MAGIC.len()];
+            if version != CSR_FORMAT_VERSION {
+                return Err(CsrCheckpointError::UnsupportedVersion {
+                    found: version,
+                    expected: CSR_FORMAT_VERSION,
+                });
+            }
+            return Ok(Self::from_rkyv_checkpoint(&bytes[header_len..]));
         }
+        Ok(None)
     }
 
     /// Restore from rkyv-serialized bytes.
@@ -272,7 +297,9 @@ mod tests {
         csr.compact();
 
         let bytes = csr.checkpoint_to_bytes();
-        let restored = CsrIndex::from_checkpoint(&bytes).expect("roundtrip");
+        let restored = CsrIndex::from_checkpoint(&bytes)
+            .expect("roundtrip")
+            .unwrap();
         assert_eq!(restored.node_count(), 3);
         assert_eq!(restored.edge_count(), 2);
         assert!(!restored.has_weights());
@@ -291,7 +318,9 @@ mod tests {
         csr.compact();
 
         let bytes = csr.checkpoint_to_bytes();
-        let restored = CsrIndex::from_checkpoint(&bytes).expect("roundtrip");
+        let restored = CsrIndex::from_checkpoint(&bytes)
+            .expect("roundtrip")
+            .unwrap();
         assert!(restored.has_weights());
         assert_eq!(restored.edge_weight("a", "R", "b"), Some(2.5));
         assert_eq!(restored.edge_weight("b", "R", "c"), Some(7.0));
@@ -304,7 +333,39 @@ mod tests {
         csr.add_edge("a", "L", "b").unwrap();
         // Don't compact — edges in buffer.
         let bytes = csr.checkpoint_to_bytes();
-        let restored = CsrIndex::from_checkpoint(&bytes).expect("roundtrip");
+        let restored = CsrIndex::from_checkpoint(&bytes)
+            .expect("roundtrip")
+            .unwrap();
         assert_eq!(restored.edge_count(), 1);
+    }
+
+    #[test]
+    fn golden_header_layout() {
+        let mut csr = CsrIndex::new();
+        csr.add_edge("a", "KNOWS", "b").unwrap();
+        let bytes = csr.checkpoint_to_bytes();
+        // Magic at bytes[0..6].
+        assert_eq!(&bytes[0..6], b"RKCS2\0");
+        // Version byte at bytes[6].
+        assert_eq!(bytes[6], super::CSR_FORMAT_VERSION);
+        // rkyv payload follows immediately.
+        assert!(bytes.len() > 7);
+    }
+
+    #[test]
+    fn version_mismatch_returns_error() {
+        let mut csr = CsrIndex::new();
+        csr.add_edge("a", "KNOWS", "b").unwrap();
+        let mut bytes = csr.checkpoint_to_bytes();
+        // Corrupt the version byte to an unsupported value.
+        bytes[6] = 0;
+        match CsrIndex::from_checkpoint(&bytes) {
+            Err(CsrCheckpointError::UnsupportedVersion { found, expected }) => {
+                assert_eq!(found, 0);
+                assert_eq!(expected, super::CSR_FORMAT_VERSION);
+            }
+            Err(other) => panic!("unexpected error: {other}"),
+            Ok(_) => panic!("expected UnsupportedVersion error, got Ok"),
+        }
     }
 }

@@ -145,7 +145,14 @@ impl CoreLoop {
             GraphOp::SetNodeLabels { node_id, labels } => {
                 let partition = self.csr_partition_mut(tid);
                 for label in labels {
-                    partition.add_node_label(node_id, label);
+                    if let Err(e) = partition.add_node_label(node_id, label) {
+                        return self.response_error(
+                            task,
+                            crate::bridge::envelope::ErrorCode::Internal {
+                                detail: format!("set node label: {e}"),
+                            },
+                        );
+                    }
                 }
                 self.response_ok(task)
             }

@@ -178,7 +178,7 @@ mod tests {
     fn wcc_isolated_nodes() {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
-        csr.add_node("isolated");
+        csr.add_node("isolated").unwrap();
         csr.compact();
 
         let batch = run(&csr);

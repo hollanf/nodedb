@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn lcc_single_node() {
         let mut csr = CsrIndex::new();
-        csr.add_node("lonely");
+        csr.add_node("lonely").unwrap();
         csr.compact();
 
         let batch = run(&csr, DEFAULT_HIGH_DEGREE_THRESHOLD, DEFAULT_SAMPLE_PAIRS);

@@ -140,7 +140,7 @@ mod tests {
         // a-b connected, c isolated. Wasserman-Faust gives c = 0.
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
-        csr.add_node("c");
+        csr.add_node("c").unwrap();
         csr.compact();
 
         let batch = run(&csr);

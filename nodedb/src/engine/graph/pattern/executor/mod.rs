@@ -462,10 +462,10 @@ mod tests {
         let (mut csr, store, _dir) = make_social_graph();
 
         // Set labels.
-        csr.add_node_label("alice", "Person");
-        csr.add_node_label("bob", "Person");
-        csr.add_node_label("carol", "Person");
-        csr.add_node_label("dave", "Bot");
+        csr.add_node_label("alice", "Person").unwrap();
+        csr.add_node_label("bob", "Person").unwrap();
+        csr.add_node_label("carol", "Person").unwrap();
+        csr.add_node_label("dave", "Bot").unwrap();
 
         // Without label filter — all KNOWS edges.
         let query = super::super::compiler::parse("MATCH (a)-[:KNOWS]->(b) RETURN a, b").unwrap();

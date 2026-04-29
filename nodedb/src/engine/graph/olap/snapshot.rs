@@ -94,8 +94,12 @@ impl CsrSnapshot {
             if *rec_tid != tid {
                 continue;
             }
-            csr.add_node(src);
-            csr.add_node(dst);
+            csr.add_node(src).map_err(|e| crate::Error::Internal {
+                detail: format!("CsrSnapshot::from_edge_store_as_of: {e}"),
+            })?;
+            csr.add_node(dst).map_err(|e| crate::Error::Internal {
+                detail: format!("CsrSnapshot::from_edge_store_as_of: {e}"),
+            })?;
         }
 
         // Second pass: insert edges with weight extraction.

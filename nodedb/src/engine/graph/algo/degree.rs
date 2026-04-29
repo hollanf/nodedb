@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn degree_single_node() {
         let mut csr = CsrIndex::new();
-        csr.add_node("solo");
+        csr.add_node("solo").unwrap();
         csr.compact();
         let batch = run(&csr, &AlgoParams::default());
         assert_eq!(batch.len(), 1);

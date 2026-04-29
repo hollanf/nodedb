@@ -160,7 +160,7 @@ mod tests {
     fn sssp_unreachable_node() {
         let mut csr = CsrIndex::new();
         csr.add_edge_weighted("a", "R", "b", 1.0).unwrap();
-        csr.add_node("island");
+        csr.add_node("island").unwrap();
         csr.compact();
 
         let params = AlgoParams {
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn sssp_single_node() {
         let mut csr = CsrIndex::new();
-        csr.add_node("solo");
+        csr.add_node("solo").unwrap();
         csr.compact();
 
         let params = AlgoParams {

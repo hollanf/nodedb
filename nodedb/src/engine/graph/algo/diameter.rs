@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn diameter_single_node() {
         let mut csr = CsrIndex::new();
-        csr.add_node("solo");
+        csr.add_node("solo").unwrap();
         csr.compact();
 
         let batch = run(

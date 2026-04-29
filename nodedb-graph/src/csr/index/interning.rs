@@ -6,11 +6,21 @@ use super::types::CsrIndex;
 
 impl CsrIndex {
     /// Get or create a dense ID for a node.
-    pub(crate) fn ensure_node(&mut self, node: &str) -> u32 {
+    ///
+    /// Returns `Err(GraphError::NodeOverflow)` when the partition already holds
+    /// `MAX_NODES_PER_CSR` nodes and a new name is introduced. The check uses a
+    /// typed `Result` rather than `debug_assert!` so the failure mode is loud
+    /// and deterministic — a silent `u32` wrap would reproduce the same class
+    /// of bug as the label-overflow issue this crate fixed previously.
+    pub(crate) fn ensure_node(&mut self, node: &str) -> Result<u32, crate::GraphError> {
         match self.node_to_id.entry(node.to_string()) {
-            Entry::Occupied(e) => *e.get(),
+            Entry::Occupied(e) => Ok(*e.get()),
             Entry::Vacant(e) => {
-                let id = self.id_to_node.len() as u32;
+                let len = self.id_to_node.len();
+                if len >= crate::MAX_NODES_PER_CSR {
+                    return Err(crate::GraphError::NodeOverflow { used: len });
+                }
+                let id = len as u32;
                 e.insert(id);
                 self.id_to_node.push(node.to_string());
                 // Extend dense offsets (new node has 0 edges in dense part).
@@ -27,7 +37,7 @@ impl CsrIndex {
                 // with the ZERO sentinel so unset nodes are never in a bitmap.
                 self.node_surrogates.push(0);
                 self.access_counts.push(std::cell::Cell::new(0));
-                id
+                Ok(id)
             }
         }
     }
@@ -120,14 +130,18 @@ impl CsrIndex {
         Some(id)
     }
 
-    /// Add a label to a node. Returns false if the 64-label limit is hit.
-    pub fn add_node_label(&mut self, node: &str, label: &str) -> bool {
-        let node_id = self.ensure_node(node);
+    /// Add a label to a node.
+    ///
+    /// Returns `Ok(false)` if the 64 distinct node-label limit is hit (the
+    /// label is silently ignored). Returns `Err(GraphError::NodeOverflow)` if
+    /// the node is new and the partition's node-id space is exhausted.
+    pub fn add_node_label(&mut self, node: &str, label: &str) -> Result<bool, crate::GraphError> {
+        let node_id = self.ensure_node(node)?;
         let Some(label_id) = self.ensure_node_label(label) else {
-            return false;
+            return Ok(false);
         };
         self.node_label_bits[node_id as usize] |= 1u64 << label_id;
-        true
+        Ok(true)
     }
 
     /// Remove a label from a node.

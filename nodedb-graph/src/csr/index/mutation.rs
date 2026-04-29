@@ -37,8 +37,8 @@ impl CsrIndex {
         weight: f64,
         force_weights: bool,
     ) -> Result<(), crate::GraphError> {
-        let src_id = self.ensure_node(src);
-        let dst_id = self.ensure_node(dst);
+        let src_id = self.ensure_node(src)?;
+        let dst_id = self.ensure_node(dst)?;
         let label_id = self.ensure_label(label)?;
 
         // Check for duplicates in buffer.

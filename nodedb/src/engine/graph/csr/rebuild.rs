@@ -29,8 +29,16 @@ pub fn rebuild_sharded_from_store_as_of(
     // EdgeRecord is now (TenantId, collection, src, label, dst, props).
     for (tid, _collection, src, _label, dst, _props) in &all_edges {
         let partition = sharded.get_or_create(*tid);
-        partition.add_node(src);
-        partition.add_node(dst);
+        partition
+            .add_node(src)
+            .map_err(|e| crate::Error::Internal {
+                detail: format!("CSR rebuild (add src node): {e}"),
+            })?;
+        partition
+            .add_node(dst)
+            .map_err(|e| crate::Error::Internal {
+                detail: format!("CSR rebuild (add dst node): {e}"),
+            })?;
     }
 
     // Second pass: insert edges into their tenant's partition.

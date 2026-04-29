@@ -165,7 +165,7 @@ mod tests {
     #[test]
     fn pagerank_single_node() {
         let mut csr = CsrIndex::new();
-        csr.add_node("lonely");
+        csr.add_node("lonely").unwrap();
         csr.compact();
 
         let batch = run(&csr, &AlgoParams::default());
@@ -176,7 +176,7 @@ mod tests {
     fn pagerank_dangling_nodes() {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
-        csr.add_node("c"); // dangling
+        csr.add_node("c").unwrap(); // dangling
         csr.compact();
 
         let batch = run(&csr, &AlgoParams::default());
