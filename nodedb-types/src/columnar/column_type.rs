@@ -85,6 +85,44 @@ impl ColumnType {
         self.fixed_size().is_none()
     }
 
+    /// Return the canonical PostgreSQL type OID for this column type.
+    ///
+    /// This is the single authoritative mapping between NodeDB `ColumnType`
+    /// variants and PostgreSQL wire-protocol OIDs. All pgwire code must derive
+    /// OIDs from this method — no local string-matching tables.
+    ///
+    /// Choices for non-native types:
+    /// - `Geometry` → `25` (TEXT): no standard pg geometry OID; PostGIS uses
+    ///   its own extension OID which we cannot claim. TEXT lets clients at least
+    ///   see the WKT/WKB string.
+    /// - `Vector(_)` → `1021` (FLOAT4_ARRAY): closest built-in pg type for a
+    ///   fixed-dimension float32 vector; pgvector uses a custom OID, which we
+    ///   avoid to stay dependency-free.
+    /// - `Array`, `Set`, `Range`, `Record`, `Regex` → `114` (JSON): these are
+    ///   variable-length MessagePack-encoded structures; JSON is the safest
+    ///   generic text OID for clients that need to read the value as a string.
+    pub fn to_pg_oid(&self) -> u32 {
+        match self {
+            Self::Bool => 16,
+            Self::Bytes => 17,
+            Self::Int64 => 20,
+            Self::Float64 => 701,
+            Self::String => 25,
+            Self::Timestamp | Self::SystemTimestamp => 1184,
+            Self::Decimal => 1700,
+            Self::Uuid | Self::Ulid => 2950,
+            Self::Json => 3802,
+            Self::Duration => 1186,
+            // No standard built-in OID for geometry; TEXT lets clients read WKT.
+            Self::Geometry => 25,
+            // FLOAT4_ARRAY (1021) is the closest built-in for fixed float32 vectors.
+            Self::Vector(_) => 1021,
+            // Variable-length structured types: expose as JSONB so clients can
+            // parse the serialized representation.
+            Self::Array | Self::Set | Self::Range | Self::Record | Self::Regex => 3802,
+        }
+    }
+
     /// Whether a `Value` is compatible with this column type.
     ///
     /// Accepts both native Value types (e.g., `Value::DateTime` for Timestamp)
@@ -352,6 +390,32 @@ impl fmt::Display for ColumnDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn to_pg_oid_stable() {
+        // Every variant must have a stable, non-zero OID.
+        assert_eq!(ColumnType::Bool.to_pg_oid(), 16);
+        assert_eq!(ColumnType::Bytes.to_pg_oid(), 17);
+        assert_eq!(ColumnType::Int64.to_pg_oid(), 20);
+        assert_eq!(ColumnType::String.to_pg_oid(), 25);
+        assert_eq!(ColumnType::Float64.to_pg_oid(), 701);
+        assert_eq!(ColumnType::Timestamp.to_pg_oid(), 1184);
+        assert_eq!(ColumnType::SystemTimestamp.to_pg_oid(), 1184);
+        assert_eq!(ColumnType::Duration.to_pg_oid(), 1186);
+        assert_eq!(ColumnType::Decimal.to_pg_oid(), 1700);
+        assert_eq!(ColumnType::Uuid.to_pg_oid(), 2950);
+        assert_eq!(ColumnType::Ulid.to_pg_oid(), 2950);
+        assert_eq!(ColumnType::Json.to_pg_oid(), 3802);
+        // Pragmatic choices.
+        assert_eq!(ColumnType::Geometry.to_pg_oid(), 25); // TEXT
+        assert_eq!(ColumnType::Vector(768).to_pg_oid(), 1021); // FLOAT4_ARRAY
+        // Structured variable-length types → JSONB.
+        assert_eq!(ColumnType::Array.to_pg_oid(), 3802);
+        assert_eq!(ColumnType::Set.to_pg_oid(), 3802);
+        assert_eq!(ColumnType::Range.to_pg_oid(), 3802);
+        assert_eq!(ColumnType::Record.to_pg_oid(), 3802);
+        assert_eq!(ColumnType::Regex.to_pg_oid(), 3802);
+    }
 
     #[test]
     fn parse_system_timestamp() {

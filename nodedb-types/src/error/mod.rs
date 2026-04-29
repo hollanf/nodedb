@@ -38,6 +38,7 @@
 pub mod code;
 pub mod ctors;
 pub mod details;
+pub mod sqlstate;
 pub mod types;
 
 pub use code::ErrorCode;

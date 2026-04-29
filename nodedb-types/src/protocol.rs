@@ -198,8 +198,13 @@ impl From<OpCode> for u8 {
     }
 }
 
+/// Error returned when decoding an unknown `OpCode` byte from the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("unknown OpCode byte: 0x{0:02X}")]
+pub struct UnknownOpCode(pub u8);
+
 impl TryFrom<u8> for OpCode {
-    type Error = String;
+    type Error = UnknownOpCode;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
@@ -279,7 +284,7 @@ impl TryFrom<u8> for OpCode {
             0x96 => Ok(OpCode::KvSortedIndexRange),
             0x97 => Ok(OpCode::KvSortedIndexCount),
             0x98 => Ok(OpCode::KvSortedIndexScore),
-            other => Err(format!("unknown OpCode byte: 0x{other:02X}")),
+            other => Err(UnknownOpCode(other)),
         }
     }
 }
@@ -1064,6 +1069,250 @@ pub const FRAME_HEADER_LEN: usize = 4;
 /// Default server port for the native protocol.
 pub const DEFAULT_NATIVE_PORT: u16 = 6433;
 
+/// Current native protocol version advertised in `HelloFrame`.
+pub const PROTO_VERSION: u16 = 1;
+
+// ─── Capability Bits ────────────────────────────────────────────────
+
+/// Capability bit: server supports streaming (partial-response chunking).
+///
+/// When set, the client may observe `ResponseStatus::Partial` chunks on
+/// long-running queries instead of a single final response.
+pub const CAP_STREAMING: u64 = 1 << 0;
+
+/// Capability bit: server supports GraphRAG fusion (`GraphRagFusion` opcode).
+pub const CAP_GRAPHRAG: u64 = 1 << 1;
+
+/// Capability bit: server supports full-text search opcodes (`TextSearch`, `HybridSearch`).
+pub const CAP_FTS: u64 = 1 << 2;
+
+/// Capability bit: server supports CRDT sync (`CrdtRead`, `CrdtApply`).
+pub const CAP_CRDT: u64 = 1 << 3;
+
+/// Capability bit: server supports spatial operations (`SpatialScan`).
+pub const CAP_SPATIAL: u64 = 1 << 4;
+
+/// Capability bit: server supports timeseries operations (`TimeseriesScan`, `TimeseriesIngest`).
+pub const CAP_TIMESERIES: u64 = 1 << 5;
+
+/// Capability bit: server supports columnar scan (`ColumnarScan`, `ColumnarInsert`).
+pub const CAP_COLUMNAR: u64 = 1 << 6;
+
+// ─── Per-Operation Limits ───────────────────────────────────────────
+
+/// Per-operation capability limits negotiated during the connection handshake.
+///
+/// The server announces its effective caps in `HelloAckFrame`. Clients must
+/// respect these limits on every request; the server enforces them server-side
+/// and returns `LimitExceeded` for violations.
+///
+/// All limits are `Option<u32>` — `None` means "no server-side cap" for that
+/// dimension. A client that does not receive a `Limits` (pre-T2-08 server)
+/// should treat all limits as `None`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Limits {
+    /// Maximum vector embedding dimensionality.
+    pub max_vector_dim: Option<u32>,
+    /// Maximum `top_k` / `k` for vector and text-search operations.
+    pub max_top_k: Option<u32>,
+    /// Maximum row limit for scan operations.
+    pub max_scan_limit: Option<u32>,
+    /// Maximum number of items in a batch insert.
+    pub max_batch_size: Option<u32>,
+    /// Maximum CRDT delta payload in bytes.
+    pub max_crdt_delta_bytes: Option<u32>,
+    /// Maximum query text length in bytes.
+    pub max_query_text_bytes: Option<u32>,
+    /// Maximum graph traversal depth.
+    pub max_graph_depth: Option<u32>,
+}
+
+// ─── Handshake Frames ───────────────────────────────────────────────
+
+/// First frame sent by the client immediately after the TCP connection is
+/// established. Carries the client's protocol version range and capability
+/// bits so the server can choose the highest mutually-supported version.
+///
+/// Wire layout (big-endian, length-prefixed by the standard 4-byte header):
+/// ```text
+/// [magic: 4 bytes] [proto_min: u16] [proto_max: u16] [capabilities: u64]
+/// ```
+/// `magic` is `0x4E44_4248` ("NDBH" — NodeDB Hello).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HelloFrame {
+    /// Client's minimum supported protocol version.
+    pub proto_min: u16,
+    /// Client's maximum supported protocol version.
+    pub proto_max: u16,
+    /// Bitfield of capabilities the client understands.
+    pub capabilities: u64,
+}
+
+/// Magic bytes for `HelloFrame`: b"NDBH".
+pub const HELLO_MAGIC: u32 = 0x4E44_4248;
+
+impl HelloFrame {
+    /// Wire size: 4-byte magic + 2 + 2 + 8 = 16 bytes.
+    pub const WIRE_SIZE: usize = 16;
+
+    /// Encode into a fixed-size byte array.
+    pub fn encode(&self) -> [u8; Self::WIRE_SIZE] {
+        let mut buf = [0u8; Self::WIRE_SIZE];
+        buf[0..4].copy_from_slice(&HELLO_MAGIC.to_be_bytes());
+        buf[4..6].copy_from_slice(&self.proto_min.to_be_bytes());
+        buf[6..8].copy_from_slice(&self.proto_max.to_be_bytes());
+        buf[8..16].copy_from_slice(&self.capabilities.to_be_bytes());
+        buf
+    }
+
+    /// Decode from raw bytes. Returns `None` if magic does not match.
+    pub fn decode(buf: &[u8; Self::WIRE_SIZE]) -> Option<Self> {
+        let magic = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        if magic != HELLO_MAGIC {
+            return None;
+        }
+        let proto_min = u16::from_be_bytes([buf[4], buf[5]]);
+        let proto_max = u16::from_be_bytes([buf[6], buf[7]]);
+        let capabilities = u64::from_be_bytes([
+            buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
+        ]);
+        Some(Self {
+            proto_min,
+            proto_max,
+            capabilities,
+        })
+    }
+}
+
+/// Server's response to a `HelloFrame`. Carries the negotiated version,
+/// server's capability bits, server version string, and per-op limits.
+///
+/// Wire layout (big-endian, length-prefixed):
+/// ```text
+/// [magic: 4 bytes] [proto_version: u16] [capabilities: u64]
+/// [server_version_len: u8] [server_version: N bytes]
+/// [limits_present: u8]
+/// if limits_present:
+///   [max_vector_dim_present: u8] [max_vector_dim: u32]
+///   [max_top_k_present: u8]      [max_top_k: u32]
+///   [max_scan_limit_present: u8] [max_scan_limit: u32]
+///   [max_batch_size_present: u8] [max_batch_size: u32]
+///   [max_crdt_delta_bytes_present: u8] [max_crdt_delta_bytes: u32]
+///   [max_query_text_bytes_present: u8] [max_query_text_bytes: u32]
+///   [max_graph_depth_present: u8] [max_graph_depth: u32]
+/// ```
+/// `magic` is `0x4E44_4241` ("NDBA" — NodeDB Ack).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HelloAckFrame {
+    /// The protocol version the server chose (server.proto_max clamped to client range).
+    pub proto_version: u16,
+    /// Bitfield of capabilities the server supports.
+    pub capabilities: u64,
+    /// Human-readable server version string (e.g. "0.1.0-dev").
+    pub server_version: String,
+    /// Per-op limits announced by the server.
+    pub limits: Limits,
+}
+
+/// Magic bytes for `HelloAckFrame`: b"NDBA".
+pub const HELLO_ACK_MAGIC: u32 = 0x4E44_4241;
+
+impl HelloAckFrame {
+    /// Encode into a `Vec<u8>`.
+    pub fn encode(&self) -> Vec<u8> {
+        let sv = self.server_version.as_bytes();
+        let sv_len = sv.len().min(255) as u8;
+
+        // Base: 4 (magic) + 2 (version) + 8 (caps) + 1 (sv_len) + sv_len
+        let mut buf = Vec::with_capacity(15 + sv_len as usize + 1 + 7 * 5);
+        buf.extend_from_slice(&HELLO_ACK_MAGIC.to_be_bytes());
+        buf.extend_from_slice(&self.proto_version.to_be_bytes());
+        buf.extend_from_slice(&self.capabilities.to_be_bytes());
+        buf.push(sv_len);
+        buf.extend_from_slice(&sv[..sv_len as usize]);
+
+        // Limits section.
+        buf.push(1u8); // limits_present = true
+        encode_limit_field(&mut buf, self.limits.max_vector_dim);
+        encode_limit_field(&mut buf, self.limits.max_top_k);
+        encode_limit_field(&mut buf, self.limits.max_scan_limit);
+        encode_limit_field(&mut buf, self.limits.max_batch_size);
+        encode_limit_field(&mut buf, self.limits.max_crdt_delta_bytes);
+        encode_limit_field(&mut buf, self.limits.max_query_text_bytes);
+        encode_limit_field(&mut buf, self.limits.max_graph_depth);
+
+        buf
+    }
+
+    /// Decode from a byte slice. Returns `None` on magic mismatch or truncation.
+    pub fn decode(data: &[u8]) -> Option<Self> {
+        if data.len() < 15 {
+            return None;
+        }
+        let magic = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+        if magic != HELLO_ACK_MAGIC {
+            return None;
+        }
+        let proto_version = u16::from_be_bytes([data[4], data[5]]);
+        let capabilities = u64::from_be_bytes([
+            data[6], data[7], data[8], data[9], data[10], data[11], data[12], data[13],
+        ]);
+        let sv_len = data[14] as usize;
+        let sv_end = 15 + sv_len;
+        if data.len() < sv_end {
+            return None;
+        }
+        let server_version = String::from_utf8_lossy(&data[15..sv_end]).into_owned();
+
+        let mut limits = Limits::default();
+        if data.len() > sv_end && data[sv_end] == 1 {
+            let mut pos = sv_end + 1;
+            limits.max_vector_dim = decode_limit_field(data, &mut pos);
+            limits.max_top_k = decode_limit_field(data, &mut pos);
+            limits.max_scan_limit = decode_limit_field(data, &mut pos);
+            limits.max_batch_size = decode_limit_field(data, &mut pos);
+            limits.max_crdt_delta_bytes = decode_limit_field(data, &mut pos);
+            limits.max_query_text_bytes = decode_limit_field(data, &mut pos);
+            limits.max_graph_depth = decode_limit_field(data, &mut pos);
+        }
+
+        Some(Self {
+            proto_version,
+            capabilities,
+            server_version,
+            limits,
+        })
+    }
+}
+
+fn encode_limit_field(buf: &mut Vec<u8>, val: Option<u32>) {
+    match val {
+        Some(v) => {
+            buf.push(1u8);
+            buf.extend_from_slice(&v.to_be_bytes());
+        }
+        None => {
+            buf.push(0u8);
+            buf.extend_from_slice(&0u32.to_be_bytes());
+        }
+    }
+}
+
+fn decode_limit_field(data: &[u8], pos: &mut usize) -> Option<u32> {
+    if *pos + 5 > data.len() {
+        return None;
+    }
+    let present = data[*pos];
+    let value = u32::from_be_bytes([
+        data[*pos + 1],
+        data[*pos + 2],
+        data[*pos + 3],
+        data[*pos + 4],
+    ]);
+    *pos += 5;
+    if present == 1 { Some(value) } else { None }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1197,5 +1446,110 @@ mod tests {
             }
             _ => panic!("expected Password variant"),
         }
+    }
+
+    #[test]
+    fn hello_frame_roundtrip() {
+        let frame = HelloFrame {
+            proto_min: 1,
+            proto_max: 3,
+            capabilities: CAP_STREAMING | CAP_GRAPHRAG | CAP_FTS,
+        };
+        let buf = frame.encode();
+        let decoded = HelloFrame::decode(&buf).expect("decode failed");
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn hello_frame_bad_magic() {
+        let mut buf = HelloFrame {
+            proto_min: 1,
+            proto_max: 1,
+            capabilities: 0,
+        }
+        .encode();
+        buf[0] = 0xFF; // corrupt magic
+        assert!(HelloFrame::decode(&buf).is_none());
+    }
+
+    #[test]
+    fn hello_ack_frame_roundtrip_all_limits() {
+        let frame = HelloAckFrame {
+            proto_version: 1,
+            capabilities: CAP_STREAMING | CAP_CRDT,
+            server_version: "0.1.0-dev".into(),
+            limits: Limits {
+                max_vector_dim: Some(1536),
+                max_top_k: Some(1000),
+                max_scan_limit: Some(10_000),
+                max_batch_size: Some(512),
+                max_crdt_delta_bytes: Some(1 << 20),
+                max_query_text_bytes: Some(4096),
+                max_graph_depth: Some(16),
+            },
+        };
+        let enc = frame.encode();
+        let decoded = HelloAckFrame::decode(&enc).expect("decode failed");
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn hello_ack_frame_roundtrip_some_limits() {
+        let frame = HelloAckFrame {
+            proto_version: 1,
+            capabilities: 0,
+            server_version: "1.0.0".into(),
+            limits: Limits {
+                max_vector_dim: Some(768),
+                max_top_k: None,
+                max_scan_limit: None,
+                max_batch_size: None,
+                max_crdt_delta_bytes: None,
+                max_query_text_bytes: None,
+                max_graph_depth: None,
+            },
+        };
+        let enc = frame.encode();
+        let decoded = HelloAckFrame::decode(&enc).expect("decode failed");
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn hello_ack_frame_roundtrip_no_limits() {
+        let frame = HelloAckFrame {
+            proto_version: 1,
+            capabilities: CAP_STREAMING,
+            server_version: "0.2.0".into(),
+            limits: Limits::default(),
+        };
+        let enc = frame.encode();
+        let decoded = HelloAckFrame::decode(&enc).expect("decode failed");
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn hello_ack_bad_magic() {
+        let frame = HelloAckFrame {
+            proto_version: 1,
+            capabilities: 0,
+            server_version: "x".into(),
+            limits: Limits::default(),
+        };
+        let mut enc = frame.encode();
+        enc[0] = 0xFF;
+        assert!(HelloAckFrame::decode(&enc).is_none());
+    }
+
+    #[test]
+    fn cap_bits_non_overlapping() {
+        let all = CAP_STREAMING
+            | CAP_GRAPHRAG
+            | CAP_FTS
+            | CAP_CRDT
+            | CAP_SPATIAL
+            | CAP_TIMESERIES
+            | CAP_COLUMNAR;
+        // Each bit should be set exactly once — count of set bits equals number of caps.
+        assert_eq!(all.count_ones(), 7);
     }
 }
