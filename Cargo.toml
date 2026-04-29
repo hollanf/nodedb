@@ -114,7 +114,7 @@ bytes = "1"
 io-uring = "0.7"
 
 # CRDTs
-loro = "1"
+loro = "=1.10.8"
 
 # Kafka bridge
 rdkafka = { version = "0.36", features = ["cmake-build"] }
@@ -163,6 +163,9 @@ unicode-normalization = "0.1"
 
 # Fast hashing for integer keys (GROUP BY aggregation)
 rustc-hash = "2"
+
+# Fast non-cryptographic hashing (xxHash3 for cluster key partitioning)
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 # Fast parsing (CSV bulk import)
 memchr = "2.7"

@@ -50,7 +50,13 @@ pub(super) const KEY_FORMAT_VERSION: &str = "format_version";
 /// Bump this (and add a matching migration arm in
 /// `catalog::migration`) on every breaking change to a
 /// zerompk-derived catalog type.
-pub(super) const CATALOG_FORMAT_VERSION: u32 = 1;
+///
+/// Version history:
+/// - 1: initial format (cluster_id, ca_cert, format_version).
+/// - 2: added `cluster_settings` (PlacementHashId, vshard_count,
+///   replication_factor, min_wire_version). Migration arm
+///   writes defaults when upgrading from v1.
+pub(super) const CATALOG_FORMAT_VERSION: u32 = 2;
 
 /// Wrap any `std::fmt::Display` error as a transport-layer
 /// `ClusterError`. Kept here so every catalog file uses the same
