@@ -43,7 +43,7 @@ pub trait SchemaOps {
 )]
 pub struct StrictSchema {
     pub columns: Vec<ColumnDef>,
-    pub version: u16,
+    pub version: u32,
     /// Columns that were removed via `ALTER DROP COLUMN`. Retained so the
     /// reader can reconstruct the physical layout of tuples written before
     /// the drop.
@@ -76,7 +76,7 @@ pub struct DroppedColumn {
     /// The column's position in the column list before it was removed.
     pub position: usize,
     /// The schema version at which the column was dropped.
-    pub dropped_at_version: u16,
+    pub dropped_at_version: u32,
 }
 
 /// Schema for a columnar collection (compressed segment files).
@@ -92,7 +92,7 @@ pub struct DroppedColumn {
 )]
 pub struct ColumnarSchema {
     pub columns: Vec<ColumnDef>,
-    pub version: u16,
+    pub version: u32,
 }
 
 /// Reserved strict-tuple column names for bitemporal collections. Stored
@@ -230,7 +230,7 @@ impl StrictSchema {
     /// the given version. Columns added after `version` are excluded;
     /// columns dropped after `version` are re-inserted at their original
     /// positions.
-    pub fn schema_for_version(&self, version: u16) -> StrictSchema {
+    pub fn schema_for_version(&self, version: u32) -> StrictSchema {
         // Start with live columns that existed at this version.
         let mut cols: Vec<ColumnDef> = self
             .columns

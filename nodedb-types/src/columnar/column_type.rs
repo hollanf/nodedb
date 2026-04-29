@@ -275,10 +275,10 @@ pub struct ColumnDef {
     /// the schema version after the bump so the reader can build a physical
     /// sub-schema for tuples written under older versions.
     #[serde(default = "default_added_at_version")]
-    pub added_at_version: u16,
+    pub added_at_version: u32,
 }
 
-fn default_added_at_version() -> u16 {
+fn default_added_at_version() -> u32 {
     1
 }
 

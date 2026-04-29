@@ -2,7 +2,7 @@
 //!
 //! Layout:
 //! ```text
-//! [schema_version: u16 LE]
+//! [schema_version: u32 LE]
 //! [null_bitmap: ceil(N/8) bytes, bit=1 means NULL]
 //! [fixed_fields: concatenated, zeroed when null]
 //! [offset_table: (N_var + 1) × u32 LE]
@@ -48,7 +48,7 @@ impl TupleEncoder {
             }
         }
 
-        let header_size = 2 + schema.null_bitmap_size();
+        let header_size = 4 + schema.null_bitmap_size();
 
         Self {
             schema: schema.clone(),
@@ -78,10 +78,10 @@ impl TupleEncoder {
         let mut buf = vec![0u8; base_size];
 
         // 1. Schema version.
-        buf[0..2].copy_from_slice(&self.schema.version.to_le_bytes());
+        buf[0..4].copy_from_slice(&self.schema.version.to_le_bytes());
 
         // 2. Null bitmap + fixed fields + type validation.
-        let bitmap_start = 2;
+        let bitmap_start = 4;
         let fixed_start = self.header_size;
 
         for (i, (col, val)) in self.schema.columns.iter().zip(values.iter()).enumerate() {
@@ -335,14 +335,16 @@ mod tests {
 
         let tuple = encoder.encode(&values).unwrap();
 
-        // Header: 2 (version) + 1 (null bitmap for 5 cols) = 3 bytes
-        assert_eq!(tuple[0], 1); // schema version 1
-        assert_eq!(tuple[1], 0); // version high byte
-        assert_eq!(tuple[2], 0); // null bitmap: no nulls
+        // Header: 4 (version) + 1 (null bitmap for 5 cols) = 5 bytes
+        assert_eq!(tuple[0], 1); // schema version low byte = 1
+        assert_eq!(tuple[1], 0); // version byte 1
+        assert_eq!(tuple[2], 0); // version byte 2
+        assert_eq!(tuple[3], 0); // version byte 3
+        assert_eq!(tuple[4], 0); // null bitmap: no nulls
 
         // Fixed section: Int64(8) + Decimal(16) + Bool(1) = 25 bytes
-        // Starting at offset 3
-        let id_bytes = &tuple[3..11];
+        // Starting at offset 5
+        let id_bytes = &tuple[5..13];
         assert_eq!(i64::from_le_bytes(id_bytes.try_into().unwrap()), 42);
     }
 
@@ -363,7 +365,7 @@ mod tests {
 
         // Null bitmap: bit 2 (email) and bit 4 (active) set.
         // Bit 2 = 0b00000100 = 4, bit 4 = 0b00010000 = 16. Combined = 20.
-        assert_eq!(tuple[2], 0b00010100);
+        assert_eq!(tuple[4], 0b00010100);
     }
 
     #[test]
@@ -417,8 +419,8 @@ mod tests {
 
         // Int64 → Float64 coercion should work.
         let tuple = encoder.encode(&[Value::Integer(42)]).unwrap();
-        // Header: 2 (version) + 1 (bitmap) = 3. Fixed: 8 bytes Float64.
-        let f = f64::from_le_bytes(tuple[3..11].try_into().unwrap());
+        // Header: 4 (version) + 1 (bitmap) = 5. Fixed: 8 bytes Float64.
+        let f = f64::from_le_bytes(tuple[5..13].try_into().unwrap());
         assert_eq!(f, 42.0);
     }
 
@@ -430,7 +432,7 @@ mod tests {
 
         let dt = NdbDateTime::from_micros(1_700_000_000_000_000);
         let tuple = encoder.encode(&[Value::DateTime(dt)]).unwrap();
-        let micros = i64::from_le_bytes(tuple[3..11].try_into().unwrap());
+        let micros = i64::from_le_bytes(tuple[5..13].try_into().unwrap());
         assert_eq!(micros, 1_700_000_000_000_000);
     }
 
@@ -451,9 +453,9 @@ mod tests {
         let tuple = encoder.encode(&values).unwrap();
 
         // Tuple must be longer than just the header + fixed section.
-        // Header: 2 (version) + 1 (bitmap) = 3. Fixed: 8 (Int64). Offset table: 8 (2 entries × u32).
+        // Header: 4 (version) + 1 (bitmap) = 5. Fixed: 8 (Int64). Offset table: 8 (2 entries × u32).
         // Variable data must be non-empty (MessagePack of the object).
-        let min_size = 3 + 8 + 8;
+        let min_size = 5 + 8 + 8;
         assert!(tuple.len() > min_size, "tuple should contain variable data");
 
         // Decode and verify the value roundtrips correctly.
@@ -472,8 +474,8 @@ mod tests {
         .unwrap();
         let encoder = TupleEncoder::new(&schema);
         let tuple = encoder.encode(&[Value::Integer(1), Value::Null]).unwrap();
-        // Null bitmap byte (index 2): bit 1 (column 1) should be set → 0b00000010 = 2.
-        assert_eq!(tuple[2] & 0b10, 0b10);
+        // Null bitmap byte (index 4): bit 1 (column 1) should be set → 0b00000010 = 2.
+        assert_eq!(tuple[4] & 0b10, 0b10);
     }
 
     #[test]
@@ -562,10 +564,10 @@ mod tests {
             Value::Float(3.0),
         ])];
         let tuple = encoder.encode(&vals).unwrap();
-        // Header: 3 bytes. Fixed: 12 bytes (3 × f32).
-        let f0 = f32::from_le_bytes(tuple[3..7].try_into().unwrap());
-        let f1 = f32::from_le_bytes(tuple[7..11].try_into().unwrap());
-        let f2 = f32::from_le_bytes(tuple[11..15].try_into().unwrap());
+        // Header: 5 bytes. Fixed: 12 bytes (3 × f32).
+        let f0 = f32::from_le_bytes(tuple[5..9].try_into().unwrap());
+        let f1 = f32::from_le_bytes(tuple[9..13].try_into().unwrap());
+        let f2 = f32::from_le_bytes(tuple[13..17].try_into().unwrap());
         assert_eq!((f0, f1, f2), (1.0, 2.0, 3.0));
     }
 }

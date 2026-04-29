@@ -26,7 +26,7 @@ pub struct TupleDecoder {
     var_table_index: Vec<Option<usize>>,
     /// Number of variable-length columns.
     var_count: usize,
-    /// Size of the tuple header: 2 (version) + null_bitmap_size.
+    /// Size of the tuple header: 4 (version) + null_bitmap_size.
     header_size: usize,
 }
 
@@ -50,7 +50,7 @@ impl TupleDecoder {
             }
         }
 
-        let header_size = 2 + schema.null_bitmap_size();
+        let header_size = 4 + schema.null_bitmap_size();
 
         Self {
             schema: schema.clone(),
@@ -63,14 +63,14 @@ impl TupleDecoder {
     }
 
     /// Read the schema version from a tuple's header.
-    pub fn schema_version(&self, tuple: &[u8]) -> Result<u16, StrictError> {
-        if tuple.len() < 2 {
+    pub fn schema_version(&self, tuple: &[u8]) -> Result<u32, StrictError> {
+        if tuple.len() < 4 {
             return Err(StrictError::TruncatedTuple {
-                expected: 2,
+                expected: 4,
                 got: tuple.len(),
             });
         }
-        Ok(u16::from_le_bytes([tuple[0], tuple[1]]))
+        Ok(u32::from_le_bytes([tuple[0], tuple[1], tuple[2], tuple[3]]))
     }
 
     /// Check whether column `col_idx` is null in the given tuple.
@@ -78,7 +78,7 @@ impl TupleDecoder {
         self.check_bounds(col_idx)?;
         self.check_min_size(tuple)?;
 
-        let bitmap_byte = tuple[2 + col_idx / 8];
+        let bitmap_byte = tuple[4 + col_idx / 8];
         Ok(bitmap_byte & (1 << (col_idx % 8)) != 0)
     }
 
@@ -347,7 +347,7 @@ impl TupleDecoder {
     }
 
     fn is_null_unchecked(&self, tuple: &[u8], col_idx: usize) -> bool {
-        let bitmap_byte = tuple[2 + col_idx / 8];
+        let bitmap_byte = tuple[4 + col_idx / 8];
         bitmap_byte & (1 << (col_idx % 8)) != 0
     }
 }
@@ -610,6 +610,32 @@ mod tests {
         ]);
 
         assert_eq!(decoder.schema_version(&tuple).unwrap(), 1);
+    }
+
+    #[test]
+    fn schema_version_u32_no_truncation() {
+        // Verify that a schema version above u16::MAX (0x0001_0000 = 65536) encodes
+        // and decodes without truncation — the u16 ceiling bug this test guards against.
+        let mut schema = crm_schema();
+        schema.version = 0x0001_0000;
+        let encoder = TupleEncoder::new(&schema);
+        let decoder = TupleDecoder::new(&schema);
+
+        let tuple = encoder
+            .encode(&[
+                Value::Integer(1),
+                Value::String("test".into()),
+                Value::Null,
+                Value::Decimal(rust_decimal::Decimal::ZERO),
+                Value::Null,
+            ])
+            .unwrap();
+
+        let decoded_version = decoder.schema_version(&tuple).unwrap();
+        assert_eq!(
+            decoded_version, 0x0001_0000u32,
+            "schema_version must not truncate to u16"
+        );
     }
 
     #[test]

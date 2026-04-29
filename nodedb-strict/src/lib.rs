@@ -7,7 +7,7 @@
 //! # Tuple Layout
 //!
 //! ```text
-//! [schema_version: u16 LE]
+//! [schema_version: u32 LE]
 //! [null_bitmap: ceil(N/8) bytes]
 //! [fixed_fields: concatenated fixed-size values, zeroed when null]
 //! [offset_table: (N_var + 1) × u32 LE — start offsets into variable data]
