@@ -63,8 +63,7 @@ fn encode_single_block(
             let null_count = valid_slice.iter().filter(|&&v| !v).count() as u32;
 
             let (min, max) = numeric_min_max_i64(slice, valid_slice);
-            let stats =
-                BlockStats::numeric(min as f64, max as f64, null_count, block_row_count as u32);
+            let stats = BlockStats::integer(min, max, null_count, block_row_count as u32);
 
             let encoded = encode_i64_with_validity(slice, valid_slice, codec)?;
             Ok((encoded, stats))
@@ -86,8 +85,7 @@ fn encode_single_block(
             let null_count = valid_slice.iter().filter(|&&v| !v).count() as u32;
 
             let (min, max) = numeric_min_max_i64(slice, valid_slice);
-            let stats =
-                BlockStats::numeric(min as f64, max as f64, null_count, block_row_count as u32);
+            let stats = BlockStats::integer(min, max, null_count, block_row_count as u32);
 
             let encoded = encode_i64_with_validity(slice, valid_slice, codec)?;
             Ok((encoded, stats))

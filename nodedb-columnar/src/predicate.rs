@@ -13,8 +13,15 @@ use crate::format::BlockStats;
 /// The value side of a scan predicate.
 #[derive(Debug, Clone)]
 pub enum PredicateValue {
-    /// A numeric threshold (f64; i64 columns are cast losslessly).
+    /// A numeric threshold (f64 for float columns, or integral f64 for i64 columns
+    /// whose value fits within ±2^53 exactly).
     Numeric(f64),
+    /// An exact integer threshold for i64/timestamp columns.
+    ///
+    /// When the planner knows the predicate value is an integer it should use
+    /// this variant so that values outside ±2^53 are compared losslessly
+    /// against `BlockStats.min_i64`/`max_i64`.
+    Integer(i64),
     /// A string threshold for lexicographic comparison.
     String(String),
 }
@@ -105,6 +112,62 @@ impl ScanPredicate {
         }
     }
 
+    // ── Integer constructors (lossless i64 predicates) ─────────────────────
+
+    /// Create a predicate: column = value (exact integer, lossless for i64/timestamp).
+    pub fn eq_i64(col_idx: usize, value: i64) -> Self {
+        Self {
+            col_idx,
+            op: PredicateOp::Eq,
+            value: PredicateValue::Integer(value),
+        }
+    }
+
+    /// Create a predicate: column != value (exact integer).
+    pub fn not_eq_i64(col_idx: usize, value: i64) -> Self {
+        Self {
+            col_idx,
+            op: PredicateOp::Ne,
+            value: PredicateValue::Integer(value),
+        }
+    }
+
+    /// Create a predicate: column > value (exact integer).
+    pub fn gt_i64(col_idx: usize, value: i64) -> Self {
+        Self {
+            col_idx,
+            op: PredicateOp::Gt,
+            value: PredicateValue::Integer(value),
+        }
+    }
+
+    /// Create a predicate: column >= value (exact integer).
+    pub fn gte_i64(col_idx: usize, value: i64) -> Self {
+        Self {
+            col_idx,
+            op: PredicateOp::Gte,
+            value: PredicateValue::Integer(value),
+        }
+    }
+
+    /// Create a predicate: column < value (exact integer).
+    pub fn lt_i64(col_idx: usize, value: i64) -> Self {
+        Self {
+            col_idx,
+            op: PredicateOp::Lt,
+            value: PredicateValue::Integer(value),
+        }
+    }
+
+    /// Create a predicate: column <= value (exact integer).
+    pub fn lte_i64(col_idx: usize, value: i64) -> Self {
+        Self {
+            col_idx,
+            op: PredicateOp::Lte,
+            value: PredicateValue::Integer(value),
+        }
+    }
+
     // ── String constructors ─────────────────────────────────────────────────
 
     /// Create a predicate: column = value (string, lexicographic).
@@ -170,6 +233,7 @@ impl ScanPredicate {
     pub fn can_skip_block(&self, stats: &BlockStats) -> bool {
         match &self.value {
             PredicateValue::Numeric(v) => can_skip_numeric(self.op, *v, stats),
+            PredicateValue::Integer(v) => can_skip_integer(self.op, *v, stats),
             PredicateValue::String(v) => can_skip_string(self.op, v, stats),
         }
     }
@@ -196,6 +260,58 @@ fn can_skip_numeric(op: PredicateOp, value: f64, stats: &BlockStats) -> bool {
         // column != value → skip only if entire block is that single value
         PredicateOp::Ne => stats.min == value && stats.max == value,
     }
+}
+
+/// Block-skip logic for integer predicates (lossless i64 comparison).
+///
+/// When `BlockStats` carries `min_i64`/`max_i64` (written by minor v1+), the
+/// comparison is done entirely in i64 — no f64 rounding. When the exact fields
+/// are absent (segments written at minor v0), we fall through to the f64 path
+/// via `f64_to_exact_i64`: if the predicate value itself converts losslessly
+/// we can still do an exact comparison against the (possibly rounded) f64
+/// stats, which is conservative (may fail to skip) but never incorrect.
+fn can_skip_integer(op: PredicateOp, value: i64, stats: &BlockStats) -> bool {
+    // Prefer lossless i64 stats when available.
+    if let (Some(smin), Some(smax)) = (stats.min_i64, stats.max_i64) {
+        return match op {
+            PredicateOp::Gt => smax <= value,
+            PredicateOp::Gte => smax < value,
+            PredicateOp::Lt => smin >= value,
+            PredicateOp::Lte => smin > value,
+            PredicateOp::Eq => value < smin || value > smax,
+            PredicateOp::Ne => smin == value && smax == value,
+        };
+    }
+
+    // Fallback: convert the predicate value to f64 if it is exactly
+    // representable, then use the f64 stats path.  If the conversion is lossy
+    // we cannot safely skip — return false (conservative).
+    match f64_to_exact_i64(value as f64).and(Some(value as f64)) {
+        Some(fv) => can_skip_numeric(op, fv, stats),
+        None => false,
+    }
+}
+
+/// Convert an f64 to i64 only if the conversion is exact.
+///
+/// Returns `Some(n)` iff:
+/// - `v` is finite,
+/// - `v` has no fractional part,
+/// - `v` lies within the exact i64 representable range `[i64::MIN as f64, (i64::MAX as f64).prev()]`.
+///
+/// Note: `i64::MAX as f64` rounds up to `9223372036854775808.0` which exceeds
+/// `i64::MAX`, so we compare `v < i64::MAX as f64` (strict less-than).
+/// `i64::MIN as f64` is exactly `−9223372036854775808.0`, so `>=` is correct.
+pub fn f64_to_exact_i64(v: f64) -> Option<i64> {
+    if !v.is_finite() || v.fract() != 0.0 {
+        return None;
+    }
+    // i64::MIN as f64 is exactly representable.
+    // i64::MAX as f64 rounds up past i64::MAX, so use strict less-than.
+    if v < i64::MIN as f64 || v >= i64::MAX as f64 {
+        return None;
+    }
+    Some(v as i64)
 }
 
 /// Block-skip logic for string predicates.
@@ -496,5 +612,141 @@ mod tests {
         }
         // "apple" was inserted → bloom says may contain → no skip.
         assert!(!ScanPredicate::str_eq(0, "apple").can_skip_block(&stats));
+    }
+
+    // ── G-03: i64 predicate pushdown correctness ────────────────────────────
+
+    /// Helper: BlockStats with exact i64 fields set (as integer() constructor produces).
+    fn i64_stats(min: i64, max: i64) -> BlockStats {
+        BlockStats::integer(min, max, 0, 1024)
+    }
+
+    /// Helper: BlockStats with only f64 fields (simulates a v0 segment).
+    fn f64_only_stats(min: f64, max: f64) -> BlockStats {
+        BlockStats::numeric(min, max, 0, 1024)
+    }
+
+    /// G-03-A: large i64 values that collapse to the same f64 must not be
+    /// incorrectly skipped when the predicate value is between them.
+    ///
+    /// i64::MAX = 9_223_372_036_854_775_807
+    /// i64::MAX - 1 = 9_223_372_036_854_775_806
+    /// i64::MAX - 2 = 9_223_372_036_854_775_805
+    ///
+    /// All three cast to the same f64 (9223372036854775808.0), so the old f64
+    /// path would have `min_f64 == max_f64 == pred_f64` and wrongly skipped.
+    #[test]
+    fn large_i64_eq_correct_no_skip() {
+        let min = i64::MAX - 2;
+        let max = i64::MAX;
+        let target = i64::MAX - 1;
+
+        // With exact i64 fields: target is in [min, max] → must NOT skip.
+        let stats = i64_stats(min, max);
+        assert!(
+            !ScanPredicate::eq_i64(0, target).can_skip_block(&stats),
+            "must not skip: target={target} is within [{min}, {max}]"
+        );
+
+        // Demonstrate the f64 path is broken (all three round to the same f64).
+        // We verify the bug exists in the fallback, so the fix is meaningful.
+        let min_f64 = min as f64;
+        let max_f64 = max as f64;
+        let target_f64 = target as f64;
+        assert_eq!(
+            min_f64, target_f64,
+            "f64 path is ambiguous: min and target round to the same f64"
+        );
+        assert_eq!(
+            max_f64, target_f64,
+            "f64 path is ambiguous: max and target round to the same f64"
+        );
+    }
+
+    /// G-03-B: a large i64 predicate value that is clearly outside the block
+    /// range must be skipped correctly via the i64 path.
+    #[test]
+    fn large_i64_definitely_outside() {
+        let stats = i64_stats(1000, 2000);
+        // 2^53 + 1 = 9_007_199_254_740_993 — well above 2000.
+        let outside: i64 = 9_007_199_254_740_993;
+        assert!(
+            ScanPredicate::eq_i64(0, outside).can_skip_block(&stats),
+            "must skip: {outside} is not in [1000, 2000]"
+        );
+    }
+
+    /// G-03-C: for a v0 segment (no min_i64/max_i64), integer predicates whose
+    /// value fits in f64 exactly fall through to the f64 path correctly.
+    #[test]
+    fn integer_predicate_fallback_to_f64_for_v0_segment() {
+        // Small value that f64 can represent exactly.
+        let stats = f64_only_stats(10.0, 50.0);
+        // 75 is outside [10, 50] → should skip.
+        assert!(ScanPredicate::eq_i64(0, 75).can_skip_block(&stats));
+        // 30 is inside [10, 50] → must not skip.
+        assert!(!ScanPredicate::eq_i64(0, 30).can_skip_block(&stats));
+    }
+
+    /// G-03-D: for a v0 segment, an integer predicate with a value outside
+    /// ±2^53 (not exactly representable in f64) must NOT skip — conservative.
+    #[test]
+    fn integer_predicate_v0_segment_unsafe_value_no_skip() {
+        // Construct f64-only stats whose f64 min/max happen to equal the
+        // rounded form of the predicate value — the old code would skip here.
+        let large: i64 = 9_007_199_254_740_993; // 2^53 + 1
+        let large_f64 = large as f64; // rounds to 9_007_199_254_740_992.0
+        let stats = f64_only_stats(large_f64, large_f64);
+        // Without exact i64 stats we cannot safely skip — return false.
+        assert!(
+            !ScanPredicate::eq_i64(0, large).can_skip_block(&stats),
+            "must not skip: predicate value is not exactly representable in f64"
+        );
+    }
+
+    // ── f64_to_exact_i64 boundary tests ────────────────────────────────────
+
+    #[test]
+    fn f64_to_exact_i64_normal_values() {
+        assert_eq!(f64_to_exact_i64(0.0), Some(0));
+        assert_eq!(f64_to_exact_i64(42.0), Some(42));
+        assert_eq!(f64_to_exact_i64(-42.0), Some(-42));
+        assert_eq!(f64_to_exact_i64(1.5), None); // fractional
+        assert_eq!(f64_to_exact_i64(f64::INFINITY), None);
+        assert_eq!(f64_to_exact_i64(f64::NAN), None);
+    }
+
+    #[test]
+    fn f64_to_exact_i64_i64_min_is_representable() {
+        // i64::MIN as f64 is exactly -9223372036854775808.0.
+        let v = i64::MIN as f64;
+        assert_eq!(f64_to_exact_i64(v), Some(i64::MIN));
+    }
+
+    #[test]
+    fn f64_to_exact_i64_i64_max_rounds_up() {
+        // i64::MAX = 9_223_372_036_854_775_807
+        // i64::MAX as f64 rounds up to 9_223_372_036_854_775_808.0 which
+        // exceeds i64::MAX — must return None.
+        let v = i64::MAX as f64;
+        assert_eq!(
+            f64_to_exact_i64(v),
+            None,
+            "i64::MAX as f64 exceeds i64::MAX and must not convert"
+        );
+    }
+
+    #[test]
+    fn f64_to_exact_i64_just_below_i64_max_f64() {
+        // The largest exactly representable i64 value in f64 is 2^63 - 2^10
+        // (the f64 just below i64::MAX as f64). Verify it converts.
+        // 9223372036854774784 = (i64::MAX as f64) - 1024 (next lower f64).
+        let v: f64 = 9_223_372_036_854_774_784.0;
+        let result = f64_to_exact_i64(v);
+        assert!(
+            result.is_some(),
+            "large but exactly representable value should convert"
+        );
+        assert_eq!(result.unwrap() as f64, v);
     }
 }

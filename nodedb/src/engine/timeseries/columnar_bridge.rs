@@ -166,9 +166,12 @@ pub fn scan_shared_segment(
 
     // Build predicates for block-level time-range skip.
     // Timestamp blocks with max < start or min > end can be skipped.
+    // Use the lossless i64 constructors so that timestamps outside ±2^53
+    // (which don't round-trip through f64 exactly) are compared correctly
+    // against the exact min_i64/max_i64 fields written by BlockStats::integer().
     let predicates = vec![
-        ScanPredicate::gte(ts_col_idx, start_ms as f64),
-        ScanPredicate::lte(ts_col_idx, end_ms as f64),
+        ScanPredicate::gte_i64(ts_col_idx, start_ms),
+        ScanPredicate::lte_i64(ts_col_idx, end_ms),
     ];
 
     // Read timestamp column with predicate pushdown.
@@ -450,5 +453,86 @@ mod tests {
             }
             _ => panic!("expected Float64 for value column"),
         }
+    }
+
+    // -- G-03: lossless i64 predicate pushdown for large timestamps -----------
+
+    /// Write a segment whose timestamp column uses values far above 2^53.
+    ///
+    /// These values are not exactly representable in f64, so the old
+    /// `ScanPredicate::gte(ts_col_idx, start_ms as f64)` path would round
+    /// the predicate and produce incorrect block-skip decisions.
+    fn write_large_ts_segment(start_ts: i64, count: usize) -> Vec<u8> {
+        let mut mt = ColumnarMemtable::new_metric(default_config());
+        for i in 0..count {
+            let ts = start_ts + i as i64;
+            let result = mt.ingest_metric(
+                (i % 3) as u64,
+                MetricSample {
+                    timestamp_ms: ts,
+                    value: i as f64,
+                },
+            );
+            assert_ne!(result, nodedb_types::timeseries::IngestResult::Rejected);
+        }
+        let drain = mt.drain();
+        write_ts_drain_as_segment(&drain).expect("write large-ts segment")
+    }
+
+    /// G-03-E: end-to-end block skip with timestamps outside ±2^53.
+    ///
+    /// The segment contains 50 rows with timestamps in
+    /// [LARGE_BASE, LARGE_BASE + 49]. We query with a range that is entirely
+    /// above the segment's max timestamp. The block must be skipped (no valid
+    /// rows returned).
+    ///
+    /// Without the fix (`start_ms as f64` cast), the predicate value would
+    /// round to the same f64 as the block's min/max and the skip decision
+    /// could be wrong.
+    #[test]
+    fn large_ts_block_skipped_when_range_above_segment() {
+        // 2^53 + 1_000_000 — well outside the exact f64 representable range.
+        const LARGE_BASE: i64 = 9_007_199_255_740_993_i64; // 2^53 + 1_000_000
+
+        let segment = write_large_ts_segment(LARGE_BASE, 50);
+
+        // Query a range entirely above the segment: [LARGE_BASE + 100, LARGE_BASE + 200].
+        // The block contains [LARGE_BASE, LARGE_BASE + 49], so it should be skipped.
+        let query_start = LARGE_BASE + 100;
+        let query_end = LARGE_BASE + 200;
+        let (ts, vals) =
+            scan_shared_segment_filtered(&segment, 0, 1, query_start, query_end).expect("scan");
+
+        assert!(
+            ts.is_empty(),
+            "expected no rows: block [{LARGE_BASE}, {}] is below query [{query_start}, {query_end}]",
+            LARGE_BASE + 49
+        );
+        assert!(vals.is_empty());
+    }
+
+    /// G-03-F: end-to-end block NOT skipped when range overlaps large timestamps.
+    ///
+    /// The segment contains rows with timestamps in [LARGE_BASE, LARGE_BASE + 49].
+    /// We query for [LARGE_BASE + 10, LARGE_BASE + 20]. The block must NOT be
+    /// skipped, and the filtered scan must return exactly 11 rows.
+    #[test]
+    fn large_ts_block_not_skipped_when_range_overlaps_segment() {
+        const LARGE_BASE: i64 = 9_007_199_255_740_993_i64;
+
+        let segment = write_large_ts_segment(LARGE_BASE, 50);
+
+        let query_start = LARGE_BASE + 10;
+        let query_end = LARGE_BASE + 20;
+        let (ts, _) =
+            scan_shared_segment_filtered(&segment, 0, 1, query_start, query_end).expect("scan");
+
+        assert_eq!(
+            ts.len(),
+            11,
+            "expected 11 rows for ts in [{query_start}, {query_end}]"
+        );
+        assert_eq!(ts[0], query_start);
+        assert_eq!(ts[10], query_end);
     }
 }

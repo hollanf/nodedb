@@ -15,7 +15,12 @@ pub const VERSION_MAJOR: u8 = 1;
 
 /// Current format minor version. Readers tolerate segments with same major
 /// but higher minor (unknown footer fields are ignored).
-pub const VERSION_MINOR: u8 = 0;
+///
+/// Changelog:
+///   0 → 1: `BlockStats` gained `min_i64`/`max_i64` fields for lossless
+///           integer predicate pushdown. Fields are optional with serde
+///           `default`; readers at minor 0 simply see `None` for both.
+pub const VERSION_MINOR: u8 = 1;
 
 /// Endianness marker: 0x01 = little-endian (always LE for NodeDB).
 pub const ENDIANNESS_LE: u8 = 0x01;
@@ -99,9 +104,12 @@ impl SegmentHeader {
 #[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct BlockStats {
     /// Minimum value in this block (encoded as f64 for uniformity;
-    /// i64 values are cast losslessly, strings use NaN).
+    /// i64 values are cast losslessly for small values; strings use NaN).
+    ///
+    /// For i64/timestamp columns, prefer `min_i64` when available — f64 cannot
+    /// represent all i64 values exactly (values outside ±2^53 may be rounded).
     pub min: f64,
-    /// Maximum value in this block.
+    /// Maximum value in this block (see `min` for caveats on i64 precision).
     pub max: f64,
     /// Number of null values in this block.
     pub null_count: u32,
@@ -120,6 +128,16 @@ pub struct BlockStats {
     /// `None` when there are no non-null string values in the block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bloom: Option<Vec<u8>>,
+    /// Exact integer minimum for i64/timestamp columns.
+    ///
+    /// Set alongside `min` (which holds the lossy f64 cast) so that predicates
+    /// with integral values outside ±2^53 can compare losslessly. `None` for
+    /// all non-integer column types and for segments written before minor v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_i64: Option<i64>,
+    /// Exact integer maximum for i64/timestamp columns (see `min_i64`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_i64: Option<i64>,
 }
 
 impl BlockStats {
@@ -133,6 +151,27 @@ impl BlockStats {
             str_min: None,
             str_max: None,
             bloom: None,
+            min_i64: None,
+            max_i64: None,
+        }
+    }
+
+    /// Create stats for an i64 or timestamp column block.
+    ///
+    /// Populates both the lossless `min_i64`/`max_i64` fields AND the lossy
+    /// `min`/`max` f64 fields so that the f64 path remains a valid fallback
+    /// for non-integral predicate values.
+    pub fn integer(min: i64, max: i64, null_count: u32, row_count: u32) -> Self {
+        Self {
+            min: min as f64,
+            max: max as f64,
+            null_count,
+            row_count,
+            str_min: None,
+            str_max: None,
+            bloom: None,
+            min_i64: Some(min),
+            max_i64: Some(max),
         }
     }
 
@@ -146,6 +185,8 @@ impl BlockStats {
             str_min: None,
             str_max: None,
             bloom: None,
+            min_i64: None,
+            max_i64: None,
         }
     }
 
@@ -165,6 +206,8 @@ impl BlockStats {
             str_min,
             str_max,
             bloom,
+            min_i64: None,
+            max_i64: None,
         }
     }
 }

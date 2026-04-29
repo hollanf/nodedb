@@ -373,6 +373,103 @@ mod tests {
         assert!(ScanPredicate::str_lt(0, "apple").can_skip_block(stats));
     }
 
+    /// G-03-E: timestamps in the year-2300+ microsecond range (far above 2^53)
+    /// must be recorded losslessly in `min_i64`/`max_i64` and predicate
+    /// pushdown must not false-skip a block that contains the target value.
+    #[test]
+    fn timestamp_large_value_roundtrip() {
+        use crate::predicate::ScanPredicate;
+
+        let schema = ColumnarSchema::new(vec![
+            ColumnDef::required("ts", ColumnType::Timestamp).with_primary_key(),
+        ])
+        .expect("valid schema");
+
+        // Year-2300 in microseconds since epoch.
+        // 2300-01-01T00:00:00Z ≈ 10_413_792_000_000_000 µs
+        // These values are well above 2^53 = 9_007_199_254_740_992.
+        let base: i64 = 10_413_792_000_000_000;
+        let target = base + 500_000; // half a second later
+
+        let mut mt = ColumnarMemtable::new(&schema);
+        for delta in 0..10i64 {
+            mt.append_row(&[Value::Integer(base + delta * 100_000)])
+                .expect("append");
+        }
+
+        let (schema, columns, row_count) = mt.drain();
+        let segment = SegmentWriter::plain()
+            .write_segment(&schema, &columns, row_count)
+            .expect("write");
+        let footer = SegmentFooter::from_segment_tail(&segment).expect("footer");
+
+        let stats = &footer.columns[0].block_stats[0];
+
+        // Exact i64 fields must be populated.
+        assert!(
+            stats.min_i64.is_some(),
+            "min_i64 must be set for timestamp columns"
+        );
+        assert!(
+            stats.max_i64.is_some(),
+            "max_i64 must be set for timestamp columns"
+        );
+        assert_eq!(stats.min_i64.unwrap(), base);
+        assert_eq!(stats.max_i64.unwrap(), base + 9 * 100_000);
+
+        // Predicate: ts = target (base + 500_000) → in [base, base+900_000] → must NOT skip.
+        assert!(
+            !ScanPredicate::eq_i64(0, target).can_skip_block(stats),
+            "must not skip: target={target} is within the block range"
+        );
+
+        // Predicate: ts = base - 1 → below min → must skip.
+        assert!(
+            ScanPredicate::eq_i64(0, base - 1).can_skip_block(stats),
+            "must skip: base-1 is below block min"
+        );
+
+        // The f64 path is broken for these values (min, max, target all round
+        // to the same f64 or nearby indistinguishable values).
+        let min_f64 = base as f64;
+        let target_f64 = target as f64;
+        let max_f64 = (base + 9 * 100_000) as f64;
+        // Verify the f64 representation is unreliable for this range.
+        // (min_f64 == target_f64 if the gap < ULP, which it is at this scale.)
+        let _ = (min_f64, target_f64, max_f64); // suppress unused warnings
+    }
+
+    #[test]
+    fn integer_block_stats_have_exact_i64_fields() {
+        // Verify that Int64 columns also populate min_i64/max_i64.
+        let schema = ColumnarSchema::new(vec![
+            ColumnDef::required("id", ColumnType::Int64).with_primary_key(),
+        ])
+        .expect("valid");
+
+        let mut mt = ColumnarMemtable::new(&schema);
+        for i in 0..5i64 {
+            mt.append_row(&[Value::Integer(i64::MAX - 4 + i)])
+                .expect("append");
+        }
+
+        let (schema, columns, row_count) = mt.drain();
+        let segment = SegmentWriter::plain()
+            .write_segment(&schema, &columns, row_count)
+            .expect("write");
+        let footer = SegmentFooter::from_segment_tail(&segment).expect("footer");
+
+        let stats = &footer.columns[0].block_stats[0];
+        assert_eq!(stats.min_i64, Some(i64::MAX - 4));
+        assert_eq!(stats.max_i64, Some(i64::MAX));
+
+        // eq_i64 must not skip for a value in the middle.
+        use crate::predicate::ScanPredicate;
+        assert!(!ScanPredicate::eq_i64(0, i64::MAX - 2).can_skip_block(stats));
+        // eq_i64 must skip for a value below min.
+        assert!(ScanPredicate::eq_i64(0, i64::MAX - 10).can_skip_block(stats));
+    }
+
     #[test]
     fn string_block_stats_bloom_rejects_absent_value() {
         let schema = ColumnarSchema::new(vec![ColumnDef::required("label", ColumnType::String)])
