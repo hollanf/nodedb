@@ -147,7 +147,7 @@ pub async fn start_cluster(
         let is_seed = config.seed_nodes.contains(&config.listen_addr);
         if is_seed && should_bootstrap(config, &transport).await {
             lifecycle.to_bootstrapping();
-            bootstrap(config, catalog).inspect_err(|e| {
+            bootstrap(config, catalog, transport.local_spki_pin()).inspect_err(|e| {
                 lifecycle.to_failed(format!("bootstrap failed: {e}"));
             })?
         } else {

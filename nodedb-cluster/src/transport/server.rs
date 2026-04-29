@@ -13,6 +13,7 @@
 //! 2. verifies the MAC against the cluster MAC key held by
 //!    [`AuthContext`],
 //! 3. rejects replays via the per-peer sliding window,
+//! 3b. verifies the TLS peer certificate identity against the topology pin,
 //! 4. decodes the inner frame and dispatches to the handler,
 //! 5. wraps the handler's response in its own authenticated envelope
 //!    with `from_node_id = local_node_id` and a fresh outbound seq for
@@ -30,12 +31,45 @@
 
 use std::sync::Arc;
 
+use rustls::pki_types::CertificateDer;
 use tokio::sync::watch;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::error::{ClusterError, Result};
 use crate::rpc_codec::{self, MAX_RPC_PAYLOAD_SIZE, RaftRpc, auth_envelope};
+use crate::topology::NodeInfo;
 use crate::transport::auth_context::AuthContext;
+use crate::transport::peer_identity_verifier::{
+    IDENTITY_MISMATCH_QUIC_ERROR, VerifyOutcome, verify_peer_identity,
+};
+
+/// Topology-decoupled lookup for per-node identity pins.
+///
+/// The server needs to check the TLS peer cert against the pinned
+/// `NodeInfo` for the MAC-verified `from_node_id`, but it must not
+/// take a direct dependency on `ClusterState` or `ClusterTopology`
+/// (which would create a circular crate dependency and would be hard
+/// to test).  Implementors wrap whatever topology store they have.
+///
+/// The `NoopIdentityStore` below is used in insecure-transport mode
+/// and in unit tests that do not exercise the identity layer.
+pub trait PeerIdentityStore: Send + Sync + 'static {
+    /// Return the `NodeInfo` for the given node_id, or `None` if
+    /// the node is not in the topology (treat as bootstrap window).
+    fn get_node_info(&self, node_id: u64) -> Option<NodeInfo>;
+}
+
+/// Always returns `None`, accepting every peer as a bootstrap window.
+///
+/// Used when mTLS is disabled (insecure transport) or in unit tests
+/// that focus on HMAC / codec layers rather than identity binding.
+pub struct NoopIdentityStore;
+
+impl PeerIdentityStore for NoopIdentityStore {
+    fn get_node_info(&self, _node_id: u64) -> Option<NodeInfo> {
+        None
+    }
+}
 
 /// Trait for handling incoming Raft RPCs.
 ///
@@ -46,16 +80,30 @@ pub trait RaftRpcHandler: Send + Sync + 'static {
     -> impl std::future::Future<Output = Result<RaftRpc>> + Send;
 }
 
+/// Extract the peer's leaf certificate DER bytes from a QUIC connection.
+///
+/// Returns `None` if the peer did not present a certificate (insecure
+/// transport) or if the runtime-type downcast fails.
+fn peer_leaf_cert_der(conn: &quinn::Connection) -> Option<Vec<u8>> {
+    let identity = conn.peer_identity()?;
+    let certs: &Vec<CertificateDer<'static>> = identity.downcast_ref()?;
+    certs.first().map(|c| c.as_ref().to_vec())
+}
+
 /// Handle all bidi streams on a single connection.
 ///
 /// Exits cleanly (Ok) on shutdown, on normal connection close,
 /// or on unrecoverable transport error.
-pub(crate) async fn handle_connection<H: RaftRpcHandler>(
+pub(crate) async fn handle_connection<H: RaftRpcHandler, S: PeerIdentityStore>(
     conn: quinn::Connection,
     handler: Arc<H>,
     auth: Arc<AuthContext>,
+    identity_store: Arc<S>,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
+    // Extract the peer cert once per connection; it does not change.
+    let peer_cert_der: Option<Vec<u8>> = peer_leaf_cert_der(&conn);
+
     loop {
         let accepted = tokio::select! {
             biased;
@@ -82,8 +130,22 @@ pub(crate) async fn handle_connection<H: RaftRpcHandler>(
         let h = handler.clone();
         let stream_shutdown = shutdown.clone();
         let stream_auth = auth.clone();
+        let stream_id_store = identity_store.clone();
+        let stream_cert = peer_cert_der.clone();
+        let conn_clone = conn.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(h, stream_auth, send, recv, stream_shutdown).await {
+            if let Err(e) = handle_stream(
+                h,
+                stream_auth,
+                stream_id_store,
+                stream_cert,
+                conn_clone,
+                send,
+                recv,
+                stream_shutdown,
+            )
+            .await
+            {
                 debug!(error = %e, "raft RPC stream error");
             }
         });
@@ -94,9 +156,13 @@ pub(crate) async fn handle_connection<H: RaftRpcHandler>(
 ///
 /// Every long-lived await is racing a shutdown signal — see the
 /// module docstring for the rationale.
-async fn handle_stream<H: RaftRpcHandler>(
+#[allow(clippy::too_many_arguments)]
+async fn handle_stream<H: RaftRpcHandler, S: PeerIdentityStore>(
     handler: Arc<H>,
     auth: Arc<AuthContext>,
+    identity_store: Arc<S>,
+    peer_cert_der: Option<Vec<u8>>,
+    conn: quinn::Connection,
     mut send: quinn::SendStream,
     mut recv: quinn::RecvStream,
     mut shutdown: watch::Receiver<bool>,
@@ -119,11 +185,57 @@ async fn handle_stream<H: RaftRpcHandler>(
             auth.peer_seq_in.accept(fields.from_node_id, fields.seq)?;
         }
 
-        // 3. Decode inner RPC and hand to handler.
+        // 3b. Peer identity check — binds the MAC-verified node_id to the
+        //     TLS certificate.  Self-addressed frames skip the check by the
+        //     same reasoning as the replay window above.
+        if fields.from_node_id != auth.local_node_id {
+            if let Some(cert_der) = &peer_cert_der {
+                let node_info = identity_store.get_node_info(fields.from_node_id);
+                match node_info {
+                    Some(ref info) => match verify_peer_identity(info, cert_der) {
+                        VerifyOutcome::Accepted { method } => {
+                            debug!(
+                                node_id = fields.from_node_id,
+                                ?method,
+                                "peer identity verified"
+                            );
+                        }
+                        VerifyOutcome::BootstrapAccepted => {
+                            warn!(
+                                node_id = fields.from_node_id,
+                                "peer identity not pinned — bootstrap window accepted"
+                            );
+                        }
+                        VerifyOutcome::Rejected => {
+                            warn!(
+                                node_id = fields.from_node_id,
+                                "peer identity mismatch — closing connection"
+                            );
+                            conn.close(IDENTITY_MISMATCH_QUIC_ERROR, b"peer identity mismatch");
+                            return Err(ClusterError::Transport {
+                                detail: format!(
+                                    "peer identity mismatch for node {}",
+                                    fields.from_node_id
+                                ),
+                            });
+                        }
+                    },
+                    None => {
+                        // Node not yet in topology — bootstrap window.
+                        warn!(
+                            node_id = fields.from_node_id,
+                            "node not in topology — bootstrap window accepted"
+                        );
+                    }
+                }
+            }
+        }
+
+        // 4. Decode inner RPC and hand to handler.
         let request = rpc_codec::decode(inner_frame)?;
         let response = handler.handle_rpc(request).await?;
 
-        // 4. Wrap the response in its own envelope. `from = local_node_id`,
+        // 5. Wrap the response in its own envelope. `from = local_node_id`,
         //    `seq = next outbound seq scoped to the caller`.
         let response_inner = rpc_codec::encode(&response)?;
         let response_seq = auth.peer_seq_out.next();

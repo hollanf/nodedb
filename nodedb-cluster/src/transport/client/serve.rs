@@ -5,12 +5,26 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::error::Result;
-use crate::transport::server::{self, RaftRpcHandler};
+use crate::transport::server::{self, NoopIdentityStore, PeerIdentityStore, RaftRpcHandler};
 
 use super::transport::NexarTransport;
 
 impl NexarTransport {
-    /// Run the inbound RPC accept loop until shutdown.
+    /// Run the inbound RPC accept loop until shutdown using `NoopIdentityStore`.
+    ///
+    /// Convenience wrapper for insecure transport / tests.  For mTLS
+    /// deployments that enforce per-node identity, use
+    /// [`serve_with_identity`].
+    pub async fn serve<H: RaftRpcHandler>(
+        &self,
+        handler: Arc<H>,
+        shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<()> {
+        self.serve_with_identity(handler, Arc::new(NoopIdentityStore), shutdown)
+            .await
+    }
+
+    /// Run the inbound RPC accept loop with a caller-supplied identity store.
     ///
     /// For each incoming connection, spawns a task that accepts bidi streams
     /// and dispatches RPCs to the handler. The `shutdown` watch receiver is
@@ -22,9 +36,10 @@ impl NexarTransport {
     /// `quinn::Connection::accept_bi` / `quinn::RecvStream::read_exact`,
     /// pinning the handler Arc (and any redb file handles it holds) for the
     /// lifetime of the runtime.
-    pub async fn serve<H: RaftRpcHandler>(
+    pub async fn serve_with_identity<H: RaftRpcHandler, S: PeerIdentityStore>(
         &self,
         handler: Arc<H>,
+        identity_store: Arc<S>,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> Result<()> {
         info!(node_id = self.node_id, addr = %self.local_addr(), "raft RPC server started");
@@ -39,9 +54,10 @@ impl NexarTransport {
                             let h = handler.clone();
                             let conn_shutdown = shutdown.clone();
                             let conn_auth = self.auth().clone();
+                            let conn_id_store = identity_store.clone();
                             tokio::spawn(async move {
                                 if let Err(e) =
-                                    server::handle_connection(conn, h, conn_auth, conn_shutdown)
+                                    server::handle_connection(conn, h, conn_auth, conn_id_store, conn_shutdown)
                                         .await
                                 {
                                     debug!(%peer, error = %e, "raft connection ended");

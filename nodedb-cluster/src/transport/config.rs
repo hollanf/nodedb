@@ -161,6 +161,11 @@ pub struct TlsCredentials {
     /// via the join RPC (L.4). Treat as key material — never log, always
     /// 0600 at rest.
     pub cluster_secret: [u8; 32],
+    /// SHA-256 digest of this node's own SubjectPublicKeyInfo DER blob.
+    /// Computed from `cert` at issuance time by [`issue_leaf_for_sans`].
+    /// Stable across cert renewals that reuse the same key-pair; changes on
+    /// key rotation.  Transmitted in `JoinRequest` so peers can pin us.
+    pub spki_pin: [u8; 32],
 }
 
 /// Build a QUIC server config with mutual TLS (production mode).
@@ -338,6 +343,8 @@ pub fn issue_leaf_for_sans(
     use rand::RngCore;
     let mut cluster_secret = [0u8; 32];
     rand::rng().fill_bytes(&mut cluster_secret);
+    let spki_pin = crate::transport::peer_identity_verifier::spki_pin_from_cert_der(cert.as_ref())
+        .unwrap_or([0u8; 32]);
     Ok(TlsCredentials {
         cert,
         key,
@@ -345,6 +352,7 @@ pub fn issue_leaf_for_sans(
         additional_ca_certs: Vec::new(),
         crls: Vec::new(),
         cluster_secret,
+        spki_pin,
     })
 }
 

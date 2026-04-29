@@ -15,6 +15,14 @@ use std::net::SocketAddr;
 /// the types it stamps.
 pub const CLUSTER_WIRE_FORMAT_VERSION: u16 = 4;
 
+fn default_spiffe_id() -> Option<String> {
+    None
+}
+
+fn default_spki_pin() -> Option<[u8; 32]> {
+    None
+}
+
 fn default_wire_version() -> u16 {
     // Records persisted by an older build that did not carry a
     // `wire_version` field default to `1` — the minimum supported
@@ -110,6 +118,18 @@ pub struct NodeInfo {
     /// topology.
     #[serde(default = "default_wire_version")]
     pub wire_version: u16,
+    /// SPIFFE URI SAN (e.g. `spiffe://cluster.local/node/1`) extracted from
+    /// the node's mTLS leaf certificate at join time.  `None` for nodes that
+    /// joined before SPIFFE identity was introduced or that are running in
+    /// insecure transport mode.
+    #[serde(default = "default_spiffe_id")]
+    pub spiffe_id: Option<String>,
+    /// SHA-256 digest of the node's SubjectPublicKeyInfo DER blob, pinned at
+    /// join time.  Stable across cert renewals that reuse the same key-pair;
+    /// changes on key rotation.  `None` until the node has joined and
+    /// transmitted its identity fields.
+    #[serde(default = "default_spki_pin")]
+    pub spki_pin: Option<[u8; 32]>,
 }
 
 impl NodeInfo {
@@ -123,6 +143,8 @@ impl NodeInfo {
             state,
             raft_groups: Vec::new(),
             wire_version: CLUSTER_WIRE_FORMAT_VERSION,
+            spiffe_id: None,
+            spki_pin: None,
         }
     }
 
@@ -131,6 +153,18 @@ impl NodeInfo {
     /// `NodeInfo::new(id, addr, state).with_wire_version(remote_v)`.
     pub fn with_wire_version(mut self, wire_version: u16) -> Self {
         self.wire_version = wire_version;
+        self
+    }
+
+    /// Set the SPIFFE URI SAN for this node. Builder-style.
+    pub fn with_spiffe_id(mut self, spiffe_id: Option<String>) -> Self {
+        self.spiffe_id = spiffe_id;
+        self
+    }
+
+    /// Set the SPKI fingerprint pin for this node. Builder-style.
+    pub fn with_spki_pin(mut self, spki_pin: Option<[u8; 32]>) -> Self {
+        self.spki_pin = spki_pin;
         self
     }
 

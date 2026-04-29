@@ -121,7 +121,7 @@ mod tests {
         };
 
         // Bootstrap first.
-        let _ = bootstrap(&config, &catalog).unwrap();
+        let _ = bootstrap(&config, &catalog, None).unwrap();
 
         // Create transport for restart.
         use crate::transport::credentials::TransportCredentials;

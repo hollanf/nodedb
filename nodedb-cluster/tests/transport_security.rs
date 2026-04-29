@@ -39,7 +39,7 @@ fn insecure_counter_guard() -> &'static Mutex<()> {
 use nodedb_cluster::transport::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use nodedb_cluster::{
     MacKey, NexarTransport, RaftRpcHandler, TlsCredentials, TransportCredentials,
-    generate_node_credentials, insecure_transport_count,
+    generate_node_credentials, insecure_transport_count, spki_pin_from_cert_der,
 };
 use nodedb_raft::message::{AppendEntriesRequest, AppendEntriesResponse, RequestVoteResponse};
 use nodedb_raft::transport::RaftTransport;
@@ -99,6 +99,7 @@ fn creds_signed_by(
 ) -> TlsCredentials {
     let (cert, key) = ca.issue_cert(san).unwrap();
     let ca_cert = ca.cert_der();
+    let spki_pin = spki_pin_from_cert_der(cert.as_ref()).unwrap_or([0u8; 32]);
     TlsCredentials {
         cert,
         key,
@@ -106,6 +107,7 @@ fn creds_signed_by(
         additional_ca_certs: Vec::new(),
         crls: Vec::new(),
         cluster_secret,
+        spki_pin,
     }
 }
 
@@ -234,7 +236,9 @@ async fn l1_insecure_server_rejected_by_mtls_client() {
 #[tokio::test]
 async fn l2_mismatched_mac_key_rejects_rpcs() {
     let (ca, mut server_creds) = generate_node_credentials("nodedb").unwrap();
-    let (client_cert, client_key) = cert_of(&creds_signed_by(&ca, "nodedb", [0u8; 32]));
+    let tmp = creds_signed_by(&ca, "nodedb", [0u8; 32]);
+    let (client_cert, client_key) = cert_of(&tmp);
+    let client_spki_pin = tmp.spki_pin;
     let client_creds = TlsCredentials {
         cert: client_cert,
         key: client_key,
@@ -242,6 +246,7 @@ async fn l2_mismatched_mac_key_rejects_rpcs() {
         additional_ca_certs: Vec::new(),
         crls: Vec::new(),
         cluster_secret: [0xAAu8; 32],
+        spki_pin: client_spki_pin,
     };
     // Deliberately mismatched cluster secrets.
     server_creds.cluster_secret = [0x55u8; 32];
@@ -379,6 +384,7 @@ fn debug_on_transport_credentials_redacts() {
         additional_ca_certs: Vec::new(),
         crls: Vec::new(),
         cluster_secret: [0xAB; 32],
+        spki_pin: [0u8; 32],
     };
     let tc = TransportCredentials::Mtls(creds);
     let s = format!("{tc:?}");

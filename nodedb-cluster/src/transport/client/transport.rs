@@ -40,6 +40,10 @@ pub struct NexarTransport {
     /// MAC key + per-peer sequence trackers. Shared with every spawned
     /// per-connection / per-stream task via `Arc::clone`.
     pub(super) auth: Arc<AuthContext>,
+    /// SPKI pin for this node's own TLS leaf certificate.  `None` when
+    /// running in insecure transport mode.  Transmitted in `JoinRequest`
+    /// so remote peers can pin our identity.
+    local_spki_pin: Option<[u8; 32]>,
 }
 
 impl NexarTransport {
@@ -105,6 +109,11 @@ impl NexarTransport {
             }
         };
 
+        let local_spki_pin = match &creds {
+            TransportCredentials::Mtls(tls) => Some(tls.spki_pin),
+            TransportCredentials::Insecure => None,
+        };
+
         let auth = Arc::new(AuthContext::from_credentials(node_id, &creds));
 
         let listener = nexar::TransportListener::bind_with_config(listen_addr, server_config)
@@ -130,6 +139,7 @@ impl NexarTransport {
             circuit_breaker: Arc::new(CircuitBreaker::new(CircuitBreakerConfig::default())),
             retry_policy: RetryPolicy::default(),
             auth,
+            local_spki_pin,
         })
     }
 
@@ -159,6 +169,27 @@ impl NexarTransport {
     /// uses it to authenticate UDP datagrams on the same key material.
     pub fn mac_key(&self) -> crate::rpc_codec::MacKey {
         self.auth.mac_key.clone()
+    }
+
+    /// SHA-256 SPKI pin for this node's own TLS leaf certificate.
+    /// `None` in insecure transport mode.
+    pub fn local_spki_pin(&self) -> Option<[u8; 32]> {
+        self.local_spki_pin
+    }
+
+    /// Return the negotiated [`WireVersion`] for the connection identified by
+    /// `stable_id`.
+    ///
+    /// Currently the wire-version handshake is not yet injected into the QUIC
+    /// connection accept/dial path, so this returns the local current version
+    /// for any live connection.  Once the handshake is wired in, this will
+    /// return the per-connection agreed version from the handshake cache.
+    pub fn agreed_version_for(
+        &self,
+        _stable_id: usize,
+    ) -> Option<crate::wire_version::WireVersion> {
+        use crate::wire_version::WireVersion;
+        Some(WireVersion::CURRENT)
     }
 
     /// Snapshot of every peer the transport has addresses cached for,

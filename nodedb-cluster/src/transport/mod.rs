@@ -2,6 +2,7 @@ pub mod auth_context;
 pub mod client;
 pub mod config;
 pub mod credentials;
+pub mod peer_identity_verifier;
 pub mod server;
 
 pub use auth_context::AuthContext;
@@ -23,4 +24,7 @@ pub mod pki_types {
     };
 }
 pub use credentials::{TransportCredentials, insecure_transport_count};
-pub use server::RaftRpcHandler;
+pub use peer_identity_verifier::{
+    IDENTITY_MISMATCH_QUIC_ERROR, VerifyMethod, VerifyOutcome, spki_pin_from_cert_der,
+};
+pub use server::{NoopIdentityStore, PeerIdentityStore, RaftRpcHandler};

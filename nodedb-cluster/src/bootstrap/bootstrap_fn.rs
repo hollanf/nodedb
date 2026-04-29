@@ -13,7 +13,16 @@ use crate::topology::{ClusterTopology, NodeInfo, NodeState};
 use super::config::{ClusterConfig, ClusterState};
 
 /// Bootstrap a new cluster: this node is the founding member.
-pub(super) fn bootstrap(config: &ClusterConfig, catalog: &ClusterCatalog) -> Result<ClusterState> {
+///
+/// `local_spki_pin` is the SHA-256 SPKI fingerprint of this node's own TLS
+/// leaf certificate; `None` in insecure transport mode.  When present it is
+/// stored in the founding node's `NodeInfo` so that joining peers can pin our
+/// identity immediately.
+pub(super) fn bootstrap(
+    config: &ClusterConfig,
+    catalog: &ClusterCatalog,
+    local_spki_pin: Option<[u8; 32]>,
+) -> Result<ClusterState> {
     info!(
         node_id = config.node_id,
         addr = %config.listen_addr,
@@ -23,11 +32,10 @@ pub(super) fn bootstrap(config: &ClusterConfig, catalog: &ClusterCatalog) -> Res
 
     // Create topology with this node.
     let mut topology = ClusterTopology::new();
-    topology.add_node(NodeInfo::new(
-        config.node_id,
-        config.listen_addr,
-        NodeState::Active,
-    ));
+    topology.add_node(
+        NodeInfo::new(config.node_id, config.listen_addr, NodeState::Active)
+            .with_spki_pin(local_spki_pin),
+    );
 
     // Create routing table: all groups on this single node.
     let routing = RoutingTable::uniform(
@@ -111,7 +119,7 @@ mod tests {
             election_timeout_max: Duration::from_millis(300),
         };
 
-        let state = bootstrap(&config, &catalog).unwrap();
+        let state = bootstrap(&config, &catalog, None).unwrap();
         let topo = state.topology.read().unwrap();
         let routing = state.routing.read().unwrap();
         let multi_raft = state.multi_raft.lock().unwrap();

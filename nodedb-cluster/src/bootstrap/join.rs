@@ -93,6 +93,8 @@ pub(super) async fn join(
         node_id: config.node_id,
         listen_addr: config.listen_addr.to_string(),
         wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
+        spiffe_id: None,
+        spki_pin: transport.local_spki_pin().map(|arr| arr.to_vec()),
     };
 
     let policy = config.join_retry;
@@ -245,13 +247,27 @@ fn apply_join_response(
     let mut topology = ClusterTopology::new();
     for node in &resp.nodes {
         let state = NodeState::from_u8(node.state).unwrap_or(NodeState::Active);
-        let mut info = NodeInfo {
-            node_id: node.node_id,
-            addr: node.addr.clone(),
+        let spki_pin: Option<[u8; 32]> = node.spki_pin.as_deref().and_then(|b| {
+            if b.len() == 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(b);
+                Some(arr)
+            } else {
+                None
+            }
+        });
+        let mut info = NodeInfo::new(
+            node.node_id,
+            node.addr
+                .parse()
+                .unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap()),
             state,
-            raft_groups: node.raft_groups.clone(),
-            wire_version: node.wire_version,
-        };
+        )
+        .with_wire_version(node.wire_version)
+        .with_spiffe_id(node.spiffe_id.clone())
+        .with_spki_pin(spki_pin);
+        // Override raft_groups from wire data (NodeInfo::new starts empty).
+        info.raft_groups = node.raft_groups.clone();
         if node.node_id == config.node_id {
             info.state = NodeState::Active;
         }
@@ -470,7 +486,7 @@ mod tests {
             election_timeout_min: Duration::from_millis(150),
             election_timeout_max: Duration::from_millis(300),
         };
-        let state1 = bootstrap(&config1, &catalog1).unwrap();
+        let state1 = bootstrap(&config1, &catalog1, None).unwrap();
 
         // state1.topology and state1.routing are Arc<RwLock<T>> after the
         // ClusterState refactor.
