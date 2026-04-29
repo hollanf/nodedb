@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use zerompk::{FromMessagePack, ToMessagePack};
 
 use super::ingest::{LogEntry, TimeRange};
 
@@ -26,7 +27,9 @@ pub enum IntervalParseError {
 }
 
 /// Lifecycle state of a partition in the partition manifest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToMessagePack, FromMessagePack,
+)]
 pub enum PartitionState {
     /// Actively receiving writes.
     Active,
@@ -45,7 +48,7 @@ pub enum PartitionState {
 /// Metadata for a single time partition.
 ///
 /// Stored in the partition manifest (redb). Shared between Origin and Lite.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct PartitionMeta {
     /// Inclusive lower bound of timestamps in this partition.
     pub min_ts: i64,

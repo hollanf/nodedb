@@ -18,7 +18,7 @@ pub fn now_ms() -> u64 {
 
 /// Create a [`CdcEvent`] with sensible test defaults.
 #[allow(dead_code)]
-pub fn make_cdc_event(seq: u64, partition: u16, collection: &str, op: &str) -> CdcEvent {
+pub fn make_cdc_event(seq: u64, partition: u32, collection: &str, op: &str) -> CdcEvent {
     CdcEvent {
         sequence: seq,
         partition,

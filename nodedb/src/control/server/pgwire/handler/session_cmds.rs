@@ -269,7 +269,7 @@ impl NodeDbPgHandler {
                     i + 1,
                     task.plan,
                     task.tenant_id.as_u32(),
-                    task.vshard_id.as_u16(),
+                    task.vshard_id.as_u32(),
                 );
                 for line in plan_desc.lines() {
                     encoder.encode_field(&line)?;

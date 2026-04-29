@@ -32,7 +32,7 @@ pub async fn delete_async(tenant_id: u32, name: String, shared: Arc<SharedState>
             let request = Request {
                 request_id,
                 tenant_id: TenantId::new(tenant_id),
-                vshard_id: VShardId::new(core_id as u16),
+                vshard_id: VShardId::new(core_id as u32),
                 plan: PhysicalPlan::Meta(MetaOp::UnregisterMaterializedView {
                     tenant_id,
                     name: name.clone(),

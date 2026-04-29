@@ -40,7 +40,7 @@ impl NodeDbPgHandler {
 
         let mut remote_leader: Option<u64> = None;
         for task in tasks {
-            let vshard_id = task.vshard_id.as_u16();
+            let vshard_id = task.vshard_id.as_u32();
             let group_id = match routing.group_for_vshard(vshard_id) {
                 Ok(g) => g,
                 Err(_) => return false,

@@ -32,7 +32,7 @@ pub enum Error {
     OffsetRegression {
         stream: String,
         group: String,
-        partition_id: u16,
+        partition_id: u32,
         current_lsn: u64,
         attempted_lsn: u64,
     },
@@ -461,7 +461,7 @@ impl From<nodedb_cluster::rpc_codec::TypedClusterError> for Error {
                 // Clamp group_id to valid vShard range — group IDs may exceed 1024
                 // for cluster-managed Raft groups; best-effort for display purposes.
                 vshard_id: crate::types::VShardId::new(
-                    (group_id as u16).min(crate::types::VShardId::COUNT - 1),
+                    (group_id as u32).min(crate::types::VShardId::COUNT - 1),
                 ),
                 leader_node: leader_node_id.unwrap_or(0),
                 leader_addr: leader_addr.unwrap_or_default(),
@@ -489,7 +489,7 @@ impl From<Error> for nodedb_cluster::rpc_codec::TypedClusterError {
                 leader_node,
                 leader_addr,
             } => TypedClusterError::NotLeader {
-                group_id: vshard_id.as_u16() as u64,
+                group_id: vshard_id.as_u32() as u64,
                 leader_node_id: if leader_node == 0 {
                     None
                 } else {

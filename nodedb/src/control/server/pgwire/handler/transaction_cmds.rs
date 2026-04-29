@@ -279,7 +279,7 @@ impl NodeDbPgHandler {
             && parts[4].eq_ignore_ascii_case("AT")
             && parts[6].eq_ignore_ascii_case("ON")
         {
-            let partition_id: u16 = parts[3].parse().unwrap_or(0);
+            let partition_id: u32 = parts[3].parse().unwrap_or(0);
             let lsn: u64 = parts[5].parse().unwrap_or(0);
             let stream_name = parts[7].to_lowercase();
             let group_name = parts[10].to_lowercase();
@@ -303,7 +303,7 @@ impl NodeDbPgHandler {
             let group_name = parts[6].to_lowercase();
             if let Some(buffer) = self.state.cdc_router.get_buffer(tenant_id, &stream_name) {
                 let events = buffer.read_from_lsn(0, usize::MAX);
-                let mut latest: std::collections::HashMap<u16, u64> =
+                let mut latest: std::collections::HashMap<u32, u64> =
                     std::collections::HashMap::new();
                 for e in &events {
                     let entry = latest.entry(e.partition).or_insert(0);

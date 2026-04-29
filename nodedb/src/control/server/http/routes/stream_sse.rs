@@ -26,7 +26,7 @@ pub struct SseParams {
     /// Consumer group name (required).
     pub group: Option<String>,
     /// Optional: stream from a specific partition only.
-    pub partition: Option<u16>,
+    pub partition: Option<u32>,
     /// Detected and rejected — callers must not supply `tenant_id` as a
     /// query parameter. Tenant is always sourced from the bearer token.
     pub tenant_id: Option<u32>,

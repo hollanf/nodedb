@@ -94,7 +94,7 @@ pub fn show_partitions(
     if let Some(buf) = buffer {
         // Scan the buffer and collect per-partition stats.
         let events = buf.read_from_lsn(0, usize::MAX);
-        let mut partition_stats: std::collections::BTreeMap<u16, (u64, u64, usize)> =
+        let mut partition_stats: std::collections::BTreeMap<u32, (u64, u64, usize)> =
             std::collections::BTreeMap::new();
         for e in &events {
             let entry = partition_stats

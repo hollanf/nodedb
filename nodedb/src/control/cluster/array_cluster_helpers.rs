@@ -88,7 +88,7 @@ pub(super) fn encode_err(e: zerompk::Error) -> Error {
 ///
 /// Used by the local-dispatch fast path to build the response envelope without
 /// going through the QUIC transport layer.
-pub(super) fn array_resp_msg_type(opcode: u16) -> Option<VShardMessageType> {
+pub(super) fn array_resp_msg_type(opcode: u32) -> Option<VShardMessageType> {
     match opcode {
         81 => Some(VShardMessageType::ArrayShardSliceResp),
         83 => Some(VShardMessageType::ArrayShardAggResp),

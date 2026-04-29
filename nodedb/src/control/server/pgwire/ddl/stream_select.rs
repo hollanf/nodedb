@@ -49,7 +49,7 @@ pub async fn select_from_stream(
     let stream_name = parts[4].to_lowercase();
     let group_name = parts[7].to_lowercase();
 
-    let mut partition: Option<u16> = None;
+    let mut partition: Option<u32> = None;
     let mut limit: usize = 100;
     let mut i = 8;
 

@@ -30,7 +30,7 @@ pub fn commit_offset(
         && parts[8].eq_ignore_ascii_case("CONSUMER")
         && parts[9].eq_ignore_ascii_case("GROUP")
     {
-        let partition_id: u16 = parts[3]
+        let partition_id: u32 = parts[3]
             .parse()
             .map_err(|_| sqlstate_error("42601", &format!("invalid partition: '{}'", parts[3])))?;
         let lsn: u64 = parts[5]

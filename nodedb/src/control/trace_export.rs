@@ -115,7 +115,7 @@ impl TraceExporter {
         start: SystemTime,
         end: SystemTime,
         tenant_id: u32,
-        vshard_id: u16,
+        vshard_id: u32,
         status_ok: bool,
     ) {
         if !self.is_enabled() {

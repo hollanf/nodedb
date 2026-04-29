@@ -22,7 +22,7 @@ pub struct PollParams {
     /// Maximum events to return. Default: 100.
     pub limit: Option<usize>,
     /// Optional: consume from a specific partition only.
-    pub partition: Option<u16>,
+    pub partition: Option<u32>,
     /// Detected and rejected — callers must not supply `tenant_id` as a
     /// query parameter. Tenant is always sourced from the bearer token.
     pub tenant_id: Option<u32>,

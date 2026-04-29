@@ -95,7 +95,7 @@ impl SessionStore {
     }
 
     /// Take pending offset commits (called after successful COMMIT dispatch).
-    pub fn take_pending_offsets(&self, addr: &SocketAddr) -> Vec<(u32, String, String, u16, u64)> {
+    pub fn take_pending_offsets(&self, addr: &SocketAddr) -> Vec<(u32, String, String, u32, u64)> {
         self.write_session(addr, |session| {
             std::mem::take(&mut session.pending_offset_commits)
         })
@@ -111,7 +111,7 @@ impl SessionStore {
         tenant_id: u32,
         stream: String,
         group: String,
-        partition_id: u16,
+        partition_id: u32,
         lsn: u64,
     ) -> bool {
         self.write_session(addr, |session| {

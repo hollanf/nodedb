@@ -117,7 +117,7 @@ impl NexarArrayDispatch {
         // Short-circuit: if the target shard is owned by this node, dispatch
         // directly to the local Data Plane instead of looping through QUIC.
         if node_id == self.own_node_id {
-            let req_opcode = req.msg_type as u16;
+            let req_opcode = req.msg_type as u32;
             let resp_opcode = req_opcode + 1;
             let resp_msg_type = array_resp_msg_type(resp_opcode).ok_or_else(|| {
                 nodedb_cluster::error::ClusterError::Codec {
@@ -181,7 +181,7 @@ pub struct ClusterArrayExecutor {
     dispatch: Arc<dyn ShardRpcDispatch>,
     circuit_breaker: Arc<CircuitBreaker>,
     source_node: u64,
-    total_shards: u16,
+    total_shards: u32,
 }
 
 struct SliceArgs<'a> {

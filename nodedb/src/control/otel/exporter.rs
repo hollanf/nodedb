@@ -197,7 +197,7 @@ pub struct SpanExport<'a> {
     pub start_ns: u64,
     pub end_ns: u64,
     pub tenant_id: u32,
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     pub status_ok: bool,
 }
 

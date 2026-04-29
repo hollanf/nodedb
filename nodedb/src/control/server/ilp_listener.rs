@@ -380,7 +380,7 @@ async fn flush_ilp_batch_inner(
     // Per-series sharding is deferred until the scan path supports
     // fan-out across multiple cores.
     let collection_vshard = VShardId::from_collection(&collection);
-    let mut shard_batches: std::collections::HashMap<u16, String> =
+    let mut shard_batches: std::collections::HashMap<u32, String> =
         std::collections::HashMap::new();
 
     for line in batch.lines() {
@@ -388,7 +388,7 @@ async fn flush_ilp_batch_inner(
             continue;
         }
 
-        let entry = shard_batches.entry(collection_vshard.as_u16()).or_default();
+        let entry = shard_batches.entry(collection_vshard.as_u32()).or_default();
         entry.push_str(line);
         entry.push('\n');
     }

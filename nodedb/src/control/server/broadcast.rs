@@ -43,7 +43,7 @@ pub async fn broadcast_to_all_cores(
     let mut receivers = Vec::with_capacity(num_cores);
     for core_id in 0..num_cores {
         let request_id = shared.next_request_id();
-        let vshard_id = VShardId::new(core_id as u16);
+        let vshard_id = VShardId::new(core_id as u32);
         let request = Request {
             request_id,
             tenant_id,
@@ -165,7 +165,7 @@ pub async fn broadcast_count_to_all_cores(
     let mut receivers = Vec::with_capacity(num_cores);
     for core_id in 0..num_cores {
         let request_id = shared.next_request_id();
-        let vshard_id = VShardId::new(core_id as u16);
+        let vshard_id = VShardId::new(core_id as u32);
         let request = Request {
             request_id,
             tenant_id,
@@ -264,7 +264,7 @@ pub async fn broadcast_raw(
     let mut receivers = Vec::with_capacity(num_cores);
     for core_id in 0..num_cores {
         let request_id = shared.next_request_id();
-        let vshard_id = VShardId::new(core_id as u16);
+        let vshard_id = VShardId::new(core_id as u32);
         let request = Request {
             request_id,
             tenant_id,

@@ -131,7 +131,7 @@ pub async fn dispatch_to_data_plane_with_source(
     // over-run, timeout) so the histogram captures the true end-to-end
     // shape of the work routed to this vshard.
     let dispatch_started = Instant::now();
-    let vshard_u16 = vshard_id.as_u16();
+    let vshard_u32 = vshard_id.as_u32();
 
     let request_id = shared.next_request_id();
     let request = Request {
@@ -165,7 +165,7 @@ pub async fn dispatch_to_data_plane_with_source(
     let max_result_bytes = shared.tuning.network.max_query_result_bytes as usize;
     let observe = |shared: &SharedState| {
         let latency_us = dispatch_started.elapsed().as_micros().min(u64::MAX as u128) as u64;
-        shared.per_vshard_metrics.observe(vshard_u16, latency_us);
+        shared.per_vshard_metrics.observe(vshard_u32, latency_us);
     };
     let response = tokio::time::timeout(
         Duration::from_secs(shared.tuning.network.default_deadline_secs),
