@@ -8,7 +8,7 @@ mod common;
 use common::cluster_harness::TestCluster;
 
 use bytes::Bytes;
-use common::cluster_harness::wait::wait_for_async;
+use common::cluster_harness::wait::wait_for;
 use futures::SinkExt;
 use futures::StreamExt;
 use nodedb_types::backup_envelope::{DEFAULT_MAX_TOTAL_BYTES, parse as parse_envelope};
@@ -124,6 +124,12 @@ async fn three_node_roundtrip_preserves_data() {
 
     // Write through node 0 — gateway routing places writes on the
     // current vshard owner (which may be any node).
+    //
+    // Hard fail-early invariant: after every INSERT the value MUST be
+    // visible from node 0's pgwire client, otherwise a previous
+    // INSERT silently dropped its data — surface that as the test
+    // failure rather than letting it propagate into the
+    // backup/restore symptom.
     for i in 0..6 {
         cluster.nodes[0]
             .client
@@ -132,6 +138,21 @@ async fn three_node_roundtrip_preserves_data() {
             ))
             .await
             .unwrap_or_else(|e| panic!("insert k{i}: {}", db_detail(&e)));
+        let rows = unique_contents(&cluster.nodes[0].client).await;
+        let expected_count = (i + 1) as usize;
+        assert_eq!(
+            rows.len(),
+            expected_count,
+            "after INSERT k{i}: expected {expected_count} rows, got {} — \
+             previous INSERT silently dropped a row. rows={rows:?}",
+            rows.len()
+        );
+        let needle = format!("\"v{i}\"");
+        assert!(
+            rows.iter().any(|s| s.contains(&needle)),
+            "after INSERT k{i}: v{i} missing — INSERT returned Ok but the row \
+             never landed. rows={rows:?}"
+        );
     }
 
     let bytes = drain_backup(0, &cluster, TENANT).await;
@@ -143,31 +164,15 @@ async fn three_node_roundtrip_preserves_data() {
         .await
         .expect("RESTORE");
 
-    // Capture which values are visible from node 1 after the restore.
-    // The exact row count is engine-dependent (broadcast scans
-    // currently return per-vshard views) — what we care about is that
-    // *every* value the test inserted survives the backup→restore
-    // roundtrip.
-    //
-    // Wait until all six values are visible from node 1 before
-    // asserting. After a restore, the rows propagate to each vShard's
-    // Raft group leader and then are applied to its state machine; a
-    // cross-node SELECT served from a leader that has committed but
-    // not yet applied the latest entry will momentarily miss a row.
-    // The window is small but real, so poll until convergence.
-    wait_for_async(
-        "node 1 sees all 6 inserted values via broadcast scan",
-        Duration::from_secs(20),
-        Duration::from_millis(50),
-        || async {
-            let rows = unique_contents(&cluster.nodes[1].client).await;
-            (0..6u32).all(|i| {
-                let needle = format!("\"v{i}\"");
-                rows.iter().any(|s| s.contains(&needle))
-            })
-        },
-    )
-    .await;
+    // After the restore, every node's `ProposeTracker.complete`
+    // bumps its per-group apply watermark after the Data Plane
+    // confirms the storage write. Wait for cluster-wide convergence
+    // so a follower-side SELECT sees the same state as the leader
+    // — deterministic, no SQL polling.
+    cluster
+        .wait_for_full_apply_convergence(Duration::from_secs(10))
+        .await;
+
     let post = unique_contents(&cluster.nodes[1].client).await;
     for i in 0..6u32 {
         let needle = format!("\"v{i}\"");
@@ -413,7 +418,19 @@ async fn restore_surfaces_failing_node_id_on_midflight_failure() {
     let downed_node_id = cluster.nodes[2].node_id;
     let downed = cluster.nodes.remove(2);
     downed.shutdown().await;
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Wait for the surviving nodes' SWIM/topology subsystem to observe
+    // the peer death before pinning the stale routes. If we pin before
+    // SWIM converges, an in-flight SWIM update can land *after* the pin
+    // and overwrite it with a fresh leader hint, defeating the
+    // fault-injection. The pin must be the last write to the routing
+    // table for `downed_node_id`'s groups.
+    wait_for(
+        "node 0 marks downed peer as inactive in its topology view",
+        Duration::from_secs(10),
+        Duration::from_millis(20),
+        || cluster.nodes[0].active_topology_size() < 3,
+    )
+    .await;
     for group_id in 0..8u64 {
         cluster.nodes[0].force_stale_route_for_test(group_id, downed_node_id);
     }

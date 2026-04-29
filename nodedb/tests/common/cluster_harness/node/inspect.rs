@@ -18,6 +18,25 @@ impl TestClusterNode {
             .unwrap_or(0)
     }
 
+    /// Number of nodes in the `Active` state from this node's view. Unlike
+    /// [`Self::topology_size`], unreachable / failed peers do NOT count —
+    /// this drops as soon as the health subsystem marks a peer down, well
+    /// before the ghost sweeper reaps the topology entry. Use this in
+    /// tests that need to gate on "peer X is observed dead by survivors"
+    /// rather than the much-later ghost reap.
+    pub fn active_topology_size(&self) -> usize {
+        self.shared
+            .cluster_topology
+            .as_ref()
+            .map(|t| {
+                t.read()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .active_nodes()
+                    .len()
+            })
+            .unwrap_or(0)
+    }
+
     /// Observed metadata-group leader id from this node's local Raft
     /// state, or `0` if no leader is known yet (election in progress).
     /// Polled by the cluster harness `spawn_three()` to gate test
@@ -35,6 +54,28 @@ impl TestClusterNode {
             .find(|g| g.group_id == nodedb_cluster::METADATA_GROUP_ID)
             .map(|g| g.leader_id)
             .unwrap_or(0)
+    }
+
+    /// Snapshot of `(group_id, leader_id)` for every Raft group hosted
+    /// on this node. Used by the harness to gate cluster startup on
+    /// every group having a stable leader — without this, the first
+    /// data-group write (after `spawn_three()` returns) can race the
+    /// data-group leader election: the proposer forwards to the
+    /// routing-table-hinted leader (still `0` because the data group
+    /// hasn't elected yet), local propose returns Ok with a bogus
+    /// log_index that nobody has actually committed, the apply path
+    /// never finds that index, and the row is silently lost while the
+    /// proposer's tracker fires Ok on a no-op or unrelated entry.
+    pub fn all_group_leaders(&self) -> Vec<(u64, u64)> {
+        let Some(observer) = self.shared.cluster_observer.get() else {
+            return Vec::new();
+        };
+        observer
+            .group_status
+            .group_statuses()
+            .into_iter()
+            .map(|g| (g.group_id, g.leader_id))
+            .collect()
     }
 
     /// Observed data-group (group 1) leader id from this node's local Raft

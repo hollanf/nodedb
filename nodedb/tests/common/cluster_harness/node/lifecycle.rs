@@ -144,7 +144,7 @@ impl TestClusterNode {
             state.cluster_routing = Some(Arc::clone(&handle.routing));
             state.cluster_transport = Some(Arc::clone(&handle.transport));
             state.metadata_cache = Arc::clone(&handle.metadata_cache);
-            state.metadata_applied_index_watcher = Arc::clone(&handle.applied_index_watcher);
+            state.group_watchers = Arc::clone(&handle.group_watchers);
         } else {
             return Err("SharedState already cloned before cluster wire-up".into());
         }

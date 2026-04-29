@@ -22,13 +22,15 @@ impl TestCluster {
             // topology within ~1s if the initial join broadcast was missed.
             health_ping_interval_secs: 1,
             // Sub-second election windows. Bootstrap defaults are 150/300ms;
-            // we allow a bit more headroom (200/500ms) because integration
-            // tests share the host CPU pool with hundreds of unit tests
-            // running in parallel and can starve the Raft tick loop briefly.
-            // Without these `_ms` overrides the seconds-granularity field
-            // floor at 1s/2s would dominate every cluster spawn.
-            election_timeout_min_ms: 200,
-            election_timeout_max_ms: 500,
+            // we allow significantly more headroom (500/1000ms) because
+            // integration tests share the host CPU pool with hundreds of
+            // unit tests running in parallel — under that load the Raft
+            // tick loop can be starved long enough that aggressive
+            // 200/500ms windows trigger spurious re-elections mid-test.
+            // 500/1000ms is still ~3× faster than the seconds-floor of
+            // 1s/2s but stable under contention.
+            election_timeout_min_ms: 500,
+            election_timeout_max_ms: 1000,
             ..ClusterTransportTuning::default()
         })
         .await
@@ -155,6 +157,65 @@ impl TestCluster {
         )
         .await;
 
+        // CRITICAL: wait for EVERY data Raft group to elect a stable
+        // leader visible on every node. Without this barrier, the
+        // first data-group write after `spawn_three()` returns can
+        // race a still-electing group:
+        //
+        // 1. Proposer's local `propose()` runs on a node that thinks
+        //    it's leader (stale routing-table hint), gets an Ok back
+        //    with a `log_index` that was never actually committed.
+        // 2. `ProposeTracker::register((group_id, log_index))`.
+        // 3. Some unrelated entry that *does* commit at that index
+        //    (e.g., a leadership-change no-op) fires `tracker.complete`,
+        //    waking the waiter with `Ok([])` even though the user's
+        //    `INSERT` row was never replicated.
+        // 4. `simple_query` returns success; the row is permanently
+        //    lost.
+        //
+        // The metadata-group-only wait above is insufficient because
+        // data groups elect independently and lag the metadata group
+        // by hundreds of milliseconds under load. Waiting until every
+        // group on every node reports a non-zero leader closes the
+        // window deterministically.
+        wait_for(
+            "every Raft group has a stable leader visible on every node",
+            Duration::from_secs(10),
+            Duration::from_millis(20),
+            || {
+                // Snapshot every node's per-group leader view. A group
+                // is "ready" iff every node reports the same non-zero
+                // leader for it.
+                let per_node: Vec<Vec<(u64, u64)>> = cluster
+                    .nodes
+                    .iter()
+                    .map(|n| n.all_group_leaders())
+                    .collect();
+                if per_node.iter().any(|v| v.is_empty()) {
+                    return false;
+                }
+                let group_ids: std::collections::BTreeSet<u64> = per_node
+                    .iter()
+                    .flat_map(|v| v.iter().map(|(gid, _)| *gid))
+                    .collect();
+                if group_ids.is_empty() {
+                    return false;
+                }
+                group_ids.iter().all(|gid| {
+                    let leaders: Vec<u64> = per_node
+                        .iter()
+                        .filter_map(|v| v.iter().find(|(g, _)| g == gid).map(|(_, l)| *l))
+                        .collect();
+                    if leaders.len() != per_node.len() {
+                        return false;
+                    }
+                    let first = leaders[0];
+                    first != 0 && leaders.iter().all(|&l| l == first)
+                })
+            },
+        )
+        .await;
+
         Ok(cluster)
     }
 
@@ -199,9 +260,10 @@ impl TestCluster {
     /// proposer's current applied index. Called after every successful
     /// DDL by `exec_ddl_on_any_leader`.
     async fn wait_for_applied_index_convergence(&self, proposer_idx: usize) {
+        let group_id = nodedb_cluster::METADATA_GROUP_ID;
         let target = self.nodes[proposer_idx]
             .shared
-            .applied_index_watcher()
+            .applied_index_watcher(group_id)
             .current();
         if target == 0 {
             return;
@@ -211,7 +273,7 @@ impl TestCluster {
             let all_caught_up = self
                 .nodes
                 .iter()
-                .all(|n| n.shared.applied_index_watcher().current() >= target);
+                .all(|n| n.shared.applied_index_watcher(group_id).current() >= target);
             if all_caught_up {
                 return;
             }
@@ -219,6 +281,90 @@ impl TestCluster {
                 // Don't panic — the caller's own `wait_for` assertion
                 // will report the specific visibility failure with a
                 // better error than "convergence timed out".
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    /// Block until every node's per-group applied watermark has
+    /// caught up to the maximum observed across the cluster for that
+    /// group. This is the deterministic barrier for "every Raft
+    /// group has fully propagated" — replaces the SQL-polling
+    /// pattern (`wait_for_async("rows visible from node N", ...)`)
+    /// that races the follower applier under load.
+    ///
+    /// For every group registered on *any* node, the target is
+    /// `max(applied_index across all nodes)`. Each node then waits
+    /// for that group's local watcher to reach the target. New
+    /// groups that show up partway through (e.g. a vshard the test
+    /// has not written to yet) are handled by re-snapshotting on
+    /// every iteration of the outer poll, so the helper is
+    /// idempotent against late-bound group registration.
+    ///
+    /// Returns once every (node, group) pair has converged or the
+    /// deadline expires. On expiry, falls through silently — the
+    /// caller's own assertion will surface the specific row-level
+    /// failure with a more useful error than "convergence timed
+    /// out".
+    pub async fn wait_for_full_apply_convergence(&self, timeout: Duration) {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            // Targets: for each group_id seen on any node, take the
+            // max applied_index. Asymmetric group membership is
+            // expected — replication factor may be < node count, so
+            // not every group is hosted on every node.
+            let mut targets: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
+            for node in &self.nodes {
+                for (gid, applied) in node.shared.group_watchers().snapshot() {
+                    let entry = targets.entry(gid).or_insert(0);
+                    if applied > *entry {
+                        *entry = applied;
+                    }
+                }
+            }
+
+            // Group membership is read from the routing table (the
+            // authoritative source) rather than inferred from the
+            // watcher registry. Inferring from the registry has a
+            // cold-start race: a follower that hosts group X but
+            // hasn't yet applied its first entry has no registry
+            // entry, would be treated as "not hosted", and the
+            // helper would return prematurely. Routing knows the
+            // members + learners list as soon as the conf-change
+            // commits.
+            let all_caught_up = {
+                let routing = self.nodes[0]
+                    .shared
+                    .cluster_routing
+                    .as_ref()
+                    .expect("cluster_routing")
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner());
+
+                self.nodes.iter().all(|node| {
+                    let nid = node.shared.node_id;
+                    let watcher = node.shared.group_watchers();
+                    targets.iter().all(|(&gid, &target)| {
+                        let hosts = routing
+                            .group_info(gid)
+                            .map(|info| info.members.contains(&nid) || info.learners.contains(&nid))
+                            .unwrap_or(false);
+                        if !hosts {
+                            return true;
+                        }
+                        watcher.get_or_create(gid).current() >= target
+                    })
+                })
+            };
+            if all_caught_up {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                // Falls through silently — the caller's own
+                // assertion will surface the specific row-level
+                // failure with a more useful error than
+                // "convergence timed out".
                 return;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;

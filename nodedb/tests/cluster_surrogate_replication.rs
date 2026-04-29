@@ -6,7 +6,7 @@
 //! resolve surrogate ↔ pk in both directions.
 
 mod common;
-use common::cluster_harness::{TestCluster, wait::wait_for};
+use common::cluster_harness::TestCluster;
 
 use std::time::Duration;
 
@@ -80,83 +80,59 @@ async fn surrogate_alloc_replicates_to_followers() {
         .await
         .unwrap_or_else(|e| panic!("insert pk_a: {}", pg_detail(&e)));
 
-    // Wait for all three nodes to return the row — this proves the
-    // Data-Plane write was replicated (or routed through the cluster)
-    // and that every node can serve the read.
-    for (idx, node) in cluster.nodes.iter().enumerate() {
-        wait_for(
-            &format!("node {idx} sees pk_a"),
-            Duration::from_secs(10),
-            Duration::from_millis(50),
-            || {
-                // Drive the check synchronously inside the closure.
-                // The closure is called from a tokio task so
-                // `block_in_place` is safe here.
-                let rows: Vec<String> = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(query_col0(&node.client, "SELECT id FROM sur_test"))
-                });
-                rows.iter().any(|r| r.contains("pk_a"))
-            },
-        )
+    // Apply-watermark barrier: deterministic replacement for the
+    // per-node SQL-poll pattern. Once every (node, group) pair has
+    // caught up to the cluster-wide max, every replica's local
+    // engine is current and the SELECT below is a single call —
+    // not a poll loop.
+    cluster
+        .wait_for_full_apply_convergence(Duration::from_secs(10))
         .await;
+
+    for (idx, node) in cluster.nodes.iter().enumerate() {
+        let rows = query_col0(&node.client, "SELECT id FROM sur_test").await;
+        assert!(
+            rows.iter().any(|r| r.contains("pk_a")),
+            "node {idx} missing pk_a; rows={rows:?}"
+        );
     }
 
     // ── Assertion 2: second insert → monotonically larger surrogate ───
-    // The engine assigns surrogates monotonically; we prove this
-    // indirectly by inserting a second row and checking that both are
-    // visible on every node in insertion order.
     cluster.nodes[0]
         .client
         .simple_query("INSERT INTO sur_test (id, val) VALUES ('pk_b', 'world')")
         .await
         .unwrap_or_else(|e| panic!("insert pk_b: {}", pg_detail(&e)));
 
-    // All nodes must eventually see both rows.
-    for (idx, node) in cluster.nodes.iter().enumerate() {
-        wait_for(
-            &format!("node {idx} sees both rows"),
-            Duration::from_secs(10),
-            Duration::from_millis(50),
-            || {
-                let rows: Vec<String> = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(query_col0(&node.client, "SELECT id FROM sur_test"))
-                });
-                rows.iter().any(|r| r.contains("pk_a")) && rows.iter().any(|r| r.contains("pk_b"))
-            },
-        )
+    cluster
+        .wait_for_full_apply_convergence(Duration::from_secs(10))
         .await;
+
+    for (idx, node) in cluster.nodes.iter().enumerate() {
+        let rows = query_col0(&node.client, "SELECT id FROM sur_test").await;
+        assert!(
+            rows.iter().any(|r| r.contains("pk_a")) && rows.iter().any(|r| r.contains("pk_b")),
+            "node {idx} missing pk_a or pk_b; rows={rows:?}"
+        );
     }
 
-    // ── Assertion 3: surrogate map survives a node being isolated and
-    // re-reading after rejoining via the existing Raft log replay path.
-    // The test harness cannot restart a node with the same data dir, so
-    // we prove the Raft-replicated state is authoritative by inserting
-    // a third row through a different node (node 1) and verifying that
-    // node 0 sees it — confirming cross-node Raft apply works.
+    // ── Assertion 3: cross-node insert via node 1 visible on others ───
     cluster.nodes[1]
         .client
         .simple_query("INSERT INTO sur_test (id, val) VALUES ('pk_c', 'third')")
         .await
         .unwrap_or_else(|e| panic!("insert pk_c via node 1: {}", pg_detail(&e)));
 
-    // Node 0 and node 2 must see pk_c within the convergence window.
-    for idx in [0usize, 2usize] {
-        let node = &cluster.nodes[idx];
-        wait_for(
-            &format!("node {idx} sees pk_c inserted by node 1"),
-            Duration::from_secs(10),
-            Duration::from_millis(50),
-            || {
-                let rows: Vec<String> = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(query_col0(&node.client, "SELECT id FROM sur_test"))
-                });
-                rows.iter().any(|r| r.contains("pk_c"))
-            },
-        )
+    cluster
+        .wait_for_full_apply_convergence(Duration::from_secs(10))
         .await;
+
+    for idx in [0usize, 2usize] {
+        let rows = query_col0(&cluster.nodes[idx].client, "SELECT id FROM sur_test").await;
+        assert!(
+            rows.iter().any(|r| r.contains("pk_c")),
+            "node {idx} missing pk_c (inserted by node 1); rows={rows:?}"
+        );
     }
 
     cluster.shutdown().await;
@@ -191,22 +167,22 @@ async fn surrogate_pk_scan_consistent_across_nodes() {
             .unwrap_or_else(|e| panic!("insert row{i}: {}", pg_detail(&e)));
     }
 
-    // Every node must be able to scan and see all five rows.
-    for (idx, node) in cluster.nodes.iter().enumerate() {
-        wait_for(
-            &format!("node {idx} sees all 5 rows"),
-            Duration::from_secs(15),
-            Duration::from_millis(50),
-            || {
-                let rows: Vec<String> = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(query_col0(&node.client, "SELECT id FROM sur_pg"))
-                });
-                // All five pks must appear.
-                (0..5u32).all(|i| rows.iter().any(|r| r.contains(&format!("row{i}"))))
-            },
-        )
+    // Single deterministic barrier: every replica's data plane has
+    // applied every committed entry → every node's SELECT below
+    // sees the same state.
+    cluster
+        .wait_for_full_apply_convergence(Duration::from_secs(15))
         .await;
+
+    for (idx, node) in cluster.nodes.iter().enumerate() {
+        let rows = query_col0(&node.client, "SELECT id FROM sur_pg").await;
+        for i in 0..5u32 {
+            let needle = format!("row{i}");
+            assert!(
+                rows.iter().any(|r| r.contains(&needle)),
+                "node {idx} missing {needle}; rows={rows:?}"
+            );
+        }
     }
 
     cluster.shutdown().await;
