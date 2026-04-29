@@ -119,17 +119,17 @@ mod tests {
             let mut m = std::collections::HashMap::new();
             m.insert("hello".to_string(), vec![cp(0, 1), cp(2, 1)]);
             m.insert("world".to_string(), vec![cp(0, 1)]);
-            writer::flush_to_segment(m)
+            writer::flush_to_segment(m).unwrap()
         };
         let seg2 = {
             let mut m = std::collections::HashMap::new();
             m.insert("hello".to_string(), vec![cp(1, 2), cp(3, 1)]);
             m.insert("foo".to_string(), vec![cp(1, 1)]);
-            writer::flush_to_segment(m)
+            writer::flush_to_segment(m).unwrap()
         };
 
-        let r1 = SegmentReader::open(seg1).unwrap();
-        let r2 = SegmentReader::open(seg2).unwrap();
+        let r1 = SegmentReader::open(seg1).expect("seg1 must be valid");
+        let r2 = SegmentReader::open(seg2).expect("seg2 must be valid");
 
         let merged = merge_segments(&[r1, r2]);
         let terms: Vec<&str> = merged.iter().map(|(t, _)| t.as_str()).collect();

@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn bmw_query_respects_top_k() {
         let idx = FtsIndex::new(MemoryBackend::new());
-        for i in 0..50u32 {
+        for i in 1..=50u32 {
             idx.index_document(T, "docs", Surrogate(i), &format!("common term word{i}"))
                 .unwrap();
         }

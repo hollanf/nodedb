@@ -37,8 +37,13 @@ impl WorkerResult {
     }
 
     /// Flush this worker's result to a temporary segment.
+    ///
+    /// Panics if any term exceeds `MAX_TERM_LEN` — callers must validate
+    /// term lengths before insertion.
     pub fn flush_to_segment(self) -> Vec<u8> {
-        writer::flush_to_segment(self.term_postings)
+        writer::flush_to_segment(self.term_postings).expect(
+            "worker result contained a term exceeding u16::MAX bytes — caller invariant violated",
+        )
     }
 }
 
@@ -55,15 +60,17 @@ impl Default for WorkerResult {
 pub fn merge_worker_segments(worker_segments: Vec<Vec<u8>>) -> Vec<u8> {
     let readers: Vec<SegmentReader> = worker_segments
         .into_iter()
-        .filter_map(SegmentReader::open)
+        .filter_map(|data| SegmentReader::open(data).ok())
         .collect();
 
     if readers.is_empty() {
-        return writer::build_from_blocks(&[]);
+        return writer::build_from_blocks(&[])
+            .expect("build_from_blocks on empty input must not fail");
     }
 
     let merged_term_blocks = merge::merge_segments(&readers);
     writer::build_from_blocks(&merged_term_blocks)
+        .expect("merge produced a term exceeding u16::MAX bytes — data invariant violated")
 }
 
 /// Partition a document range into `num_workers` disjoint sub-ranges.
@@ -151,7 +158,7 @@ mod tests {
         let merged = merge_worker_segments(vec![seg1, seg2]);
 
         // Verify merged segment.
-        let reader = SegmentReader::open(merged).unwrap();
+        let reader = SegmentReader::open(merged).expect("merged segment must be valid");
         assert_eq!(reader.num_terms(), 3); // hello, world, foo
         assert_eq!(reader.df("hello"), 3); // docs 0, 1, 2
         assert_eq!(reader.df("world"), 1); // doc 0
@@ -161,7 +168,7 @@ mod tests {
     #[test]
     fn merge_empty_workers() {
         let merged = merge_worker_segments(Vec::new());
-        let reader = SegmentReader::open(merged).unwrap();
+        let reader = SegmentReader::open(merged).expect("merged segment must be valid");
         assert_eq!(reader.num_terms(), 0);
     }
 }

@@ -25,7 +25,7 @@ pub fn collect_merged_term_blocks<B: FtsBackend>(
     let mut readers: Vec<SegmentReader> = Vec::new();
     for id in &seg_ids {
         if let Some(data) = backend.read_segment(tid, collection, id)?
-            && let Some(reader) = SegmentReader::open(data)
+            && let Ok(reader) = SegmentReader::open(data)
         {
             readers.push(reader);
         }
@@ -90,7 +90,7 @@ pub fn collect_all_terms<B: FtsBackend>(
     let seg_ids = backend.list_segments(tid, collection)?;
     for id in &seg_ids {
         if let Some(data) = backend.read_segment(tid, collection, id)?
-            && let Some(reader) = SegmentReader::open(data)
+            && let Ok(reader) = SegmentReader::open(data)
         {
             for term in reader.terms() {
                 terms.insert(term);
@@ -155,7 +155,7 @@ mod tests {
         let backend = MemoryBackend::new();
         let mut postings = HashMap::new();
         postings.insert("hello".to_string(), vec![cp(0, 1), cp(5, 2)]);
-        let seg_bytes = writer::flush_to_segment(postings);
+        let seg_bytes = writer::flush_to_segment(postings).unwrap();
         backend
             .write_segment(T, "col", "L0:0000000000000001", &seg_bytes)
             .unwrap();
@@ -174,7 +174,7 @@ mod tests {
 
         let mut seg_postings = HashMap::new();
         seg_postings.insert("hello".to_string(), vec![cp(0, 1), cp(5, 2)]);
-        let seg_bytes = writer::flush_to_segment(seg_postings);
+        let seg_bytes = writer::flush_to_segment(seg_postings).unwrap();
         backend
             .write_segment(T, "col", "L0:0000000000000001", &seg_bytes)
             .unwrap();

@@ -7,13 +7,17 @@ use std::collections::HashMap;
 
 use crate::block::{CompactPosting, PostingBlock, into_blocks};
 
+use super::error::SegmentError;
 use super::format::{self, TermDictEntry};
 
 /// Flush a memtable's postings into an immutable segment byte buffer.
 ///
 /// `term_postings` is the drained HashMap from `Memtable::drain()`.
-/// Returns the serialized segment bytes.
-pub fn flush_to_segment(term_postings: HashMap<String, Vec<CompactPosting>>) -> Vec<u8> {
+/// Returns the serialized segment bytes or a `SegmentError` if any term
+/// exceeds `MAX_TERM_LEN`.
+pub fn flush_to_segment(
+    term_postings: HashMap<String, Vec<CompactPosting>>,
+) -> Result<Vec<u8>, SegmentError> {
     // Sort terms for binary-searchable term dictionary.
     let mut sorted_terms: Vec<(String, Vec<CompactPosting>)> = term_postings.into_iter().collect();
     sorted_terms.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -23,6 +27,14 @@ pub fn flush_to_segment(term_postings: HashMap<String, Vec<CompactPosting>>) -> 
     let mut dict_entries = Vec::with_capacity(sorted_terms.len());
 
     for (term, postings) in &sorted_terms {
+        let term_len = term.len();
+        if term_len > format::MAX_TERM_LEN {
+            return Err(SegmentError::TermTooLong {
+                term_len,
+                max: format::MAX_TERM_LEN,
+            });
+        }
+
         let offset = posting_data.len() as u64;
         let df = postings.len() as u32;
 
@@ -56,7 +68,6 @@ pub fn flush_to_segment(term_postings: HashMap<String, Vec<CompactPosting>>) -> 
 
     let mut buf = Vec::new();
 
-    // Header (will be written with correct offsets).
     format::write_header(
         &mut buf,
         dict_entries.len() as u32,
@@ -69,20 +80,33 @@ pub fn flush_to_segment(term_postings: HashMap<String, Vec<CompactPosting>>) -> 
 
     // Term dictionary.
     for entry in &dict_entries {
-        format::write_term_entry(&mut buf, entry);
+        format::write_term_entry(&mut buf, entry)?;
     }
 
-    buf
+    // Footer CRC (CRC32C over all preceding bytes).
+    format::write_footer_crc(&mut buf);
+
+    Ok(buf)
 }
 
 /// Build a segment from pre-sorted, pre-blocked posting data.
 ///
 /// Used by compaction and parallel build where blocks are already formed.
-pub fn build_from_blocks(term_blocks: &[(String, Vec<PostingBlock>)]) -> Vec<u8> {
+pub fn build_from_blocks(
+    term_blocks: &[(String, Vec<PostingBlock>)],
+) -> Result<Vec<u8>, SegmentError> {
     let mut posting_data = Vec::new();
     let mut dict_entries = Vec::with_capacity(term_blocks.len());
 
     for (term, blocks) in term_blocks {
+        let term_len = term.len();
+        if term_len > format::MAX_TERM_LEN {
+            return Err(SegmentError::TermTooLong {
+                term_len,
+                max: format::MAX_TERM_LEN,
+            });
+        }
+
         let offset = posting_data.len() as u64;
         let df: u32 = blocks.iter().map(|b| b.len() as u32).sum();
 
@@ -117,9 +141,13 @@ pub fn build_from_blocks(term_blocks: &[(String, Vec<PostingBlock>)]) -> Vec<u8>
     );
     buf.extend_from_slice(&posting_data);
     for entry in &dict_entries {
-        format::write_term_entry(&mut buf, entry);
+        format::write_term_entry(&mut buf, entry)?;
     }
-    buf
+
+    // Footer CRC.
+    format::write_footer_crc(&mut buf);
+
+    Ok(buf)
 }
 
 #[cfg(test)]
@@ -161,7 +189,7 @@ mod tests {
     #[test]
     fn flush_produces_valid_segment() {
         let postings = make_postings();
-        let segment = flush_to_segment(postings);
+        let segment = flush_to_segment(postings).unwrap();
 
         // Should start with magic.
         assert_eq!(&segment[0..4], b"FTSS");
@@ -169,12 +197,35 @@ mod tests {
         // Parse header.
         let header = format::parse_header(&segment).unwrap();
         assert_eq!(header.num_terms, 2);
+
+        // CRC must be valid.
+        format::verify_footer_crc(&segment).expect("CRC should be valid after flush");
     }
 
     #[test]
     fn flush_empty_memtable() {
-        let segment = flush_to_segment(HashMap::new());
+        let segment = flush_to_segment(HashMap::new()).unwrap();
         let header = format::parse_header(&segment).unwrap();
         assert_eq!(header.num_terms, 0);
+        format::verify_footer_crc(&segment).expect("CRC should be valid for empty segment");
+    }
+
+    #[test]
+    fn flush_term_too_long_rejected() {
+        let mut map = HashMap::new();
+        map.insert(
+            "x".repeat(u16::MAX as usize + 1),
+            vec![CompactPosting {
+                doc_id: nodedb_types::Surrogate(0),
+                term_freq: 1,
+                fieldnorm: smallfloat::encode(10),
+                positions: vec![0],
+            }],
+        );
+        let err = flush_to_segment(map).unwrap_err();
+        assert!(
+            matches!(err, SegmentError::TermTooLong { .. }),
+            "expected TermTooLong, got {err}"
+        );
     }
 }

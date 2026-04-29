@@ -2,14 +2,16 @@
 
 use crate::block::PostingBlock;
 
+use super::error::SegmentError;
 use super::format::{self, SegmentHeader, TermDictEntry};
 
 /// Reader for an immutable segment.
 ///
 /// Holds a reference to the raw segment bytes and the parsed term dictionary.
 /// Posting blocks are decoded on demand (not all at once).
+#[derive(Debug)]
 pub struct SegmentReader {
-    /// Raw segment bytes.
+    /// Raw segment bytes (including footer CRC).
     data: Vec<u8>,
     /// Parsed header.
     header: SegmentHeader,
@@ -18,15 +20,27 @@ pub struct SegmentReader {
 }
 
 impl SegmentReader {
-    /// Open a segment from raw bytes. Returns `None` if malformed.
-    pub fn open(data: Vec<u8>) -> Option<Self> {
+    /// Open a segment from raw bytes.
+    ///
+    /// Verifies the CRC32C footer before parsing any other field. Returns a
+    /// typed `SegmentError` on any validation failure — no silent `None`.
+    pub fn open(data: Vec<u8>) -> Result<Self, SegmentError> {
+        // CRC must be verified first so every subsequent parse is over known-good bytes.
+        format::verify_footer_crc(&data)?;
+
         let header = format::parse_header(&data)?;
+
         let dict_start = header.term_dict_offset as usize;
-        if dict_start > data.len() {
-            return None;
+        // term_dict_offset must point into the body (before the footer CRC).
+        let body_end = data.len() - format::FOOTER_SIZE;
+        if dict_start > body_end {
+            return Err(SegmentError::Truncated);
         }
-        let term_dict = format::parse_term_dict(&data[dict_start..], header.num_terms)?;
-        Some(Self {
+
+        let term_dict = format::parse_term_dict(&data[dict_start..body_end], header.num_terms)
+            .ok_or(SegmentError::Truncated)?;
+
+        Ok(Self {
             data,
             header,
             term_dict,
@@ -61,7 +75,9 @@ impl SegmentReader {
 
         let start = self.header.posting_data_offset as usize + entry.posting_offset as usize;
         let end = start + entry.posting_len as usize;
-        if end > self.data.len() {
+        // Clamp to body (excluding footer).
+        let body_end = self.data.len() - format::FOOTER_SIZE;
+        if end > body_end {
             return Vec::new();
         }
 
@@ -146,7 +162,7 @@ mod tests {
                 positions: vec![1],
             }],
         );
-        writer::flush_to_segment(postings)
+        writer::flush_to_segment(postings).expect("flush must succeed in test")
     }
 
     #[test]
@@ -190,5 +206,38 @@ mod tests {
         let mut terms = reader.terms();
         terms.sort();
         assert_eq!(terms, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn corrupted_crc_rejected() {
+        let mut seg_data = make_segment();
+        // Flip the last byte of the CRC footer.
+        let last = seg_data.len() - 1;
+        seg_data[last] ^= 0xFF;
+        let err = SegmentReader::open(seg_data).unwrap_err();
+        assert!(
+            matches!(err, SegmentError::ChecksumMismatch { .. }),
+            "expected ChecksumMismatch, got {err}"
+        );
+    }
+
+    #[test]
+    fn old_version_rejected() {
+        // Build a valid v3 segment then patch the version field to 2.
+        let mut seg_data = make_segment();
+        let v2: [u8; 2] = 2u16.to_le_bytes();
+        seg_data[4] = v2[0];
+        seg_data[5] = v2[1];
+        // Also fix up the CRC so the version-check is reached.
+        let body_end = seg_data.len() - 4;
+        let new_crc = crc32c::crc32c(&seg_data[..body_end]);
+        let crc_bytes = new_crc.to_le_bytes();
+        seg_data[body_end..].copy_from_slice(&crc_bytes);
+
+        let err = SegmentReader::open(seg_data).unwrap_err();
+        assert!(
+            matches!(err, SegmentError::UnsupportedVersion { found: 2, .. }),
+            "expected UnsupportedVersion, got {err}"
+        );
     }
 }

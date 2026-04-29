@@ -80,7 +80,7 @@ pub fn compact_level<B: FtsBackend>(
 
     for meta in &to_merge {
         if let Some(data) = backend.read_segment(tid, collection, &meta.segment_id)?
-            && let Some(reader) = SegmentReader::open(data)
+            && let Ok(reader) = SegmentReader::open(data)
         {
             readers.push(reader);
             merged_ids.push(meta.segment_id.clone());
@@ -92,7 +92,8 @@ pub fn compact_level<B: FtsBackend>(
     }
 
     let merged_term_blocks = merge::merge_segments(&readers);
-    let new_segment = writer::build_from_blocks(&merged_term_blocks);
+    let new_segment = writer::build_from_blocks(&merged_term_blocks)
+        .expect("compaction produced a term longer than u16::MAX — data invariant violated");
 
     Ok(Some((new_segment, merged_ids)))
 }
