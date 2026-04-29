@@ -8,7 +8,7 @@ mod block;
 mod encode;
 mod stats;
 
-use nodedb_codec::{ColumnCodec, ColumnTypeHint};
+use nodedb_codec::{ColumnCodec, ColumnTypeHint, ResolvedColumnCodec};
 use nodedb_types::columnar::{ColumnType, ColumnarSchema};
 
 use crate::error::ColumnarError;
@@ -86,9 +86,10 @@ impl SegmentWriter {
             // For DictEncoded columns, the codec stored in meta is DeltaFastLanesLz4 (IDs),
             // and the dictionary strings are stored in the meta for reader reconstruction.
             let (effective_codec, dictionary) = match col_data {
-                ColumnData::DictEncoded { dictionary, .. } => {
-                    (ColumnCodec::DeltaFastLanesLz4, Some(dictionary.clone()))
-                }
+                ColumnData::DictEncoded { dictionary, .. } => (
+                    ResolvedColumnCodec::DeltaFastLanesLz4,
+                    Some(dictionary.clone()),
+                ),
                 _ => (codec, None),
             };
 
@@ -128,20 +129,25 @@ impl SegmentWriter {
 /// For timeseries profiles (tag=1), Float64 metric columns use Gorilla XOR
 /// encoding when the data is monotonic/slowly-changing. For other profiles,
 /// the standard auto-detection pipeline applies.
-pub fn select_codec_for_profile(col_type: &ColumnType, profile_tag: u8) -> ColumnCodec {
+///
+/// Always returns a `ResolvedColumnCodec` — `Auto` is never returned.
+pub fn select_codec_for_profile(col_type: &ColumnType, profile_tag: u8) -> ResolvedColumnCodec {
     // Timeseries profile: prefer Gorilla for Float64 metrics.
     if profile_tag == PROFILE_TIMESERIES && matches!(col_type, ColumnType::Float64) {
-        return ColumnCodec::Gorilla;
+        return ResolvedColumnCodec::Gorilla;
     }
     // Timeseries profile: delta-of-delta for timestamps.
     if profile_tag == PROFILE_TIMESERIES && matches!(col_type, ColumnType::Timestamp) {
-        return ColumnCodec::DeltaFastLanesLz4;
+        return ResolvedColumnCodec::DeltaFastLanesLz4;
     }
     select_codec(col_type)
 }
 
 /// Select the best codec for a column type using nodedb-codec's auto-detection.
-fn select_codec(col_type: &ColumnType) -> ColumnCodec {
+///
+/// Always returns a `ResolvedColumnCodec` — `Auto` is consumed here and
+/// never forwarded downstream.
+fn select_codec(col_type: &ColumnType) -> ResolvedColumnCodec {
     let hint = match col_type {
         ColumnType::Int64 => ColumnTypeHint::Int64,
         ColumnType::Float64 => ColumnTypeHint::Float64,
@@ -157,14 +163,19 @@ fn select_codec(col_type: &ColumnType) -> ColumnCodec {
         | ColumnType::Set
         | ColumnType::Range
         | ColumnType::Record => {
-            return ColumnCodec::Lz4;
+            return ResolvedColumnCodec::Lz4;
         }
         ColumnType::Duration => ColumnTypeHint::Int64, // i64 microseconds
         ColumnType::Vector(_) => {
-            return ColumnCodec::Lz4;
+            return ResolvedColumnCodec::Lz4;
         }
     };
+    // detect_codec resolves Auto via the type hint and always returns a
+    // concrete codec. Map any unexpected Auto back to a safe default
+    // (Lz4) rather than panicking in library code.
     nodedb_codec::detect_codec(ColumnCodec::Auto, hint)
+        .try_resolve()
+        .unwrap_or(ResolvedColumnCodec::Lz4)
 }
 
 #[cfg(test)]
@@ -183,6 +194,84 @@ mod tests {
             ColumnDef::nullable("score", ColumnType::Float64),
         ])
         .expect("valid")
+    }
+
+    // ── T1-05 ResolvedColumnCodec integration tests ────────────────────────────
+
+    /// The writer resolves Auto to a concrete codec before writing.
+    /// The resulting footer must not contain codec byte 0 (Auto discriminant).
+    #[test]
+    fn auto_codec_resolves_to_concrete_before_write() {
+        let schema = ColumnarSchema::new(vec![
+            ColumnDef::required("id", ColumnType::Int64).with_primary_key(),
+            ColumnDef::required("name", ColumnType::String),
+            ColumnDef::nullable("score", ColumnType::Float64),
+        ])
+        .expect("valid");
+
+        let mut mt = ColumnarMemtable::new(&schema);
+        for i in 0..10 {
+            mt.append_row(&[
+                Value::Integer(i),
+                Value::String(format!("item_{i}")),
+                Value::Float(i as f64 * 1.5),
+            ])
+            .expect("append");
+        }
+        let (schema, columns, row_count) = mt.drain();
+        let writer = SegmentWriter::plain();
+        let segment = writer
+            .write_segment(&schema, &columns, row_count)
+            .expect("write must succeed");
+
+        let footer = SegmentFooter::from_segment_tail(&segment).expect("valid footer");
+
+        // None of the column codecs should be the Auto discriminant (byte 0).
+        // All must be concrete, resolved codecs.
+        for col in &footer.columns {
+            // Auto does not exist on ResolvedColumnCodec so the type itself
+            // guarantees this — but we can also serialize and verify the
+            // discriminant byte is not 0.
+            let encoded = zerompk::to_msgpack_vec(&col.codec).expect("serialize");
+            // msgpack c_enum encodes as a single byte when value < 128.
+            // The last byte in the encoded form holds the discriminant.
+            let discriminant_byte = *encoded.last().expect("non-empty");
+            assert_ne!(
+                discriminant_byte, 0,
+                "column '{}' has Auto discriminant (0) on disk — resolve was skipped",
+                col.name
+            );
+        }
+    }
+
+    /// The writer resolves Auto to a sensible non-trivial codec for Int64 columns.
+    #[test]
+    fn auto_codec_int64_resolves_to_non_raw() {
+        use nodedb_codec::ResolvedColumnCodec;
+
+        let schema = ColumnarSchema::new(vec![
+            ColumnDef::required("val", ColumnType::Int64).with_primary_key(),
+        ])
+        .expect("valid");
+
+        let mut mt = ColumnarMemtable::new(&schema);
+        for i in 0..10 {
+            mt.append_row(&[Value::Integer(i)]).expect("append");
+        }
+        let (schema, columns, row_count) = mt.drain();
+        let writer = SegmentWriter::plain();
+        let segment = writer
+            .write_segment(&schema, &columns, row_count)
+            .expect("write");
+        let footer = SegmentFooter::from_segment_tail(&segment).expect("footer");
+
+        // Auto for Int64 should resolve to a delta/int codec, never Raw or Auto.
+        let codec = footer.columns[0].codec;
+        assert_ne!(
+            codec,
+            ResolvedColumnCodec::Raw,
+            "Int64 should not resolve to Raw"
+        );
     }
 
     #[test]
@@ -501,7 +590,7 @@ mod tests {
 
         let bloom = stats
             .bloom
-            .as_deref()
+            .as_ref()
             .expect("bloom present for >16 distinct");
         assert!(bloom_may_contain(bloom, "alpha"));
         assert!(bloom_may_contain(bloom, "beta"));

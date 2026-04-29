@@ -20,7 +20,13 @@ pub const VERSION_MAJOR: u8 = 1;
 ///   0 → 1: `BlockStats` gained `min_i64`/`max_i64` fields for lossless
 ///           integer predicate pushdown. Fields are optional with serde
 ///           `default`; readers at minor 0 simply see `None` for both.
-pub const VERSION_MINOR: u8 = 1;
+///   1 → 2: `BlockStats.bloom` changed from `Option<Vec<u8>>` to
+///           `Option<BloomFilter>` — the bloom parameters (k hash functions,
+///           m bit-array size) are now persisted alongside the bytes so that
+///           future readers are not dependent on compile-time constants to
+///           interpret old segments. The field is still optional with serde
+///           `default`; readers at minor ≤1 see `None`.
+pub const VERSION_MINOR: u8 = 2;
 
 /// Endianness marker: 0x01 = little-endian (always LE for NodeDB).
 pub const ENDIANNESS_LE: u8 = 0x01;
@@ -99,6 +105,23 @@ impl SegmentHeader {
     }
 }
 
+/// On-disk representation of a Bloom filter, bundled with the parameters
+/// that produced it.
+///
+/// Storing `k` and `m` alongside the bytes allows any future reader to
+/// interpret the filter without relying on compile-time constants.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
+pub struct BloomFilter {
+    /// Number of independent hash functions used when building and querying
+    /// the filter.
+    pub k: u8,
+    /// Size of the bit array in bits. The `bytes` field holds `(m + 7) / 8`
+    /// bytes.
+    pub m: u32,
+    /// Packed bit array.
+    pub bytes: Vec<u8>,
+}
+
 /// Per-block statistics for a single column. Enables predicate pushdown:
 /// skip blocks where `WHERE price > 100` and block's `max_price < 100`.
 #[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
@@ -123,11 +146,14 @@ pub struct BlockStats {
     /// `None` for non-string columns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub str_max: Option<String>,
-    /// Bloom filter bytes for equality-predicate skipping on string columns
-    /// (256 bytes = 2048 bits, 3 FNV-variant hash functions).
-    /// `None` when there are no non-null string values in the block.
+    /// Bloom filter for equality-predicate skipping on string columns.
+    ///
+    /// Carries the filter parameters (`k`, `m`) alongside the bytes so that
+    /// readers never depend on compile-time constants to interpret the filter.
+    /// `None` when there are no non-null string values in the block, or when
+    /// cardinality is too low to justify the overhead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bloom: Option<Vec<u8>>,
+    pub bloom: Option<BloomFilter>,
     /// Exact integer minimum for i64/timestamp columns.
     ///
     /// Set alongside `min` (which holds the lossy f64 cast) so that predicates
@@ -196,7 +222,7 @@ impl BlockStats {
         row_count: u32,
         str_min: Option<String>,
         str_max: Option<String>,
-        bloom: Option<Vec<u8>>,
+        bloom: Option<BloomFilter>,
     ) -> Self {
         Self {
             min: f64::NAN,
@@ -223,7 +249,9 @@ pub struct ColumnMeta {
     /// Total byte length of all blocks for this column.
     pub length: u64,
     /// Codec used for this column's blocks.
-    pub codec: nodedb_codec::ColumnCodec,
+    ///
+    /// Always a concrete, resolved codec — never `Auto`.
+    pub codec: nodedb_codec::ResolvedColumnCodec,
     /// Number of blocks for this column.
     pub block_count: u32,
     /// Per-block statistics (one entry per block).
@@ -370,7 +398,7 @@ mod tests {
                     name: "id".into(),
                     offset: 7,
                     length: 512,
-                    codec: nodedb_codec::ColumnCodec::DeltaFastLanesLz4,
+                    codec: nodedb_codec::ResolvedColumnCodec::DeltaFastLanesLz4,
                     block_count: 2,
                     block_stats: vec![
                         BlockStats::numeric(1.0, 1024.0, 0, 1024),
@@ -382,7 +410,7 @@ mod tests {
                     name: "name".into(),
                     offset: 519,
                     length: 256,
-                    codec: nodedb_codec::ColumnCodec::FsstLz4,
+                    codec: nodedb_codec::ResolvedColumnCodec::FsstLz4,
                     block_count: 2,
                     block_stats: vec![
                         BlockStats::non_numeric(0, 1024),
@@ -394,7 +422,7 @@ mod tests {
                     name: "score".into(),
                     offset: 775,
                     length: 128,
-                    codec: nodedb_codec::ColumnCodec::AlpFastLanesLz4,
+                    codec: nodedb_codec::ResolvedColumnCodec::AlpFastLanesLz4,
                     block_count: 2,
                     block_stats: vec![
                         BlockStats::numeric(0.0, 100.0, 10, 1024),

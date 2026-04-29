@@ -8,7 +8,7 @@
 //! `BlockStats.str_min` / `BlockStats.str_max`). For string Eq predicates the
 //! optional bloom filter provides an additional fast-reject path.
 
-use crate::format::BlockStats;
+use crate::format::{BlockStats, BloomFilter};
 
 /// The value side of a scan predicate.
 #[derive(Debug, Clone)]
@@ -342,8 +342,8 @@ fn can_skip_string(op: PredicateOp, value: &str, stats: &BlockStats) -> bool {
 
     // For Eq predicates, apply bloom filter as an additional fast-reject.
     if op == PredicateOp::Eq
-        && let Some(ref bloom_bytes) = stats.bloom
-        && !bloom_may_contain(bloom_bytes, value)
+        && let Some(ref bloom) = stats.bloom
+        && !bloom_may_contain(bloom, value)
     {
         return true; // Bloom says "definitely not present" → skip.
     }
@@ -353,66 +353,101 @@ fn can_skip_string(op: PredicateOp, value: &str, stats: &BlockStats) -> bool {
 
 // ── Bloom filter ────────────────────────────────────────────────────────────
 
-/// Bloom filter size in bytes (2048 bits).
-pub const BLOOM_BYTES: usize = 256;
+/// Default bloom filter size in bits (2048 bits = 256 bytes).
+///
+/// This is the default used by `build_bloom`. The actual value in use for any
+/// given filter is stored in `BloomFilter::m` on disk — readers always use the
+/// persisted value, never this constant.
+pub const BLOOM_BITS_DEFAULT: u32 = 2048;
 
-/// Number of independent hash functions.
-const BLOOM_HASH_COUNT: u32 = 3;
+/// Convenience byte count for the default bit array size.
+pub const BLOOM_BYTES: usize = (BLOOM_BITS_DEFAULT as usize) / 8;
+
+/// Default number of independent hash functions.
+///
+/// The actual value in use for any given filter is stored in `BloomFilter::k`
+/// on disk.
+pub const BLOOM_K_DEFAULT: u8 = 3;
 
 /// FNV-1a 64-bit offset basis.
 const FNV_OFFSET: u64 = 14_695_981_039_346_656_037;
 /// FNV-1a 64-bit prime.
 const FNV_PRIME: u64 = 1_099_511_628_211;
 
-/// Compute the i-th hash slot for a string value in a 2048-bit filter.
+/// Compute the i-th hash slot for a string value in an `m`-bit filter.
 ///
 /// Uses FNV-1a seeded with different constants for each hash function to
-/// produce independent bit positions.
-fn bloom_bit_pos(value: &str, hash_idx: u32) -> usize {
+/// produce independent bit positions. `m` must be a power of two so the
+/// bitmask `m - 1` is exact.
+fn bloom_bit_pos(value: &str, hash_idx: u32, m: u32) -> usize {
     // Mix the hash index into the seed to produce distinct hash functions.
     let mut hash = FNV_OFFSET ^ (hash_idx as u64).wrapping_mul(FNV_PRIME);
     for byte in value.bytes() {
         hash ^= byte as u64;
         hash = hash.wrapping_mul(FNV_PRIME);
     }
-    // Map to [0, 2048).
-    (hash as usize) & (BLOOM_BYTES * 8 - 1)
+    // Map to [0, m).  m is always a power of two so (m - 1) is a valid mask.
+    (hash as usize) & ((m as usize) - 1)
 }
 
-/// Insert a string value into a bloom filter buffer.
-///
-/// The buffer must be exactly `BLOOM_BYTES` in length.
-pub fn bloom_insert(bloom: &mut [u8], value: &str) {
-    for i in 0..BLOOM_HASH_COUNT {
-        let bit = bloom_bit_pos(value, i);
-        bloom[bit / 8] |= 1 << (bit % 8);
+/// Insert a string value into a `BloomFilter`.
+pub fn bloom_insert(bloom: &mut BloomFilter, value: &str) {
+    for i in 0..(bloom.k as u32) {
+        let bit = bloom_bit_pos(value, i, bloom.m);
+        bloom.bytes[bit / 8] |= 1 << (bit % 8);
     }
 }
 
-/// Test whether a string value may be present in a bloom filter.
+/// Test whether a string value may be present in a `BloomFilter`.
+///
+/// Uses the `k` and `m` stored inside the filter — never compile-time
+/// constants — so that filters written with different parameters are
+/// interpreted correctly.
 ///
 /// Returns `false` only when the value is definitely absent.
 /// Returns `true` when it may be present (possible false positive).
-pub fn bloom_may_contain(bloom: &[u8], value: &str) -> bool {
-    if bloom.len() < BLOOM_BYTES {
-        // Malformed/truncated bloom — default to "may contain" to avoid
-        // incorrectly skipping a block.
+///
+/// If the byte array is too short for the declared `m`, returns `true`
+/// (conservative: do not incorrectly skip a block).
+pub fn bloom_may_contain(bloom: &BloomFilter, value: &str) -> bool {
+    let expected_bytes = (bloom.m as usize).div_ceil(8);
+    if bloom.bytes.len() < expected_bytes {
+        // Malformed/truncated bloom — default to "may contain".
         return true;
     }
-    for i in 0..BLOOM_HASH_COUNT {
-        let bit = bloom_bit_pos(value, i);
-        if bloom[bit / 8] & (1 << (bit % 8)) == 0 {
+    for i in 0..(bloom.k as u32) {
+        let bit = bloom_bit_pos(value, i, bloom.m);
+        if bloom.bytes[bit / 8] & (1 << (bit % 8)) == 0 {
             return false;
         }
     }
     true
 }
 
-/// Build a new bloom filter buffer and insert all provided string values.
+/// Build a new `BloomFilter` with the default parameters (`k=3`, `m=2048`)
+/// and insert all provided string values.
 ///
 /// Skips empty strings and nulls (caller passes only valid, non-null values).
-pub fn build_bloom(values: &[&str]) -> Vec<u8> {
-    let mut bloom = vec![0u8; BLOOM_BYTES];
+pub fn build_bloom(values: &[&str]) -> BloomFilter {
+    build_bloom_with_params(values, BLOOM_K_DEFAULT, BLOOM_BITS_DEFAULT)
+}
+
+/// Build a `BloomFilter` with explicit `k` (hash function count) and `m`
+/// (bit-array size). `m` must be a power of two and at least 8.
+///
+/// This is useful when tuning the filter for a specific target false-positive
+/// rate. Use `build_bloom` for the standard default parameters.
+pub fn build_bloom_with_params(values: &[&str], k: u8, m: u32) -> BloomFilter {
+    debug_assert!(
+        m >= 8 && m.is_power_of_two(),
+        "m must be a power of two ≥ 8"
+    );
+    let byte_count = (m as usize).div_ceil(8);
+    let mut bloom = BloomFilter {
+        k,
+        m,
+        bytes: vec![0u8; byte_count],
+    };
     for v in values {
         bloom_insert(&mut bloom, v);
     }
@@ -422,6 +457,7 @@ pub fn build_bloom(values: &[&str]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zerompk;
 
     fn stats(min: f64, max: f64) -> BlockStats {
         BlockStats::numeric(min, max, 0, 1024)
@@ -612,6 +648,63 @@ mod tests {
         }
         // "apple" was inserted → bloom says may contain → no skip.
         assert!(!ScanPredicate::str_eq(0, "apple").can_skip_block(&stats));
+    }
+
+    // ── Bloom filter parameter persistence ─────────────────────────────────
+
+    /// T1-18: bloom parameters (k, m) must survive a BlockStats MessagePack
+    /// roundtrip so that future readers can reconstruct the filter without
+    /// relying on compile-time constants.
+    #[test]
+    fn bloom_params_persist_through_msgpack_roundtrip() {
+        let bloom = build_bloom_with_params(&["hello", "world"], 7, 8192);
+        assert_eq!(bloom.k, 7);
+        assert_eq!(bloom.m, 8192);
+        assert_eq!(bloom.bytes.len(), 8192 / 8); // 1024 bytes
+
+        let stats = BlockStats::string_block(
+            0,
+            10,
+            Some("hello".into()),
+            Some("world".into()),
+            Some(bloom),
+        );
+
+        // Roundtrip through MessagePack (the on-disk serialization path).
+        let encoded = zerompk::to_msgpack_vec(&stats).expect("MessagePack encode");
+        let decoded: BlockStats = zerompk::from_msgpack(&encoded).expect("MessagePack decode");
+
+        let persisted = decoded
+            .bloom
+            .expect("bloom must be present after roundtrip");
+        assert_eq!(persisted.k, 7, "k must be preserved on disk");
+        assert_eq!(persisted.m, 8192, "m must be preserved on disk");
+        assert_eq!(
+            persisted.bytes.len(),
+            1024,
+            "byte array length must match m/8"
+        );
+
+        // Functional check: values inserted before serialization must still be
+        // found using the params decoded from disk.
+        assert!(bloom_may_contain(&persisted, "hello"));
+        assert!(bloom_may_contain(&persisted, "world"));
+    }
+
+    /// T1-18: a filter built with non-default k=7, m=8192 uses those params
+    /// for bit-position calculations — not the default BLOOM_BITS_DEFAULT/K.
+    #[test]
+    fn bloom_custom_params_functional() {
+        let bloom = build_bloom_with_params(&["alpha", "beta", "gamma"], 7, 8192);
+        assert!(bloom_may_contain(&bloom, "alpha"));
+        assert!(bloom_may_contain(&bloom, "beta"));
+        assert!(bloom_may_contain(&bloom, "gamma"));
+
+        // A default-params filter built from the same values should give the
+        // same membership results but is a different object (different m).
+        let default_bloom = build_bloom(&["alpha", "beta", "gamma"]);
+        assert_eq!(default_bloom.k, BLOOM_K_DEFAULT);
+        assert_eq!(default_bloom.m, BLOOM_BITS_DEFAULT);
     }
 
     // ── G-03: i64 predicate pushdown correctness ────────────────────────────

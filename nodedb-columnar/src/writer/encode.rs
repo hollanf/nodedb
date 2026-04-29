@@ -1,6 +1,6 @@
 //! Low-level encoding helpers: validity bitmaps, numeric pipelines, schema hash.
 
-use nodedb_codec::{ColumnCodec, encode_f64_pipeline, encode_i64_pipeline};
+use nodedb_codec::{ResolvedColumnCodec, encode_f64_pipeline, encode_i64_pipeline};
 use nodedb_types::columnar::ColumnarSchema;
 
 use crate::error::ColumnarError;
@@ -9,9 +9,9 @@ use crate::error::ColumnarError;
 pub(super) fn encode_i64_with_validity(
     values: &[i64],
     valid: &[bool],
-    codec: ColumnCodec,
+    codec: ResolvedColumnCodec,
 ) -> Result<Vec<u8>, ColumnarError> {
-    let compressed = encode_i64_pipeline(values, codec)?;
+    let compressed = encode_i64_pipeline(values, codec.into_column_codec())?;
     Ok(prepend_validity(valid, &compressed))
 }
 
@@ -19,9 +19,9 @@ pub(super) fn encode_i64_with_validity(
 pub(super) fn encode_f64_with_validity(
     values: &[f64],
     valid: &[bool],
-    codec: ColumnCodec,
+    codec: ResolvedColumnCodec,
 ) -> Result<Vec<u8>, ColumnarError> {
-    let compressed = encode_f64_pipeline(values, codec)?;
+    let compressed = encode_f64_pipeline(values, codec.into_column_codec())?;
     Ok(prepend_validity(valid, &compressed))
 }
 

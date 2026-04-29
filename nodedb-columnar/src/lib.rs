@@ -34,15 +34,15 @@ pub use filter::{
     dict_eval_ne, words_for,
 };
 pub use format::{
-    BLOCK_SIZE, BlockStats, ColumnMeta, MAGIC, SegmentFooter, SegmentHeader, VERSION_MAJOR,
-    VERSION_MINOR,
+    BLOCK_SIZE, BlockStats, BloomFilter, ColumnMeta, MAGIC, SegmentFooter, SegmentHeader,
+    VERSION_MAJOR, VERSION_MINOR,
 };
 pub use memtable::{ColumnarMemtable, IngestValue, MemtableRowIter};
 pub use mutation::MutationEngine;
 pub use pk_index::PkIndex;
 pub use predicate::{
-    BLOOM_BYTES, PredicateOp, PredicateValue, ScanPredicate, bloom_insert, bloom_may_contain,
-    build_bloom,
+    BLOOM_BITS_DEFAULT, BLOOM_BYTES, BLOOM_K_DEFAULT, PredicateOp, PredicateValue, ScanPredicate,
+    bloom_insert, bloom_may_contain, build_bloom, build_bloom_with_params,
 };
 pub use reader::SegmentReader;
 pub use writer::SegmentWriter;

@@ -1,7 +1,7 @@
 //! Statistics computation helpers: numeric min/max, string zone-maps, bloom filters.
 
-use crate::format::BlockStats;
-use crate::predicate::{BLOOM_BYTES, bloom_insert};
+use crate::format::{BlockStats, BloomFilter};
+use crate::predicate::{BLOOM_BITS_DEFAULT, BLOOM_K_DEFAULT, bloom_insert};
 
 /// Maximum byte length for string zone-map bounds (truncation threshold).
 pub(super) const STRING_BOUND_MAX_BYTES: usize = 32;
@@ -64,7 +64,12 @@ pub(super) fn compute_string_block_stats(
     // alone cannot efficiently prune. Low-cardinality columns (≤16 distinct)
     // are better served by dict encoding + integer comparison.
     let bloom_opt = if has_non_null && distinct.len() > BLOOM_DISTINCT_THRESHOLD {
-        let mut bloom = vec![0u8; BLOOM_BYTES];
+        let byte_count = (BLOOM_BITS_DEFAULT as usize).div_ceil(8);
+        let mut bloom = BloomFilter {
+            k: BLOOM_K_DEFAULT,
+            m: BLOOM_BITS_DEFAULT,
+            bytes: vec![0u8; byte_count],
+        };
         for (&is_valid, row_idx) in valid_slice.iter().zip(start..end) {
             if !is_valid {
                 continue;

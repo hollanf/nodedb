@@ -10,7 +10,7 @@
 //! - **Bool/Decimal/Uuid/Vector**: `[validity_bitmap][codec_compressed_bytes]`
 //! - **String/Bytes/Geometry**: `[validity_bitmap][offset_len: u32][compressed_offsets][compressed_data]`
 
-use nodedb_codec::ColumnCodec;
+use nodedb_codec::{ColumnCodec, ResolvedColumnCodec};
 
 use crate::delete_bitmap::DeleteBitmap;
 use crate::error::ColumnarError;
@@ -243,23 +243,23 @@ fn infer_column_type(meta: &ColumnMeta) -> ColumnKind {
     }
 
     match meta.codec {
-        ColumnCodec::DeltaFastLanesLz4
-        | ColumnCodec::DeltaFastLanesRans
-        | ColumnCodec::FastLanesLz4
-        | ColumnCodec::Delta
-        | ColumnCodec::DoubleDelta => ColumnKind::Int64,
+        ResolvedColumnCodec::DeltaFastLanesLz4
+        | ResolvedColumnCodec::DeltaFastLanesRans
+        | ResolvedColumnCodec::FastLanesLz4
+        | ResolvedColumnCodec::Delta
+        | ResolvedColumnCodec::DoubleDelta => ColumnKind::Int64,
 
-        ColumnCodec::AlpFastLanesLz4
-        | ColumnCodec::AlpFastLanesRans
-        | ColumnCodec::AlpRdLz4
-        | ColumnCodec::PcodecLz4
-        | ColumnCodec::Gorilla => ColumnKind::Float64,
+        ResolvedColumnCodec::AlpFastLanesLz4
+        | ResolvedColumnCodec::AlpFastLanesRans
+        | ResolvedColumnCodec::AlpRdLz4
+        | ResolvedColumnCodec::PcodecLz4
+        | ResolvedColumnCodec::Gorilla => ColumnKind::Float64,
 
-        ColumnCodec::FsstLz4 | ColumnCodec::FsstRans => ColumnKind::VarLen,
+        ResolvedColumnCodec::FsstLz4 | ResolvedColumnCodec::FsstRans => ColumnKind::VarLen,
 
         // LZ4/Raw/Zstd could be bool, binary, decimal, uuid, vector — use
         // block_stats to distinguish: if min/max are NaN → binary-like.
-        ColumnCodec::Lz4 | ColumnCodec::Raw | ColumnCodec::Zstd | ColumnCodec::Auto => {
+        ResolvedColumnCodec::Lz4 | ResolvedColumnCodec::Raw | ResolvedColumnCodec::Zstd => {
             if meta.block_stats.first().is_some_and(|s| !s.min.is_nan()) {
                 ColumnKind::Int64 // Numeric fallback.
             } else {
@@ -372,7 +372,7 @@ fn decode_block(
     result: &mut DecodedColumn,
     block_data: &[u8],
     kind: &ColumnKind,
-    codec: ColumnCodec,
+    codec: ResolvedColumnCodec,
     row_count: usize,
     dictionary: Option<&[String]>,
 ) -> Result<(), ColumnarError> {
@@ -399,7 +399,7 @@ fn decode_block(
                 append_null_fill(result, row_count);
                 return Ok(());
             };
-            let decoded = nodedb_codec::decode_i64_pipeline(payload, codec)?;
+            let decoded = nodedb_codec::decode_i64_pipeline(payload, codec.into_column_codec())?;
             values.extend_from_slice(&decoded[..row_count.min(decoded.len())]);
             while values.len() < v.len() + row_count {
                 values.push(0);
@@ -411,7 +411,7 @@ fn decode_block(
                 append_null_fill(result, row_count);
                 return Ok(());
             };
-            let decoded = nodedb_codec::decode_f64_pipeline(payload, codec)?;
+            let decoded = nodedb_codec::decode_f64_pipeline(payload, codec.into_column_codec())?;
             values.extend_from_slice(&decoded[..row_count.min(decoded.len())]);
             while values.len() < v.len() + row_count {
                 values.push(0.0);
@@ -442,7 +442,8 @@ fn decode_block(
 
             let decoded_offsets =
                 nodedb_codec::decode_i64_pipeline(offset_data, ColumnCodec::DeltaFastLanesLz4)?;
-            let decoded_bytes = nodedb_codec::decode_bytes_pipeline(string_data, codec)?;
+            let decoded_bytes =
+                nodedb_codec::decode_bytes_pipeline(string_data, codec.into_column_codec())?;
 
             // decoded_offsets has row_count + 1 entries (including sentinel).
             // Map them to absolute positions in the output data buffer.
@@ -465,7 +466,8 @@ fn decode_block(
                 append_null_fill(result, row_count);
                 return Ok(());
             };
-            let decoded_bytes = nodedb_codec::decode_bytes_pipeline(payload, codec)?;
+            let decoded_bytes =
+                nodedb_codec::decode_bytes_pipeline(payload, codec.into_column_codec())?;
             let base = data.len() as u32;
 
             if row_count > 0 && !decoded_bytes.is_empty() {
@@ -551,6 +553,62 @@ mod tests {
         SegmentWriter::plain()
             .write_segment(&schema, &columns, row_count)
             .expect("write")
+    }
+
+    // ── T1-05 ResolvedColumnCodec reader tests ─────────────────────────────────
+
+    /// The `ResolvedColumnCodec` type statically excludes `Auto` (discriminant 0).
+    ///
+    /// This test verifies the compile-time guarantee by confirming:
+    /// 1. Serializing any `ResolvedColumnCodec` value never produces byte 0 (Auto discriminant).
+    /// 2. The msgpack deserialization of a byte-0 value as `ResolvedColumnCodec` fails.
+    ///
+    /// Together these ensure that `Auto` can never appear in a segment footer,
+    /// because `ResolvedColumnCodec` cannot represent it.
+    #[test]
+    fn resolved_codec_never_serializes_as_auto_discriminant() {
+        use nodedb_codec::ResolvedColumnCodec;
+
+        let all_concrete = [
+            ResolvedColumnCodec::AlpFastLanesLz4,
+            ResolvedColumnCodec::AlpRdLz4,
+            ResolvedColumnCodec::PcodecLz4,
+            ResolvedColumnCodec::DeltaFastLanesLz4,
+            ResolvedColumnCodec::FastLanesLz4,
+            ResolvedColumnCodec::FsstLz4,
+            ResolvedColumnCodec::AlpFastLanesRans,
+            ResolvedColumnCodec::DeltaFastLanesRans,
+            ResolvedColumnCodec::FsstRans,
+            ResolvedColumnCodec::Gorilla,
+            ResolvedColumnCodec::DoubleDelta,
+            ResolvedColumnCodec::Delta,
+            ResolvedColumnCodec::Lz4,
+            ResolvedColumnCodec::Zstd,
+            ResolvedColumnCodec::Raw,
+        ];
+
+        for codec in all_concrete {
+            let bytes = zerompk::to_msgpack_vec(&codec).expect("serialize");
+            // The msgpack c_enum for small integers uses a fixint byte.
+            // Byte 0 is the Auto discriminant — none of the resolved variants
+            // should serialize to it.
+            assert!(
+                !bytes.contains(&0u8) || bytes.len() > 1,
+                "codec {codec} serialized to bytes containing 0: {bytes:?}"
+            );
+            // More precisely: the last byte (discriminant byte) must not be 0.
+            let disc = *bytes.last().unwrap();
+            assert_ne!(disc, 0u8, "codec {codec} has discriminant byte 0 (Auto)");
+        }
+
+        // Attempt to deserialize byte 0 as ResolvedColumnCodec — must fail.
+        // Encode byte 0 as a msgpack fixint (0x00 = msgpack positive fixint 0).
+        let auto_byte: &[u8] = &[0x00];
+        let result: Result<ResolvedColumnCodec, _> = zerompk::from_msgpack(auto_byte);
+        assert!(
+            result.is_err(),
+            "deserializing byte 0 as ResolvedColumnCodec must fail (Auto is not a valid variant)"
+        );
     }
 
     #[test]

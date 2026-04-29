@@ -1,6 +1,6 @@
 //! Column block encoding: `encode_column_blocks` and the per-block dispatch logic.
 
-use nodedb_codec::ColumnCodec;
+use nodedb_codec::{ColumnCodec, ResolvedColumnCodec};
 use nodedb_types::columnar::ColumnType;
 
 use crate::error::ColumnarError;
@@ -18,7 +18,7 @@ pub(super) fn encode_column_blocks(
     buf: &mut Vec<u8>,
     col_data: &ColumnData,
     col_type: &ColumnType,
-    codec: ColumnCodec,
+    codec: ResolvedColumnCodec,
     row_count: usize,
 ) -> Result<Vec<BlockStats>, ColumnarError> {
     let num_blocks = row_count.div_ceil(BLOCK_SIZE);
@@ -47,7 +47,7 @@ pub(super) fn encode_column_blocks(
 fn encode_single_block(
     col_data: &ColumnData,
     _col_type: &ColumnType,
-    codec: ColumnCodec,
+    codec: ResolvedColumnCodec,
     start: usize,
     end: usize,
     block_row_count: usize,
@@ -105,7 +105,8 @@ fn encode_single_block(
                 }
                 packed.push(byte);
             }
-            let compressed = nodedb_codec::encode_bytes_pipeline(&packed, codec)?;
+            let compressed =
+                nodedb_codec::encode_bytes_pipeline(&packed, codec.into_column_codec())?;
 
             let stats = BlockStats::non_numeric(null_count, block_row_count as u32);
             let encoded = prepend_validity(valid_slice, &compressed);
@@ -119,7 +120,8 @@ fn encode_single_block(
             let byte_end = offsets[end] as usize;
             let string_bytes = &data[byte_start..byte_end];
 
-            let compressed = nodedb_codec::encode_bytes_pipeline(string_bytes, codec)?;
+            let compressed =
+                nodedb_codec::encode_bytes_pipeline(string_bytes, codec.into_column_codec())?;
 
             let stats = compute_string_block_stats(
                 data,
@@ -135,9 +137,8 @@ fn encode_single_block(
                 .iter()
                 .map(|&o| (o as i64) - (offsets[start] as i64))
                 .collect();
-            let offset_codec = ColumnCodec::DeltaFastLanesLz4;
             let compressed_offsets =
-                nodedb_codec::encode_i64_pipeline(&block_offsets, offset_codec)?;
+                nodedb_codec::encode_i64_pipeline(&block_offsets, ColumnCodec::DeltaFastLanesLz4)?;
 
             let mut encoded = encode_validity_bitmap(valid_slice);
             encoded.extend_from_slice(&(compressed_offsets.len() as u32).to_le_bytes());
@@ -153,7 +154,8 @@ fn encode_single_block(
             let byte_end = offsets[end] as usize;
             let raw_bytes = &data[byte_start..byte_end];
 
-            let compressed = nodedb_codec::encode_bytes_pipeline(raw_bytes, codec)?;
+            let compressed =
+                nodedb_codec::encode_bytes_pipeline(raw_bytes, codec.into_column_codec())?;
             let stats = BlockStats::non_numeric(null_count, block_row_count as u32);
 
             let block_offsets: Vec<i64> = offsets[start..=end]
@@ -178,7 +180,7 @@ fn encode_single_block(
             for v in slice {
                 raw.extend_from_slice(v);
             }
-            let compressed = nodedb_codec::encode_bytes_pipeline(&raw, codec)?;
+            let compressed = nodedb_codec::encode_bytes_pipeline(&raw, codec.into_column_codec())?;
             let stats = BlockStats::non_numeric(null_count, block_row_count as u32);
             let encoded = prepend_validity(valid_slice, &compressed);
             Ok((encoded, stats))
@@ -195,7 +197,7 @@ fn encode_single_block(
             for f in float_slice {
                 raw.extend_from_slice(&f.to_le_bytes());
             }
-            let compressed = nodedb_codec::encode_bytes_pipeline(&raw, codec)?;
+            let compressed = nodedb_codec::encode_bytes_pipeline(&raw, codec.into_column_codec())?;
             let stats = BlockStats::non_numeric(null_count, block_row_count as u32);
             let encoded = prepend_validity(valid_slice, &compressed);
             Ok((encoded, stats))
@@ -223,8 +225,11 @@ fn encode_single_block(
                 null_count,
                 block_row_count as u32,
             );
-            let encoded =
-                encode_i64_with_validity(&id_i64, valid_slice, ColumnCodec::DeltaFastLanesLz4)?;
+            let encoded = encode_i64_with_validity(
+                &id_i64,
+                valid_slice,
+                ResolvedColumnCodec::DeltaFastLanesLz4,
+            )?;
             Ok((encoded, stats))
         }
     }

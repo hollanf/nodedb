@@ -160,7 +160,120 @@ impl ColumnCodec {
     }
 }
 
+impl ColumnCodec {
+    /// Resolve `Auto` to a concrete codec using the provided detection result,
+    /// or return an error if this is called with `Auto` where a concrete value
+    /// is required (i.e. a caller forgot to run detection first).
+    ///
+    /// For callers that have already run detection and hold a non-`Auto`
+    /// codec, this is a zero-cost newtype wrap.
+    pub fn try_resolve(self) -> Result<ResolvedColumnCodec, CodecError> {
+        match self {
+            Self::Auto => Err(CodecError::UnresolvedAuto),
+            Self::AlpFastLanesLz4 => Ok(ResolvedColumnCodec::AlpFastLanesLz4),
+            Self::AlpRdLz4 => Ok(ResolvedColumnCodec::AlpRdLz4),
+            Self::PcodecLz4 => Ok(ResolvedColumnCodec::PcodecLz4),
+            Self::DeltaFastLanesLz4 => Ok(ResolvedColumnCodec::DeltaFastLanesLz4),
+            Self::FastLanesLz4 => Ok(ResolvedColumnCodec::FastLanesLz4),
+            Self::FsstLz4 => Ok(ResolvedColumnCodec::FsstLz4),
+            Self::AlpFastLanesRans => Ok(ResolvedColumnCodec::AlpFastLanesRans),
+            Self::DeltaFastLanesRans => Ok(ResolvedColumnCodec::DeltaFastLanesRans),
+            Self::FsstRans => Ok(ResolvedColumnCodec::FsstRans),
+            Self::Gorilla => Ok(ResolvedColumnCodec::Gorilla),
+            Self::DoubleDelta => Ok(ResolvedColumnCodec::DoubleDelta),
+            Self::Delta => Ok(ResolvedColumnCodec::Delta),
+            Self::Lz4 => Ok(ResolvedColumnCodec::Lz4),
+            Self::Zstd => Ok(ResolvedColumnCodec::Zstd),
+            Self::Raw => Ok(ResolvedColumnCodec::Raw),
+        }
+    }
+}
+
 impl std::fmt::Display for ColumnCodec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A `ColumnCodec` that has been resolved away from `Auto`.
+///
+/// Invariant: this type can never hold the `Auto` variant. All on-disk
+/// column headers (`ColumnMeta.codec`) and per-column statistics
+/// (`ColumnStatistics.codec`) use `ResolvedColumnCodec`, making it a
+/// compile-time guarantee that `Auto` never survives to disk.
+///
+/// The `#[repr(u8)]` discriminants are **identical** to the corresponding
+/// `ColumnCodec` discriminants so that on-disk byte values are unchanged.
+/// `Auto` (discriminant 0) is intentionally absent.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToMessagePack, FromMessagePack,
+)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+#[msgpack(c_enum)]
+pub enum ResolvedColumnCodec {
+    AlpFastLanesLz4 = 1,
+    AlpRdLz4 = 2,
+    PcodecLz4 = 3,
+    DeltaFastLanesLz4 = 4,
+    FastLanesLz4 = 5,
+    FsstLz4 = 6,
+    AlpFastLanesRans = 7,
+    DeltaFastLanesRans = 8,
+    FsstRans = 9,
+    Gorilla = 10,
+    DoubleDelta = 11,
+    Delta = 12,
+    Lz4 = 13,
+    Zstd = 14,
+    Raw = 15,
+}
+
+impl ResolvedColumnCodec {
+    /// Convert back to `ColumnCodec` for use with codec pipelines that
+    /// accept the full enum (e.g. `encode_i64_pipeline`, `decode_f64_pipeline`).
+    pub fn into_column_codec(self) -> ColumnCodec {
+        match self {
+            Self::AlpFastLanesLz4 => ColumnCodec::AlpFastLanesLz4,
+            Self::AlpRdLz4 => ColumnCodec::AlpRdLz4,
+            Self::PcodecLz4 => ColumnCodec::PcodecLz4,
+            Self::DeltaFastLanesLz4 => ColumnCodec::DeltaFastLanesLz4,
+            Self::FastLanesLz4 => ColumnCodec::FastLanesLz4,
+            Self::FsstLz4 => ColumnCodec::FsstLz4,
+            Self::AlpFastLanesRans => ColumnCodec::AlpFastLanesRans,
+            Self::DeltaFastLanesRans => ColumnCodec::DeltaFastLanesRans,
+            Self::FsstRans => ColumnCodec::FsstRans,
+            Self::Gorilla => ColumnCodec::Gorilla,
+            Self::DoubleDelta => ColumnCodec::DoubleDelta,
+            Self::Delta => ColumnCodec::Delta,
+            Self::Lz4 => ColumnCodec::Lz4,
+            Self::Zstd => ColumnCodec::Zstd,
+            Self::Raw => ColumnCodec::Raw,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AlpFastLanesLz4 => "alp_fastlanes_lz4",
+            Self::AlpRdLz4 => "alp_rd_lz4",
+            Self::PcodecLz4 => "pcodec_lz4",
+            Self::DeltaFastLanesLz4 => "delta_fastlanes_lz4",
+            Self::FastLanesLz4 => "fastlanes_lz4",
+            Self::FsstLz4 => "fsst_lz4",
+            Self::AlpFastLanesRans => "alp_fastlanes_rans",
+            Self::DeltaFastLanesRans => "delta_fastlanes_rans",
+            Self::FsstRans => "fsst_rans",
+            Self::Gorilla => "gorilla",
+            Self::DoubleDelta => "double_delta",
+            Self::Delta => "delta",
+            Self::Lz4 => "lz4",
+            Self::Zstd => "zstd",
+            Self::Raw => "raw",
+        }
+    }
+}
+
+impl std::fmt::Display for ResolvedColumnCodec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
@@ -180,10 +293,12 @@ pub enum ColumnTypeHint {
 ///
 /// Stored in partition metadata for predicate pushdown and approximate
 /// query answers without decompression.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct ColumnStatistics {
     /// Codec used for this column in this partition.
-    pub codec: ColumnCodec,
+    ///
+    /// Always a concrete, resolved codec — never `Auto`.
+    pub codec: ResolvedColumnCodec,
     /// Number of non-null values.
     pub count: u64,
     /// Minimum value (as f64 for numeric columns, 0.0 for non-numeric).
@@ -206,7 +321,7 @@ pub struct ColumnStatistics {
 
 impl ColumnStatistics {
     /// Create empty statistics with just the codec.
-    pub fn new(codec: ColumnCodec) -> Self {
+    pub fn new(codec: ResolvedColumnCodec) -> Self {
         Self {
             codec,
             count: 0,
@@ -220,7 +335,7 @@ impl ColumnStatistics {
     }
 
     /// Compute statistics for an i64 column.
-    pub fn from_i64(values: &[i64], codec: ColumnCodec, compressed_bytes: u64) -> Self {
+    pub fn from_i64(values: &[i64], codec: ResolvedColumnCodec, compressed_bytes: u64) -> Self {
         if values.is_empty() {
             return Self::new(codec);
         }
@@ -252,7 +367,7 @@ impl ColumnStatistics {
     }
 
     /// Compute statistics for an f64 column.
-    pub fn from_f64(values: &[f64], codec: ColumnCodec, compressed_bytes: u64) -> Self {
+    pub fn from_f64(values: &[f64], codec: ResolvedColumnCodec, compressed_bytes: u64) -> Self {
         if values.is_empty() {
             return Self::new(codec);
         }
@@ -287,7 +402,7 @@ impl ColumnStatistics {
     pub fn from_symbols(
         values: &[u32],
         cardinality: u32,
-        codec: ColumnCodec,
+        codec: ResolvedColumnCodec,
         compressed_bytes: u64,
     ) -> Self {
         Self {
@@ -314,6 +429,117 @@ impl ColumnStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── T1-05 ResolvedColumnCodec tests ────────────────────────────────────────
+
+    /// Discriminants of ResolvedColumnCodec must exactly match those of the
+    /// corresponding ColumnCodec variants so on-disk byte values are unchanged.
+    #[test]
+    fn resolved_codec_discriminants_match_column_codec() {
+        // Verify that the byte values written to disk by ResolvedColumnCodec
+        // are the same as those that would be written by ColumnCodec.
+        // We test all 15 concrete variants.
+        let pairs: &[(ResolvedColumnCodec, ColumnCodec)] = &[
+            (
+                ResolvedColumnCodec::AlpFastLanesLz4,
+                ColumnCodec::AlpFastLanesLz4,
+            ),
+            (ResolvedColumnCodec::AlpRdLz4, ColumnCodec::AlpRdLz4),
+            (ResolvedColumnCodec::PcodecLz4, ColumnCodec::PcodecLz4),
+            (
+                ResolvedColumnCodec::DeltaFastLanesLz4,
+                ColumnCodec::DeltaFastLanesLz4,
+            ),
+            (ResolvedColumnCodec::FastLanesLz4, ColumnCodec::FastLanesLz4),
+            (ResolvedColumnCodec::FsstLz4, ColumnCodec::FsstLz4),
+            (
+                ResolvedColumnCodec::AlpFastLanesRans,
+                ColumnCodec::AlpFastLanesRans,
+            ),
+            (
+                ResolvedColumnCodec::DeltaFastLanesRans,
+                ColumnCodec::DeltaFastLanesRans,
+            ),
+            (ResolvedColumnCodec::FsstRans, ColumnCodec::FsstRans),
+            (ResolvedColumnCodec::Gorilla, ColumnCodec::Gorilla),
+            (ResolvedColumnCodec::DoubleDelta, ColumnCodec::DoubleDelta),
+            (ResolvedColumnCodec::Delta, ColumnCodec::Delta),
+            (ResolvedColumnCodec::Lz4, ColumnCodec::Lz4),
+            (ResolvedColumnCodec::Zstd, ColumnCodec::Zstd),
+            (ResolvedColumnCodec::Raw, ColumnCodec::Raw),
+        ];
+
+        for &(resolved, column) in pairs {
+            // Serialize both through msgpack (the on-disk format) and check bytes match.
+            let resolved_bytes = zerompk::to_msgpack_vec(&resolved).unwrap();
+            let column_bytes = zerompk::to_msgpack_vec(&column).unwrap();
+            assert_eq!(
+                resolved_bytes, column_bytes,
+                "discriminant mismatch for {resolved} vs {column}"
+            );
+
+            // Also verify round-trip via into_column_codec.
+            assert_eq!(
+                resolved.into_column_codec(),
+                column,
+                "into_column_codec mismatch for {resolved}"
+            );
+        }
+    }
+
+    /// Auto resolves to an error; all concrete variants resolve successfully.
+    #[test]
+    fn try_resolve_auto_returns_error() {
+        assert!(
+            matches!(
+                ColumnCodec::Auto.try_resolve(),
+                Err(crate::error::CodecError::UnresolvedAuto)
+            ),
+            "Auto.try_resolve() must return UnresolvedAuto error"
+        );
+    }
+
+    #[test]
+    fn try_resolve_concrete_succeeds() {
+        let concretes = [
+            ColumnCodec::AlpFastLanesLz4,
+            ColumnCodec::Gorilla,
+            ColumnCodec::Delta,
+            ColumnCodec::Raw,
+            ColumnCodec::Lz4,
+        ];
+        for codec in concretes {
+            assert!(
+                codec.try_resolve().is_ok(),
+                "{codec} should resolve successfully"
+            );
+        }
+    }
+
+    #[test]
+    fn resolved_codec_serde_roundtrip() {
+        for codec in [
+            ResolvedColumnCodec::AlpFastLanesLz4,
+            ResolvedColumnCodec::AlpRdLz4,
+            ResolvedColumnCodec::PcodecLz4,
+            ResolvedColumnCodec::DeltaFastLanesLz4,
+            ResolvedColumnCodec::FastLanesLz4,
+            ResolvedColumnCodec::FsstLz4,
+            ResolvedColumnCodec::AlpFastLanesRans,
+            ResolvedColumnCodec::DeltaFastLanesRans,
+            ResolvedColumnCodec::FsstRans,
+            ResolvedColumnCodec::Gorilla,
+            ResolvedColumnCodec::DoubleDelta,
+            ResolvedColumnCodec::Delta,
+            ResolvedColumnCodec::Lz4,
+            ResolvedColumnCodec::Zstd,
+            ResolvedColumnCodec::Raw,
+        ] {
+            let json = sonic_rs::to_string(&codec).unwrap();
+            let back: ResolvedColumnCodec = sonic_rs::from_str(&json).unwrap();
+            assert_eq!(codec, back, "serde roundtrip failed for {codec}");
+        }
+    }
 
     #[test]
     fn column_codec_serde_roundtrip() {
@@ -344,7 +570,7 @@ mod tests {
     #[test]
     fn column_statistics_i64() {
         let values = vec![10i64, 20, 30, 40, 50];
-        let stats = ColumnStatistics::from_i64(&values, ColumnCodec::Delta, 12);
+        let stats = ColumnStatistics::from_i64(&values, ResolvedColumnCodec::Delta, 12);
         assert_eq!(stats.count, 5);
         assert_eq!(stats.min, Some(10.0));
         assert_eq!(stats.max, Some(50.0));
@@ -356,7 +582,7 @@ mod tests {
     #[test]
     fn column_statistics_f64() {
         let values = vec![1.5f64, 2.5, 3.5];
-        let stats = ColumnStatistics::from_f64(&values, ColumnCodec::Gorilla, 8);
+        let stats = ColumnStatistics::from_f64(&values, ResolvedColumnCodec::Gorilla, 8);
         assert_eq!(stats.count, 3);
         assert_eq!(stats.min, Some(1.5));
         assert_eq!(stats.max, Some(3.5));
@@ -366,7 +592,7 @@ mod tests {
     #[test]
     fn column_statistics_symbols() {
         let values = vec![0u32, 1, 2, 0, 1];
-        let stats = ColumnStatistics::from_symbols(&values, 3, ColumnCodec::Raw, 20);
+        let stats = ColumnStatistics::from_symbols(&values, 3, ResolvedColumnCodec::Raw, 20);
         assert_eq!(stats.count, 5);
         assert_eq!(stats.cardinality, Some(3));
         assert!(stats.min.is_none());
@@ -375,7 +601,7 @@ mod tests {
     #[test]
     fn compression_ratio_calculation() {
         let stats = ColumnStatistics {
-            codec: ColumnCodec::Delta,
+            codec: ResolvedColumnCodec::Delta,
             count: 100,
             min: None,
             max: None,

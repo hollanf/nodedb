@@ -26,4 +26,13 @@ pub enum CodecError {
     /// Invalid layout construction or access (vector quantization).
     #[error("layout error: {detail}")]
     LayoutError { detail: String },
+
+    /// `ColumnCodec::Auto` reached a point where a concrete codec was required.
+    ///
+    /// `Auto` is a user-facing selection hint that must be resolved to a
+    /// concrete codec at flush time. If `Auto` appears in a serialized
+    /// on-disk header or is passed directly to an encoder, the write path
+    /// has a bug — `ColumnCodec::try_resolve()` was not called.
+    #[error("unresolved Auto codec: codec must be resolved to a concrete variant before writing")]
+    UnresolvedAuto,
 }
