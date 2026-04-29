@@ -2,12 +2,32 @@
 
 use super::core::TenantCrdtEngine;
 
+/// Envelope version embedded in every serialized `VersionVector` JSON string.
+///
+/// Format: `{"v": <LORO_VV_FORMAT_VERSION>, "vv": {"<peer_hex>": <counter>, …}}`
+///
+/// Increment this constant (and add a migration path) when the serialization
+/// format for version vectors changes in a backward-incompatible way. Every
+/// call site that produces or consumes a version-vector string goes through
+/// [`version_vector_json`] / [`json_to_vv`], so the version check is
+/// centralised here.
+const LORO_VV_FORMAT_VERSION: u8 = 1;
+
 impl TenantCrdtEngine {
-    /// Get the current version vector as a JSON string.
+    /// Get the current version vector as a versioned JSON string.
+    ///
+    /// The returned string has the shape:
+    /// `{"v": <LORO_VV_FORMAT_VERSION>, "vv": {"<peer_hex>": <counter>, …}}`
+    ///
+    /// Pass this string to any method that accepts a `version_json` parameter.
     pub fn version_vector_json(&self) -> crate::Result<String> {
         let vv = self.state.oplog_version_vector();
-        let map = vv_to_json_map(&vv);
-        sonic_rs::to_string(&map).map_err(|e| crate::Error::Internal {
+        let inner = vv_to_json_map(&vv);
+        let envelope = VvEnvelope {
+            v: LORO_VV_FORMAT_VERSION,
+            vv: inner,
+        };
+        sonic_rs::to_string(&envelope).map_err(|e| crate::Error::Internal {
             detail: format!("version vector serialization: {e}"),
         })
     }
@@ -64,6 +84,17 @@ impl TenantCrdtEngine {
     }
 }
 
+/// Serialization envelope for a Loro `VersionVector`.
+///
+/// Produced by [`TenantCrdtEngine::version_vector_json`] and consumed by
+/// [`json_to_vv`]. The `v` field lets readers detect format-version mismatches
+/// before attempting to interpret the `vv` payload.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct VvEnvelope {
+    v: u8,
+    vv: std::collections::HashMap<String, i64>,
+}
+
 /// Convert a Loro VersionVector to a JSON-friendly map: `{peer_id_hex: counter}`.
 fn vv_to_json_map(vv: &loro::VersionVector) -> std::collections::HashMap<String, i64> {
     let mut map = std::collections::HashMap::new();
@@ -73,14 +104,25 @@ fn vv_to_json_map(vv: &loro::VersionVector) -> std::collections::HashMap<String,
     map
 }
 
-/// Parse a JSON version vector string into a Loro VersionVector.
+/// Parse a versioned JSON version-vector string into a Loro VersionVector.
+///
+/// The string must have been produced by [`TenantCrdtEngine::version_vector_json`].
+/// Returns [`crate::Error::VersionCompat`] if the envelope version does not
+/// match [`LORO_VV_FORMAT_VERSION`].
 fn json_to_vv(json: &str) -> crate::Result<loro::VersionVector> {
-    let map: std::collections::HashMap<String, i64> =
-        sonic_rs::from_str(json).map_err(|e| crate::Error::BadRequest {
-            detail: format!("invalid version vector JSON: {e}"),
-        })?;
+    let envelope: VvEnvelope = sonic_rs::from_str(json).map_err(|e| crate::Error::BadRequest {
+        detail: format!("invalid version vector JSON: {e}"),
+    })?;
+    if envelope.v != LORO_VV_FORMAT_VERSION {
+        return Err(crate::Error::VersionCompat {
+            detail: format!(
+                "version vector format version mismatch: expected {LORO_VV_FORMAT_VERSION}, got {}",
+                envelope.v
+            ),
+        });
+    }
     let mut vv = loro::VersionVector::default();
-    for (peer_hex, counter) in &map {
+    for (peer_hex, counter) in &envelope.vv {
         let peer = u64::from_str_radix(peer_hex.trim_start_matches("0x"), 16).map_err(|e| {
             crate::Error::BadRequest {
                 detail: format!("invalid peer_id hex '{peer_hex}': {e}"),
@@ -89,4 +131,70 @@ fn json_to_vv(json: &str) -> crate::Result<loro::VersionVector> {
         vv.insert(peer, *counter as i32);
     }
     Ok(vv)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_vv_json(v: u8, peers: &[(&str, i64)]) -> String {
+        let inner: std::collections::HashMap<String, i64> =
+            peers.iter().map(|(k, c)| (k.to_string(), *c)).collect();
+        let envelope = VvEnvelope { v, vv: inner };
+        sonic_rs::to_string(&envelope).unwrap()
+    }
+
+    #[test]
+    fn vv_roundtrip_through_json() {
+        let json = make_vv_json(LORO_VV_FORMAT_VERSION, &[("000000000000001a", 42)]);
+        let vv = json_to_vv(&json).unwrap();
+        // Verify the peer 0x1a is present with counter 42.
+        let found = vv
+            .iter()
+            .find(|&(peer, _)| *peer == 0x1a_u64)
+            .map(|(_, c)| *c);
+        assert_eq!(found, Some(42_i32));
+    }
+
+    #[test]
+    fn vv_json_rejects_wrong_version() {
+        let json = make_vv_json(
+            LORO_VV_FORMAT_VERSION.wrapping_add(1),
+            &[("000000000000001a", 1)],
+        );
+        let err = json_to_vv(&json).unwrap_err();
+        assert!(
+            matches!(err, crate::Error::VersionCompat { .. }),
+            "expected VersionCompat, got: {err}"
+        );
+    }
+
+    #[test]
+    fn vv_json_rejects_version_zero() {
+        let json = make_vv_json(0, &[]);
+        let err = json_to_vv(&json).unwrap_err();
+        assert!(
+            matches!(err, crate::Error::VersionCompat { .. }),
+            "expected VersionCompat, got: {err}"
+        );
+    }
+
+    #[test]
+    fn vv_json_rejects_malformed_input() {
+        let err = json_to_vv("not json at all").unwrap_err();
+        assert!(
+            matches!(err, crate::Error::BadRequest { .. }),
+            "expected BadRequest, got: {err}"
+        );
+    }
+
+    #[test]
+    fn vv_json_rejects_invalid_peer_hex() {
+        let json = make_vv_json(LORO_VV_FORMAT_VERSION, &[("not-hex-at-all!!", 1)]);
+        let err = json_to_vv(&json).unwrap_err();
+        assert!(
+            matches!(err, crate::Error::BadRequest { .. }),
+            "expected BadRequest, got: {err}"
+        );
+    }
 }

@@ -17,6 +17,17 @@ use crate::schema::array_schema::ArraySchema;
 use crate::sync::hlc::{Hlc, HlcGenerator};
 use crate::sync::replica_id::ReplicaId;
 
+/// Envelope version for the Loro snapshot bytes produced and consumed by this
+/// module.
+///
+/// Format: `[LORO_FORMAT_VERSION: u8][loro snapshot bytes…]`
+///
+/// Increment this constant (and add a migration path) whenever the Loro
+/// snapshot wire format changes in a backward-incompatible way. The version is
+/// checked on every import so that snapshots from an older binary are rejected
+/// with a clear error rather than silently corrupting state.
+pub const LORO_FORMAT_VERSION: u8 = 1;
+
 /// Loro-backed CRDT document tracking a single array's schema.
 ///
 /// The schema is stored as a MessagePack blob at root map key `"content"`.
@@ -82,16 +93,24 @@ impl SchemaDoc {
         })
     }
 
-    /// Export the full Loro snapshot as bytes.
+    /// Export the full Loro snapshot as an enveloped byte buffer.
     ///
-    /// The returned bytes can be passed to [`SchemaDoc::import_snapshot`] on
-    /// another replica to converge schema state.
+    /// The returned bytes have the format:
+    /// `[LORO_FORMAT_VERSION: u8][loro snapshot bytes…]`
+    ///
+    /// Pass the result to [`SchemaDoc::import_snapshot`] (or
+    /// [`SchemaDoc::import_snapshot_replicated`]) on another replica to
+    /// converge schema state.
     pub fn export_snapshot(&self) -> ArrayResult<Vec<u8>> {
-        self.doc
-            .export(loro::ExportMode::Snapshot)
-            .map_err(|e| ArrayError::SegmentCorruption {
+        let loro_bytes = self.doc.export(loro::ExportMode::Snapshot).map_err(|e| {
+            ArrayError::SegmentCorruption {
                 detail: format!("loro snapshot export failed: {e}"),
-            })
+            }
+        })?;
+        let mut envelope = Vec::with_capacity(1 + loro_bytes.len());
+        envelope.push(LORO_FORMAT_VERSION);
+        envelope.extend_from_slice(&loro_bytes);
+        Ok(envelope)
     }
 
     /// Import a Loro snapshot from a remote replica.
@@ -107,9 +126,12 @@ impl SchemaDoc {
         remote_hlc: Hlc,
         generator: &HlcGenerator,
     ) -> ArrayResult<()> {
-        self.doc.import(bytes).map_err(|e| ArrayError::LoroError {
-            detail: format!("loro import failed: {e}"),
-        })?;
+        let loro_bytes = strip_envelope(bytes)?;
+        self.doc
+            .import(loro_bytes)
+            .map_err(|e| ArrayError::LoroError {
+                detail: format!("loro import failed: {e}"),
+            })?;
         generator.observe(remote_hlc)?;
         self.schema_hlc = generator.next()?;
         Ok(())
@@ -130,9 +152,12 @@ impl SchemaDoc {
         bytes: &[u8],
         committed_hlc: Hlc,
     ) -> ArrayResult<()> {
-        self.doc.import(bytes).map_err(|e| ArrayError::LoroError {
-            detail: format!("loro import (replicated) failed: {e}"),
-        })?;
+        let loro_bytes = strip_envelope(bytes)?;
+        self.doc
+            .import(loro_bytes)
+            .map_err(|e| ArrayError::LoroError {
+                detail: format!("loro import (replicated) failed: {e}"),
+            })?;
         self.schema_hlc = committed_hlc;
         Ok(())
     }
@@ -179,6 +204,25 @@ impl SchemaDoc {
                 detail: "root[\"content\"] not found".into(),
             }),
         }
+    }
+}
+
+// ─── Envelope helpers ─────────────────────────────────────────────────────────
+
+/// Strip the one-byte version prefix from an enveloped snapshot buffer.
+///
+/// Returns a slice into `bytes` starting after the version byte, or an error
+/// if the buffer is empty or the version does not match [`LORO_FORMAT_VERSION`].
+fn strip_envelope(bytes: &[u8]) -> ArrayResult<&[u8]> {
+    match bytes.first() {
+        None => Err(ArrayError::SegmentCorruption {
+            detail: "loro snapshot envelope is empty".into(),
+        }),
+        Some(&v) if v != LORO_FORMAT_VERSION => Err(ArrayError::LoroSnapshotVersionMismatch {
+            expected: LORO_FORMAT_VERSION,
+            got: v,
+        }),
+        Some(_) => Ok(&bytes[1..]),
     }
 }
 
@@ -278,7 +322,69 @@ mod tests {
     fn import_garbage_errors() {
         let g = generator(1);
         let mut doc = SchemaDoc::new(replica(1));
-        let result = doc.import_snapshot(b"not valid msgpack or loro data", Hlc::ZERO, &g);
+        // Prefix with a valid version byte so we get past the envelope check
+        // and into Loro's own parser — which should reject the payload.
+        let mut bad = vec![LORO_FORMAT_VERSION];
+        bad.extend_from_slice(b"not valid loro data");
+        let result = doc.import_snapshot(&bad, Hlc::ZERO, &g);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn export_snapshot_has_version_prefix() {
+        let g = generator(1);
+        let schema = simple_schema("arr");
+        let doc = SchemaDoc::from_schema(replica(1), &schema, &g).unwrap();
+        let snapshot = doc.export_snapshot().unwrap();
+        assert!(!snapshot.is_empty());
+        assert_eq!(snapshot[0], LORO_FORMAT_VERSION);
+    }
+
+    #[test]
+    fn import_snapshot_rejects_wrong_version() {
+        let g_a = generator(1);
+        let schema = simple_schema("v");
+        let doc_a = SchemaDoc::from_schema(replica(1), &schema, &g_a).unwrap();
+        let mut snapshot = doc_a.export_snapshot().unwrap();
+
+        // Corrupt the version byte.
+        snapshot[0] = LORO_FORMAT_VERSION.wrapping_add(1);
+
+        let g_b = generator(2);
+        let mut doc_b = SchemaDoc::new(replica(2));
+        let err = doc_b
+            .import_snapshot(&snapshot, doc_a.schema_hlc(), &g_b)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ArrayError::LoroSnapshotVersionMismatch { expected, got }
+                    if expected == LORO_FORMAT_VERSION && got == LORO_FORMAT_VERSION.wrapping_add(1)
+            ),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn import_snapshot_replicated_rejects_wrong_version() {
+        let g_a = generator(1);
+        let schema = simple_schema("v2");
+        let doc_a = SchemaDoc::from_schema(replica(1), &schema, &g_a).unwrap();
+        let mut snapshot = doc_a.export_snapshot().unwrap();
+
+        snapshot[0] = 0; // version 0 has never existed
+
+        let mut doc_b = SchemaDoc::new(replica(2));
+        let err = doc_b
+            .import_snapshot_replicated(&snapshot, doc_a.schema_hlc())
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ArrayError::LoroSnapshotVersionMismatch { expected, got }
+                    if expected == LORO_FORMAT_VERSION && got == 0
+            ),
+            "unexpected error: {err}"
+        );
     }
 }

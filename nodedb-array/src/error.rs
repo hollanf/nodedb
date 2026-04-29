@@ -86,6 +86,13 @@ pub enum ArrayError {
     /// An error returned by the Loro CRDT library.
     #[error("loro error: {detail}")]
     LoroError { detail: String },
+
+    /// The Loro snapshot envelope version does not match `LORO_FORMAT_VERSION`.
+    ///
+    /// This is a hard rejection: loading a snapshot produced by a different
+    /// (incompatible) Loro format version would silently corrupt state.
+    #[error("loro snapshot version mismatch: expected {expected}, got {got}")]
+    LoroSnapshotVersionMismatch { expected: u8, got: u8 },
 }
 
 impl ArrayError {
@@ -106,7 +113,8 @@ impl ArrayError {
             | ArrayError::InvalidHlc { .. }
             | ArrayError::HlcLockPoisoned
             | ArrayError::InvalidOp { .. }
-            | ArrayError::LoroError { .. } => "",
+            | ArrayError::LoroError { .. }
+            | ArrayError::LoroSnapshotVersionMismatch { .. } => "",
         }
     }
 }
