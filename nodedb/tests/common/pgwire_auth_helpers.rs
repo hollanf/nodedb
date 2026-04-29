@@ -64,3 +64,10 @@ pub async fn ddl_err(state: &SharedState, identity: &AuthenticatedIdentity, sql:
     let err = result.unwrap().unwrap_err();
     err.to_string()
 }
+
+/// Run DDL as a readonly identity and assert it is denied with `permission denied`.
+pub async fn assert_readonly_denied(state: &SharedState, sql: &str) {
+    let viewer = readonly_user();
+    let err = ddl_err(state, &viewer, sql).await;
+    assert!(err.contains("permission denied"), "{err}");
+}

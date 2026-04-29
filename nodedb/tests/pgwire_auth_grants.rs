@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::pgwire_auth_helpers::{ddl_err, ddl_ok, make_state, readonly_user, superuser};
+use common::pgwire_auth_helpers::{assert_readonly_denied, ddl_err, ddl_ok, make_state, superuser};
 use nodedb::control::security::identity::{AuthMethod, AuthenticatedIdentity, Role};
 use nodedb::types::TenantId;
 
@@ -72,7 +72,5 @@ async fn readonly_cannot_grant() {
     let su = superuser();
     ddl_ok(&state, &su, "CREATE USER target WITH PASSWORD 'pass'").await;
 
-    let viewer = readonly_user();
-    let err = ddl_err(&state, &viewer, "GRANT ROLE superuser TO target").await;
-    assert!(err.contains("permission denied"), "{err}");
+    assert_readonly_denied(&state, "GRANT ROLE superuser TO target").await;
 }

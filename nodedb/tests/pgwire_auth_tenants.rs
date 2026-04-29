@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::pgwire_auth_helpers::{ddl_err, ddl_ok, make_state, readonly_user, superuser};
+use common::pgwire_auth_helpers::{assert_readonly_denied, ddl_err, ddl_ok, make_state, superuser};
 use nodedb::control::security::audit::AuditEvent;
 
 #[tokio::test]
@@ -29,15 +29,11 @@ async fn drop_system_tenant_rejected() {
 #[tokio::test]
 async fn tenant_ops_require_superuser() {
     let state = make_state();
-    let viewer = readonly_user();
-    let err = ddl_err(&state, &viewer, "CREATE TENANT evil").await;
-    assert!(err.contains("permission denied"), "{err}");
+    assert_readonly_denied(&state, "CREATE TENANT evil").await;
 }
 
 #[tokio::test]
 async fn show_tenants_requires_superuser() {
     let state = make_state();
-    let viewer = readonly_user();
-    let err = ddl_err(&state, &viewer, "SHOW TENANTS").await;
-    assert!(err.contains("permission denied"), "{err}");
+    assert_readonly_denied(&state, "SHOW TENANTS").await;
 }

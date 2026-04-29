@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::pgwire_auth_helpers::{ddl_err, ddl_ok, make_state, readonly_user, superuser};
+use common::pgwire_auth_helpers::{assert_readonly_denied, ddl_err, ddl_ok, make_state, superuser};
 use nodedb::control::security::identity::Role;
 use nodedb::types::TenantId;
 
@@ -104,9 +104,7 @@ async fn alter_user_role() {
 #[tokio::test]
 async fn readonly_cannot_create_user() {
     let state = make_state();
-    let viewer = readonly_user();
-    let err = ddl_err(&state, &viewer, "CREATE USER hacker WITH PASSWORD 'x'").await;
-    assert!(err.contains("permission denied"), "{err}");
+    assert_readonly_denied(&state, "CREATE USER hacker WITH PASSWORD 'x'").await;
 }
 
 #[tokio::test]
@@ -115,7 +113,5 @@ async fn readonly_cannot_drop_user() {
     let su = superuser();
     ddl_ok(&state, &su, "CREATE USER target WITH PASSWORD 'pass'").await;
 
-    let viewer = readonly_user();
-    let err = ddl_err(&state, &viewer, "DROP USER target").await;
-    assert!(err.contains("permission denied"), "{err}");
+    assert_readonly_denied(&state, "DROP USER target").await;
 }
