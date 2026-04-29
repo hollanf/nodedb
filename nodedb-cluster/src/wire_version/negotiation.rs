@@ -82,6 +82,11 @@ pub fn negotiate(
 )]
 pub struct VersionHandshake {
     pub range: (u16, u16),
+    /// Optional capability bitmask for forward-compatible feature advertisement.
+    /// Unknown bits are ignored by the receiver.  Defaults to `0` (no extra
+    /// capabilities) so older peers that do not set this field remain compatible.
+    #[serde(default)]
+    pub capabilities: u64,
 }
 
 /// Server-side acknowledgement returned after negotiation succeeds.
@@ -97,6 +102,10 @@ pub struct VersionHandshake {
 )]
 pub struct VersionHandshakeAck {
     pub agreed: u16,
+    /// Capability bitmask echoed (or narrowed) by the server.
+    /// Unknown bits are ignored by the receiver.  Defaults to `0`.
+    #[serde(default)]
+    pub capabilities: u64,
 }
 
 impl VersionHandshake {
@@ -104,12 +113,28 @@ impl VersionHandshake {
     pub fn from_range(range: VersionRange) -> Self {
         Self {
             range: (range.min.0, range.max.0),
+            capabilities: 0,
         }
     }
 
     /// Recover the [`VersionRange`] from wire fields.
     pub fn to_range(&self) -> VersionRange {
         VersionRange::new(WireVersion(self.range.0), WireVersion(self.range.1))
+    }
+}
+
+impl VersionHandshakeAck {
+    /// Construct an ack for the given agreed wire version.
+    pub fn new(agreed: WireVersion) -> Self {
+        Self {
+            agreed: agreed.0,
+            capabilities: 0,
+        }
+    }
+
+    /// The agreed wire version as a typed [`WireVersion`].
+    pub fn agreed_version(&self) -> WireVersion {
+        WireVersion(self.agreed)
     }
 }
 
