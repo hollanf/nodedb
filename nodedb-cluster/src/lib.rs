@@ -94,10 +94,12 @@ pub use routing_liveness::{NodeIdResolver, RoutingLivenessHook};
 pub use rpc_codec::{MacKey, RaftRpc};
 pub use topology::{ClusterTopology, NodeInfo, NodeState};
 pub use transport::{
-    NexarTransport, RaftRpcHandler, TlsCredentials, TransportCredentials, TransportPeerSnapshot,
-    ca_fingerprint, ca_fingerprint_hex, generate_node_credentials,
+    IDENTITY_MISMATCH_QUIC_ERROR, NexarTransport, NoopIdentityStore, PeerIdentityStore,
+    RaftRpcHandler, TlsCredentials, TransportCredentials, TransportPeerSnapshot, VerifyMethod,
+    VerifyOutcome, ca_fingerprint, ca_fingerprint_hex, generate_node_credentials,
     generate_node_credentials_multi_san, insecure_transport_count, issue_leaf_for_sans,
     load_crls_from_pem, make_raft_client_config_mtls, make_raft_server_config_mtls,
+    spki_pin_from_cert_der,
 };
 pub use wire::VShardEnvelope;
 
@@ -143,6 +145,6 @@ pub use auth::{
 
 pub use wire_version::{
     VersionHandshake, VersionHandshakeAck, VersionRange, Versioned, WireVersion, WireVersionError,
-    WireVersionMetrics, decode_versioned, encode_versioned, negotiate, unwrap_bytes_versioned,
-    wrap_bytes_versioned,
+    WireVersionMetrics, decode_versioned, encode_versioned, local_version_range, negotiate,
+    unwrap_bytes_versioned, wrap_bytes_versioned,
 };

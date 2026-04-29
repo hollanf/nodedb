@@ -59,6 +59,7 @@ mod tests {
             additional_ca_certs: Vec::new(),
             crls: Vec::new(),
             cluster_secret: secret,
+            spki_pin: [0u8; 32],
         }
     }
 

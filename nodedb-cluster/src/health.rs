@@ -288,6 +288,8 @@ pub fn broadcast_topology(
                     state: n.state.as_u8(),
                     raft_groups: n.raft_groups.clone(),
                     wire_version: n.wire_version,
+                    spiffe_id: n.spiffe_id.clone(),
+                    spki_pin: n.spki_pin.map(|arr| arr.to_vec()),
                 })
                 .collect(),
         });
@@ -330,6 +332,8 @@ async fn broadcast_topology_to_peer(
                     state: n.state.as_u8(),
                     raft_groups: n.raft_groups.clone(),
                     wire_version: n.wire_version,
+                    spiffe_id: n.spiffe_id.clone(),
+                    spki_pin: n.spki_pin.map(|arr| arr.to_vec()),
                 })
                 .collect(),
         })
@@ -363,13 +367,26 @@ pub fn handle_topology_update(
         for node in &update.nodes {
             let state = crate::topology::NodeState::from_u8(node.state)
                 .unwrap_or(crate::topology::NodeState::Active);
-            let info = crate::topology::NodeInfo {
-                node_id: node.node_id,
-                addr: node.addr.clone(),
+            let spki_pin: Option<[u8; 32]> = node.spki_pin.as_deref().and_then(|b| {
+                if b.len() == 32 {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(b);
+                    Some(arr)
+                } else {
+                    None
+                }
+            });
+            let mut info = crate::topology::NodeInfo::new(
+                node.node_id,
+                node.addr
+                    .parse()
+                    .unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap()),
                 state,
-                raft_groups: node.raft_groups.clone(),
-                wire_version: node.wire_version,
-            };
+            )
+            .with_wire_version(node.wire_version)
+            .with_spiffe_id(node.spiffe_id.clone())
+            .with_spki_pin(spki_pin);
+            info.raft_groups = node.raft_groups.clone();
             new_topo.add_node(info);
         }
         *topo = new_topo;
@@ -420,6 +437,8 @@ mod tests {
                     state: 1,
                     raft_groups: vec![],
                     wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
+                    spiffe_id: None,
+                    spki_pin: None,
                 },
                 JoinNodeInfo {
                     node_id: 2,
@@ -427,6 +446,8 @@ mod tests {
                     state: 1,
                     raft_groups: vec![],
                     wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
+                    spiffe_id: None,
+                    spki_pin: None,
                 },
             ],
         };

@@ -15,6 +15,11 @@ pub struct JoinRequest {
     pub node_id: u64,
     pub listen_addr: String,
     pub wire_version: u16,
+    /// SPIFFE URI SAN from the joiner's mTLS leaf certificate, if present.
+    pub spiffe_id: Option<String>,
+    /// SHA-256 SPKI fingerprint of the joiner's mTLS leaf certificate.
+    /// Stored as `Vec<u8>` for rkyv compatibility; always 32 bytes when present.
+    pub spki_pin: Option<Vec<u8>>,
 }
 
 /// Response to a join request — carries full cluster state.
@@ -36,6 +41,11 @@ pub struct JoinNodeInfo {
     pub state: u8,
     pub raft_groups: Vec<u64>,
     pub wire_version: u16,
+    /// SPIFFE URI SAN for this node, if known.
+    pub spiffe_id: Option<String>,
+    /// SHA-256 SPKI fingerprint for this node.
+    /// Stored as `Vec<u8>` for rkyv compatibility; always 32 bytes when present.
+    pub spki_pin: Option<Vec<u8>>,
 }
 
 /// Raft group membership in the join response wire format.
@@ -172,11 +182,18 @@ mod tests {
             node_id: 42,
             listen_addr: "10.0.0.5:9400".into(),
             wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
+            spiffe_id: Some("spiffe://cluster.local/node/42".into()),
+            spki_pin: Some(vec![0xabu8; 32]),
         };
         match roundtrip(RaftRpc::JoinRequest(req)) {
             RaftRpc::JoinRequest(d) => {
                 assert_eq!(d.node_id, 42);
                 assert_eq!(d.listen_addr, "10.0.0.5:9400");
+                assert_eq!(
+                    d.spiffe_id.as_deref(),
+                    Some("spiffe://cluster.local/node/42")
+                );
+                assert_eq!(d.spki_pin.as_deref(), Some([0xabu8; 32].as_ref()));
             }
             other => panic!("expected JoinRequest, got {other:?}"),
         }
@@ -194,6 +211,8 @@ mod tests {
                 state: 1,
                 raft_groups: vec![0, 1],
                 wire_version: crate::topology::CLUSTER_WIRE_FORMAT_VERSION,
+                spiffe_id: None,
+                spki_pin: None,
             }],
             vshard_to_group: (0..1024u64).map(|i| i % 4).collect(),
             groups: vec![JoinGroupInfo {
