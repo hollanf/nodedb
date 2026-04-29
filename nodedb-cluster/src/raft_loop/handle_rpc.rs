@@ -76,6 +76,19 @@ impl<A: CommitApplier, P: PlanExecutor> RaftRpcHandler for RaftLoop<A, P> {
                 Ok(RaftRpc::RequestVoteResponse(resp))
             }
             RaftRpc::InstallSnapshotRequest(req) => {
+                // Validate snapshot framing for any non-empty chunk.
+                // Empty data is the bootstrap stub (no engine data yet); skip
+                // framing in that case. When a real engine ships data it calls
+                // `encode_snapshot_chunk` on the sender side and enforcement
+                // happens here automatically.
+                if !req.data.is_empty() {
+                    nodedb_raft::decode_snapshot_chunk(&req.data).map_err(|e| {
+                        crate::error::ClusterError::Codec {
+                            detail: format!("InstallSnapshot framing: {e}"),
+                        }
+                    })?;
+                }
+
                 let last_included_index = req.last_included_index;
                 let group_id = req.group_id;
                 let resp = {

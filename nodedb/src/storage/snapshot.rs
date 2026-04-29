@@ -13,6 +13,13 @@ use crate::storage::snapshot_restore::parse_utc_timestamp;
 pub use crate::storage::snapshot_restore::{PitrTarget, RestoreDryRun, dry_run_restore};
 use crate::types::Lsn;
 
+/// On-disk format version for [`SnapshotMeta`].
+///
+/// Increment this constant whenever the serialized layout of `SnapshotMeta`
+/// changes in a backward-incompatible way. Readers must reject any snapshot
+/// whose stored `format_version` does not match this value.
+pub const SNAPSHOT_FORMAT_VERSION: u32 = 1;
+
 /// Snapshot metadata stored alongside the snapshot data.
 #[derive(
     Debug,
@@ -25,6 +32,8 @@ use crate::types::Lsn;
     zerompk::FromMessagePack,
 )]
 pub struct SnapshotMeta {
+    /// On-disk format version. Must equal [`SNAPSHOT_FORMAT_VERSION`] on read.
+    pub format_version: u32,
     /// Unique snapshot identifier.
     pub snapshot_id: u64,
     /// LSN at snapshot begin (inclusive).
@@ -41,6 +50,23 @@ pub struct SnapshotMeta {
     pub parent_id: Option<u64>,
     /// Total uncompressed data size in bytes.
     pub data_bytes: u64,
+}
+
+impl SnapshotMeta {
+    /// Verify that the deserialized `format_version` matches the current
+    /// on-disk format. Returns an error if the versions differ.
+    pub fn validate_format_version(&self) -> crate::Result<()> {
+        if self.format_version != SNAPSHOT_FORMAT_VERSION {
+            return Err(crate::Error::VersionCompat {
+                detail: format!(
+                    "snapshot {} has format_version {} but this node expects {}; \
+                     upgrade required or restore from a compatible snapshot",
+                    self.snapshot_id, self.format_version, SNAPSHOT_FORMAT_VERSION,
+                ),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Snapshot type.
@@ -244,6 +270,7 @@ mod tests {
 
     fn base_snapshot(id: u64, end_lsn: u64) -> SnapshotMeta {
         SnapshotMeta {
+            format_version: SNAPSHOT_FORMAT_VERSION,
             snapshot_id: id,
             begin_lsn: Lsn::new(1),
             end_lsn: Lsn::new(end_lsn),
@@ -257,6 +284,7 @@ mod tests {
 
     fn delta_snapshot(id: u64, begin: u64, end: u64, parent: u64) -> SnapshotMeta {
         SnapshotMeta {
+            format_version: SNAPSHOT_FORMAT_VERSION,
             snapshot_id: id,
             begin_lsn: Lsn::new(begin),
             end_lsn: Lsn::new(end),
@@ -368,5 +396,40 @@ mod tests {
 
         assert!(target.deltas.is_empty());
         assert_eq!(target.wal_records_to_replay, 10); // 110 - 100
+    }
+
+    #[test]
+    fn snapshot_meta_roundtrip_format_version() {
+        let meta = base_snapshot(42, 500);
+        assert_eq!(meta.format_version, SNAPSHOT_FORMAT_VERSION);
+
+        // Serialize and deserialize via MessagePack.
+        let bytes = zerompk::to_msgpack_vec(&meta).expect("serialize");
+        let decoded: SnapshotMeta = zerompk::from_msgpack(&bytes).expect("deserialize");
+
+        assert_eq!(decoded, meta);
+        decoded
+            .validate_format_version()
+            .expect("current version must validate");
+    }
+
+    #[test]
+    fn snapshot_meta_rejects_unknown_format_version() {
+        let mut meta = base_snapshot(7, 200);
+        meta.format_version = SNAPSHOT_FORMAT_VERSION + 1;
+
+        let err = meta
+            .validate_format_version()
+            .expect_err("must reject future version");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("format_version"),
+            "error message should mention format_version: {msg}"
+        );
+        assert!(
+            msg.contains(&(SNAPSHOT_FORMAT_VERSION + 1).to_string()),
+            "error message should contain the bad version: {msg}"
+        );
     }
 }

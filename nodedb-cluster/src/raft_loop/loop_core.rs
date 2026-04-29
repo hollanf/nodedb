@@ -293,7 +293,7 @@ impl<A: CommitApplier, P: PlanExecutor> RaftLoop<A, P> {
     /// Propose a command to the Raft group owning the given vShard.
     ///
     /// Returns `(group_id, log_index)` on success.
-    pub fn propose(&self, vshard_id: u16, data: Vec<u8>) -> Result<(u64, u64)> {
+    pub fn propose(&self, vshard_id: u32, data: Vec<u8>) -> Result<(u64, u64)> {
         let mut mr = self.multi_raft.lock().unwrap_or_else(|p| p.into_inner());
         mr.propose(vshard_id, data)
     }
@@ -448,7 +448,7 @@ impl<A: CommitApplier, P: PlanExecutor> RaftLoop<A, P> {
     /// returns the original `NotLeader` error so the caller can retry.
     pub async fn propose_via_data_leader(
         &self,
-        vshard_id: u16,
+        vshard_id: u32,
         data: Vec<u8>,
     ) -> Result<(u64, u64)> {
         // Phase 1: try local propose.
@@ -480,7 +480,7 @@ impl<A: CommitApplier, P: PlanExecutor> RaftLoop<A, P> {
     async fn forward_data_propose(
         &self,
         leader_id: u64,
-        vshard_id: u16,
+        vshard_id: u32,
         data: Vec<u8>,
     ) -> Result<(u64, u64)> {
         {

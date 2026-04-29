@@ -28,6 +28,9 @@ pub enum RaftError {
     #[error("serialization error: {detail}")]
     Serialization { detail: String },
 
+    #[error("snapshot format error: {detail}")]
+    SnapshotFormat { detail: String },
+
     #[error("shutdown in progress")]
     Shutdown,
 }

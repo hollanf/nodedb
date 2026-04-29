@@ -25,7 +25,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{info, warn};
 
 use crate::data::snapshot::CoreSnapshot;
-use crate::storage::snapshot::{SnapshotCatalog, SnapshotKind, SnapshotMeta};
+use crate::storage::snapshot::{
+    SNAPSHOT_FORMAT_VERSION, SnapshotCatalog, SnapshotKind, SnapshotMeta,
+};
 use crate::types::Lsn;
 
 /// Monotonic snapshot ID counter.
@@ -118,6 +120,7 @@ pub fn create_base_snapshot(
         .as_micros() as u64;
 
     let meta = SnapshotMeta {
+        format_version: SNAPSHOT_FORMAT_VERSION,
         snapshot_id,
         begin_lsn: Lsn::new(min_watermark),
         end_lsn: Lsn::new(max_watermark),
@@ -159,13 +162,20 @@ pub fn create_base_snapshot(
 }
 
 /// Load a snapshot manifest from a snapshot directory.
+///
+/// Returns an error if the manifest cannot be deserialized or if the
+/// `format_version` stored in the manifest does not match
+/// [`SNAPSHOT_FORMAT_VERSION`].
 pub fn load_manifest(snap_dir: &Path) -> crate::Result<SnapshotManifest> {
     let manifest_path = snap_dir.join("manifest.msgpack");
     let bytes = fs::read(&manifest_path).map_err(crate::Error::Io)?;
-    zerompk::from_msgpack(&bytes).map_err(|e| crate::Error::Serialization {
-        format: "msgpack".into(),
-        detail: format!("snapshot manifest: {e}"),
-    })
+    let manifest: SnapshotManifest =
+        zerompk::from_msgpack(&bytes).map_err(|e| crate::Error::Serialization {
+            format: "msgpack".into(),
+            detail: format!("snapshot manifest: {e}"),
+        })?;
+    manifest.meta.validate_format_version()?;
+    Ok(manifest)
 }
 
 /// Load a per-core snapshot from a snapshot directory.

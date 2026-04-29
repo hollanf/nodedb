@@ -61,7 +61,7 @@ pub async fn backup_tenant(state: &Arc<SharedState>, tenant_id: u32) -> Result<B
     let snapshot_watermark = state.hlc_clock.now().wall_ns;
     let meta = EnvelopeMeta {
         tenant_id,
-        source_vshard_count: VSHARD_COUNT,
+        source_vshard_count: VSHARD_COUNT as u16,
         hash_seed: 0, // VSHARD_COUNT-derived hash; no seed today
         snapshot_watermark,
     };

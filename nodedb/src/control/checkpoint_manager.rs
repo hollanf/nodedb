@@ -84,7 +84,7 @@ pub async fn run_checkpoint_cycle(
         for core_id in 0..num_cores {
             let request_id =
                 RequestId::new(CHECKPOINT_REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed));
-            let vshard_id = VShardId::new(core_id as u16);
+            let vshard_id = VShardId::new(core_id as u32);
 
             let request = Request {
                 request_id,

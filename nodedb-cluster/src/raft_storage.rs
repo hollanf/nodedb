@@ -19,7 +19,9 @@ use nodedb_raft::message::LogEntry;
 use nodedb_raft::state::HardState;
 use nodedb_raft::storage::LogStorage;
 
-/// Log entries: key = index (big-endian u64 for sorted iteration), value = MessagePack bytes.
+use crate::wire_version::envelope::{decode_versioned, encode_versioned};
+
+/// Log entries: key = index (big-endian u64 for sorted iteration), value = versioned-envelope bytes.
 const ENTRIES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("raft.entries");
 
 /// Metadata: key = name, value = MessagePack bytes.
@@ -100,7 +102,7 @@ impl LogStorage for RedbLogStorage {
 
             for entry in entries {
                 let key = index_key(entry.index);
-                let value = zerompk::to_msgpack_vec(entry).map_err(|e| {
+                let value = encode_versioned(entry).map_err(|e| {
                     nodedb_raft::error::RaftError::Storage {
                         detail: format!("serialize entry: {e}"),
                     }
@@ -198,7 +200,7 @@ impl LogStorage for RedbLogStorage {
             let (_, value) = result.map_err(|e| nodedb_raft::error::RaftError::Storage {
                 detail: format!("entry read: {e}"),
             })?;
-            let entry: LogEntry = zerompk::from_msgpack(value.value()).map_err(|e| {
+            let entry: LogEntry = decode_versioned(value.value()).map_err(|e| {
                 nodedb_raft::error::RaftError::Storage {
                     detail: format!("deserialize entry: {e}"),
                 }
@@ -469,6 +471,89 @@ mod tests {
         s.save_hard_state(&hs).unwrap();
         let loaded = s.load_hard_state().unwrap();
         assert_eq!(loaded, hs);
+    }
+
+    /// LogEntry written and read back via the versioned envelope.
+    #[test]
+    fn versioned_roundtrip() {
+        let (mut s, _dir) = open_temp();
+        let entry = LogEntry {
+            term: 3,
+            index: 1,
+            data: b"versioned-payload".to_vec(),
+        };
+        s.append(std::slice::from_ref(&entry)).unwrap();
+        let loaded = s.load_entries_after(0).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0], entry);
+    }
+
+    /// Simulate bytes stored by a pre-versioning peer (raw zerompk, no
+    /// envelope) — decode_versioned falls back to v1 and succeeds.
+    #[test]
+    fn v1_fallback_raw_zerompk_decodes() {
+        let (s, _dir) = open_temp();
+
+        // Manually write a raw-zerompk entry into the redb table.
+        let entry = LogEntry {
+            term: 1,
+            index: 42,
+            data: b"raw".to_vec(),
+        };
+        let raw_bytes = zerompk::to_msgpack_vec(&entry).unwrap();
+        let key = index_key(42);
+
+        let write_txn = s.db.begin_write().unwrap();
+        {
+            let mut table = write_txn.open_table(ENTRIES).unwrap();
+            table.insert(key.as_slice(), raw_bytes.as_slice()).unwrap();
+        }
+        write_txn.commit().unwrap();
+
+        let loaded = s.load_entries_after(41).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0], entry);
+    }
+
+    /// Bytes with the envelope marker but an unknown future version must
+    /// return a Storage error, not silently decode as v1.
+    #[test]
+    fn version_mismatch_returns_error() {
+        let (s, _dir) = open_temp();
+
+        // Build an envelope with a future version number (9999).
+        let inner = zerompk::to_msgpack_vec(&LogEntry {
+            term: 1,
+            index: 77,
+            data: vec![],
+        })
+        .unwrap();
+
+        // Construct the envelope manually: marker + version(9999) + inner_len + inner.
+        let mut bad_bytes = Vec::new();
+        bad_bytes.push(0xc1u8); // ENVELOPE_MARKER
+        bad_bytes.extend_from_slice(&9999u16.to_be_bytes());
+        bad_bytes.extend_from_slice(&(inner.len() as u32).to_be_bytes());
+        bad_bytes.extend_from_slice(&inner);
+
+        let key = index_key(77);
+        let write_txn = s.db.begin_write().unwrap();
+        {
+            let mut table = write_txn.open_table(ENTRIES).unwrap();
+            table.insert(key.as_slice(), bad_bytes.as_slice()).unwrap();
+        }
+        write_txn.commit().unwrap();
+
+        let err = s.load_entries_after(76).unwrap_err();
+        match err {
+            nodedb_raft::error::RaftError::Storage { detail } => {
+                assert!(
+                    detail.contains("deserialize"),
+                    "expected 'deserialize' in detail: {detail}"
+                );
+            }
+            other => panic!("expected Storage error, got: {other}"),
+        }
     }
 
     #[test]
