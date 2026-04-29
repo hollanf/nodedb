@@ -8,8 +8,6 @@ pub enum AuthMode {
     Trust,
     /// Username + password (SCRAM-SHA-256 over pgwire, cleartext over HTTP).
     Password,
-    /// Username + password (MD5 over pgwire). For legacy PostgreSQL clients.
-    Md5Password,
     /// mTLS client certificate authentication.
     Certificate,
 }

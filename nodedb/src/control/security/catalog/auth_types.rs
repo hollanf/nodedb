@@ -25,9 +25,6 @@ pub struct StoredUser {
     /// Unix timestamp (seconds) when the password expires. 0 = no expiry.
     #[msgpack(default)]
     pub password_expires_at: u64,
-    /// MD5 hash for pgwire MD5 auth: `md5(password + username)` as hex.
-    #[msgpack(default)]
-    pub md5_hash: String,
 }
 
 /// Serializable API key record for redb storage.

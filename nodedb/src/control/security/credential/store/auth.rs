@@ -1,5 +1,5 @@
-//! Authentication lookups: password verification, SCRAM / MD5
-//! credential exports, identity-building.
+//! Authentication lookups: password verification, SCRAM credential
+//! exports, identity-building.
 
 use super::super::super::identity::{AuthMethod, AuthenticatedIdentity};
 use super::super::super::time::now_secs;
@@ -31,26 +31,6 @@ impl CredentialStore {
                 true
             })
             .map(|u| (u.scram_salt.clone(), u.scram_salted_password.clone()))
-    }
-
-    /// Get the MD5 hash for pgwire MD5 auth. Returns
-    /// `md5(password + username)` as stored during user creation.
-    /// Returns None for service accounts, expired passwords, or
-    /// missing users.
-    pub fn get_md5_hash(&self, username: &str) -> Option<String> {
-        let users = read_lock(&self.users).ok()?;
-        users
-            .get(username)
-            .filter(|u| u.is_active && !u.is_service_account)
-            .filter(|u| {
-                if u.password_expires_at > 0 && now_secs() >= u.password_expires_at {
-                    tracing::warn!(username = u.username, "password expired, MD5 login denied");
-                    return false;
-                }
-                true
-            })
-            .filter(|u| !u.md5_hash.is_empty())
-            .map(|u| u.md5_hash.clone())
     }
 
     /// Verify a cleartext password against the stored Argon2 hash.

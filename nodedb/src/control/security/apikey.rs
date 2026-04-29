@@ -1,8 +1,11 @@
 //! API key management — generation, verification, storage.
 //!
-//! Key format: `ndb_<key_id>_<secret>`
-//! - key_id: 12 chars base62 (encodes random u64)
-//! - secret: 43 chars base62 (encodes random 32 bytes)
+//! Key format: `ndb_<key_id>.<secret>`
+//! - `ndb_` — literal prefix (4 chars).
+//! - `<key_id>` — 8 random bytes encoded as base64url-no-pad (11 chars).
+//! - `.` — separator; `.` is not in the base64url alphabet so the split is unambiguous.
+//! - `<secret>` — 32 random bytes encoded as base64url-no-pad (43 chars).
+//! - Total token length: 59 chars.
 //!
 //! Storage: SHA-256 hash of secret in system catalog (redb).
 //! The full key is only shown once at creation time.
@@ -199,7 +202,7 @@ impl ApiKeyStore {
         })?;
         keys.insert(key_id.clone(), record);
 
-        Ok(format!("ndb_{key_id}_{secret}"))
+        Ok(format!("ndb_{key_id}.{secret}"))
     }
 
     /// Verify an API key string. Returns the record if valid.
@@ -287,7 +290,7 @@ impl ApiKeyStore {
                 .map(|s| format!("{}:{}", s.permission, s.collection))
                 .collect(),
         };
-        let token = format!("ndb_{key_id}_{secret}");
+        let token = format!("ndb_{key_id}.{secret}");
         (stored, token)
     }
 
@@ -359,29 +362,20 @@ impl ApiKeyStore {
 
 // ── Key generation ──────────────────────────────────────────────────
 
-const BASE62: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+use base64::Engine as _;
 
 fn generate_key_id() -> String {
     use argon2::password_hash::rand_core::{OsRng, RngCore};
     let mut bytes = [0u8; 8];
     OsRng.fill_bytes(&mut bytes);
-    base62_encode(&bytes)
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 fn generate_secret() -> String {
     use argon2::password_hash::rand_core::{OsRng, RngCore};
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
-    base62_encode(&bytes)
-}
-
-fn base62_encode(bytes: &[u8]) -> String {
-    let mut result = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        result.push(BASE62[(b >> 2) as usize % 62] as char);
-        result.push(BASE62[(b & 0x03) as usize * 16 % 62] as char);
-    }
-    result
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 /// SHA-256 hash of an API key secret for storage.
@@ -396,14 +390,38 @@ fn hash_secret(secret: &str) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
+/// Parse and validate a `ndb_<key_id>.<secret>` token.
+///
+/// Returns `(key_id_str, secret_str)` only if:
+/// - The `ndb_` prefix is present.
+/// - Exactly one `.` separator follows (not in base64url alphabet → unambiguous).
+/// - Both halves decode cleanly as base64url-no-pad.
+/// - key_id decodes to exactly 8 bytes; secret decodes to exactly 32 bytes.
 fn parse_token(token: &str) -> Option<(&str, &str)> {
-    let stripped = token.strip_prefix("ndb_")?;
-    let underscore_pos = stripped.find('_')?;
-    if underscore_pos == 0 || underscore_pos == stripped.len() - 1 {
+    let body = token.strip_prefix("ndb_")?;
+    let dot_pos = body.find('.')?;
+    if dot_pos == 0 || dot_pos == body.len() - 1 {
         return None;
     }
-    let key_id = &stripped[..underscore_pos];
-    let secret = &stripped[underscore_pos + 1..];
+    let key_id = &body[..dot_pos];
+    let secret = &body[dot_pos + 1..];
+
+    // Validate key_id: must decode to exactly 8 bytes.
+    let key_id_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(key_id)
+        .ok()?;
+    if key_id_bytes.len() != 8 {
+        return None;
+    }
+
+    // Validate secret: must decode to exactly 32 bytes.
+    let secret_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(secret)
+        .ok()?;
+    if secret_bytes.len() != 32 {
+        return None;
+    }
+
     Some((key_id, secret))
 }
 
@@ -436,8 +454,10 @@ mod tests {
             .create_key("alice", 1, TenantId::new(1), 0, vec![], None)
             .unwrap();
 
+        // Format: ndb_<11 chars>.<43 chars> = 59 chars total.
         assert!(token.starts_with("ndb_"));
-        assert_eq!(token.matches('_').count(), 2); // ndb_<id>_<secret>
+        assert_eq!(token.len(), 59);
+        assert_eq!(token.chars().filter(|&c| c == '.').count(), 1);
 
         let record = store.verify_key(&token).unwrap();
         assert_eq!(record.username, "alice");
@@ -451,9 +471,17 @@ mod tests {
             .create_key("alice", 1, TenantId::new(1), 0, vec![], None)
             .unwrap();
 
-        assert!(store.verify_key("ndb_wrong_secret").is_none());
+        // Underscore-separated (no dot) rejected.
+        assert!(store.verify_key("ndb_wrongid_wrongsecret").is_none());
+        // Garbage.
         assert!(store.verify_key("garbage").is_none());
         assert!(store.verify_key("").is_none());
+        // Correct prefix but invalid base64url halves.
+        assert!(store.verify_key("ndb_!!!.???").is_none());
+        // Missing dot separator.
+        assert!(store.verify_key("ndb_nodothere").is_none());
+        // Wrong prefix.
+        assert!(store.verify_key("nodedb_abc.def").is_none());
     }
 
     #[test]
@@ -472,7 +500,6 @@ mod tests {
     #[test]
     fn expired_key_rejected() {
         let store = ApiKeyStore::new();
-        // Create with 0-second TTL (already expired).
         let key_id = generate_key_id();
         let secret = generate_secret();
         let secret_hash = hash_secret(&secret);
@@ -491,7 +518,7 @@ mod tests {
 
         store.keys.write().unwrap().insert(key_id.clone(), record);
 
-        let token = format!("ndb_{key_id}_{secret}");
+        let token = format!("ndb_{key_id}.{secret}");
         assert!(store.verify_key(&token).is_none());
     }
 
@@ -514,12 +541,106 @@ mod tests {
 
     #[test]
     fn parse_token_format() {
-        let (key_id, secret) = parse_token("ndb_abc123_secretpart").unwrap();
-        assert_eq!(key_id, "abc123");
-        assert_eq!(secret, "secretpart");
+        // Build a valid token manually: 8-byte key_id, 32-byte secret.
+        let key_id_bytes = [0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe];
+        let secret_bytes = [0x42u8; 32];
+        let key_id_enc = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key_id_bytes);
+        let secret_enc = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
+        let token = format!("ndb_{key_id_enc}.{secret_enc}");
 
+        let (kid, sec) = parse_token(&token).unwrap();
+        assert_eq!(kid, key_id_enc);
+        assert_eq!(sec, secret_enc);
+
+        // Invalid cases.
         assert!(parse_token("not_valid").is_none());
-        assert!(parse_token("ndb__empty").is_none());
-        assert!(parse_token("ndb_only_").is_none());
+        assert!(parse_token("ndb_.emptykeyid").is_none());
+        assert!(parse_token("ndb_onlynoseparator").is_none());
+        // Underscore separator (no dot) rejected.
+        assert!(parse_token("ndb_abc123_secretpart").is_none());
+    }
+
+    #[test]
+    fn encode_decode_roundtrip_1000() {
+        use argon2::password_hash::rand_core::{OsRng, RngCore};
+
+        for _ in 0..1000 {
+            let mut key_bytes = [0u8; 8];
+            let mut secret_bytes = [0u8; 32];
+            OsRng.fill_bytes(&mut key_bytes);
+            OsRng.fill_bytes(&mut secret_bytes);
+
+            let key_enc = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key_bytes);
+            let secret_enc = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
+
+            let key_dec = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(&key_enc)
+                .unwrap();
+            let secret_dec = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(&secret_enc)
+                .unwrap();
+
+            assert_eq!(key_dec.as_slice(), &key_bytes);
+            assert_eq!(secret_dec.as_slice(), &secret_bytes);
+        }
+    }
+
+    #[test]
+    fn entropy_coverage_10000_keys() {
+        // Generate 10000 keys, collect chars at each position, assert each position
+        // sees ≥ 50 distinct base64url chars (out of 64 possible).
+        let key_id_len = 11usize;
+        let secret_len = 43usize;
+
+        let mut key_id_chars: Vec<std::collections::HashSet<char>> = (0..key_id_len)
+            .map(|_| std::collections::HashSet::new())
+            .collect();
+        let mut secret_chars: Vec<std::collections::HashSet<char>> = (0..secret_len)
+            .map(|_| std::collections::HashSet::new())
+            .collect();
+
+        for _ in 0..10_000 {
+            let key_id = generate_key_id();
+            let secret = generate_secret();
+
+            assert_eq!(
+                key_id.len(),
+                key_id_len,
+                "key_id length must be {key_id_len}"
+            );
+            assert_eq!(
+                secret.len(),
+                secret_len,
+                "secret length must be {secret_len}"
+            );
+
+            for (pos, ch) in key_id.chars().enumerate() {
+                key_id_chars[pos].insert(ch);
+            }
+            for (pos, ch) in secret.chars().enumerate() {
+                secret_chars[pos].insert(ch);
+            }
+        }
+
+        // 8 bytes → 11 base64url chars. Positions 0-9 encode 6 full bits each (64 possible
+        // values). Position 10 encodes only the remaining 2 bits (4 possible values: A/Q/g/w).
+        for (pos, chars) in key_id_chars.iter().enumerate() {
+            let min_distinct = if pos < key_id_len - 1 { 50 } else { 4 };
+            assert!(
+                chars.len() >= min_distinct,
+                "key_id position {pos} only saw {} distinct chars (expected ≥ {min_distinct})",
+                chars.len()
+            );
+        }
+        // 32 bytes → 43 base64url chars. Positions 0-41 encode 6 full bits each.
+        // Position 42 encodes only 4 bits (16 possible values).
+        for (pos, chars) in secret_chars.iter().enumerate() {
+            let min_distinct = if pos < secret_len - 1 { 50 } else { 16 };
+            assert!(
+                chars.len() >= min_distinct,
+                "secret position {pos} only saw {} distinct chars (expected ≥ {min_distinct})",
+                chars.len()
+            );
+        }
     }
 }

@@ -51,7 +51,6 @@ pub fn put_admin_user(catalog: &SystemCatalog) {
         created_at: 0,
         updated_at: 0,
         password_expires_at: 0,
-        md5_hash: String::new(),
     };
     catalog.put_user(&user).unwrap();
 }

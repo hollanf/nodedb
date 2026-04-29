@@ -369,7 +369,6 @@ fn credential_ghost_refuses_startup() {
             created_at: 0,
             updated_at: 0,
             password_expires_at: 0,
-            md5_hash: String::new(),
         };
         cat.put_user(&stored_user).unwrap();
         // writer and catalog dropped here — redb file is unlocked.

@@ -16,7 +16,7 @@ use super::super::super::catalog::SystemCatalog;
 use super::super::super::identity::Role;
 use super::super::super::time::now_secs;
 use super::super::hash::{
-    compute_md5_hash, compute_scram_salted_password, generate_scram_salt, hash_password_argon2,
+    compute_scram_salted_password, generate_scram_salt, hash_password_argon2,
 };
 use super::super::lockout::LoginAttemptTracker;
 use super::super::record::UserRecord;
@@ -196,7 +196,6 @@ impl CredentialStore {
                 created_at: now_secs(),
                 updated_at: now_secs(),
                 password_expires_at: self.compute_expiry(),
-                md5_hash: compute_md5_hash(username, password),
             };
             self.persist_user(&mut record)?;
             users.insert(username.to_string(), record);

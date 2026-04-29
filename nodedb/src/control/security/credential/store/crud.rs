@@ -5,7 +5,7 @@ use crate::types::TenantId;
 use super::super::super::identity::Role;
 use super::super::super::time::now_secs;
 use super::super::hash::{
-    compute_md5_hash, compute_scram_salted_password, generate_scram_salt, hash_password_argon2,
+    compute_scram_salted_password, generate_scram_salt, hash_password_argon2,
 };
 use super::super::record::UserRecord;
 use super::core::{CredentialStore, write_lock};
@@ -46,7 +46,6 @@ impl CredentialStore {
             created_at: now_secs(),
             updated_at: now_secs(),
             password_expires_at: self.compute_expiry(),
-            md5_hash: compute_md5_hash(username, password),
         };
 
         self.persist_user(&mut record)?;
@@ -85,7 +84,6 @@ impl CredentialStore {
             created_at: now_secs(),
             updated_at: now_secs(),
             password_expires_at: 0,
-            md5_hash: String::new(),
         };
 
         self.persist_user(&mut record)?;
@@ -124,7 +122,6 @@ impl CredentialStore {
         record.scram_salt = salt;
         record.password_hash = hash_password_argon2(password)?;
         record.password_expires_at = self.compute_expiry();
-        record.md5_hash = compute_md5_hash(username, password);
         self.persist_user(record)?;
         Ok(())
     }

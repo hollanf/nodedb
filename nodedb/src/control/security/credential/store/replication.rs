@@ -27,7 +27,7 @@ use super::super::super::catalog::StoredUser;
 use super::super::super::identity::Role;
 use super::super::super::time::now_secs;
 use super::super::hash::{
-    compute_md5_hash, compute_scram_salted_password, generate_scram_salt, hash_password_argon2,
+    compute_scram_salted_password, generate_scram_salt, hash_password_argon2,
 };
 use super::super::record::UserRecord;
 use super::core::{CredentialStore, read_lock};
@@ -35,7 +35,7 @@ use super::core::{CredentialStore, read_lock};
 impl CredentialStore {
     /// Build a `StoredUser` ready for replication via
     /// `CatalogEntry::PutUser`. Allocates a user_id, hashes the
-    /// password (Argon2 + SCRAM salt + MD5), but does NOT insert
+    /// password (Argon2 + SCRAM salt), but does NOT insert
     /// into the in-memory map or write to redb — the applier does
     /// that on every node after the raft commit.
     pub fn prepare_user(
@@ -75,7 +75,6 @@ impl CredentialStore {
             created_at: now,
             updated_at: now,
             password_expires_at: self.compute_expiry(),
-            md5_hash: compute_md5_hash(username, password),
         })
     }
 
@@ -108,7 +107,6 @@ impl CredentialStore {
             stored.scram_salted_password = compute_scram_salted_password(pw, &salt);
             stored.scram_salt = salt;
             stored.password_hash = hash_password_argon2(pw)?;
-            stored.md5_hash = compute_md5_hash(username, pw);
             stored.password_expires_at = self.compute_expiry();
         }
         if let Some(roles) = new_roles {

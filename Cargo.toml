@@ -209,9 +209,6 @@ futures = "0.3"
 async-stream = "0.3"
 
 
-# MD5 (for pgwire MD5 auth compatibility)
-md5 = "0.8"
-
 # HTTP API
 axum = { version = "0.8", features = ["ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }

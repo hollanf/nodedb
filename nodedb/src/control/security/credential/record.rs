@@ -26,9 +26,6 @@ pub struct UserRecord {
     pub updated_at: u64,
     /// Unix timestamp (seconds) when the password expires. 0 = no expiry.
     pub password_expires_at: u64,
-    /// MD5 hash for pgwire MD5 auth: `md5(password + username)` as hex string.
-    /// Empty for service accounts.
-    pub md5_hash: String,
 }
 
 impl UserRecord {
@@ -47,7 +44,6 @@ impl UserRecord {
             created_at: self.created_at,
             updated_at: self.updated_at,
             password_expires_at: self.password_expires_at,
-            md5_hash: self.md5_hash.clone(),
         }
     }
 
@@ -70,7 +66,6 @@ impl UserRecord {
             created_at: s.created_at,
             updated_at: s.updated_at,
             password_expires_at: s.password_expires_at,
-            md5_hash: s.md5_hash,
             roles,
         }
     }

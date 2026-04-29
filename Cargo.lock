@@ -3740,7 +3740,6 @@ dependencies = [
  "lexical-core",
  "libc",
  "loro",
- "md5 0.8.0",
  "memchr",
  "memmap2",
  "nexar",
