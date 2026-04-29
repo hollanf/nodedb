@@ -1,4 +1,4 @@
-use nodedb_codec::ColumnCodec;
+use nodedb_codec::{ColumnCodec, ResolvedColumnCodec};
 use nodedb_types::timeseries::{MetricSample, PartitionMeta, PartitionState};
 use tempfile::TempDir;
 
@@ -47,10 +47,10 @@ fn write_and_read_simple_partition() {
     assert!(meta.column_stats.contains_key("value"));
     let ts_stats = &meta.column_stats["timestamp"];
     assert_eq!(ts_stats.count, 100);
-    assert_eq!(ts_stats.codec, ColumnCodec::DoubleDelta);
+    assert_eq!(ts_stats.codec, ResolvedColumnCodec::DoubleDelta);
     let val_stats = &meta.column_stats["value"];
     assert_eq!(val_stats.count, 100);
-    assert_eq!(val_stats.codec, ColumnCodec::Gorilla);
+    assert_eq!(val_stats.codec, ResolvedColumnCodec::Gorilla);
 
     let part_dir = tmp.path().join("ts-test");
     let read_meta = ColumnarSegmentReader::read_meta(&part_dir).unwrap();
@@ -66,7 +66,7 @@ fn write_and_read_simple_partition() {
         &part_dir,
         "timestamp",
         ColumnType::Timestamp,
-        Some(ColumnCodec::DoubleDelta),
+        Some(ResolvedColumnCodec::DoubleDelta),
     )
     .unwrap();
     let timestamps = ts_col.as_timestamps();
@@ -78,7 +78,7 @@ fn write_and_read_simple_partition() {
         &part_dir,
         "value",
         ColumnType::Float64,
-        Some(ColumnCodec::Gorilla),
+        Some(ResolvedColumnCodec::Gorilla),
     )
     .unwrap();
     let values = val_col.as_f64();
@@ -121,7 +121,10 @@ fn write_and_read_with_tags() {
         .write_partition("ts-tags", &drain, 86_400_000, 99)
         .unwrap();
     assert_eq!(meta.row_count, 50);
-    assert_eq!(meta.column_stats["host"].codec, ColumnCodec::FastLanesLz4);
+    assert_eq!(
+        meta.column_stats["host"].codec,
+        ResolvedColumnCodec::FastLanesLz4
+    );
     assert_eq!(meta.column_stats["host"].cardinality, Some(2));
 
     let part_dir = tmp.path().join("ts-tags");
@@ -129,7 +132,7 @@ fn write_and_read_with_tags() {
         &part_dir,
         "host",
         ColumnType::Symbol,
-        Some(ColumnCodec::FastLanesLz4),
+        Some(ResolvedColumnCodec::FastLanesLz4),
     )
     .unwrap();
     assert_eq!(host_col.as_symbols().len(), 50);
@@ -171,7 +174,7 @@ fn column_projection() {
 
     assert!(matches!(
         meta.column_stats["extra"].codec,
-        ColumnCodec::Delta | ColumnCodec::DoubleDelta
+        ResolvedColumnCodec::Delta | ResolvedColumnCodec::DoubleDelta
     ));
 
     let part_dir = tmp.path().join("ts-proj");
@@ -216,15 +219,21 @@ fn explicit_codec_override() {
         .write_partition("ts-gorilla", &drain, 86_400_000, 0)
         .unwrap();
 
-    assert_eq!(meta.column_stats["timestamp"].codec, ColumnCodec::Gorilla);
-    assert_eq!(meta.column_stats["value"].codec, ColumnCodec::Gorilla);
+    assert_eq!(
+        meta.column_stats["timestamp"].codec,
+        ResolvedColumnCodec::Gorilla
+    );
+    assert_eq!(
+        meta.column_stats["value"].codec,
+        ResolvedColumnCodec::Gorilla
+    );
 
     let part_dir = tmp.path().join("ts-gorilla");
     let ts_col = ColumnarSegmentReader::read_column_with_codec(
         &part_dir,
         "timestamp",
         ColumnType::Timestamp,
-        Some(ColumnCodec::Gorilla),
+        Some(ResolvedColumnCodec::Gorilla),
     )
     .unwrap();
     let timestamps = ts_col.as_timestamps();

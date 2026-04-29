@@ -141,9 +141,9 @@ pub(super) fn value_to_binary_tuple_bitemporal(
 /// are already msgpack — detected by checking for msgpack map headers).
 pub(super) fn binary_tuple_to_value(tuple_bytes: &[u8], schema: &StrictSchema) -> Option<Value> {
     // Reject bytes that look like msgpack maps (fixmap 0x80-0x8F, map16 0xDE, map32 0xDF).
-    // Binary tuples start with a u16 LE schema version — values 0x80+ in the first
-    // byte would mean schema version >= 128 which we don't use. This catches the
-    // common case where data is already stored as msgpack.
+    // Binary tuples start with a u32 LE schema version — the low byte (first byte)
+    // of any realistic version is well below 0x80. This catches the common case
+    // where data is already stored as msgpack.
     if let Some(&first) = tuple_bytes.first()
         && ((0x80..=0x8F).contains(&first) || first == 0xDE || first == 0xDF)
     {

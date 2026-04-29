@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use nodedb_codec::{ColumnCodec, ColumnStatistics};
+use nodedb_codec::{ColumnCodec, ColumnStatistics, ResolvedColumnCodec};
 use nodedb_types::timeseries::{PartitionMeta, SymbolDictionary};
 
 use super::super::columnar_memtable::{ColumnData, ColumnType, ColumnarSchema};
@@ -48,7 +48,7 @@ impl ColumnarSegmentReader {
         partition_dir: &Path,
         col_name: &str,
         col_type: ColumnType,
-        codec: Option<ColumnCodec>,
+        codec: Option<ResolvedColumnCodec>,
     ) -> Result<ColumnData, SegmentError> {
         let col_path = partition_dir.join(format!("{col_name}.col"));
         let data = std::fs::read(&col_path)
@@ -69,7 +69,7 @@ impl ColumnarSegmentReader {
         partition_dir: &Path,
         col_name: &str,
         col_type: ColumnType,
-        codec: Option<ColumnCodec>,
+        codec: Option<ResolvedColumnCodec>,
         raw_bytes: &[u8],
     ) -> Result<ColumnData, SegmentError> {
         let codec = codec.unwrap_or_else(|| {
@@ -125,7 +125,7 @@ impl ColumnarSegmentReader {
         partition_dir: &Path,
         col_name: &str,
         col_type: ColumnType,
-        codec: Option<ColumnCodec>,
+        codec: Option<ResolvedColumnCodec>,
         block_indices: &[usize],
     ) -> Result<(ColumnData, Vec<(usize, usize)>), SegmentError> {
         let raw = Self::read_column_raw(partition_dir, col_name)?;
@@ -136,7 +136,7 @@ impl ColumnarSegmentReader {
                 .unwrap_or_else(|| legacy_default_codec(col_type))
         });
 
-        let is_fastlanes = matches!(codec, ColumnCodec::FastLanesLz4);
+        let is_fastlanes = matches!(codec, ResolvedColumnCodec::FastLanesLz4);
 
         if !is_fastlanes || block_indices.is_empty() {
             let data = decode_column(&raw, col_type, codec)?;
@@ -150,7 +150,7 @@ impl ColumnarSegmentReader {
             return Ok((data, vec![(0, total)]));
         }
 
-        let fastlanes_bytes = if codec == ColumnCodec::FastLanesLz4 {
+        let fastlanes_bytes = if codec == ResolvedColumnCodec::FastLanesLz4 {
             nodedb_codec::decode_bytes_pipeline(&raw, ColumnCodec::Lz4)
                 .map_err(|e| SegmentError::Io(format!("lz4 decode: {e}")))?
         } else {

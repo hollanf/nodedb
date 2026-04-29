@@ -65,10 +65,16 @@ impl ColumnarSegmentWriter {
         }
 
         // Write schema with resolved codecs.
+        // ColumnarSchema.codecs stores ColumnCodec (the pre-resolve type); convert
+        // the resolved variants back for schema persistence so the schema file
+        // records the actual codec used (not Auto).
         let schema_with_codecs = ColumnarSchema {
             columns: drain.schema.columns.clone(),
             timestamp_idx: drain.schema.timestamp_idx,
-            codecs: resolved_codecs,
+            codecs: resolved_codecs
+                .iter()
+                .map(|c| c.into_column_codec())
+                .collect(),
         };
         let schema_json = sonic_rs::to_vec(&schema_to_json(&schema_with_codecs))
             .map_err(|e| SegmentError::Io(format!("serialize schema: {e}")))?;

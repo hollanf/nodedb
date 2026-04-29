@@ -16,6 +16,7 @@ use std::time::Duration;
 use tracing::{debug, info};
 
 use super::compress::{LogDictionary, compress_log};
+use super::reader::encode_tseg_header;
 use nodedb_types::timeseries::{FlushedKind, FlushedSeries, SegmentKind, SegmentRef};
 
 use super::segment_index::SegmentIndex;
@@ -168,10 +169,9 @@ impl BucketManager {
         gorilla_block: &[u8],
         sample_count: u64,
     ) -> std::io::Result<usize> {
-        // Segment format: header(16) + gorilla_block.
-        // Header: magic(4) + kind(1) + sample_count(8) + block_len(4).
-        let mut buf = Vec::with_capacity(17 + gorilla_block.len());
-        buf.extend_from_slice(b"TSEG"); // magic
+        let mut buf =
+            Vec::with_capacity(super::reader::TSEG_HEADER_SIZE + 13 + gorilla_block.len());
+        encode_tseg_header(&mut buf);
         buf.push(0x01); // kind = metric
         buf.extend_from_slice(&sample_count.to_le_bytes());
         buf.extend_from_slice(&(gorilla_block.len() as u32).to_le_bytes());
@@ -197,9 +197,8 @@ impl BucketManager {
 
         let compressed = compress_log(&raw, dict, self.config.log_compression_level);
 
-        // Segment format: header(13) + compressed_block.
-        let mut buf = Vec::with_capacity(13 + compressed.len());
-        buf.extend_from_slice(b"TSEG"); // magic
+        let mut buf = Vec::with_capacity(super::reader::TSEG_HEADER_SIZE + 9 + compressed.len());
+        encode_tseg_header(&mut buf);
         buf.push(0x02); // kind = log
         buf.extend_from_slice(&(entries.len() as u32).to_le_bytes());
         buf.extend_from_slice(&(compressed.len() as u32).to_le_bytes());

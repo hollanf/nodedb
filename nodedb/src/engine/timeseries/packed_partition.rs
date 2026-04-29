@@ -1,4 +1,4 @@
-//! Single-file packed partition format with footer byte ranges.
+//! Single-file packed partition format with versioned binary footer.
 //!
 //! Combines all column files, schema, sparse index, and metadata into a
 //! single immutable file for cold/S3 storage. The footer at the end of
@@ -13,24 +13,22 @@
 //! ┌───────────────────────────────────────┐
 //! │  Column 0 data (compressed bytes)     │
 //! │  Column 1 data (compressed bytes)     │
-//! │  Column 2 data (compressed bytes)     │
 //! │  ...                                  │
 //! ├───────────────────────────────────────┤
 //! │  Sparse index data                    │
 //! ├───────────────────────────────────────┤
-//! │  Footer (JSON)                        │
-//! │  - column_ranges: [(offset, length)]  │
-//! │  - sparse_index_range: (offset, len)  │
-//! │  - schema                             │
-//! │  - partition_meta                     │
+//! │  Footer body (msgpack PackedFooter)   │
 //! ├───────────────────────────────────────┤
-//! │  Footer length (4 bytes, LE u32)      │
-//! │  Magic bytes "NDPK" (4 bytes)         │
+//! │  footer_len   : u32 LE   (4 bytes)    │
+//! │  crc32c       : u32 LE   (4 bytes)    │  ← CRC over footer body
+//! │  version      : u16 LE=1 (2 bytes)    │
+//! │  magic "NDPK" : 4 bytes  (4 bytes)    │  ← always at EOF
 //! └───────────────────────────────────────┘
 //! ```
 //!
-//! Reading: read last 8 bytes → footer length → seek back → parse footer →
-//! use byte ranges to read only needed columns.
+//! Tail is 14 bytes total. Reader: read last 4 bytes for magic, version at
+//! -6..-4, CRC at -10..-6, footer_len at -14..-10, then read body and
+//! verify CRC before deserializing.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -39,13 +37,61 @@ use serde::{Deserialize, Serialize};
 
 use nodedb_codec::ColumnCodec;
 use nodedb_types::timeseries::PartitionMeta;
-use sonic_rs;
 
-/// Magic bytes at the end of a packed partition file.
-const MAGIC: &[u8; 4] = b"NDPK";
+/// Magic bytes at the end of a packed partition file (at EOF).
+pub const PACKED_MAGIC: [u8; 4] = *b"NDPK";
+/// Format version written to the tail.
+pub const PACKED_VERSION: u16 = 1;
+/// Fixed byte size of the tail (footer_len + crc + version + magic).
+pub const PACKED_TAIL_SIZE: usize = 14;
+
+// ── Cursor helper ─────────────────────────────────────────────────────────────
+
+struct TailCursor<'a> {
+    data: &'a [u8],
+    /// Current position measured from the *end* of the slice.
+    from_end: usize,
+}
+
+impl<'a> TailCursor<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self { data, from_end: 0 }
+    }
+
+    /// Read `n` bytes backwards, returning them in logical order.
+    fn read_back(&mut self, n: usize) -> Option<&'a [u8]> {
+        let new_from_end = self.from_end + n;
+        if new_from_end > self.data.len() {
+            return None;
+        }
+        let end = self.data.len() - self.from_end;
+        let start = end - n;
+        self.from_end = new_from_end;
+        Some(&self.data[start..end])
+    }
+
+    fn read_back_u32_le(&mut self) -> Option<u32> {
+        let b = self.read_back(4)?;
+        Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
+    fn read_back_u16_le(&mut self) -> Option<u16> {
+        let b = self.read_back(2)?;
+        Some(u16::from_le_bytes([b[0], b[1]]))
+    }
+
+    /// Bytes consumed from the end so far (== current tail offset).
+    fn consumed(&self) -> usize {
+        self.from_end
+    }
+}
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 /// Footer of a packed partition file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct PackedFooter {
     /// Per-column byte ranges: column_name → (offset, length).
     pub column_ranges: HashMap<String, (u64, u64)>,
@@ -58,12 +104,29 @@ pub struct PackedFooter {
 }
 
 /// Schema entry for a column in the packed format.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct PackedColumnSchema {
     pub name: String,
     pub col_type: String,
     pub codec: ColumnCodec,
 }
+
+/// Error type for packed partition operations.
+#[derive(thiserror::Error, Debug)]
+pub enum PackedError {
+    #[error("packed partition I/O: {0}")]
+    Io(String),
+    #[error("packed partition corrupt: {0}")]
+    Corrupt(String),
+    #[error("unsupported packed partition format version: {version}")]
+    UnsupportedVersion { version: u16 },
+    #[error("packed partition footer CRC mismatch: stored={stored:#010x} calc={calc:#010x}")]
+    InvalidFooterCrc { stored: u32, calc: u32 },
+}
+
+// ── Writer ────────────────────────────────────────────────────────────────────
 
 /// Write a packed partition file from individual column files.
 pub fn write_packed(
@@ -90,23 +153,28 @@ pub fn write_packed(
         (offset, idx_data.len() as u64)
     });
 
-    // Build footer.
+    // Build footer body.
     let footer = PackedFooter {
         column_ranges,
         sparse_index_range,
         schema: schema.to_vec(),
         meta: meta.clone(),
     };
-    let footer_json =
-        sonic_rs::to_vec(&footer).map_err(|e| PackedError::Io(format!("footer json: {e}")))?;
+    let footer_body = zerompk::to_msgpack_vec(&footer)
+        .map_err(|e| PackedError::Io(format!("footer encode: {e}")))?;
 
-    let footer_offset = buf.len();
-    buf.extend_from_slice(&footer_json);
+    // Append footer body.
+    buf.extend_from_slice(&footer_body);
+    let footer_len = footer_body.len() as u32;
 
-    // Write footer length + magic.
-    let footer_len = (buf.len() - footer_offset) as u32;
+    // CRC32C over footer body only.
+    let crc = crc32c::crc32c(&footer_body);
+
+    // Tail: footer_len (4B) | crc (4B) | version (2B) | magic (4B)
     buf.extend_from_slice(&footer_len.to_le_bytes());
-    buf.extend_from_slice(MAGIC);
+    buf.extend_from_slice(&crc.to_le_bytes());
+    buf.extend_from_slice(&PACKED_VERSION.to_le_bytes());
+    buf.extend_from_slice(&PACKED_MAGIC);
 
     let total_size = buf.len() as u64;
     std::fs::write(output_path, &buf)
@@ -114,6 +182,8 @@ pub fn write_packed(
 
     Ok(total_size)
 }
+
+// ── Reader ────────────────────────────────────────────────────────────────────
 
 /// Read the footer from a packed partition file.
 pub fn read_footer(file_path: &Path) -> Result<PackedFooter, PackedError> {
@@ -124,37 +194,53 @@ pub fn read_footer(file_path: &Path) -> Result<PackedFooter, PackedError> {
 
 /// Read the footer from in-memory bytes (for testing or mmap'd files).
 pub fn read_footer_from_bytes(data: &[u8]) -> Result<PackedFooter, PackedError> {
-    if data.len() < 8 {
-        return Err(PackedError::Corrupt("file too small for footer".into()));
-    }
-
-    // Check magic.
-    let magic = &data[data.len() - 4..];
-    if magic != MAGIC {
+    if data.len() < PACKED_TAIL_SIZE {
         return Err(PackedError::Corrupt(format!(
-            "invalid magic: expected NDPK, got {:?}",
-            magic
+            "file too small for packed tail: {} bytes",
+            data.len()
         )));
     }
 
-    // Read footer length.
-    let footer_len = u32::from_le_bytes([
-        data[data.len() - 8],
-        data[data.len() - 7],
-        data[data.len() - 6],
-        data[data.len() - 5],
-    ]) as usize;
+    let mut tail = TailCursor::new(data);
 
-    let footer_start = data.len() - 8 - footer_len;
-    if footer_start > data.len() {
-        return Err(PackedError::Corrupt(
-            "footer length exceeds file size".into(),
-        ));
+    // Read tail fields in reverse order (right → left).
+    let magic = tail.read_back(4).unwrap();
+    if magic != PACKED_MAGIC {
+        return Err(PackedError::Corrupt(format!(
+            "invalid magic: expected NDPK, got {magic:?}"
+        )));
     }
 
-    let footer_bytes = &data[footer_start..footer_start + footer_len];
-    sonic_rs::from_slice(footer_bytes)
-        .map_err(|e| PackedError::Corrupt(format!("footer json: {e}")))
+    let version = tail.read_back_u16_le().unwrap();
+    if version != PACKED_VERSION {
+        return Err(PackedError::UnsupportedVersion { version });
+    }
+
+    let crc_stored = tail.read_back_u32_le().unwrap();
+    let footer_len = tail.read_back_u32_le().unwrap() as usize;
+
+    // tail.consumed() == PACKED_TAIL_SIZE at this point.
+    let tail_offset = data.len() - tail.consumed();
+    if footer_len > tail_offset {
+        return Err(PackedError::Corrupt(format!(
+            "footer_len {footer_len} exceeds available bytes {tail_offset}"
+        )));
+    }
+
+    let body_start = tail_offset - footer_len;
+    let footer_body = &data[body_start..body_start + footer_len];
+
+    // Verify CRC over body.
+    let crc_calc = crc32c::crc32c(footer_body);
+    if crc_stored != crc_calc {
+        return Err(PackedError::InvalidFooterCrc {
+            stored: crc_stored,
+            calc: crc_calc,
+        });
+    }
+
+    zerompk::from_msgpack(footer_body)
+        .map_err(|e| PackedError::Corrupt(format!("footer body decode: {e}")))
 }
 
 /// Read a single column's data from a packed file using byte range.
@@ -197,14 +283,7 @@ pub fn http_range_headers(footer: &PackedFooter, columns: &[&str]) -> Vec<(Strin
         .collect()
 }
 
-/// Error type for packed partition operations.
-#[derive(thiserror::Error, Debug)]
-pub enum PackedError {
-    #[error("packed partition I/O: {0}")]
-    Io(String),
-    #[error("packed partition corrupt: {0}")]
-    Corrupt(String),
-}
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -295,7 +374,6 @@ mod tests {
             meta: test_meta(),
         };
 
-        // Only request cpu column — skip timestamp and host.
         let ranges = http_range_headers(&footer, &["cpu"]);
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].0, "cpu");
@@ -321,7 +399,7 @@ mod tests {
 
     #[test]
     fn invalid_magic() {
-        let data = vec![0u8; 100]; // No magic.
+        let data = vec![0u8; 100]; // No magic at EOF.
         assert!(read_footer_from_bytes(&data).is_err());
     }
 
@@ -340,15 +418,99 @@ mod tests {
             meta: test_meta(),
         };
 
-        // Query only needs ts + cpu → skip mem and host entirely.
         let headers = http_range_headers(&footer, &["ts", "cpu"]);
         assert_eq!(headers.len(), 2);
 
-        // Total bytes fetched: 10000 + 5000 = 15000 out of 22000 total.
         let fetched: u64 = headers
             .iter()
             .map(|(name, _)| footer.column_ranges[name].1)
             .sum();
         assert_eq!(fetched, 15000);
+    }
+
+    // ── G-04: packed-partition golden tests ────────────────────────────────────
+
+    /// Verify tail layout byte by byte.
+    #[test]
+    fn packed_golden_tail_bytes() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("golden.ndpk");
+        let columns = vec![("ts".to_string(), vec![1u8, 2, 3])];
+        write_packed(&path, &columns, None, &[], &test_meta()).unwrap();
+
+        let data = std::fs::read(&path).unwrap();
+        let n = data.len();
+
+        // Last 4 bytes: magic
+        assert_eq!(&data[n - 4..], b"NDPK");
+
+        // Bytes -6..-4: version = 1 LE
+        let version = u16::from_le_bytes([data[n - 6], data[n - 5]]);
+        assert_eq!(version, PACKED_VERSION);
+
+        // Bytes -10..-6: crc32c
+        let crc_stored = u32::from_le_bytes([data[n - 10], data[n - 9], data[n - 8], data[n - 7]]);
+
+        // Bytes -14..-10: footer_len
+        let footer_len =
+            u32::from_le_bytes([data[n - 14], data[n - 13], data[n - 12], data[n - 11]]) as usize;
+
+        // Footer body is immediately before the tail.
+        let body_end = n - PACKED_TAIL_SIZE;
+        let body_start = body_end - footer_len;
+        let footer_body = &data[body_start..body_end];
+
+        // CRC must be internally consistent.
+        let crc_calc = crc32c::crc32c(footer_body);
+        assert_eq!(
+            crc_stored, crc_calc,
+            "golden: stored CRC does not match re-computed CRC over body"
+        );
+
+        // Body must deserialize correctly.
+        let footer: PackedFooter = zerompk::from_msgpack(footer_body).unwrap();
+        assert_eq!(footer.column_ranges["ts"], (0, 3));
+    }
+
+    /// Version != 1 must be rejected.
+    #[test]
+    fn packed_rejects_unsupported_version() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("v2.ndpk");
+        let columns = vec![("ts".to_string(), vec![1u8])];
+        write_packed(&path, &columns, None, &[], &test_meta()).unwrap();
+
+        let mut data = std::fs::read(&path).unwrap();
+        let n = data.len();
+        // Patch version bytes (-6..-4) to version = 2.
+        let v2 = 2u16.to_le_bytes();
+        data[n - 6] = v2[0];
+        data[n - 5] = v2[1];
+
+        let err = read_footer_from_bytes(&data).unwrap_err();
+        assert!(
+            matches!(err, PackedError::UnsupportedVersion { version: 2 }),
+            "expected UnsupportedVersion {{version: 2}}, got {err:?}"
+        );
+    }
+
+    /// Corrupt CRC must be rejected.
+    #[test]
+    fn packed_rejects_bad_crc() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("bad_crc.ndpk");
+        let columns = vec![("ts".to_string(), vec![1u8])];
+        write_packed(&path, &columns, None, &[], &test_meta()).unwrap();
+
+        let mut data = std::fs::read(&path).unwrap();
+        let n = data.len();
+        // Flip a byte in the CRC field at -10..-6.
+        data[n - 10] ^= 0xFF;
+
+        let err = read_footer_from_bytes(&data).unwrap_err();
+        assert!(
+            matches!(err, PackedError::InvalidFooterCrc { .. }),
+            "expected InvalidFooterCrc, got {err:?}"
+        );
     }
 }

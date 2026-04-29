@@ -67,9 +67,12 @@ pub fn resolve_decode_strategy(
 }
 
 /// List all codecs supported by the current nodedb-codec build.
+///
+/// `Auto` is intentionally excluded: it is a write-time selection hint,
+/// not a decodable on-disk codec. A partition header with codec byte 0
+/// (`Auto`) is malformed and would be rejected by the reader.
 pub fn supported_codecs() -> Vec<ColumnCodec> {
     vec![
-        ColumnCodec::Auto,
         ColumnCodec::AlpFastLanesLz4,
         ColumnCodec::AlpRdLz4,
         ColumnCodec::PcodecLz4,
@@ -129,8 +132,13 @@ mod tests {
     #[test]
     fn supported_codecs_complete() {
         let codecs = supported_codecs();
-        assert!(codecs.len() >= 16);
+        // 15 concrete codecs — Auto is intentionally excluded.
+        assert_eq!(codecs.len(), 15);
         assert!(codecs.contains(&ColumnCodec::AlpFastLanesLz4));
         assert!(codecs.contains(&ColumnCodec::FsstRans));
+        assert!(
+            !codecs.contains(&ColumnCodec::Auto),
+            "Auto must not appear in supported_codecs"
+        );
     }
 }
