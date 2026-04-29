@@ -1,3 +1,5 @@
+use nodedb_types::columnar::ColumnType;
+use nodedb_types::error::sqlstate;
 use pgwire::api::Type;
 use pgwire::api::results::FieldFormat;
 use pgwire::api::results::FieldInfo;
@@ -18,19 +20,19 @@ pub fn sqlstate_error(code: &str, message: &str) -> PgWireError {
 /// Map a NodeDB `Error` to a PostgreSQL SQLSTATE code + message.
 pub fn error_to_sqlstate(err: &crate::Error) -> (&'static str, &'static str, String) {
     match err {
-        crate::Error::BadRequest { detail } => ("ERROR", "42601", detail.clone()),
-        crate::Error::PlanError { detail } => ("ERROR", "42601", detail.clone()),
+        crate::Error::BadRequest { detail } => ("ERROR", sqlstate::SYNTAX_ERROR, detail.clone()),
+        crate::Error::PlanError { detail } => ("ERROR", sqlstate::SYNTAX_ERROR, detail.clone()),
         crate::Error::CollectionNotFound { collection, .. } => (
             "ERROR",
-            "42P01",
+            sqlstate::UNDEFINED_TABLE,
             format!("collection \"{collection}\" does not exist"),
         ),
         crate::Error::CollectionDeactivated { collection, .. } => (
             "ERROR",
-            // 42P01 (undefined_table) is the canonical pg code; the
-            // distinct message carries the UNDROP hint so client UX
-            // can surface a restore button without a custom sqlstate.
-            "42P01",
+            // UNDEFINED_TABLE is the canonical pg code; the distinct message
+            // carries the UNDROP hint so client UX can surface a restore
+            // button without a custom sqlstate.
+            sqlstate::UNDEFINED_TABLE,
             format!(
                 "collection \"{collection}\" was dropped and is within its retention \
                  window; restore it with `UNDROP COLLECTION {collection}` before \
@@ -42,39 +44,54 @@ pub fn error_to_sqlstate(err: &crate::Error) -> (&'static str, &'static str, Str
             document_id,
         } => (
             "ERROR",
-            "02000",
+            sqlstate::NO_DATA,
             format!("document \"{document_id}\" not found in \"{collection}\""),
         ),
-        crate::Error::RejectedConstraint { detail, .. } => ("ERROR", "23505", detail.clone()),
-        crate::Error::DeadlineExceeded { .. } => ("ERROR", "57014", err.to_string()),
-        crate::Error::ConflictRetry { .. } => ("ERROR", "40001", err.to_string()),
-        crate::Error::RejectedAuthz { .. } => ("ERROR", "42501", err.to_string()),
-        crate::Error::MemoryExhausted { .. } => ("ERROR", "53200", err.to_string()),
-        crate::Error::FanOutExceeded { .. } => ("ERROR", "54001", err.to_string()),
-        crate::Error::NoLeader { .. } => ("ERROR", "55P03", err.to_string()),
-        // SQLSTATE 57P04: admin_shutdown — the closest Postgres
-        // canonical code for "try again later, different node".
-        // Client libraries that recognise the 57P* family treat
-        // this as retryable transient unavailability, which is
-        // exactly the semantics we want. The message carries the
-        // hinted leader address so an operator inspecting logs
-        // can see the redirect target.
+        crate::Error::RejectedConstraint { detail, .. } => {
+            ("ERROR", sqlstate::UNIQUE_VIOLATION, detail.clone())
+        }
+        crate::Error::DeadlineExceeded { .. } => {
+            ("ERROR", sqlstate::QUERY_CANCELED, err.to_string())
+        }
+        crate::Error::ConflictRetry { .. } => {
+            ("ERROR", sqlstate::SERIALIZATION_FAILURE, err.to_string())
+        }
+        crate::Error::RejectedAuthz { .. } => {
+            ("ERROR", sqlstate::INSUFFICIENT_PRIVILEGE, err.to_string())
+        }
+        crate::Error::MemoryExhausted { .. } => {
+            ("ERROR", sqlstate::OUT_OF_MEMORY, err.to_string())
+        }
+        crate::Error::FanOutExceeded { .. } => {
+            ("ERROR", sqlstate::STATEMENT_TOO_COMPLEX, err.to_string())
+        }
+        crate::Error::NoLeader { .. } => {
+            ("ERROR", sqlstate::LOCK_NOT_AVAILABLE, err.to_string())
+        }
+        // DATABASE_DROPPED (57P04) — the closest Postgres canonical code for
+        // "try again later, different node". Client libraries that recognise
+        // the 57P* family treat this as retryable transient unavailability,
+        // which is exactly the semantics we want. The message carries the
+        // hinted leader address so an operator inspecting logs can see the
+        // redirect target.
         crate::Error::NotLeader { leader_addr, .. } => (
             "ERROR",
-            "57P04",
+            sqlstate::DATABASE_DROPPED,
             format!("cluster in leader election; leader hint: {leader_addr}"),
         ),
-        _ => ("ERROR", "XX000", err.to_string()),
+        _ => ("ERROR", sqlstate::INTERNAL_ERROR, err.to_string()),
     }
 }
 
 /// Map a Data Plane `ErrorCode` to SQLSTATE.
 pub fn error_code_to_sqlstate(code: &ErrorCode) -> (&'static str, &'static str, String) {
     match code {
-        ErrorCode::DeadlineExceeded => ("ERROR", "57014", "query cancelled due to deadline".into()),
+        ErrorCode::DeadlineExceeded => {
+            ("ERROR", sqlstate::QUERY_CANCELED, "query cancelled due to deadline".into())
+        }
         ErrorCode::RejectedConstraint { constraint, detail } => (
             "ERROR",
-            "23505",
+            sqlstate::UNIQUE_VIOLATION,
             if detail.is_empty() {
                 format!("constraint violation: {constraint}")
             } else {
@@ -83,77 +100,85 @@ pub fn error_code_to_sqlstate(code: &ErrorCode) -> (&'static str, &'static str, 
         ),
         ErrorCode::RejectedPrevalidation { reason } => (
             "ERROR",
-            "23514",
+            sqlstate::CHECK_VIOLATION,
             format!("pre-validation rejected: {reason}"),
         ),
-        ErrorCode::NotFound => ("ERROR", "02000", "not found".into()),
-        ErrorCode::RejectedAuthz => ("ERROR", "42501", "authorization denied".into()),
-        ErrorCode::ConflictRetry => ("ERROR", "40001", "write conflict, retry".into()),
-        ErrorCode::FanOutExceeded => ("ERROR", "54001", "fan-out limit exceeded".into()),
-        ErrorCode::ResourcesExhausted => ("ERROR", "53200", "resources exhausted".into()),
+        ErrorCode::NotFound => ("ERROR", sqlstate::NO_DATA, "not found".into()),
+        ErrorCode::RejectedAuthz => {
+            ("ERROR", sqlstate::INSUFFICIENT_PRIVILEGE, "authorization denied".into())
+        }
+        ErrorCode::ConflictRetry => {
+            ("ERROR", sqlstate::SERIALIZATION_FAILURE, "write conflict, retry".into())
+        }
+        ErrorCode::FanOutExceeded => {
+            ("ERROR", sqlstate::STATEMENT_TOO_COMPLEX, "fan-out limit exceeded".into())
+        }
+        ErrorCode::ResourcesExhausted => {
+            ("ERROR", sqlstate::OUT_OF_MEMORY, "resources exhausted".into())
+        }
         ErrorCode::RejectedDanglingEdge { missing_node } => (
             "ERROR",
-            "23503",
+            sqlstate::FOREIGN_KEY_VIOLATION,
             format!("edge rejected: node \"{missing_node}\" does not exist"),
         ),
         ErrorCode::DuplicateWrite => (
             "ERROR",
-            "23505",
+            sqlstate::UNIQUE_VIOLATION,
             "duplicate write detected via idempotency key".into(),
         ),
         ErrorCode::AppendOnlyViolation { collection } => (
             "ERROR",
-            "23601",
+            sqlstate::APPEND_ONLY_VIOLATION,
             format!("append-only violation: UPDATE/DELETE not allowed on {collection}"),
         ),
         ErrorCode::BalanceViolation { collection, detail } => (
             "ERROR",
-            "23602",
+            sqlstate::BALANCE_VIOLATION,
             format!("balance violation on {collection}: {detail}"),
         ),
         ErrorCode::PeriodLocked { collection } => (
             "ERROR",
-            "23603",
+            sqlstate::PERIOD_LOCKED,
             format!("period locked: writes rejected on {collection}"),
         ),
         ErrorCode::RetentionViolation { collection } => (
             "ERROR",
-            "23606",
+            sqlstate::RETENTION_VIOLATION,
             format!("retention violation: cannot delete from {collection}"),
         ),
         ErrorCode::LegalHoldActive { collection } => (
             "ERROR",
-            "23607",
+            sqlstate::LEGAL_HOLD_ACTIVE,
             format!("legal hold active: cannot delete from {collection}"),
         ),
         ErrorCode::StateTransitionViolation { collection, detail } => (
             "ERROR",
-            "23604",
+            sqlstate::STATE_TRANSITION_VIOLATION,
             format!("state transition violation on {collection}: {detail}"),
         ),
         ErrorCode::TransitionCheckViolation { collection } => (
             "ERROR",
-            "23605",
+            sqlstate::TRANSITION_CHECK_VIOLATION,
             format!("transition check violation on {collection}"),
         ),
         ErrorCode::TypeGuardViolation { collection, detail } => (
             "ERROR",
-            "23608",
+            sqlstate::TYPE_GUARD_VIOLATION,
             format!("type guard violation on {collection}: {detail}"),
         ),
         ErrorCode::TypeMismatch { collection, detail } => (
             "ERROR",
-            "42846",
+            sqlstate::CANNOT_COERCE,
             format!("type mismatch on {collection}: {detail}"),
         ),
         ErrorCode::OverflowError { collection } => (
             "ERROR",
-            "22003",
+            sqlstate::NUMERIC_VALUE_OUT_OF_RANGE,
             format!("arithmetic overflow on {collection}"),
         ),
         ErrorCode::InsufficientBalance { collection, detail } => (
             "ERROR",
-            "23514",
+            sqlstate::CHECK_VIOLATION,
             format!("insufficient balance on {collection}: {detail}"),
         ),
         ErrorCode::RateExceeded {
@@ -161,18 +186,20 @@ pub fn error_code_to_sqlstate(code: &ErrorCode) -> (&'static str, &'static str, 
             retry_after_ms,
         } => (
             "ERROR",
-            "54001",
+            sqlstate::STATEMENT_TOO_COMPLEX,
             format!("rate limit exceeded for {gate}, retry after {retry_after_ms}ms"),
         ),
         ErrorCode::CollectionDraining { collection } => (
             "ERROR",
-            "57P03",
+            sqlstate::CANNOT_CONNECT_NOW,
             format!(
                 "collection '{collection}' is draining for hard-delete; retry after purge completes"
             ),
         ),
-        ErrorCode::Internal { detail } => ("ERROR", "XX000", detail.clone()),
-        ErrorCode::Unsupported { detail } => ("ERROR", "0A000", detail.clone()),
+        ErrorCode::Internal { detail } => ("ERROR", sqlstate::INTERNAL_ERROR, detail.clone()),
+        ErrorCode::Unsupported { detail } => {
+            ("ERROR", sqlstate::FEATURE_NOT_SUPPORTED, detail.clone())
+        }
     }
 }
 
@@ -281,27 +308,28 @@ pub fn float8_array_field(name: &str) -> FieldInfo {
     )
 }
 
-/// Map a NodeDB/DataFusion field type name to a pgwire Type.
+/// Map a NodeDB field type name to a pgwire `Type`.
 ///
-/// Used when constructing RowDescription from collection schemas.
+/// Uses `ColumnType::from_str` + `ColumnType::to_pg_oid` as the single
+/// authoritative OID mapping. Falls back to `Type::TEXT` only for names that
+/// cannot be parsed as a known `ColumnType` (e.g. DataFusion aliases like
+/// `"int4"` or `"float8[]"`).
 pub fn type_name_to_pgwire(type_name: &str) -> Type {
+    // Try to parse via the canonical ColumnType mapping first.
+    if let Ok(ct) = type_name.parse::<ColumnType>() {
+        return Type::from_oid(ct.to_pg_oid()).unwrap_or(Type::TEXT);
+    }
+    // Handle DataFusion / legacy aliases that ColumnType::from_str doesn't cover.
     match type_name.to_lowercase().as_str() {
         "int" | "int4" | "integer" => Type::INT4,
         "int2" | "smallint" => Type::INT2,
-        "int8" | "bigint" => Type::INT8,
         "float4" | "real" => Type::FLOAT4,
         "float8" | "double" | "double precision" => Type::FLOAT8,
-        "text" | "string" => Type::TEXT,
         "varchar" => Type::VARCHAR,
-        "bool" | "boolean" => Type::BOOL,
-        "bytea" | "bytes" => Type::BYTEA,
-        "json" => Type::JSON,
-        "jsonb" => Type::JSONB,
-        "timestamp" => Type::TIMESTAMP,
         "timestamptz" => Type::TIMESTAMPTZ,
-        s if s.starts_with("vector") || s.starts_with("float4[]") => Type::FLOAT4_ARRAY,
+        s if s.starts_with("float4[]") => Type::FLOAT4_ARRAY,
         "float8[]" => Type::FLOAT8_ARRAY,
-        _ => Type::TEXT, // Default fallback for unknown types.
+        _ => Type::TEXT,
     }
 }
 
@@ -309,7 +337,7 @@ pub fn type_name_to_pgwire(type_name: &str) -> Type {
 pub fn notice_warning(message: &str) -> pgwire::messages::response::NoticeResponse {
     pgwire::messages::response::NoticeResponse::from(pgwire::error::ErrorInfo::new(
         "WARNING".to_owned(),
-        "01000".to_owned(),
+        sqlstate::WARNING.to_owned(),
         message.to_owned(),
     ))
 }
@@ -320,7 +348,7 @@ pub fn require_admin(identity: &AuthenticatedIdentity, action: &str) -> PgWireRe
         Ok(())
     } else {
         Err(sqlstate_error(
-            "42501",
+            sqlstate::INSUFFICIENT_PRIVILEGE,
             &format!("permission denied: only superuser or tenant_admin can {action}"),
         ))
     }

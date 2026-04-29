@@ -14,6 +14,7 @@
 //!     ON DENY SILENT
 //! ```
 
+use nodedb_types::error::sqlstate;
 use serde::{Deserialize, Serialize};
 
 /// How the system responds when an RLS policy denies access.
@@ -84,15 +85,15 @@ pub fn deny_to_http_status(code: &str) -> u16 {
 /// Map a `DenyMode::Error` to a PostgreSQL SQLSTATE code.
 pub fn deny_to_sqlstate(code: &str) -> &'static str {
     match code {
-        DenyCodes::UNAUTHORIZED => "28000", // invalid_authorization_specification
-        DenyCodes::INSUFFICIENT_SCOPE => "42501", // insufficient_privilege
-        DenyCodes::ACCOUNT_SUSPENDED => "42501", // insufficient_privilege
-        DenyCodes::ACCOUNT_BANNED => "42501", // insufficient_privilege
-        DenyCodes::RATE_LIMITED => "53300", // too_many_connections (closest match)
-        DenyCodes::QUOTA_EXCEEDED => "53400", // configuration_limit_exceeded
-        DenyCodes::RLS_READ_DENIED => "42501", // insufficient_privilege
-        DenyCodes::RLS_WRITE_DENIED => "42501", // insufficient_privilege
-        _ => "42501",
+        DenyCodes::UNAUTHORIZED => sqlstate::INVALID_AUTHORIZATION,
+        DenyCodes::INSUFFICIENT_SCOPE => sqlstate::INSUFFICIENT_PRIVILEGE,
+        DenyCodes::ACCOUNT_SUSPENDED => sqlstate::INSUFFICIENT_PRIVILEGE,
+        DenyCodes::ACCOUNT_BANNED => sqlstate::INSUFFICIENT_PRIVILEGE,
+        DenyCodes::RATE_LIMITED => sqlstate::TOO_MANY_CONNECTIONS,
+        DenyCodes::QUOTA_EXCEEDED => sqlstate::CONFIGURATION_LIMIT_EXCEEDED,
+        DenyCodes::RLS_READ_DENIED => sqlstate::INSUFFICIENT_PRIVILEGE,
+        DenyCodes::RLS_WRITE_DENIED => sqlstate::INSUFFICIENT_PRIVILEGE,
+        _ => sqlstate::INSUFFICIENT_PRIVILEGE,
     }
 }
 
@@ -243,9 +244,18 @@ mod tests {
 
     #[test]
     fn sqlstate_mapping() {
-        assert_eq!(deny_to_sqlstate(DenyCodes::UNAUTHORIZED), "28000");
-        assert_eq!(deny_to_sqlstate(DenyCodes::INSUFFICIENT_SCOPE), "42501");
-        assert_eq!(deny_to_sqlstate(DenyCodes::RATE_LIMITED), "53300");
+        assert_eq!(
+            deny_to_sqlstate(DenyCodes::UNAUTHORIZED),
+            sqlstate::INVALID_AUTHORIZATION
+        );
+        assert_eq!(
+            deny_to_sqlstate(DenyCodes::INSUFFICIENT_SCOPE),
+            sqlstate::INSUFFICIENT_PRIVILEGE
+        );
+        assert_eq!(
+            deny_to_sqlstate(DenyCodes::RATE_LIMITED),
+            sqlstate::TOO_MANY_CONNECTIONS
+        );
     }
 
     #[test]

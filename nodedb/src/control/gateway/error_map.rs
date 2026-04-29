@@ -5,6 +5,8 @@
 //! listener's error envelope so the translation is consistent and a change
 //! to the SQLSTATE codes or HTTP status codes is a one-file edit.
 
+use nodedb_types::error::sqlstate;
+
 use crate::Error;
 
 pub struct GatewayErrorMap;
@@ -18,25 +20,27 @@ impl GatewayErrorMap {
     pub fn to_pgwire(err: &Error) -> (&'static str, String) {
         match err {
             Error::NotLeader { leader_addr, .. } => (
-                "57P04",
+                sqlstate::DATABASE_DROPPED,
                 format!("cluster in leader election; leader hint: {leader_addr}"),
             ),
-            Error::DeadlineExceeded { .. } => ("57014", err.to_string()),
+            Error::DeadlineExceeded { .. } => (sqlstate::QUERY_CANCELED, err.to_string()),
             Error::RetryableSchemaChanged { descriptor } => (
-                "XX000",
+                sqlstate::INTERNAL_ERROR,
                 format!("schema changed during execution ({descriptor}); please retry"),
             ),
             Error::CollectionNotFound { collection, .. } => (
-                "42P01",
+                sqlstate::UNDEFINED_TABLE,
                 format!("collection \"{collection}\" does not exist"),
             ),
-            Error::RejectedAuthz { .. } => ("42501", err.to_string()),
-            Error::BadRequest { detail } => ("42601", detail.clone()),
-            Error::PlanError { detail } => ("42601", detail.clone()),
-            Error::Serialization { .. } | Error::Codec { .. } => ("XX000", err.to_string()),
-            Error::Internal { .. } => ("XX000", err.to_string()),
-            Error::NoLeader { .. } => ("55P03", err.to_string()),
-            _ => ("XX000", err.to_string()),
+            Error::RejectedAuthz { .. } => (sqlstate::INSUFFICIENT_PRIVILEGE, err.to_string()),
+            Error::BadRequest { detail } => (sqlstate::SYNTAX_ERROR, detail.clone()),
+            Error::PlanError { detail } => (sqlstate::SYNTAX_ERROR, detail.clone()),
+            Error::Serialization { .. } | Error::Codec { .. } => {
+                (sqlstate::INTERNAL_ERROR, err.to_string())
+            }
+            Error::Internal { .. } => (sqlstate::INTERNAL_ERROR, err.to_string()),
+            Error::NoLeader { .. } => (sqlstate::LOCK_NOT_AVAILABLE, err.to_string()),
+            _ => (sqlstate::INTERNAL_ERROR, err.to_string()),
         }
     }
 
@@ -194,45 +198,45 @@ mod tests {
     #[test]
     fn pgwire_not_leader() {
         let (code, _msg) = GatewayErrorMap::to_pgwire(&not_leader());
-        assert_eq!(code, "57P04");
+        assert_eq!(code, sqlstate::DATABASE_DROPPED);
     }
 
     #[test]
     fn pgwire_deadline() {
         let (code, _) = GatewayErrorMap::to_pgwire(&deadline());
-        assert_eq!(code, "57014");
+        assert_eq!(code, sqlstate::QUERY_CANCELED);
     }
 
     #[test]
     fn pgwire_schema_changed() {
         let (code, msg) = GatewayErrorMap::to_pgwire(&schema_changed());
-        assert_eq!(code, "XX000");
+        assert_eq!(code, sqlstate::INTERNAL_ERROR);
         assert!(msg.contains("users"));
     }
 
     #[test]
     fn pgwire_not_found() {
         let (code, msg) = GatewayErrorMap::to_pgwire(&not_found());
-        assert_eq!(code, "42P01");
+        assert_eq!(code, sqlstate::UNDEFINED_TABLE);
         assert!(msg.contains("missing_col"));
     }
 
     #[test]
     fn pgwire_authz() {
         let (code, _) = GatewayErrorMap::to_pgwire(&authz());
-        assert_eq!(code, "42501");
+        assert_eq!(code, sqlstate::INSUFFICIENT_PRIVILEGE);
     }
 
     #[test]
     fn pgwire_internal() {
         let (code, _) = GatewayErrorMap::to_pgwire(&internal());
-        assert_eq!(code, "XX000");
+        assert_eq!(code, sqlstate::INTERNAL_ERROR);
     }
 
     #[test]
     fn pgwire_serialization() {
         let (code, _) = GatewayErrorMap::to_pgwire(&serialization());
-        assert_eq!(code, "XX000");
+        assert_eq!(code, sqlstate::INTERNAL_ERROR);
     }
 
     // --- HTTP mapping ---

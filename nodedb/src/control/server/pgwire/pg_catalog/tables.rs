@@ -6,6 +6,8 @@ use futures::stream;
 use pgwire::api::results::{DataRowEncoder, QueryResponse, Response};
 use pgwire::error::PgWireResult;
 
+use nodedb_types::columnar::ColumnType;
+
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::server::pgwire::types::{bool_field, int4_field, int8_field, text_field};
 use crate::control::state::SharedState;
@@ -68,6 +70,7 @@ pub fn pg_type() -> PgWireResult<Vec<Response>> {
 
     let types: &[(i64, &str, i32, &str)] = &[
         (16, "bool", 1, "b"),
+        (17, "bytea", -1, "b"),
         (20, "int8", 8, "b"),
         (21, "int2", 2, "b"),
         (23, "int4", 4, "b"),
@@ -75,10 +78,13 @@ pub fn pg_type() -> PgWireResult<Vec<Response>> {
         (114, "json", -1, "b"),
         (700, "float4", 4, "b"),
         (701, "float8", 8, "b"),
+        (1021, "float4[]", -1, "b"),
         (1043, "varchar", -1, "b"),
         (1082, "date", 4, "b"),
         (1114, "timestamp", 8, "b"),
         (1184, "timestamptz", 8, "b"),
+        (1186, "interval", 16, "b"),
+        (1700, "numeric", -1, "b"),
         (2950, "uuid", 16, "b"),
         (3802, "jsonb", -1, "b"),
     ];
@@ -250,21 +256,19 @@ fn load_collections(
 }
 
 fn field_type_to_oid(field_type: &str) -> i64 {
+    // Delegate to the canonical ColumnType mapping wherever possible.
+    if let Ok(ct) = field_type.parse::<ColumnType>() {
+        return ct.to_pg_oid() as i64;
+    }
+    // Handle legacy / DataFusion aliases that ColumnType::from_str doesn't cover.
     match field_type.to_lowercase().as_str() {
-        "bool" | "boolean" => 16,
         "int" | "integer" | "int4" => 23,
-        "bigint" | "int8" => 20,
         "smallint" | "int2" => 21,
         "float" | "float4" | "real" => 700,
         "double" | "float8" => 701,
-        "text" | "string" => 25,
         "varchar" => 1043,
-        "json" => 114,
-        "jsonb" => 3802,
-        "uuid" => 2950,
         "date" => 1082,
-        "timestamp" => 1114,
         "timestamptz" => 1184,
-        _ => 25,
+        _ => 25, // TEXT fallback
     }
 }

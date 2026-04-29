@@ -13,6 +13,8 @@ use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use nodedb_types::error::sqlstate as ss;
+
 use async_trait::async_trait;
 use futures::stream;
 use futures::{Sink, SinkExt};
@@ -45,7 +47,7 @@ impl NodeDbPgHandler {
         intent: CopyIntent,
     ) -> PgWireResult<Response> {
         if !identity.is_superuser {
-            return Err(sqlstate("42501", "permission denied: superuser required"));
+            return Err(sqlstate(ss::INSUFFICIENT_PRIVILEGE, "permission denied: superuser required"));
         }
 
         match intent {
@@ -89,10 +91,12 @@ impl CopyHandler for NodeDbCopyHandler {
         let id = conn_id(&client.socket_addr());
         match self.restore_state.append(id, &copy_data.data) {
             Ok(()) => Ok(()),
-            Err(e @ AppendError::NotPending) => Err(sqlstate("0A000", &e.to_string())),
+            Err(e @ AppendError::NotPending) => {
+                Err(sqlstate(ss::FEATURE_NOT_SUPPORTED, &e.to_string()))
+            }
             Err(e @ AppendError::OverCap { .. }) => {
                 self.restore_state.cancel(id);
-                Err(sqlstate("54000", &e.to_string()))
+                Err(sqlstate(ss::PROGRAM_LIMIT_EXCEEDED, &e.to_string()))
             }
         }
     }
@@ -107,7 +111,7 @@ impl CopyHandler for NodeDbCopyHandler {
         let pending = self
             .restore_state
             .take(id)
-            .ok_or_else(|| sqlstate("0A000", "no restore pending on this connection"))?;
+            .ok_or_else(|| sqlstate(ss::FEATURE_NOT_SUPPORTED, "no restore pending on this connection"))?;
         let stats = backup::restore_tenant(
             &self.state,
             pending.tenant_id,
@@ -126,7 +130,7 @@ impl CopyHandler for NodeDbCopyHandler {
         client
             .send(PgWireBackendMessage::CommandComplete(tag.into()))
             .await
-            .map_err(|e| sqlstate("XX000", &format!("CommandComplete send failed: {e:?}")))?;
+            .map_err(|e| sqlstate(ss::INTERNAL_ERROR, &format!("CommandComplete send failed: {e:?}")))?;
         // Leave the COPY-in-progress state so the next Sync from the
         // client gets dispatched normally. pgwire's `process_message`
         // only routes Sync via the `AwaitingSync` arm.
@@ -155,5 +159,5 @@ fn internal(e: crate::Error) -> PgWireError {
     // Surface error string but never echo deserializer context — the
     // restore orchestrator already scrubs envelope errors. We pass
     // through everything else (RPC failures, dispatch errors).
-    sqlstate("XX000", &e.to_string())
+    sqlstate(ss::INTERNAL_ERROR, &e.to_string())
 }
