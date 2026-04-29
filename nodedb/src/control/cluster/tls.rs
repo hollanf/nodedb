@@ -170,6 +170,8 @@ fn load_from_paths(paths: &TlsPaths, tls_dir: &Path) -> crate::Result<TlsCredent
         .unwrap_or_else(|| tls_dir.join(CLUSTER_SECRET_FILE));
     let cluster_secret = read_cluster_secret(&secret_path)?;
     let additional_ca_certs = load_extra_cas(tls_dir)?;
+    let spki_pin =
+        nodedb_cluster::transport::spki_pin_from_cert_der(cert.as_ref()).unwrap_or([0u8; 32]);
     Ok(TlsCredentials {
         cert,
         key,
@@ -177,6 +179,7 @@ fn load_from_paths(paths: &TlsPaths, tls_dir: &Path) -> crate::Result<TlsCredent
         additional_ca_certs,
         crls,
         cluster_secret,
+        spki_pin,
     })
 }
 
@@ -186,6 +189,8 @@ fn load_from_data_dir(tls_dir: &Path) -> crate::Result<TlsCredentials> {
     let ca_cert = read_single_cert(&tls_dir.join(CA_CERT_FILE))?;
     let cluster_secret = read_cluster_secret(&tls_dir.join(CLUSTER_SECRET_FILE))?;
     let additional_ca_certs = load_extra_cas(tls_dir)?;
+    let spki_pin =
+        nodedb_cluster::transport::spki_pin_from_cert_der(cert.as_ref()).unwrap_or([0u8; 32]);
     Ok(TlsCredentials {
         cert,
         key,
@@ -193,6 +198,7 @@ fn load_from_data_dir(tls_dir: &Path) -> crate::Result<TlsCredentials> {
         additional_ca_certs,
         crls: Vec::new(),
         cluster_secret,
+        spki_pin,
     })
 }
 
