@@ -170,8 +170,19 @@ pub async fn restore_tenant(
             "restore: routed some entries to local node because no current leader was visible"
         );
     }
-    let split = buckets;
-    for (node_id, sub) in split {
+    // Dispatch the per-node sub-snapshots. The local bucket runs first
+    // on the SPSC bridge (its handler mutates this node's engine state
+    // and must not race with concurrent reads on this node). Remote
+    // buckets then fan out in parallel via QUIC RPC — they touch
+    // independent state machines and don't interact with each other,
+    // so a sequential `for ... .await?` would have turned N × rpc
+    // timeouts into N × that wall time when a peer is unreachable.
+    // Each remote dispatch's error already carries the failing node
+    // id, so first-error-wins is preserved by reducing the result
+    // vector.
+    let mut local_plan: Option<PhysicalPlan> = None;
+    let mut remote_futs = Vec::with_capacity(buckets.len());
+    for (node_id, sub) in buckets {
         let payload = zerompk::to_msgpack_vec(&sub).map_err(|e| Error::Internal {
             detail: format!("restore: snapshot encode failed: {e}"),
         })?;
@@ -180,17 +191,26 @@ pub async fn restore_tenant(
             snapshot: payload,
         });
         if is_self(state, node_id) {
-            sync_dispatch::dispatch_async(
-                state,
-                TenantId::new(tenant_id),
-                "__system",
-                plan,
-                NODE_RESTORE_TIMEOUT,
-            )
-            .await?;
+            local_plan = Some(plan);
         } else {
-            dispatch_remote(state, node_id, tenant_id, plan).await?;
+            let state = state.clone();
+            remote_futs
+                .push(async move { dispatch_remote(&state, node_id, tenant_id, plan).await });
         }
+    }
+    if let Some(plan) = local_plan {
+        sync_dispatch::dispatch_async(
+            state,
+            TenantId::new(tenant_id),
+            "__system",
+            plan,
+            NODE_RESTORE_TIMEOUT,
+        )
+        .await?;
+    }
+    let results = futures::future::join_all(remote_futs).await;
+    if let Some(first_err) = results.into_iter().find_map(Result::err) {
+        return Err(first_err);
     }
 
     Ok(stats)

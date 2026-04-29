@@ -36,6 +36,23 @@ pub async fn metrics(
     output.push_str("# TYPE nodedb_node_id gauge\n");
     output.push_str(&format!("nodedb_node_id {}\n\n", state.shared.node_id));
 
+    // Raft propose retries triggered by leader-election overwrites.
+    // Non-zero is informational (the retry handles correctness);
+    // chronically large values flag election-window or routing-table
+    // tuning issues.
+    output.push_str(
+        "# HELP nodedb_raft_propose_leader_change_retries_total \
+         Raft propose retries triggered by RetryableLeaderChange (leader-election no-op overwrote a proposer's index).\n",
+    );
+    output.push_str("# TYPE nodedb_raft_propose_leader_change_retries_total counter\n");
+    output.push_str(&format!(
+        "nodedb_raft_propose_leader_change_retries_total {}\n\n",
+        state
+            .shared
+            .raft_propose_leader_change_retries
+            .load(std::sync::atomic::Ordering::Relaxed)
+    ));
+
     // Cluster lifecycle observability — emitted only when cluster
     // mode is enabled (`ClusterObserver` published by start_raft).
     //

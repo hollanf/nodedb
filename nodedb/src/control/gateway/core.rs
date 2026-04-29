@@ -235,7 +235,6 @@ impl Gateway {
             let retry_counter = Arc::clone(&self.not_leader_retry_count);
             let version_set_for_route = version_set.clone();
             let payloads = retry_not_leader(routing_ref, move |attempt| {
-                // Every attempt after the first is a NotLeader retry.
                 if attempt > 0 {
                     retry_counter.fetch_add(1, Ordering::Relaxed);
                 }
@@ -245,18 +244,11 @@ impl Gateway {
                 let trace_id = ctx.trace_id;
                 let version_set = version_set_for_route.clone();
                 async move {
-                    // Re-resolve the route decision against the *current*
-                    // routing table on every attempt. The retry loop updates
-                    // the table on `NotLeader` responses; without
-                    // re-resolution the retry would dispatch to the same
-                    // stale leader hint forever.
                     let decision = {
                         let routing_guard = shared
                             .cluster_routing
                             .as_ref()
                             .map(|rw| rw.read().unwrap_or_else(|p| p.into_inner()));
-                        // Snapshot Raft group statuses once per resolution
-                        // so the live-leader lookup sees a consistent view.
                         let raft_snapshot: Vec<nodedb_cluster::GroupStatus> = shared
                             .raft_status_fn
                             .as_ref()

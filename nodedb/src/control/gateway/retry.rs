@@ -81,6 +81,30 @@ where
                     leader_addr: String::new(),
                 });
             }
+            Err(Error::RetryableLeaderChange {
+                group_id,
+                log_index,
+            }) => {
+                // The Raft entry the proposer was waiting on was
+                // overwritten by a new leader's election no-op. Re-
+                // propose: the next attempt will land at a fresh log
+                // index under the new leader's term. Same backoff
+                // schedule as NotLeader — bounded retries so a
+                // pathological cluster doesn't loop forever.
+                debug!(
+                    attempt,
+                    group_id, log_index, "gateway: leader change overwrote entry — will re-propose"
+                );
+
+                if attempt + 1 < MAX_RETRIES {
+                    sleep(Duration::from_millis(backoff_ms)).await;
+                }
+
+                last_err = Some(Error::RetryableLeaderChange {
+                    group_id,
+                    log_index,
+                });
+            }
             Err(other) => return Err(other),
         }
     }
