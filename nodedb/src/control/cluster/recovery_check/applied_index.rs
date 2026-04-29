@@ -65,7 +65,9 @@ pub fn check_applied_index(shared: &SharedState) -> AppliedIndexGate {
         cache.applied_index
     };
 
-    let watcher_current = shared.metadata_applied_index_watcher.current();
+    let watcher_current = shared
+        .applied_index_watcher(nodedb_cluster::METADATA_GROUP_ID)
+        .current();
 
     let gap = watcher_current.saturating_sub(cache_applied);
     AppliedIndexGate {

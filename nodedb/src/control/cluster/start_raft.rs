@@ -47,7 +47,14 @@ pub fn start_raft(
         })?;
 
     // Build the propose tracker and distributed applier.
-    let tracker = Arc::new(ProposeTracker::new());
+    //
+    // The tracker is wired with the per-group apply watermark
+    // registry so every `tracker.complete(group_id, idx, _)` call
+    // also bumps the watcher — coupling the "data applied on this
+    // node" signal to the single source of truth that proposers
+    // and cross-node visibility waits both consume.
+    let tracker =
+        Arc::new(ProposeTracker::new().with_group_watchers(handle.group_watchers.clone()));
     let (dist_applier, apply_rx) = create_distributed_applier(tracker.clone());
     let dist_applier = Arc::new(dist_applier);
 
@@ -65,7 +72,6 @@ pub fn start_raft(
     // `Register` dispatches on committed `CollectionDdl::Create`.
     let metadata_applier_concrete = Arc::new(MetadataCommitApplier::new(
         handle.metadata_cache.clone(),
-        handle.applied_index_watcher.clone(),
         shared.catalog_change_tx.clone(),
         shared.credentials.clone(),
     ));
@@ -153,7 +159,8 @@ pub fn start_raft(
         .with_plan_executor(plan_executor)
         .with_metadata_applier(metadata_applier)
         .with_vshard_handler(vshard_handler)
-        .with_tick_interval(tick_interval),
+        .with_tick_interval(tick_interval)
+        .with_group_watchers(handle.group_watchers.clone()),
     );
 
     // Spawn cluster subsystems now that the loop owns `MultiRaft`.
@@ -215,7 +222,7 @@ pub fn start_raft(
     let tracker_for_proposer = tracker.clone();
     let deadline_secs = shared.tuning.network.default_deadline_secs;
     let async_proposer: Arc<crate::control::wal_replication::AsyncRaftProposer> =
-        Arc::new(move |vshard_id, data| {
+        Arc::new(move |vshard_id, idempotency_key, data| {
             let rl = raft_loop_async.clone();
             let tk = tracker_for_proposer.clone();
             Box::pin(async move {
@@ -226,10 +233,14 @@ pub fn start_raft(
                         detail: format!("raft propose (async): {e}"),
                     })?;
 
-                // Register the waiter. The ProposeTracker stores a pending
-                // result if complete() already fired, so the rx resolves
-                // immediately rather than timing out.
-                let rx = tk.register(group_id, log_index);
+                // Register the waiter with the proposer's idempotency
+                // key. The apply path compares against the committed
+                // entry's key so a leader-change overwrite at the same
+                // (group_id, log_index) — by either an empty no-op or a
+                // different proposer's real entry — surfaces as
+                // `RetryableLeaderChange` instead of leaking a
+                // not-our-payload back to the caller.
+                let rx = tk.register(group_id, log_index, idempotency_key);
                 tokio::time::timeout(std::time::Duration::from_secs(deadline_secs), rx)
                     .await
                     .map_err(|_| crate::Error::Dispatch {
@@ -240,8 +251,17 @@ pub fn start_raft(
                     .map_err(|_| crate::Error::Dispatch {
                         detail: "propose waiter channel closed".into(),
                     })?
-                    .map_err(|e| crate::Error::Dispatch {
-                        detail: format!("apply error: {e}"),
+                    // Preserve `RetryableLeaderChange` so the gateway
+                    // retry loop can re-propose against the new leader
+                    // — wrapping it in `Dispatch` would hide the
+                    // retryable signal and surface as silent INSERT
+                    // success. Other errors stay wrapped for
+                    // diagnostics.
+                    .map_err(|e| match e {
+                        crate::Error::RetryableLeaderChange { .. } => e,
+                        other => crate::Error::Dispatch {
+                            detail: format!("apply error: {other}"),
+                        },
                     })
             })
         });

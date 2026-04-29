@@ -6,8 +6,9 @@ use tracing::info;
 
 use nodedb_types::config::tuning::ClusterTransportTuning;
 
+use nodedb_cluster::GroupAppliedWatchers;
+
 use crate::config::server::ClusterSettings;
-use crate::control::cluster::applied_index_watcher::AppliedIndexWatcher;
 use crate::control::cluster::handle::ClusterHandle;
 
 /// Initialize the cluster: create transport, open catalog, bootstrap/join/restart.
@@ -112,7 +113,7 @@ pub async fn init_cluster_with_transport(
     let topology = state.topology;
     let routing = state.routing;
     let metadata_cache = Arc::new(RwLock::new(nodedb_cluster::MetadataCache::new()));
-    let applied_index_watcher = Arc::new(AppliedIndexWatcher::new());
+    let group_watchers = Arc::new(GroupAppliedWatchers::new());
 
     // `start_cluster` does not start any subsystems, so the `Arc<Mutex<MultiRaft>>`
     // it returns has exactly one strong owner (this scope). `try_unwrap`
@@ -134,7 +135,7 @@ pub async fn init_cluster_with_transport(
         routing,
         lifecycle,
         metadata_cache,
-        applied_index_watcher,
+        group_watchers,
         node_id: config.node_id,
         multi_raft: Mutex::new(Some(multi_raft_inner)),
         catalog,

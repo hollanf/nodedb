@@ -107,9 +107,7 @@ impl SharedState {
                 crate::control::cluster::metadata_applier::CATALOG_CHANNEL_CAPACITY,
             )
             .0,
-            metadata_applied_index_watcher: Arc::new(
-                crate::control::cluster::applied_index_watcher::AppliedIndexWatcher::new(),
-            ),
+            group_watchers: Arc::new(nodedb_cluster::GroupAppliedWatchers::new()),
             metadata_raft: std::sync::OnceLock::new(),
             propose_tracker: std::sync::OnceLock::new(),
             raft_proposer: std::sync::OnceLock::new(),
@@ -272,6 +270,7 @@ impl SharedState {
             },
             connections_rejected: AtomicU64::new(0),
             connections_accepted: AtomicU64::new(0),
+            raft_propose_leader_change_retries: AtomicU64::new(0),
             request_id_counter: AtomicU64::new(1),
             system_metrics: Some(Arc::new(crate::control::metrics::SystemMetrics::new())),
             retention_settings: Arc::new(std::sync::RwLock::new(
@@ -584,9 +583,7 @@ impl SharedState {
                 crate::control::cluster::metadata_applier::CATALOG_CHANNEL_CAPACITY,
             )
             .0,
-            metadata_applied_index_watcher: Arc::new(
-                crate::control::cluster::applied_index_watcher::AppliedIndexWatcher::new(),
-            ),
+            group_watchers: Arc::new(nodedb_cluster::GroupAppliedWatchers::new()),
             metadata_raft: std::sync::OnceLock::new(),
             propose_tracker: std::sync::OnceLock::new(),
             raft_proposer: std::sync::OnceLock::new(),
@@ -636,6 +633,7 @@ impl SharedState {
             change_stream: crate::control::change_stream::ChangeStream::new(4096),
             connections_rejected: AtomicU64::new(0),
             connections_accepted: AtomicU64::new(0),
+            raft_propose_leader_change_retries: AtomicU64::new(0),
             request_id_counter: AtomicU64::new(1),
             system_metrics: Some(Arc::new(crate::control::metrics::SystemMetrics::new())),
             retention_settings: Arc::new(std::sync::RwLock::new(

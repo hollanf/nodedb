@@ -68,15 +68,31 @@ impl SharedState {
         crate::control::rolling_upgrade::compute_from_topology(&guard)
     }
 
-    /// Shared handle to the metadata applied-index watcher.
+    /// Shared handle to a Raft group's apply watermark watcher.
     ///
-    /// Used by [`crate::control::metadata_proposer::propose_catalog_entry`]
-    /// to block until a freshly-proposed metadata entry has been
-    /// applied locally.
+    /// Lazily creates the watcher if it does not yet exist so a
+    /// proposer can register its waiter before the first apply on a
+    /// brand-new group. Used by
+    /// [`crate::control::metadata_proposer::propose_catalog_entry`]
+    /// (with `nodedb_cluster::METADATA_GROUP_ID`) and by the
+    /// descriptor-lease drain path. Distributed-write commit
+    /// waiting goes through `propose_tracker` directly because it
+    /// also needs SPSC dispatch coupling, but the underlying apply
+    /// watermark for any data group can be read from the same
+    /// registry.
     pub fn applied_index_watcher(
         &self,
-    ) -> std::sync::Arc<crate::control::cluster::applied_index_watcher::AppliedIndexWatcher> {
-        self.metadata_applied_index_watcher.clone()
+        group_id: u64,
+    ) -> std::sync::Arc<nodedb_cluster::AppliedIndexWatcher> {
+        self.group_watchers.get_or_create(group_id)
+    }
+
+    /// Shared handle to the entire per-group apply watermark
+    /// registry. Use this when you need to operate on multiple
+    /// groups (e.g. test harnesses asserting full cluster
+    /// convergence).
+    pub fn group_watchers(&self) -> std::sync::Arc<nodedb_cluster::GroupAppliedWatchers> {
+        self.group_watchers.clone()
     }
 
     /// Maximum SPSC ring buffer utilization across all cores (0-100).

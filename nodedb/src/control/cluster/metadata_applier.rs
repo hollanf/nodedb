@@ -7,10 +7,12 @@
 //! All 16 per-DDL-object types are handled by adding a variant to
 //! `CatalogEntry` — nothing in this file changes per type.
 //!
-//! The applier also advances the `AppliedIndexWatcher` (so sync
-//! pgwire handlers unblock on commit) and broadcasts
-//! `CatalogChangeEvent` (for future prepared-statement / catalog
-//! cache invalidation).
+//! The applier broadcasts `CatalogChangeEvent` (for future
+//! prepared-statement / catalog cache invalidation). The per-group
+//! apply watermark is maintained by the Raft tick loop directly via
+//! [`nodedb_cluster::GroupAppliedWatchers`] — the applier no longer
+//! owns its own watcher because that primitive is now keyed by
+//! `group_id` and shared across every Raft group on the node.
 
 use std::sync::{Arc, OnceLock, RwLock, Weak};
 
@@ -20,7 +22,6 @@ use tracing::{debug, warn};
 use nodedb_cluster::{MetadataApplier, MetadataCache, MetadataEntry, decode_entry};
 
 use crate::control::catalog_entry;
-use crate::control::cluster::applied_index_watcher::AppliedIndexWatcher;
 use crate::control::security::credential::CredentialStore;
 use crate::control::state::SharedState;
 
@@ -37,7 +38,6 @@ pub struct CatalogChangeEvent {
 /// Production `MetadataApplier` installed on the `RaftLoop`.
 pub struct MetadataCommitApplier {
     cache: Arc<RwLock<MetadataCache>>,
-    watcher: Arc<AppliedIndexWatcher>,
     catalog_change_tx: broadcast::Sender<CatalogChangeEvent>,
     credentials: Arc<CredentialStore>,
     /// Weak handle to `SharedState`. Installed by `start_raft` after
@@ -52,13 +52,11 @@ pub struct MetadataCommitApplier {
 impl MetadataCommitApplier {
     pub fn new(
         cache: Arc<RwLock<MetadataCache>>,
-        watcher: Arc<AppliedIndexWatcher>,
         catalog_change_tx: broadcast::Sender<CatalogChangeEvent>,
         credentials: Arc<CredentialStore>,
     ) -> Self {
         Self {
             cache,
-            watcher,
             catalog_change_tx,
             credentials,
             shared: OnceLock::new(),
@@ -507,11 +505,16 @@ impl MetadataApplier for MetadataCommitApplier {
             self.apply_host_side_effects(&entry, *index);
         }
         if last > 0 {
-            self.watcher.bump(last);
+            // The Raft tick loop bumps the per-group apply watcher
+            // directly after `advance_applied`; this applier only
+            // owns the catalog-change broadcast.
             let _ = self.catalog_change_tx.send(CatalogChangeEvent {
                 applied_index: last,
             });
-            debug!(applied_index = last, "metadata applier bumped watermark");
+            debug!(
+                applied_index = last,
+                "metadata applier broadcast catalog-change event"
+            );
         }
         last
     }
@@ -527,7 +530,6 @@ mod tests {
     fn make_applier() -> (
         MetadataCommitApplier,
         Arc<RwLock<MetadataCache>>,
-        Arc<AppliedIndexWatcher>,
         Arc<CredentialStore>,
         tempfile::TempDir,
     ) {
@@ -535,11 +537,9 @@ mod tests {
         let credentials =
             Arc::new(CredentialStore::open(&tmp.path().join("system.redb")).expect("open"));
         let cache = Arc::new(RwLock::new(MetadataCache::new()));
-        let watcher = Arc::new(AppliedIndexWatcher::new());
         let (tx, _rx) = broadcast::channel(16);
-        let applier =
-            MetadataCommitApplier::new(cache.clone(), watcher.clone(), tx, credentials.clone());
-        (applier, cache, watcher, credentials, tmp)
+        let applier = MetadataCommitApplier::new(cache.clone(), tx, credentials.clone());
+        (applier, cache, credentials, tmp)
     }
 
     fn put_collection_entry(name: &str) -> MetadataEntry {
@@ -552,10 +552,9 @@ mod tests {
 
     #[test]
     fn apply_put_collection_writes_through_to_redb() {
-        let (applier, cache, watcher, credentials, _tmp) = make_applier();
+        let (applier, cache, credentials, _tmp) = make_applier();
         let bytes = encode_entry(&put_collection_entry("orders")).unwrap();
         assert_eq!(applier.apply(&[(11, bytes)]), 11);
-        assert_eq!(watcher.current(), 11);
 
         let cache_guard = cache.read().unwrap();
         assert_eq!(cache_guard.applied_index, 11);
@@ -575,7 +574,7 @@ mod tests {
 
     #[test]
     fn apply_deactivate_preserves_record() {
-        let (applier, _cache, _watcher, credentials, _tmp) = make_applier();
+        let (applier, _cache, credentials, _tmp) = make_applier();
 
         // Seed.
         applier.apply(&[(1, encode_entry(&put_collection_entry("archived")).unwrap())]);
@@ -601,8 +600,7 @@ mod tests {
 
     #[test]
     fn apply_empty_batch_is_noop() {
-        let (applier, _cache, watcher, _credentials, _tmp) = make_applier();
+        let (applier, _cache, _credentials, _tmp) = make_applier();
         assert_eq!(applier.apply(&[]), 0);
-        assert_eq!(watcher.current(), 0);
     }
 }

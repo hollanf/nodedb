@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex, RwLock};
 
-use crate::control::cluster::applied_index_watcher::AppliedIndexWatcher;
+use nodedb_cluster::GroupAppliedWatchers;
 
 /// Pending cluster-subsystem startup state.
 ///
@@ -34,8 +34,11 @@ pub struct ClusterHandle {
     /// pgwire handlers, and HTTP catalog endpoints can read descriptors
     /// without going back to redb.
     pub metadata_cache: Arc<RwLock<nodedb_cluster::MetadataCache>>,
-    /// Watcher used by the metadata proposer to block on local apply.
-    pub applied_index_watcher: Arc<AppliedIndexWatcher>,
+    /// Per-Raft-group apply watermark registry. Shared with the
+    /// `RaftLoop` (which bumps it on apply / snapshot install) and
+    /// with `SharedState` (where proposers and consistent-read paths
+    /// look up the watcher for the group whose proposal they made).
+    pub group_watchers: Arc<GroupAppliedWatchers>,
     /// This node's ID.
     pub node_id: u64,
     /// `MultiRaft` constructed by `start_cluster` with the correct

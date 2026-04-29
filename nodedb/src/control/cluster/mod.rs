@@ -8,11 +8,12 @@
 //! - [`handle`] — the `ClusterHandle` passed between init and start_raft.
 //! - [`spsc_applier`] — committed data-group entries → SPSC bridge.
 //! - [`metadata_applier`] — committed metadata-group entries →
-//!   `MetadataCache` + `AppliedIndexWatcher` + optional redb writeback.
-//! - [`applied_index_watcher`] — sync wait primitive used by
-//!   [`crate::control::metadata_proposer`].
+//!   `MetadataCache` + optional redb writeback. The per-Raft-group
+//!   apply watermark watchers themselves now live in
+//!   [`nodedb_cluster::GroupAppliedWatchers`] and are bumped from
+//!   the Raft tick loop so every group (metadata + data) shares one
+//!   primitive.
 
-pub mod applied_index_watcher;
 pub mod array_cluster_exec;
 pub mod array_cluster_helpers;
 pub mod array_executor;
@@ -27,7 +28,6 @@ pub mod start_raft;
 pub mod tls;
 pub mod warm_peers;
 
-pub use applied_index_watcher::AppliedIndexWatcher;
 pub use array_cluster_exec::ClusterArrayExecutor;
 pub use array_executor::DataPlaneArrayExecutor;
 pub use handle::ClusterHandle;

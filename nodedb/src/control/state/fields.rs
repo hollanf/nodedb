@@ -163,12 +163,15 @@ pub struct SharedState {
         crate::control::cluster::metadata_applier::CatalogChangeEvent,
     >,
 
-    /// Watcher advanced by the `MetadataCommitApplier` after each
-    /// apply batch. Used by `metadata_proposer::propose_catalog_entry`
-    /// to synchronously block until a freshly-proposed entry is
-    /// visible on this node.
-    pub metadata_applied_index_watcher:
-        Arc<crate::control::cluster::applied_index_watcher::AppliedIndexWatcher>,
+    /// Per-Raft-group apply watermark registry. Bumped by the Raft
+    /// tick loop after every committed-entry apply and after every
+    /// snapshot install. Used by `metadata_proposer::propose_catalog_entry`,
+    /// the descriptor-lease drain path, and the distributed-write
+    /// commit-wait path to synchronously block until a freshly-
+    /// proposed entry is visible on this node — keyed by the
+    /// proposing group's `group_id` so the metadata group and each
+    /// data vshard group track independent watermarks.
+    pub group_watchers: Arc<nodedb_cluster::GroupAppliedWatchers>,
 
     /// Type-erased handle for proposing to the metadata raft group.
     /// Installed by `cluster::start_raft` after `SharedState::open`
@@ -422,6 +425,15 @@ pub struct SharedState {
 
     /// Total connections accepted since startup.
     pub connections_accepted: AtomicU64,
+
+    /// Total Raft propose retries triggered by `RetryableLeaderChange`
+    /// — i.e. cases where a leader-election no-op (or a new leader's
+    /// own first entry) overwrote the index our proposer was waiting
+    /// on, and we re-proposed transparently. A non-zero value is a
+    /// sign of leader churn during writes; chronically large values
+    /// suggest investigating election-window tuning or routing-table
+    /// staleness, not a correctness problem (the retry handles it).
+    pub raft_propose_leader_change_retries: AtomicU64,
 
     /// Per-node monotonic request ID allocator.
     ///
