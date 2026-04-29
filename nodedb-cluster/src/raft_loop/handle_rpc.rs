@@ -76,8 +76,19 @@ impl<A: CommitApplier, P: PlanExecutor> RaftRpcHandler for RaftLoop<A, P> {
                 Ok(RaftRpc::RequestVoteResponse(resp))
             }
             RaftRpc::InstallSnapshotRequest(req) => {
-                let mut mr = self.multi_raft.lock().unwrap_or_else(|p| p.into_inner());
-                let resp = mr.handle_install_snapshot(&req)?;
+                let last_included_index = req.last_included_index;
+                let group_id = req.group_id;
+                let resp = {
+                    let mut mr = self.multi_raft.lock().unwrap_or_else(|p| p.into_inner());
+                    mr.handle_install_snapshot(&req)?
+                };
+                // Snapshot install fast-forwards `last_applied` to
+                // `last_included_index` inside the Raft node without
+                // ever producing committed entries for the apply
+                // loop. Mirror that jump into the per-group apply
+                // watcher here so waiters on this group's apply
+                // watermark wake up promptly.
+                self.group_watchers.bump(group_id, last_included_index);
                 Ok(RaftRpc::InstallSnapshotResponse(resp))
             }
             // Cluster join — full orchestration in `super::join`.

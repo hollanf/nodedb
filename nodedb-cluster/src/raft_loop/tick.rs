@@ -176,6 +176,30 @@ impl<A: CommitApplier, P: PlanExecutor> RaftLoop<A, P> {
                         let mut mr = self.multi_raft.lock().unwrap_or_else(|p| p.into_inner());
                         if let Err(e) = mr.advance_applied(group_id, last_applied) {
                             warn!(group_id, error = %e, "failed to advance applied index");
+                        } else if group_id == crate::metadata_group::METADATA_GROUP_ID {
+                            // Metadata group: the metadata applier
+                            // applied entries synchronously to redb
+                            // before returning, so the apply
+                            // watermark is data-visible at this
+                            // point. Bump the watcher.
+                            //
+                            // Data groups are NOT bumped here — for
+                            // them `applier.apply_committed` only
+                            // enqueues entries onto the
+                            // `DistributedApplier` channel; the
+                            // actual data lands in storage when
+                            // `run_apply_loop` finishes the
+                            // SPSC round-trip to the Data Plane.
+                            // The host crate bumps the watcher
+                            // there, so the watermark always means
+                            // "data visible on this node up to
+                            // index N" regardless of which group.
+                            //
+                            // Snapshot-install path also bumps
+                            // (in `super::handle_rpc`) — covers
+                            // jump-on-snapshot for both group
+                            // kinds.
+                            self.group_watchers.bump(group_id, last_applied);
                         }
                     }
 

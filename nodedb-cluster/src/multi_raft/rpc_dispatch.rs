@@ -111,4 +111,26 @@ impl MultiRaft {
     pub fn match_index_for(&self, group_id: u64, peer: u64) -> Option<u64> {
         self.groups.get(&group_id)?.match_index_for(peer)
     }
+
+    /// Read the locally-applied index for a Raft group hosted on this
+    /// node. Returns `None` if the group is not mounted here.
+    ///
+    /// Used by the tick loop to mirror `last_applied` into the
+    /// per-group [`crate::applied_watcher::AppliedIndexWatcher`] —
+    /// covers both the regular apply path and the snapshot-install
+    /// path (which sets `last_applied = last_included_index`
+    /// directly without producing committed entries).
+    pub fn last_applied(&self, group_id: u64) -> Option<u64> {
+        self.groups.get(&group_id).map(|n| n.last_applied())
+    }
+
+    /// `(group_id, last_applied)` pairs for every locally-mounted
+    /// group. Cheap O(groups) snapshot — groups are few (one
+    /// metadata + handful of vshard groups per node).
+    pub fn applied_indices(&self) -> Vec<(u64, u64)> {
+        self.groups
+            .iter()
+            .map(|(gid, node)| (*gid, node.last_applied()))
+            .collect()
+    }
 }

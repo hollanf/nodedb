@@ -1,3 +1,4 @@
+pub mod applied_watcher;
 pub mod array_routing;
 pub mod auth;
 pub mod bootstrap;
@@ -51,6 +52,7 @@ pub mod vshard_handler;
 pub mod wire;
 pub mod wire_version;
 
+pub use applied_watcher::{AppliedIndexWatcher, GroupAppliedWatchers, WaitOutcome};
 pub use bootstrap::{
     ClusterConfig, ClusterState, JoinRetryPolicy, start_cluster, start_cluster_subsystems,
 };

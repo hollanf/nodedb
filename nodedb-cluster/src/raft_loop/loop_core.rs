@@ -12,6 +12,7 @@ use tracing::debug;
 
 use nodedb_raft::message::LogEntry;
 
+use crate::applied_watcher::GroupAppliedWatchers;
 use crate::catalog::ClusterCatalog;
 use crate::conf_change::ConfChange;
 use crate::error::Result;
@@ -108,6 +109,13 @@ pub struct RaftLoop<A: CommitApplier, P: PlanExecutor = NoopPlanExecutor> {
     /// uninitialized metadata raft group, which previously surfaced
     /// as `metadata propose: not leader` under fast restart loops.
     pub(super) ready_watch: tokio::sync::watch::Sender<bool>,
+    /// Per-Raft-group apply watermark watchers. Bumped from
+    /// [`super::tick::do_tick`] after applies and from
+    /// [`super::handle_rpc`] after snapshot installs. The host crate
+    /// shares this Arc with `SharedState` so proposers, lease
+    /// renewals, and consistent reads can wait on the apply
+    /// watermark of the *specific* group whose proposal they made.
+    pub(super) group_watchers: Arc<GroupAppliedWatchers>,
 }
 
 impl<A: CommitApplier> RaftLoop<A> {
@@ -134,6 +142,7 @@ impl<A: CommitApplier> RaftLoop<A> {
             shutdown_watch,
             ready_watch,
             loop_metrics: LoopMetrics::new("raft_tick_loop"),
+            group_watchers: Arc::new(GroupAppliedWatchers::new()),
         }
     }
 }
@@ -155,7 +164,24 @@ impl<A: CommitApplier, P: PlanExecutor> RaftLoop<A, P> {
             shutdown_watch: self.shutdown_watch,
             ready_watch: self.ready_watch,
             loop_metrics: self.loop_metrics,
+            group_watchers: self.group_watchers,
         }
+    }
+
+    /// Replace the per-group apply watcher registry.
+    ///
+    /// The host crate calls this with the same `Arc` it stores on
+    /// `SharedState` so proposers and consistent-read paths share
+    /// one registry with the tick loop's bump points. Defaults to a
+    /// fresh empty registry when not set.
+    pub fn with_group_watchers(mut self, watchers: Arc<GroupAppliedWatchers>) -> Self {
+        self.group_watchers = watchers;
+        self
+    }
+
+    /// Shared handle to the per-group apply watcher registry.
+    pub fn group_watchers(&self) -> Arc<GroupAppliedWatchers> {
+        Arc::clone(&self.group_watchers)
     }
 
     /// Shared handle to this loop's standardized metrics.
