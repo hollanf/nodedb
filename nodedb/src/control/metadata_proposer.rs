@@ -20,13 +20,15 @@
 //!    `Error::Config { detail: "metadata propose: not leader ..." }`.
 //!    Gateway-side redirection will make this transparent.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
-use nodedb_cluster::{MetadataEntry, encode_entry};
+use nodedb_cluster::{METADATA_GROUP_ID, MetadataEntry, WaitOutcome, encode_entry};
+
+#[cfg(test)]
+use nodedb_cluster::AppliedIndexWatcher;
 
 use crate::control::catalog_entry::{self, CatalogEntry};
-use crate::control::cluster::applied_index_watcher::AppliedIndexWatcher;
 use crate::control::state::SharedState;
 use crate::error::Error;
 
@@ -47,13 +49,15 @@ pub const DEFAULT_PROPOSE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(35);
 
 /// Type-erased handle for proposing to the metadata raft group.
+///
+/// The apply watermark for the metadata group lives on
+/// [`SharedState::applied_index_watcher`] (keyed by
+/// [`nodedb_cluster::METADATA_GROUP_ID`]); callers of [`Self::propose`]
+/// look it up there rather than receiving it through this handle.
 pub trait MetadataRaftHandle: Send + Sync {
     /// Propose a raw encoded `MetadataEntry` to the metadata group.
     /// Returns its assigned log index on success.
     fn propose(&self, bytes: Vec<u8>) -> Result<u64, Error>;
-
-    /// The applied-index watcher backing this handle.
-    fn watcher(&self) -> Arc<AppliedIndexWatcher>;
 }
 
 /// Concrete impl wrapping `nodedb_cluster::RaftLoop`.
@@ -64,7 +68,6 @@ pub struct RaftLoopProposerHandle {
             crate::control::LocalPlanExecutor,
         >,
     >,
-    watcher: OnceLock<Arc<AppliedIndexWatcher>>,
 }
 
 impl RaftLoopProposerHandle {
@@ -76,15 +79,7 @@ impl RaftLoopProposerHandle {
             >,
         >,
     ) -> Self {
-        Self {
-            raft_loop,
-            watcher: OnceLock::new(),
-        }
-    }
-
-    pub fn with_watcher(self, watcher: Arc<AppliedIndexWatcher>) -> Self {
-        let _ = self.watcher.set(watcher);
-        self
+        Self { raft_loop }
     }
 }
 
@@ -106,13 +101,6 @@ impl MetadataRaftHandle for RaftLoopProposerHandle {
         .map_err(|e| Error::Config {
             detail: format!("metadata propose: {e}"),
         })
-    }
-
-    fn watcher(&self) -> Arc<AppliedIndexWatcher> {
-        self.watcher
-            .get()
-            .cloned()
-            .unwrap_or_else(|| Arc::new(AppliedIndexWatcher::new()))
     }
 }
 
@@ -204,26 +192,28 @@ pub fn propose_catalog_entry_with_timeout(
 
     let log_index = handle.propose(raw)?;
 
-    let watcher = shared.applied_index_watcher();
+    let watcher = shared.applied_index_watcher(METADATA_GROUP_ID);
     // `wait_for` blocks the calling thread on a Condvar. When the
     // caller is already inside a tokio task (pgwire handlers always
     // are), parking the worker without telling tokio starves every
     // other task that lands on it — including the raft tick that
     // would otherwise bump the watcher. Wrap the blocking section
     // in `block_in_place` so tokio reassigns a fresh worker.
-    let timed_out = tokio::task::block_in_place(|| !watcher.wait_for(log_index, timeout));
-    if timed_out {
-        return Err(Error::Config {
+    let outcome = tokio::task::block_in_place(|| watcher.wait_for(log_index, timeout));
+    match outcome {
+        WaitOutcome::Reached => Ok(log_index),
+        WaitOutcome::TimedOut => Err(Error::Config {
             detail: format!(
                 "metadata propose timed out after {:?} waiting for log index {} (current: {})",
                 timeout,
                 log_index,
                 watcher.current()
             ),
-        });
+        }),
+        WaitOutcome::GroupGone => Err(Error::Config {
+            detail: "metadata group no longer hosted on this node".into(),
+        }),
     }
-
-    Ok(log_index)
 }
 
 /// Propose a surrogate high-watermark advance to the metadata Raft group
@@ -251,10 +241,10 @@ pub fn propose_surrogate_hwm(shared: &SharedState, hwm: u32) -> Result<u64, Erro
 
     let log_index = handle.propose(raw)?;
 
-    let watcher = shared.applied_index_watcher();
-    let timed_out =
-        tokio::task::block_in_place(|| !watcher.wait_for(log_index, DEFAULT_PROPOSE_TIMEOUT));
-    if timed_out {
+    let watcher = shared.applied_index_watcher(METADATA_GROUP_ID);
+    let outcome =
+        tokio::task::block_in_place(|| watcher.wait_for(log_index, DEFAULT_PROPOSE_TIMEOUT));
+    if !outcome.is_reached() {
         return Err(Error::Config {
             detail: format!("surrogate_alloc propose timed out waiting for log index {log_index}"),
         });
@@ -268,9 +258,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn watcher_helper_returns_true_on_past_target() {
+    fn watcher_helper_returns_reached_on_past_target() {
         let w = AppliedIndexWatcher::new();
         w.bump(10);
-        assert!(w.wait_for(5, Duration::from_millis(1)));
+        assert!(w.wait_for(5, Duration::from_millis(1)).is_reached());
     }
 }

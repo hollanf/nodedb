@@ -149,6 +149,22 @@ pub enum Error {
     #[error("retryable schema change on {descriptor}")]
     RetryableSchemaChanged { descriptor: String },
 
+    /// The Raft entry the proposer was waiting on at `(group_id, log_index)`
+    /// was overwritten by a leader-election no-op (the previous leader
+    /// stepped down before the user entry committed; the new leader
+    /// committed an empty entry at the same index, truncating the
+    /// uncommitted data).
+    ///
+    /// **Critical**: this is the silent-data-loss bug killer — without
+    /// surfacing this case, `tracker.complete(Ok([]))` on the no-op
+    /// would tell the proposer their INSERT succeeded when in fact
+    /// the row was never replicated. Callers (gateway, async raft
+    /// proposer) MUST treat this as retryable and re-propose.
+    #[error(
+        "raft entry at group {group_id} index {log_index} was overwritten by leader change; retry needed"
+    )]
+    RetryableLeaderChange { group_id: u64, log_index: u64 },
+
     #[error("execution limit exceeded: {detail}")]
     ExecutionLimitExceeded { detail: String },
 
@@ -373,6 +389,12 @@ impl From<Error> for NodeDbError {
             Error::RetryableSchemaChanged { descriptor } => {
                 NodeDbError::plan_error(format!("retryable schema change on {descriptor}"))
             }
+            Error::RetryableLeaderChange {
+                group_id,
+                log_index,
+            } => NodeDbError::dispatch(format!(
+                "raft leader change overwrote entry at group {group_id} index {log_index}; retry exhausted"
+            )),
             Error::ExecutionLimitExceeded { detail } => NodeDbError::bad_request(detail),
 
             // Infrastructure — flatten to opaque public variants

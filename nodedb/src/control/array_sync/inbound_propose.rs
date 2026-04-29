@@ -32,12 +32,13 @@ impl OriginArrayInbound {
         hlc: Hlc,
     ) -> Result<(), Option<ArrayRejectMsg>> {
         let vshard_id = entry.vshard_id;
+        let idempotency_key = entry.idempotency_key;
         let data = entry.to_bytes();
 
         // Use the async proposer (with transparent leader forwarding + apply
         // wait) when available. It returns the apply payload directly.
         if let Some(async_proposer) = self.shared().async_raft_proposer.get().map(|a| a.as_ref()) {
-            return match async_proposer(vshard_id, data).await {
+            return match async_proposer(vshard_id, idempotency_key, data).await {
                 Ok(_payload) => Ok(()),
                 Err(e) => {
                     warn!(array = %array, error = %e, "array_inbound: raft propose+apply failed");
@@ -90,7 +91,7 @@ impl OriginArrayInbound {
             }
         };
 
-        let rx = tracker.register(group_id, log_index);
+        let rx = tracker.register(group_id, log_index, idempotency_key);
         let timeout_secs = self.shared().tuning.network.default_deadline_secs;
 
         match tokio::time::timeout(Duration::from_secs(timeout_secs), rx).await {

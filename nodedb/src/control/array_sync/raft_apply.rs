@@ -26,6 +26,7 @@ pub(crate) async fn apply_array_op(
     tracker: &Arc<ProposeTracker>,
     group_id: u64,
     log_index: u64,
+    applied_key: u64,
     array: &str,
     op_bytes: &[u8],
 ) {
@@ -44,6 +45,7 @@ pub(crate) async fn apply_array_op(
             tracker.complete(
                 group_id,
                 log_index,
+                applied_key,
                 Err(crate::Error::Internal {
                     detail: format!("array op decode: {e}"),
                 }),
@@ -59,7 +61,7 @@ pub(crate) async fn apply_array_op(
         Arc::clone(&state.array_sync_op_log),
     );
     if engine.already_seen(&op.header.array, op.header.hlc) {
-        tracker.complete(group_id, log_index, Ok(vec![]));
+        tracker.complete(group_id, log_index, applied_key, Ok(vec![]));
         return;
     }
 
@@ -101,7 +103,7 @@ pub(crate) async fn apply_array_op(
             group_id, index = log_index, array = %array, error = %e,
             "apply_array_op: ensure_array_open failed"
         );
-        tracker.complete(group_id, log_index, Err(e));
+        tracker.complete(group_id, log_index, applied_key, Err(e));
         return;
     }
 
@@ -122,6 +124,7 @@ pub(crate) async fn apply_array_op(
                     tracker.complete(
                         group_id,
                         log_index,
+                        applied_key,
                         Err(crate::Error::Internal {
                             detail: format!("cells encode: {e}"),
                         }),
@@ -144,6 +147,7 @@ pub(crate) async fn apply_array_op(
                     tracker.complete(
                         group_id,
                         log_index,
+                        applied_key,
                         Err(crate::Error::Internal {
                             detail: format!("coords encode: {e}"),
                         }),
@@ -188,6 +192,7 @@ pub(crate) async fn apply_array_op(
         tracker.complete(
             group_id,
             log_index,
+            applied_key,
             Err(crate::Error::Internal {
                 detail: format!("dispatch: {e}"),
             }),
@@ -206,10 +211,10 @@ pub(crate) async fn apply_array_op(
                     "apply_array_op: op applied but op-log append failed"
                 );
             }
-            tracker.complete(group_id, log_index, Ok(payload));
+            tracker.complete(group_id, log_index, applied_key, Ok(payload));
         }
         Err(e) => {
-            tracker.complete(group_id, log_index, Err(e));
+            tracker.complete(group_id, log_index, applied_key, Err(e));
         }
     }
 }
@@ -289,6 +294,13 @@ async fn ensure_array_open(
     await_data_plane(open_rx, "OpenArray").await.map(|_| ())
 }
 
+/// Payload extracted from a `ReplicatedWrite::ArraySchema` entry.
+pub(crate) struct ArraySchemaPayload<'a> {
+    pub array: &'a str,
+    pub snapshot_payload: &'a [u8],
+    pub schema_hlc_bytes: [u8; 18],
+}
+
 /// Apply a committed `ArraySchema` entry on the local node.
 ///
 /// 1. Imports the Loro snapshot into the local `OriginSchemaRegistry`.
@@ -302,9 +314,8 @@ pub(crate) fn apply_array_schema(
     tracker: &Arc<ProposeTracker>,
     group_id: u64,
     log_index: u64,
-    array: &str,
-    snapshot_payload: &[u8],
-    schema_hlc_bytes: [u8; 18],
+    applied_key: u64,
+    payload: ArraySchemaPayload<'_>,
 ) {
     use nodedb_array::sync::hlc::Hlc;
     use nodedb_array::types::ArrayId;
@@ -312,6 +323,11 @@ pub(crate) fn apply_array_schema(
 
     use crate::control::array_catalog::entry::ArrayCatalogEntry;
 
+    let ArraySchemaPayload {
+        array,
+        snapshot_payload,
+        schema_hlc_bytes,
+    } = payload;
     let remote_hlc = Hlc::from_bytes(&schema_hlc_bytes);
 
     // Use the replicated import path so every replica converges to the same
@@ -329,6 +345,7 @@ pub(crate) fn apply_array_schema(
         tracker.complete(
             group_id,
             log_index,
+            applied_key,
             Err(crate::Error::Internal {
                 detail: format!("schema import: {e}"),
             }),
@@ -380,7 +397,7 @@ pub(crate) fn apply_array_schema(
         }
     }
 
-    tracker.complete(group_id, log_index, Ok(vec![]));
+    tracker.complete(group_id, log_index, applied_key, Ok(vec![]));
 }
 
 /// Await a Data Plane response, mapping timeout / channel-closed / error-status

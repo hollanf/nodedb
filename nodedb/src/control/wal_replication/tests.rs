@@ -5,20 +5,26 @@ use crate::types::{TenantId, VShardId};
 
 #[test]
 fn replicated_entry_roundtrip() {
-    let entry = ReplicatedEntry {
-        tenant_id: 1,
-        vshard_id: 42,
-        write: ReplicatedWrite::PointPut {
+    let entry = ReplicatedEntry::new(
+        1,
+        42,
+        ReplicatedWrite::PointPut {
             collection: "users".into(),
             document_id: "u1".into(),
             value: b"alice".to_vec(),
         },
-    };
+    );
+    let original_key = entry.idempotency_key;
+    assert_ne!(original_key, 0, "idempotency_key must be non-zero");
 
     let bytes = entry.to_bytes();
     let decoded = ReplicatedEntry::from_bytes(&bytes).unwrap();
     assert_eq!(decoded.tenant_id, 1);
     assert_eq!(decoded.vshard_id, 42);
+    assert_eq!(
+        decoded.idempotency_key, original_key,
+        "idempotency_key roundtrip"
+    );
     match decoded.write {
         ReplicatedWrite::PointPut {
             collection,
@@ -84,11 +90,7 @@ fn all_write_variants_serialize() {
     ];
 
     for write in writes {
-        let entry = ReplicatedEntry {
-            tenant_id: 1,
-            vshard_id: 0,
-            write,
-        };
+        let entry = ReplicatedEntry::new(1, 0, write);
         let bytes = entry.to_bytes();
         let decoded = ReplicatedEntry::from_bytes(&bytes);
         assert!(decoded.is_some(), "failed to roundtrip: {entry:?}");
@@ -98,9 +100,9 @@ fn all_write_variants_serialize() {
 #[test]
 fn propose_tracker_register_and_complete() {
     let tracker = ProposeTracker::new();
-    let mut rx = tracker.register(1, 5);
+    let mut rx = tracker.register(1, 5, 0xdead_beef);
 
-    assert!(tracker.complete(1, 5, Ok(b"result".to_vec())));
+    assert!(tracker.complete(1, 5, 0xdead_beef, Ok(b"result".to_vec())));
 
     let result = rx.try_recv().unwrap();
     assert_eq!(result.unwrap(), b"result");
@@ -109,7 +111,57 @@ fn propose_tracker_register_and_complete() {
 #[test]
 fn propose_tracker_no_waiter_returns_false() {
     let tracker = ProposeTracker::new();
-    assert!(!tracker.complete(1, 99, Ok(vec![])));
+    assert!(!tracker.complete(1, 99, 0, Ok(vec![])));
+}
+
+#[test]
+fn propose_tracker_key_mismatch_surfaces_retryable_leader_change() {
+    let tracker = ProposeTracker::new();
+    let mut rx = tracker.register(1, 5, 0xaaaa);
+
+    // A different proposer's entry (different idempotency_key)
+    // committed at the same (group_id, log_index). The waiter must
+    // see RetryableLeaderChange, not the success result that belongs
+    // to a different proposal.
+    assert!(tracker.complete(1, 5, 0xbbbb, Ok(b"other-proposers-payload".to_vec())));
+
+    let result = rx.try_recv().unwrap();
+    match result {
+        Err(crate::Error::RetryableLeaderChange {
+            group_id,
+            log_index,
+        }) => {
+            assert_eq!(group_id, 1);
+            assert_eq!(log_index, 5);
+        }
+        other => panic!("expected RetryableLeaderChange, got {other:?}"),
+    }
+}
+
+#[test]
+fn propose_tracker_zero_applied_key_passes_through_explicit_error() {
+    // Empty raft entries (leader-change no-ops) carry no idempotency
+    // key. The applier passes `applied_key = 0` together with an
+    // explicit `RetryableLeaderChange` result; the tracker must
+    // forward that result rather than treating the zero key as a
+    // mismatch (which would produce the same error but mask the
+    // distinction in logs).
+    let tracker = ProposeTracker::new();
+    let mut rx = tracker.register(1, 5, 0xaaaa);
+    assert!(tracker.complete(
+        1,
+        5,
+        0,
+        Err(crate::Error::RetryableLeaderChange {
+            group_id: 1,
+            log_index: 5,
+        }),
+    ));
+    let result = rx.try_recv().unwrap();
+    assert!(matches!(
+        result,
+        Err(crate::Error::RetryableLeaderChange { .. })
+    ));
 }
 
 #[test]

@@ -251,9 +251,9 @@ pub fn to_replicated_entry(
         _ => return None,
     };
 
-    Some(ReplicatedEntry {
-        tenant_id: tenant_id.as_u32(),
-        vshard_id: vshard_id.as_u16(),
+    Some(ReplicatedEntry::new(
+        tenant_id.as_u32(),
+        vshard_id.as_u16(),
         write,
-    })
+    ))
 }

@@ -79,13 +79,13 @@ pub(super) fn propose_and_wait(
     // `wait_for` parks the calling thread on a Condvar — wrap in
     // `block_in_place` so tokio reassigns a fresh worker and the
     // raft tick that bumps the watcher is not starved.
-    let watcher = shared.applied_index_watcher();
-    let timed_out = tokio::task::block_in_place(|| !watcher.wait_for(log_index, PROPOSE_TIMEOUT));
-    if timed_out {
+    let watcher = shared.applied_index_watcher(nodedb_cluster::METADATA_GROUP_ID);
+    let outcome = tokio::task::block_in_place(|| watcher.wait_for(log_index, PROPOSE_TIMEOUT));
+    if !outcome.is_reached() {
         return Err(Error::Config {
             detail: format!(
-                "descriptor lease {operation} timed out after {PROPOSE_TIMEOUT:?} \
-                 waiting for log index {log_index} (current: {})",
+                "descriptor lease {operation} did not apply within {PROPOSE_TIMEOUT:?} \
+                 (log index {log_index}, current: {}, outcome: {outcome:?})",
                 watcher.current()
             ),
         });

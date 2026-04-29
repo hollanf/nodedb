@@ -197,15 +197,15 @@ fn propose_drain(
         detail: format!("descriptor drain {operation} encode: {e}"),
     })?;
     let log_index = handle.propose(raw)?;
-    let watcher = shared.applied_index_watcher();
+    let watcher = shared.applied_index_watcher(nodedb_cluster::METADATA_GROUP_ID);
     const DRAIN_PROPOSE_TIMEOUT: Duration = Duration::from_secs(5);
-    let timed_out =
-        tokio::task::block_in_place(|| !watcher.wait_for(log_index, DRAIN_PROPOSE_TIMEOUT));
-    if timed_out {
+    let outcome =
+        tokio::task::block_in_place(|| watcher.wait_for(log_index, DRAIN_PROPOSE_TIMEOUT));
+    if !outcome.is_reached() {
         return Err(Error::Config {
             detail: format!(
-                "descriptor drain {operation} timed out after {DRAIN_PROPOSE_TIMEOUT:?} \
-                 waiting for log index {log_index} (current: {})",
+                "descriptor drain {operation} did not apply within {DRAIN_PROPOSE_TIMEOUT:?} \
+                 (log index {log_index}, current: {}, outcome: {outcome:?})",
                 watcher.current()
             ),
         });

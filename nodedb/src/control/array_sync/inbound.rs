@@ -240,11 +240,7 @@ impl OriginArrayInbound {
             snapshot_payload: msg.snapshot_payload.clone(),
             schema_hlc_bytes: hlc_arr,
         };
-        let entry = ReplicatedEntry {
-            tenant_id: self.tenant_id.as_u32(),
-            vshard_id: vshard_id.as_u16(),
-            write,
-        };
+        let entry = ReplicatedEntry::new(self.tenant_id.as_u32(), vshard_id.as_u16(), write);
 
         match self.propose_and_await(entry, &msg.array, remote_hlc).await {
             Ok(()) => Ok(InboundOutcome::SchemaImported),
@@ -380,11 +376,7 @@ impl OriginArrayInbound {
             schema_hlc_bytes: hlc_bytes,
         };
         let vshard = self.vshard_for_op(&op);
-        let entry = ReplicatedEntry {
-            tenant_id: self.tenant_id.as_u32(),
-            vshard_id: vshard.as_u16(),
-            write,
-        };
+        let entry = ReplicatedEntry::new(self.tenant_id.as_u32(), vshard.as_u16(), write);
 
         match self
             .propose_and_await(entry, &op.header.array, op.header.hlc)
