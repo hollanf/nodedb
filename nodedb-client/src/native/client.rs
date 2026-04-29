@@ -15,6 +15,8 @@ use nodedb_types::protocol::{OpCode, TextFields};
 use nodedb_types::result::{QueryResult, SearchResult, SubGraph};
 use nodedb_types::value::Value;
 
+use nodedb_types::protocol::Limits;
+
 use super::pool::{Pool, PoolConfig};
 use super::response_parse::{json_to_value, parse_search_results, parse_subgraph_response};
 use crate::traits::NodeDb;
@@ -113,6 +115,34 @@ impl NativeClient {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl NodeDb for NativeClient {
+    fn proto_version(&self) -> u16 {
+        self.pool
+            .negotiated_meta()
+            .map(|m| m.proto_version)
+            .unwrap_or(0)
+    }
+
+    fn capabilities(&self) -> u64 {
+        self.pool
+            .negotiated_meta()
+            .map(|m| m.capabilities)
+            .unwrap_or(0)
+    }
+
+    fn server_version(&self) -> String {
+        self.pool
+            .negotiated_meta()
+            .map(|m| m.server_version)
+            .unwrap_or_default()
+    }
+
+    fn limits(&self) -> Limits {
+        self.pool
+            .negotiated_meta()
+            .map(|m| m.limits)
+            .unwrap_or_default()
+    }
+
     async fn vector_search(
         &self,
         collection: &str,

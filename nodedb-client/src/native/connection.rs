@@ -7,8 +7,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use nodedb_types::error::{NodeDbError, NodeDbResult};
 use nodedb_types::protocol::{
-    AuthMethod, FRAME_HEADER_LEN, MAX_FRAME_SIZE, NativeRequest, NativeResponse, OpCode,
-    RequestFields, ResponseStatus, TextFields,
+    AuthMethod, CAP_COLUMNAR, CAP_CRDT, CAP_FTS, CAP_GRAPHRAG, CAP_SPATIAL, CAP_STREAMING,
+    CAP_TIMESERIES, FRAME_HEADER_LEN, HELLO_MAGIC, HelloAckFrame, HelloFrame, Limits,
+    MAX_FRAME_SIZE, NativeRequest, NativeResponse, OpCode, PROTO_VERSION, RequestFields,
+    ResponseStatus, TextFields,
 };
 use nodedb_types::result::QueryResult;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -84,6 +86,14 @@ pub struct NativeConnection {
     stream: ConnStream,
     seq: AtomicU64,
     authenticated: bool,
+    /// Protocol version negotiated during the handshake (0 = handshake not performed).
+    pub proto_version: u16,
+    /// Capability bits advertised by the server in `HelloAckFrame`.
+    pub capabilities: u64,
+    /// Human-readable server version string from `HelloAckFrame`.
+    pub server_version: String,
+    /// Per-operation limits from `HelloAckFrame`.
+    pub limits: Limits,
 }
 
 impl NativeConnection {
@@ -96,6 +106,10 @@ impl NativeConnection {
             stream: ConnStream::Plain(stream),
             seq: AtomicU64::new(1),
             authenticated: false,
+            proto_version: 0,
+            capabilities: 0,
+            server_version: String::new(),
+            limits: Limits::default(),
         })
     }
 
@@ -129,7 +143,82 @@ impl NativeConnection {
             stream: ConnStream::Tls(Box::new(tls_stream)),
             seq: AtomicU64::new(1),
             authenticated: false,
+            proto_version: 0,
+            capabilities: 0,
+            server_version: String::new(),
+            limits: Limits::default(),
         })
+    }
+
+    /// Perform the native protocol handshake.
+    ///
+    /// Sends a `HelloFrame` and reads the server's `HelloAckFrame`. Stores the
+    /// negotiated `proto_version`, `capabilities`, `server_version`, and `limits`
+    /// on the connection so callers can inspect them via the `NodeDb` trait.
+    ///
+    /// Handshake is optional for pre-T2-01 servers: if the first byte returned is
+    /// not part of the `HelloAck` magic (`0x4E` = 'N'), the frame is treated as a
+    /// legacy server that does not support handshake, and all negotiated fields
+    /// keep their zero-value defaults.
+    pub async fn perform_client_handshake(&mut self) -> NodeDbResult<()> {
+        // Client capability mask — advertise everything this SDK understands.
+        let client_caps = CAP_STREAMING
+            | CAP_GRAPHRAG
+            | CAP_FTS
+            | CAP_CRDT
+            | CAP_SPATIAL
+            | CAP_TIMESERIES
+            | CAP_COLUMNAR;
+
+        let hello = HelloFrame {
+            proto_min: 1,
+            proto_max: PROTO_VERSION,
+            capabilities: client_caps,
+        };
+        let payload = hello.encode();
+
+        // Write length-prefixed HelloFrame.
+        let len = payload.len() as u32;
+        self.stream
+            .write_all(&len.to_be_bytes())
+            .await
+            .map_err(io_err)?;
+        self.stream.write_all(&payload).await.map_err(io_err)?;
+        self.stream.flush().await.map_err(io_err)?;
+
+        // Peek the magic prefix to detect pre-handshake servers.
+        let mut len_buf = [0u8; FRAME_HEADER_LEN];
+        self.stream.read_exact(&mut len_buf).await.map_err(io_err)?;
+        let ack_len = u32::from_be_bytes(len_buf);
+        if ack_len > MAX_FRAME_SIZE {
+            return Err(NodeDbError::internal(format!(
+                "HelloAck frame too large: {ack_len}"
+            )));
+        }
+
+        let mut ack_buf = vec![0u8; ack_len as usize];
+        self.stream.read_exact(&mut ack_buf).await.map_err(io_err)?;
+
+        // If the magic doesn't match, this is a legacy server — ignore and return.
+        let magic_bytes: [u8; 4] = if ack_buf.len() >= 4 {
+            [ack_buf[0], ack_buf[1], ack_buf[2], ack_buf[3]]
+        } else {
+            return Ok(()); // Too short — legacy server.
+        };
+        if u32::from_be_bytes(magic_bytes) != nodedb_types::protocol::HELLO_ACK_MAGIC {
+            // Pre-handshake server: leave negotiated fields at defaults.
+            return Ok(());
+        }
+
+        let ack = HelloAckFrame::decode(&ack_buf)
+            .ok_or_else(|| NodeDbError::internal("failed to decode HelloAckFrame from server"))?;
+
+        self.proto_version = ack.proto_version;
+        self.capabilities = ack.capabilities;
+        self.server_version = ack.server_version;
+        self.limits = ack.limits;
+
+        Ok(())
     }
 
     /// Authenticate with the server.

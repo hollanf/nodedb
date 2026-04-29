@@ -16,6 +16,7 @@ use nodedb_types::dropped_collection::DroppedCollection;
 use nodedb_types::error::{NodeDbError, NodeDbResult};
 use nodedb_types::filter::{EdgeFilter, MetadataFilter};
 use nodedb_types::id::{EdgeId, NodeId};
+use nodedb_types::protocol::Limits;
 use nodedb_types::result::{QueryResult, SearchResult, SubGraph};
 use nodedb_types::text_search::TextSearchParams;
 use nodedb_types::value::Value;
@@ -263,6 +264,39 @@ pub trait NodeDb: NodeDbMarker {
         Ok(())
     }
 
+    // ─── Connection Metadata ─────────────────────────────────────────────
+
+    /// The protocol version negotiated during the connection handshake.
+    ///
+    /// Returns `0` when no handshake was performed (e.g. pre-T2-01 servers
+    /// or implementations that do not maintain a persistent connection).
+    fn proto_version(&self) -> u16 {
+        0
+    }
+
+    /// The raw capability bitfield advertised by the server.
+    ///
+    /// Returns `0` when no handshake was performed. Use
+    /// `Capabilities::from_raw(self.capabilities())` for named predicates.
+    fn capabilities(&self) -> u64 {
+        0
+    }
+
+    /// The server version string from `HelloAckFrame` (e.g. `"0.1.0-dev"`).
+    ///
+    /// Returns an empty string when no handshake was performed.
+    fn server_version(&self) -> String {
+        String::new()
+    }
+
+    /// Per-operation limits announced by the server.
+    ///
+    /// All fields are `None` when no handshake was performed — the caller
+    /// should treat `None` as "no server-side cap" for that dimension.
+    fn limits(&self) -> Limits {
+        Limits::default()
+    }
+
     // ─── SQL Escape Hatch ────────────────────────────────────────────
 
     /// Execute a raw SQL query with parameters.
@@ -414,6 +448,7 @@ fn value_as_string(v: &Value) -> NodeDbResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capabilities::Capabilities;
     use std::collections::HashMap;
 
     /// Mock implementation to verify the trait is object-safe and
@@ -603,5 +638,55 @@ mod tests {
 
         let doc = Document::new("note-1");
         db.document_put("notes", doc).await.unwrap();
+    }
+
+    /// Default `proto_version()` returns 0 for impls that do not override.
+    #[test]
+    fn default_proto_version_is_zero() {
+        let db = MockDb;
+        assert_eq!(db.proto_version(), 0);
+    }
+
+    /// Default `capabilities()` returns 0 for impls that do not override.
+    #[test]
+    fn default_capabilities_is_zero() {
+        let db = MockDb;
+        assert_eq!(db.capabilities(), 0);
+        // Wrapping in Capabilities gives all-false predicates.
+        let caps = Capabilities::from_raw(db.capabilities());
+        assert!(!caps.supports_streaming());
+        assert!(!caps.supports_graphrag());
+    }
+
+    /// Default `server_version()` returns an empty string.
+    #[test]
+    fn default_server_version_is_empty() {
+        let db = MockDb;
+        assert!(db.server_version().is_empty());
+    }
+
+    /// Default `limits()` returns all-None limits.
+    #[test]
+    fn default_limits_all_none() {
+        let db = MockDb;
+        let limits = db.limits();
+        assert!(limits.max_vector_dim.is_none());
+        assert!(limits.max_top_k.is_none());
+        assert!(limits.max_scan_limit.is_none());
+        assert!(limits.max_batch_size.is_none());
+        assert!(limits.max_crdt_delta_bytes.is_none());
+        assert!(limits.max_query_text_bytes.is_none());
+        assert!(limits.max_graph_depth.is_none());
+    }
+
+    /// Capabilities newtype works as documented.
+    #[test]
+    fn capabilities_newtype_smoke() {
+        use nodedb_types::protocol::{CAP_FTS, CAP_STREAMING};
+        let caps = Capabilities::from_raw(CAP_STREAMING | CAP_FTS);
+        assert!(caps.supports_streaming());
+        assert!(caps.supports_fts());
+        assert!(!caps.supports_graphrag());
+        assert!(!caps.supports_crdt());
     }
 }

@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nodedb_types::error::{NodeDbError, NodeDbResult};
-use nodedb_types::protocol::AuthMethod;
+use nodedb_types::protocol::{AuthMethod, Limits};
 use tokio::sync::{Semaphore, SemaphorePermit};
 
 use super::connection::NativeConnection;
@@ -47,12 +47,23 @@ impl Default for PoolConfig {
     }
 }
 
+/// Negotiated connection metadata from the first handshake performed by this pool.
+#[derive(Debug, Clone, Default)]
+pub struct NegotiatedMeta {
+    pub proto_version: u16,
+    pub capabilities: u64,
+    pub server_version: String,
+    pub limits: Limits,
+}
+
 /// Shared state for idle connection return.
 ///
 /// Uses `std::sync::Mutex` (not tokio) so the `Drop` impl can
 /// return connections synchronously without spawning async tasks.
 struct PoolInner {
     idle: Mutex<VecDeque<NativeConnection>>,
+    /// Negotiated metadata from the first handshake.
+    meta: Mutex<Option<NegotiatedMeta>>,
     max_size: usize,
 }
 
@@ -72,10 +83,21 @@ impl Pool {
             config,
             inner: Arc::new(PoolInner {
                 idle: Mutex::new(VecDeque::new()),
+                meta: Mutex::new(None),
                 max_size,
             }),
             semaphore,
         }
+    }
+
+    /// Returns the negotiated connection metadata from the first handshake, or
+    /// `None` if no connection has been established yet.
+    pub fn negotiated_meta(&self) -> Option<NegotiatedMeta> {
+        self.inner
+            .meta
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Acquire a connection from the pool.
@@ -124,8 +146,24 @@ impl Pool {
         .await
         .map_err(|_| NodeDbError::sync_connection_failed("connect timeout"))??;
 
+        // Perform the native protocol handshake (no-op on pre-T2-01 servers).
+        conn.perform_client_handshake().await?;
+
         // Authenticate.
         conn.authenticate(self.config.auth.clone()).await?;
+
+        // Capture negotiated metadata from the first handshake.
+        {
+            let mut meta = self.inner.meta.lock().unwrap_or_else(|e| e.into_inner());
+            if meta.is_none() {
+                *meta = Some(NegotiatedMeta {
+                    proto_version: conn.proto_version,
+                    capabilities: conn.capabilities,
+                    server_version: conn.server_version.clone(),
+                    limits: conn.limits.clone(),
+                });
+            }
+        }
 
         Ok(PooledConnection {
             conn: Some(conn),

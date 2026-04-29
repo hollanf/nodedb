@@ -1,3 +1,4 @@
+pub mod capabilities;
 pub mod traits;
 
 #[cfg(feature = "remote")]
@@ -8,6 +9,7 @@ mod remote_parse;
 #[cfg(feature = "native")]
 pub mod native;
 
+pub use capabilities::Capabilities;
 pub use traits::NodeDb;
 
 #[cfg(feature = "remote")]
