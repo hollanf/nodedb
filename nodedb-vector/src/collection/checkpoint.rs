@@ -85,9 +85,7 @@ impl VectorCollection {
                 .iter()
                 .map(|s| {
                     let (pq_bytes, pq_codes) = match &s.pq {
-                        Some((codec, codes)) => {
-                            (zerompk::to_msgpack_vec(codec).ok(), Some(codes.clone()))
-                        }
+                        Some((codec, codes)) => (Some(codec.to_bytes()), Some(codes.clone())),
                         None => (None, None),
                     };
                     SealedSnapshot {
@@ -178,9 +176,9 @@ impl VectorCollection {
 
         let mut sealed = Vec::with_capacity(snap.sealed_segments.len());
         for ss in &snap.sealed_segments {
-            if let Some(index) = HnswIndex::from_checkpoint(&ss.hnsw_bytes) {
+            if let Some(index) = HnswIndex::from_checkpoint(&ss.hnsw_bytes).ok().flatten() {
                 let pq = match (&ss.pq_bytes, &ss.pq_codes) {
-                    (Some(bytes), Some(codes)) => zerompk::from_msgpack::<PqCodec>(bytes)
+                    (Some(bytes), Some(codes)) => PqCodec::from_bytes(bytes)
                         .ok()
                         .map(|codec| (codec, codes.clone())),
                     _ => None,

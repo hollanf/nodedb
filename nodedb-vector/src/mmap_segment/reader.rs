@@ -1,4 +1,4 @@
-//! Memory-mapped reader for the NDVS v1 vector segment format.
+//! Memory-mapped reader for the NDVS v2 vector segment format.
 
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use super::format::{
 };
 use super::writer::write_segment;
 
-/// Memory-mapped vector segment file (v1 NDVS format).
+/// Memory-mapped vector segment file (v2 NDVS format).
 ///
 /// Exposes a `&[f32]` view of the vector data block and a `&[u64]` view of
 /// the surrogate ID block — both zero-copy slices into the mmap region.
@@ -185,15 +185,26 @@ impl MmapVectorSegment {
         // Validate footer.
         let footer_start = file_size - FOOTER_SIZE;
         let footer = unsafe { std::slice::from_raw_parts(base.add(footer_start), FOOTER_SIZE) };
+
+        // Trailing magic — last 4 bytes of the file must be b"NDVS".
+        if &footer[42..46] != MAGIC.as_slice() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid NDVS trailing magic bytes",
+            ));
+        }
+
         let footer_fv = u16::from_le_bytes([footer[0], footer[1]]);
         if footer_fv != FORMAT_VERSION {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("footer format version mismatch: {footer_fv}"),
+                format!(
+                    "unsupported segment footer version {footer_fv}; expected {FORMAT_VERSION}"
+                ),
             ));
         }
         let stored_footer_size =
-            u32::from_le_bytes([footer[54], footer[55], footer[56], footer[57]]) as usize;
+            u32::from_le_bytes([footer[38], footer[39], footer[40], footer[41]]) as usize;
         if stored_footer_size != FOOTER_SIZE {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -493,6 +504,82 @@ mod tests {
         assert!(seg.get_vector(0).is_none());
         assert_eq!(seg.all_vectors_flat().len(), 0);
         assert_eq!(seg.all_surrogate_ids().len(), 0);
+    }
+
+    #[test]
+    fn footer_golden_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("golden.vseg");
+        let v = vec![1.0f32, 2.0, 3.0];
+        write_segment(&path, 3, &[&v], &[42]).unwrap();
+        let data = std::fs::read(&path).unwrap();
+
+        // Footer starts at file_size - FOOTER_SIZE.
+        let footer_start = data.len() - FOOTER_SIZE;
+        let footer = &data[footer_start..];
+
+        // [0..2] format_version = FORMAT_VERSION.
+        let fv = u16::from_le_bytes([footer[0], footer[1]]);
+        assert_eq!(fv, FORMAT_VERSION);
+
+        // [34..38] checksum matches body CRC32C.
+        let body = &data[..footer_start];
+        let expected_crc = crc32c::crc32c(body);
+        let stored_crc = u32::from_le_bytes([footer[34], footer[35], footer[36], footer[37]]);
+        assert_eq!(stored_crc, expected_crc);
+
+        // [38..42] footer_size = FOOTER_SIZE (46).
+        let fs = u32::from_le_bytes([footer[38], footer[39], footer[40], footer[41]]) as usize;
+        assert_eq!(fs, FOOTER_SIZE);
+
+        // [42..46] trailing magic = b"NDVS".
+        assert_eq!(&footer[42..46], b"NDVS");
+    }
+
+    #[test]
+    fn trailing_magic_corruption_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trailmagic.vseg");
+        let v = vec![1.0f32, 2.0, 3.0];
+        write_segment(&path, 3, &[&v], &[42]).unwrap();
+
+        let mut data = std::fs::read(&path).unwrap();
+        // Corrupt the last 4 bytes (trailing magic).
+        let last = data.len();
+        data[last - 4] = 0xde;
+        data[last - 3] = 0xad;
+        data[last - 2] = 0xbe;
+        data[last - 1] = 0xef;
+        std::fs::write(&path, &data).unwrap();
+
+        let result = MmapVectorSegment::open(&path);
+        assert!(result.is_err(), "expected trailing magic error");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string().contains("trailing magic"),
+            "expected trailing magic message, got: {err}"
+        );
+    }
+
+    #[test]
+    fn footer_version_mismatch_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fvmismatch.vseg");
+        let v = vec![1.0f32, 2.0, 3.0];
+        write_segment(&path, 3, &[&v], &[42]).unwrap();
+
+        let mut data = std::fs::read(&path).unwrap();
+        // Corrupt the footer format version bytes to 99.
+        let footer_start = data.len() - FOOTER_SIZE;
+        let fv_bytes = 99u16.to_le_bytes();
+        data[footer_start] = fv_bytes[0];
+        data[footer_start + 1] = fv_bytes[1];
+        std::fs::write(&path, &data).unwrap();
+
+        let result = MmapVectorSegment::open(&path);
+        assert!(result.is_err(), "expected footer version mismatch error");
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

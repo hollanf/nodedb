@@ -24,7 +24,7 @@ pub struct SpatialIndexMeta {
     /// Index type.
     pub index_type: SpatialIndexType,
     /// Number of entries at last checkpoint.
-    pub entry_count: usize,
+    pub entry_count: u64,
     /// Bounding box of all indexed geometries (spatial extent).
     pub extent: Option<BoundingBox>,
 }
@@ -57,6 +57,8 @@ impl std::fmt::Display for SpatialIndexType {
 
 /// Magic header for rkyv-serialized R-tree snapshots (6 bytes).
 const RTREE_RKYV_MAGIC: &[u8; 6] = b"RKSPT\0";
+/// Current format version for rkyv-serialized R-tree snapshots.
+pub const RTREE_FORMAT_VERSION: u8 = 1;
 
 /// Serialized R-tree snapshot (legacy MessagePack).
 #[derive(Debug, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
@@ -78,8 +80,9 @@ impl RTree {
         };
         let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&snapshot)
             .map_err(|e| RTreeCheckpointError::RkyvSerialize(e.to_string()))?;
-        let mut buf = Vec::with_capacity(RTREE_RKYV_MAGIC.len() + rkyv_bytes.len());
+        let mut buf = Vec::with_capacity(RTREE_RKYV_MAGIC.len() + 1 + rkyv_bytes.len());
         buf.extend_from_slice(RTREE_RKYV_MAGIC);
+        buf.push(RTREE_FORMAT_VERSION);
         buf.extend_from_slice(&rkyv_bytes);
         Ok(buf)
     }
@@ -88,11 +91,21 @@ impl RTree {
     ///
     /// Auto-detects format: rkyv (magic `RKSPT\0`) or legacy MessagePack.
     /// Uses bulk_load (STR packing) for optimal node packing.
+    ///
+    /// Returns `Err(RTreeCheckpointError::UnsupportedVersion)` when the magic
+    /// matches but the version byte is not `RTREE_FORMAT_VERSION`. Buffers
+    /// without the magic prefix fall through to legacy MessagePack decode.
     pub fn from_checkpoint(bytes: &[u8]) -> Result<Self, RTreeCheckpointError> {
-        if bytes.len() > RTREE_RKYV_MAGIC.len()
-            && &bytes[..RTREE_RKYV_MAGIC.len()] == RTREE_RKYV_MAGIC
-        {
-            let rkyv_bytes = &bytes[RTREE_RKYV_MAGIC.len()..];
+        let header_len = RTREE_RKYV_MAGIC.len() + 1; // magic + version byte
+        if bytes.len() > header_len && &bytes[..RTREE_RKYV_MAGIC.len()] == RTREE_RKYV_MAGIC {
+            let version = bytes[RTREE_RKYV_MAGIC.len()];
+            if version != RTREE_FORMAT_VERSION {
+                return Err(RTreeCheckpointError::UnsupportedVersion {
+                    found: version,
+                    expected: RTREE_FORMAT_VERSION,
+                });
+            }
+            let rkyv_bytes = &bytes[header_len..];
             let mut aligned = rkyv::util::AlignedVec::<16>::with_capacity(rkyv_bytes.len());
             aligned.extend_from_slice(rkyv_bytes);
             let snapshot: RTreeSnapshotRkyv =
@@ -154,6 +167,8 @@ pub enum RTreeCheckpointError {
     RkyvSerialize(String),
     #[error("R-tree rkyv deserialization failed: {0}")]
     RkyvDeserialize(String),
+    #[error("unsupported R-tree checkpoint version {found}; expected {expected}")]
+    UnsupportedVersion { found: u8, expected: u8 },
 }
 
 #[cfg(test)]
@@ -243,7 +258,7 @@ mod tests {
             tree.insert(make_entry(i, (i as f64) * 0.01, (i as f64) * 0.01));
         }
         let bytes = tree.checkpoint_to_bytes().unwrap();
-        // Each entry: id(8) + 4 f64(32) = ~40 bytes + msgpack overhead.
+        // Each entry: id(8) + 4 f64(32) = ~40 bytes + rkyv overhead.
         // 1000 entries ≈ 40-60KB is reasonable.
         assert!(
             bytes.len() < 100_000,
@@ -255,5 +270,35 @@ mod tests {
             "checkpoint too small: {} bytes",
             bytes.len()
         );
+    }
+
+    #[test]
+    fn golden_header_layout() {
+        let mut tree = RTree::new();
+        tree.insert(make_entry(1, 10.0, 20.0));
+        let bytes = tree.checkpoint_to_bytes().unwrap();
+        // Magic at bytes[0..6].
+        assert_eq!(&bytes[0..6], b"RKSPT\0");
+        // Version byte at bytes[6].
+        assert_eq!(bytes[6], super::RTREE_FORMAT_VERSION);
+        // rkyv payload follows immediately.
+        assert!(bytes.len() > 7);
+    }
+
+    #[test]
+    fn version_mismatch_returns_error() {
+        let mut tree = RTree::new();
+        tree.insert(make_entry(1, 10.0, 20.0));
+        let mut bytes = tree.checkpoint_to_bytes().unwrap();
+        // Corrupt the version byte to an unsupported value.
+        bytes[6] = 0;
+        match RTree::from_checkpoint(&bytes) {
+            Err(RTreeCheckpointError::UnsupportedVersion { found, expected }) => {
+                assert_eq!(found, 0);
+                assert_eq!(expected, super::RTREE_FORMAT_VERSION);
+            }
+            Err(other) => panic!("unexpected error: {other}"),
+            Ok(_) => panic!("expected UnsupportedVersion error, got Ok"),
+        }
     }
 }

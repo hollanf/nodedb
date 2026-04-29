@@ -1,11 +1,17 @@
-//! On-disk format constants and shared types for the NDVS v1 vector segment.
+//! On-disk format constants and shared types for the NDVS v2 vector segment.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
 pub(super) const MAGIC: [u8; 4] = *b"NDVS";
-pub(super) const FORMAT_VERSION: u16 = 1;
+/// Current on-disk format version.
+///
+/// v1 → v2 changes:
+/// - Removed `min_lsn`/`max_lsn` fields (were always zero, never tracked).
+/// - Added trailing magic (`b"NDVS"`) as the last 4 bytes of the footer.
+/// - Footer shrinks from 58 → 46 bytes.
+pub(super) const FORMAT_VERSION: u16 = 2;
 pub(super) const DTYPE_F32: u8 = 0;
 
 /// Header size in bytes (32). Padded to 8-byte alignment so the surrogate
@@ -21,15 +27,24 @@ pub(super) const fn vec_pad(vec_bytes: usize) -> usize {
     (8 - (vec_bytes % 8)) % 8
 }
 
-/// Footer size in bytes (58).
-pub(super) const FOOTER_SIZE: usize = 58;
+/// Footer size in bytes (46).
+///
+/// Layout:
+/// ```text
+/// [0..2]   format_version  (u16 LE)
+/// [2..34]  created_by      (32-byte null-padded version string)
+/// [34..38] checksum        (u32 LE CRC32C over header + data body)
+/// [38..42] footer_size     (u32 LE, always 46)
+/// [42..46] trailing_magic  (b"NDVS")
+/// ```
+pub(super) const FOOTER_SIZE: usize = 46;
 
 // ── Codec slot ────────────────────────────────────────────────────────────────
 
 /// At-rest compression codec for the vector data block.
 ///
 /// Stored as a `u8` in the segment header (byte 21). Only `None` is supported
-/// in v1. The decode site in the reader matches exhaustively so the right
+/// in v2. The decode site in the reader matches exhaustively so the right
 /// hook for future compression codecs is obvious.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

@@ -11,6 +11,8 @@ use crate::hnsw::graph::{ARENA_INITIAL_CAPACITY, HnswIndex, Node, Xorshift64};
 
 /// Magic header for rkyv-serialized HNSW snapshots (6 bytes).
 const HNSW_RKYV_MAGIC: &[u8; 6] = b"RKHNS\0";
+/// Current format version for rkyv-serialized HNSW snapshots.
+pub const HNSW_FORMAT_VERSION: u8 = 1;
 
 /// rkyv-serialized HNSW snapshot. SoA layout for better rkyv compatibility
 /// (flat Vecs instead of Vec<struct>).
@@ -56,21 +58,35 @@ impl HnswIndex {
         };
         let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&snapshot)
             .expect("HNSW rkyv serialization should not fail");
-        let mut buf = Vec::with_capacity(HNSW_RKYV_MAGIC.len() + rkyv_bytes.len());
+        let mut buf = Vec::with_capacity(HNSW_RKYV_MAGIC.len() + 1 + rkyv_bytes.len());
         buf.extend_from_slice(HNSW_RKYV_MAGIC);
+        buf.push(HNSW_FORMAT_VERSION);
         buf.extend_from_slice(&rkyv_bytes);
         buf
     }
 
     /// Restore an index from a checkpoint snapshot.
     ///
-    /// Auto-detects format: rkyv (magic `RKHNS\0`) or legacy MessagePack.
-    pub fn from_checkpoint(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() > HNSW_RKYV_MAGIC.len() && &bytes[..HNSW_RKYV_MAGIC.len()] == HNSW_RKYV_MAGIC
-        {
-            return Self::from_rkyv_checkpoint(&bytes[HNSW_RKYV_MAGIC.len()..]);
+    /// Returns:
+    /// - `Ok(Some(index))` — successfully decoded (rkyv or legacy MessagePack).
+    /// - `Ok(None)` — bytes could not be decoded by any known format.
+    /// - `Err(VectorError::UnsupportedVersion)` — magic matches `RKHNS\0` but
+    ///   the version byte is not `HNSW_FORMAT_VERSION`; the caller must reject
+    ///   the buffer rather than silently falling through to legacy decode.
+    pub fn from_checkpoint(bytes: &[u8]) -> Result<Option<Self>, crate::error::VectorError> {
+        let header_len = HNSW_RKYV_MAGIC.len() + 1; // magic + version byte
+        if bytes.len() > header_len && &bytes[..HNSW_RKYV_MAGIC.len()] == HNSW_RKYV_MAGIC {
+            let version = bytes[HNSW_RKYV_MAGIC.len()];
+            if version != HNSW_FORMAT_VERSION {
+                return Err(crate::error::VectorError::UnsupportedVersion {
+                    found: version,
+                    expected: HNSW_FORMAT_VERSION,
+                });
+            }
+            return Ok(Self::from_rkyv_checkpoint(&bytes[header_len..]));
         }
-        Self::from_msgpack_checkpoint(bytes)
+        // No magic prefix — fall through to legacy MessagePack.
+        Ok(Self::from_msgpack_checkpoint(bytes))
     }
 
     /// Restore from rkyv-serialized bytes.
@@ -194,7 +210,7 @@ mod tests {
         let bytes = idx.checkpoint_to_bytes();
         assert!(!bytes.is_empty());
 
-        let restored = HnswIndex::from_checkpoint(&bytes).unwrap();
+        let restored = HnswIndex::from_checkpoint(&bytes).unwrap().unwrap();
         assert_eq!(restored.len(), 50);
         assert_eq!(restored.dim(), 3);
         assert_eq!(restored.entry_point(), idx.entry_point());
@@ -207,6 +223,36 @@ mod tests {
         for (a, b) in orig_results.iter().zip(rest_results.iter()) {
             assert_eq!(a.id, b.id);
             assert!((a.distance - b.distance).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn golden_header_layout() {
+        let mut idx = make_index();
+        idx.insert(vec![1.0, 2.0, 3.0]).unwrap();
+        let bytes = idx.checkpoint_to_bytes();
+        // Magic at bytes[0..6].
+        assert_eq!(&bytes[0..6], b"RKHNS\0");
+        // Version byte at bytes[6].
+        assert_eq!(bytes[6], super::HNSW_FORMAT_VERSION);
+        // rkyv payload follows immediately.
+        assert!(bytes.len() > 7);
+    }
+
+    #[test]
+    fn version_mismatch_returns_error() {
+        let mut idx = make_index();
+        idx.insert(vec![1.0, 2.0, 3.0]).unwrap();
+        let mut bytes = idx.checkpoint_to_bytes();
+        // Corrupt the version byte to an unsupported value.
+        bytes[6] = 0;
+        match HnswIndex::from_checkpoint(&bytes) {
+            Err(crate::error::VectorError::UnsupportedVersion { found, expected }) => {
+                assert_eq!(found, 0);
+                assert_eq!(expected, super::HNSW_FORMAT_VERSION);
+            }
+            Err(other) => panic!("unexpected error: {other}"),
+            Ok(_) => panic!("expected UnsupportedVersion error, got Ok"),
         }
     }
 }

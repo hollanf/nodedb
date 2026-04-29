@@ -14,8 +14,12 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::VectorError;
+
 /// PQ codec with trained codebooks.
-#[derive(Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
 pub struct PqCodec {
     /// Original vector dimensionality.
     pub dim: usize,
@@ -132,6 +136,42 @@ impl PqCodec {
             out.extend_from_slice(&self.codebooks[sub][c as usize]);
         }
         out
+    }
+
+    /// Serialize the codec to bytes with a versioned magic header.
+    ///
+    /// Format: `[NDPQ\0\0 (6 bytes)][version: u8 = 1][msgpack payload]`
+    pub fn to_bytes(&self) -> Vec<u8> {
+        const MAGIC: &[u8; 6] = b"NDPQ\0\0";
+        const VERSION: u8 = 1;
+        let payload = zerompk::to_msgpack_vec(self).unwrap_or_default();
+        let mut out = Vec::with_capacity(7 + payload.len());
+        out.extend_from_slice(MAGIC);
+        out.push(VERSION);
+        out.extend_from_slice(&payload);
+        out
+    }
+
+    /// Deserialize the codec from bytes produced by [`Self::to_bytes`].
+    ///
+    /// Returns `VectorError::InvalidMagic` if the header does not match
+    /// `NDPQ\0\0`, and `VectorError::UnsupportedVersion` for unknown versions.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, VectorError> {
+        const MAGIC: &[u8; 6] = b"NDPQ\0\0";
+        const PQ_FORMAT_VERSION: u8 = 1;
+
+        if bytes.len() < 7 || &bytes[0..6] != MAGIC {
+            return Err(VectorError::InvalidMagic);
+        }
+        let version = bytes[6];
+        if version != PQ_FORMAT_VERSION {
+            return Err(VectorError::UnsupportedVersion {
+                found: version,
+                expected: PQ_FORMAT_VERSION,
+            });
+        }
+        zerompk::from_msgpack::<Self>(&bytes[7..])
+            .map_err(|e| VectorError::DeserializationFailed(e.to_string()))
     }
 
     fn nearest_centroid(&self, subspace: usize, sub_vec: &[f32]) -> usize {
@@ -337,5 +377,55 @@ mod tests {
 
         let batch = codec.encode_batch(&refs);
         assert_eq!(batch.len(), 2 * 200); // M=2, N=200
+    }
+
+    // G-04: golden format test — verifies the on-disk layout is stable.
+    #[test]
+    fn pq_codec_golden_format() {
+        let vecs = make_clustered_data();
+        let refs: Vec<&[f32]> = vecs.iter().map(|v| v.as_slice()).collect();
+        let codec = PqCodec::train(&refs, 4, 2, 16, 10);
+
+        let bytes = codec.to_bytes();
+
+        // Magic header.
+        assert_eq!(&bytes[0..6], b"NDPQ\0\0", "magic mismatch");
+        // Version byte.
+        assert_eq!(bytes[6], 1u8, "version must be 1");
+        // Payload at offset 7 must decode back to a valid PqCodec.
+        let restored = zerompk::from_msgpack::<PqCodec>(&bytes[7..])
+            .expect("msgpack payload at offset 7 must decode");
+        assert_eq!(restored.dim, codec.dim);
+        assert_eq!(restored.m, codec.m);
+    }
+
+    #[test]
+    fn pq_version_mismatch_returns_error() {
+        // Craft a header with magic correct but version = 0 (unsupported).
+        let mut crafted = b"NDPQ\0\0".to_vec();
+        crafted.push(0u8); // wrong version
+        crafted.extend_from_slice(b"\x80"); // minimal valid msgpack map
+
+        let err = PqCodec::from_bytes(&crafted).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                VectorError::UnsupportedVersion {
+                    found: 0,
+                    expected: 1
+                }
+            ),
+            "expected UnsupportedVersion, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn pq_invalid_magic_returns_error() {
+        let bad: &[u8] = b"JUNK\0\0\x01some-payload";
+        let err = PqCodec::from_bytes(bad).unwrap_err();
+        assert!(
+            matches!(err, VectorError::InvalidMagic),
+            "expected InvalidMagic, got: {err:?}"
+        );
     }
 }

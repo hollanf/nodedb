@@ -1,4 +1,4 @@
-//! Writer for the NDVS v1 on-disk vector segment format.
+//! Writer for the NDVS v2 on-disk vector segment format.
 
 use std::path::Path;
 
@@ -6,7 +6,7 @@ use super::format::{
     DTYPE_F32, FOOTER_SIZE, FORMAT_VERSION, HEADER_SIZE, MAGIC, VectorSegmentCodec, vec_pad,
 };
 
-/// Write a v1 NDVS segment file to `path`.
+/// Write a v2 NDVS segment file to `path`.
 ///
 /// `surrogate_ids[i]` is the u64 surrogate for `vectors[i]`. The slice may be
 /// empty, in which case all surrogate IDs are written as 0.
@@ -40,7 +40,7 @@ pub fn write_segment(
         .truncate(true)
         .open(path)?;
 
-    // Header — 28 bytes.
+    // Header — 32 bytes.
     fd.write_all(&MAGIC)?;
     fd.write_all(&FORMAT_VERSION.to_le_bytes())?;
     fd.write_all(&0u16.to_le_bytes())?; // flags
@@ -100,7 +100,7 @@ pub fn write_segment(
     }
     let checksum = crc32c::crc32c(&data);
 
-    // Append the footer (58 bytes).
+    // Append the footer (46 bytes).
     let mut fd = std::fs::OpenOptions::new().append(true).open(path)?;
 
     let mut created_by = [0u8; 32];
@@ -108,12 +108,11 @@ pub fn write_segment(
     let copy_len = ver.len().min(31);
     created_by[..copy_len].copy_from_slice(&ver[..copy_len]);
 
-    fd.write_all(&FORMAT_VERSION.to_le_bytes())?; // footer format_version
-    fd.write_all(&created_by)?;
-    fd.write_all(&checksum.to_le_bytes())?;
-    fd.write_all(&0u64.to_le_bytes())?; // min_lsn (not tracked in v1)
-    fd.write_all(&0u64.to_le_bytes())?; // max_lsn (not tracked in v1)
-    fd.write_all(&(FOOTER_SIZE as u32).to_le_bytes())?;
+    fd.write_all(&FORMAT_VERSION.to_le_bytes())?; // footer format_version [0..2]
+    fd.write_all(&created_by)?; // created_by              [2..34]
+    fd.write_all(&checksum.to_le_bytes())?; // checksum    [34..38]
+    fd.write_all(&(FOOTER_SIZE as u32).to_le_bytes())?; // footer_size [38..42]
+    fd.write_all(&MAGIC)?; // trailing magic               [42..46]
     fd.sync_all()?;
 
     Ok(())
