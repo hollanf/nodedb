@@ -28,9 +28,9 @@ pub struct CrossShardDlqEntry {
     /// SQL statement that failed to execute on the target.
     pub sql: String,
     /// Source vShard ID.
-    pub source_vshard: u16,
+    pub source_vshard: u32,
     /// Target vShard ID.
-    pub target_vshard: u16,
+    pub target_vshard: u32,
     /// Target node ID.
     pub target_node: u64,
     /// Source LSN for idempotency correlation.
@@ -52,8 +52,8 @@ pub struct DlqEnqueueParams {
     pub tenant_id: u32,
     pub source_collection: String,
     pub sql: String,
-    pub source_vshard: u16,
-    pub target_vshard: u16,
+    pub source_vshard: u32,
+    pub target_vshard: u32,
     pub target_node: u64,
     pub source_lsn: u64,
     pub source_sequence: u64,

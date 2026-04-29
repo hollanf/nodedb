@@ -44,12 +44,12 @@ impl Default for GhostSweeperConfig {
 /// target shard. In single-node mode, this always returns `Purge` (no
 /// remote shards to check). In cluster mode, it sends an RPC.
 pub fn run_sweep_loop<V>(
-    ghost_tables: Arc<Mutex<Vec<(u16, GhostTable)>>>,
+    ghost_tables: Arc<Mutex<Vec<(u32, GhostTable)>>>,
     config: GhostSweeperConfig,
     verify_fn: V,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) where
-    V: Fn(&str, u16) -> SweepVerdict + Send + 'static,
+    V: Fn(&str, u32) -> SweepVerdict + Send + 'static,
 {
     info!(
         interval_secs = config.interval.as_secs(),
@@ -112,7 +112,7 @@ mod tests {
         stub.refcount = 0;
         table.insert(stub);
 
-        let tables = Arc::new(Mutex::new(vec![(0u16, table)]));
+        let tables = Arc::new(Mutex::new(vec![(0u32, table)]));
 
         // Run one sweep manually.
         {

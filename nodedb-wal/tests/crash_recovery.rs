@@ -21,7 +21,7 @@ fn write_records(path: &std::path::Path, count: u32) -> Vec<u64> {
     for i in 0..count {
         let payload = format!("record-{i}");
         let lsn = writer
-            .append(RecordType::Put as u16, 1, 0, payload.as_bytes())
+            .append(RecordType::Put as u32, 1, 0, payload.as_bytes())
             .unwrap();
         lsns.push(lsn);
     }
@@ -47,10 +47,10 @@ fn crash_before_sync_loses_buffered_records() {
     {
         let mut writer = WalWriter::open_without_direct_io(&path).unwrap();
         writer
-            .append(RecordType::Put as u16, 1, 0, b"unsync-1")
+            .append(RecordType::Put as u32, 1, 0, b"unsync-1")
             .unwrap();
         writer
-            .append(RecordType::Put as u16, 1, 0, b"unsync-2")
+            .append(RecordType::Put as u32, 1, 0, b"unsync-2")
             .unwrap();
         // Drop without sync — records are lost (correct behavior).
     }
@@ -95,7 +95,7 @@ fn torn_write_mid_payload() {
     // Manually construct a valid header but truncate the payload.
     {
         let record = WalRecord::new(
-            RecordType::Put as u16,
+            RecordType::Put as u32,
             99,
             1,
             0,
@@ -144,8 +144,8 @@ fn corrupted_checksum_stops_replay() {
 
         // Skip past 2 complete records, flip a byte in the 3rd.
         // Each record is HEADER_SIZE + payload_len. For "record-N" payloads:
-        // payload = "record-0" = 8 bytes, so wire_size = 30 + 8 = 38.
-        let offset = 2 * 38 + 35; // Into the 3rd record's payload area.
+        // payload = "record-0" = 8 bytes, so wire_size = 50 + 8 = 58.
+        let offset = 2 * 58 + 55; // Into the 3rd record's payload area.
         file.seek(SeekFrom::Start(offset as u64)).unwrap();
         let mut byte = [0u8; 1];
         file.read_exact(&mut byte).unwrap();
@@ -185,7 +185,7 @@ fn reopen_after_crash_continues_correctly() {
         let mut writer = WalWriter::open_without_direct_io(&path).unwrap();
         assert_eq!(writer.next_lsn(), 6);
         let lsn = writer
-            .append(RecordType::Put as u16, 1, 0, b"after-crash")
+            .append(RecordType::Put as u32, 1, 0, b"after-crash")
             .unwrap();
         assert_eq!(lsn, 6);
         writer.sync().unwrap();

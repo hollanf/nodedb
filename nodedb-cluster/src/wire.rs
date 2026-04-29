@@ -21,7 +21,7 @@ pub struct VShardEnvelope {
     /// Target node ID.
     pub target_node: u64,
     /// vShard being referenced.
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     /// Opaque payload (type-dependent).
     pub payload: Vec<u8>,
 }
@@ -159,14 +159,17 @@ pub enum VShardMessageType {
 }
 
 /// Current wire protocol version.
-pub const WIRE_VERSION: u16 = 1;
+///
+/// v2 widens `vshard_id` u16→u32 in the binary frame, increasing min header
+/// size from 26 to 28 bytes.
+pub const WIRE_VERSION: u16 = 2;
 
 impl VShardEnvelope {
     pub fn new(
         msg_type: VShardMessageType,
         source_node: u64,
         target_node: u64,
-        vshard_id: u16,
+        vshard_id: u32,
         payload: Vec<u8>,
     ) -> Self {
         Self {
@@ -180,10 +183,11 @@ impl VShardEnvelope {
     }
 
     /// Serialize to bytes (transport-agnostic).
+    ///
+    /// Binary format (v2, all little-endian):
+    ///   version(2) + msg_type(2) + source(8) + target(8) + vshard(4) + payload_len(4) + payload
     pub fn to_bytes(&self) -> Vec<u8> {
-        // Simple binary format: version(2) + msg_type(2) + source(8) + target(8)
-        // + vshard(2) + payload_len(4) + payload
-        let mut buf = Vec::with_capacity(26 + self.payload.len());
+        let mut buf = Vec::with_capacity(28 + self.payload.len());
         buf.extend_from_slice(&self.version.to_le_bytes());
         buf.extend_from_slice(&(self.msg_type as u16).to_le_bytes());
         buf.extend_from_slice(&self.source_node.to_le_bytes());
@@ -196,20 +200,20 @@ impl VShardEnvelope {
 
     /// Deserialize from bytes.
     pub fn from_bytes(buf: &[u8]) -> Option<Self> {
-        if buf.len() < 26 {
+        if buf.len() < 28 {
             return None;
         }
         let version = u16::from_le_bytes(buf[0..2].try_into().ok()?);
         let msg_type_raw = u16::from_le_bytes(buf[2..4].try_into().ok()?);
         let source_node = u64::from_le_bytes(buf[4..12].try_into().ok()?);
         let target_node = u64::from_le_bytes(buf[12..20].try_into().ok()?);
-        let vshard_id = u16::from_le_bytes(buf[20..22].try_into().ok()?);
-        let payload_len = u32::from_le_bytes(buf[22..26].try_into().ok()?) as usize;
+        let vshard_id = u32::from_le_bytes(buf[20..24].try_into().ok()?);
+        let payload_len = u32::from_le_bytes(buf[24..28].try_into().ok()?) as usize;
 
-        if buf.len() < 26 + payload_len {
+        if buf.len() < 28 + payload_len {
             return None;
         }
-        let payload = buf[26..26 + payload_len].to_vec();
+        let payload = buf[28..28 + payload_len].to_vec();
 
         let msg_type = match msg_type_raw {
             1 => VShardMessageType::SegmentChunk,
@@ -276,6 +280,11 @@ impl VShardEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wire_version_is_2() {
+        assert_eq!(WIRE_VERSION, 2, "v2 widened vshard_id to u32");
+    }
 
     #[test]
     fn envelope_roundtrip() {
@@ -361,7 +370,7 @@ mod tests {
     fn empty_payload() {
         let env = VShardEnvelope::new(VShardMessageType::RoutingAck, 5, 6, 999, vec![]);
         let bytes = env.to_bytes();
-        assert_eq!(bytes.len(), 26); // header only
+        assert_eq!(bytes.len(), 28); // header only (v2: vshard_id widened u16→u32)
         let decoded = VShardEnvelope::from_bytes(&bytes).unwrap();
         assert!(decoded.payload.is_empty());
     }
@@ -388,5 +397,30 @@ mod tests {
             rdma_bytes, quic_bytes,
             "wire format must be transport-agnostic"
         );
+    }
+
+    #[test]
+    fn large_vshard_id_roundtrip() {
+        // vshard_id is now u32; ensure values above old u16::MAX round-trip
+        // without truncation.
+        let env = VShardEnvelope::new(
+            VShardMessageType::WalTail,
+            10,
+            20,
+            0x0001_FFFF,
+            b"payload".to_vec(),
+        );
+        let bytes = env.to_bytes();
+        let decoded = VShardEnvelope::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded.vshard_id, 0x0001_FFFFu32);
+    }
+
+    #[test]
+    fn truncated_below_28_returns_none() {
+        // With v2 header = 28 bytes, a 27-byte buffer must be rejected.
+        let env = VShardEnvelope::new(VShardMessageType::RoutingAck, 1, 2, 0, vec![]);
+        let bytes = env.to_bytes();
+        assert_eq!(bytes.len(), 28);
+        assert!(VShardEnvelope::from_bytes(&bytes[..27]).is_none());
     }
 }

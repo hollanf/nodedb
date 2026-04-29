@@ -370,11 +370,11 @@ mod tests {
         rt: RecordType,
         payload: &[u8],
         tenant_id: u32,
-        vshard_id: u16,
+        vshard_id: u32,
         lsn: u64,
     ) -> WalRecord {
         WalRecord::new(
-            rt as u16,
+            rt as u32,
             lsn,
             tenant_id,
             vshard_id,

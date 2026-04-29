@@ -28,7 +28,7 @@ pub enum WalError {
     /// Unknown required record type encountered during replay.
     /// Optional unknown record types are safely skipped.
     #[error("unknown required record type {record_type} at LSN {lsn}")]
-    UnknownRequiredRecordType { record_type: u16, lsn: u64 },
+    UnknownRequiredRecordType { record_type: u32, lsn: u64 },
 
     /// Write payload exceeds maximum record size.
     #[error("payload too large: {size} bytes (max: {max})")]

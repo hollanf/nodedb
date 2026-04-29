@@ -50,7 +50,7 @@ pub struct ArrayShardSliceReq {
 /// Gather response: shard returns matching rows as opaque msgpack row bytes.
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct ArrayShardSliceResp {
-    pub shard_id: u16,
+    pub shard_id: u32,
     /// Zerompk-encoded rows. Each element is a zerompk encoding of one result row.
     pub rows_msgpack: Vec<Vec<u8>>,
     /// True when the shard hit the `limit` and may have more rows.
@@ -88,7 +88,7 @@ pub struct ArrayShardAggReq {
 /// Gather response: shard returns partial aggregate(s) for merge.
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct ArrayShardAggResp {
-    pub shard_id: u16,
+    pub shard_id: u32,
     /// One partial per group-by bucket (or one entry when group_by_dim < 0).
     pub partials: Vec<super::merge::ArrayAggPartial>,
     /// True when `system_as_of` is below the oldest tile version on this shard
@@ -117,7 +117,7 @@ pub struct ArrayShardPutReq {
 /// Acknowledgement: shard confirms the put was applied.
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct ArrayShardPutResp {
-    pub shard_id: u16,
+    pub shard_id: u32,
     pub applied_lsn: u64,
 }
 
@@ -140,7 +140,7 @@ pub struct ArrayShardDeleteReq {
 /// Acknowledgement: shard confirms the delete was applied.
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct ArrayShardDeleteResp {
-    pub shard_id: u16,
+    pub shard_id: u32,
     pub applied_lsn: u64,
 }
 
@@ -158,7 +158,7 @@ pub struct ArrayShardSurrogateBitmapReq {
 /// Response: shard returns a surrogate bitmap for matching cells.
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct ArrayShardSurrogateBitmapResp {
-    pub shard_id: u16,
+    pub shard_id: u32,
     /// Zerompk encoding of `SurrogateBitmap` for the matching cells.
     pub bitmap_msgpack: Vec<u8>,
 }

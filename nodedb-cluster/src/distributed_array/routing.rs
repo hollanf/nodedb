@@ -28,7 +28,7 @@ use crate::routing::VSHARD_COUNT;
 /// `prefix_bits` — number of high-order bits used for routing (1–16).
 ///
 /// Returns the vShard ID in `[0, VSHARD_COUNT)`.
-pub fn array_vshard_for_tile(hilbert_prefix: u64, prefix_bits: u8) -> Result<u16> {
+pub fn array_vshard_for_tile(hilbert_prefix: u64, prefix_bits: u8) -> Result<u32> {
     validate_prefix_bits(prefix_bits)?;
     let bucket = prefix_bucket(hilbert_prefix, prefix_bits);
     Ok(bucket_to_vshard(bucket, prefix_bits))
@@ -48,23 +48,23 @@ pub fn array_vshard_for_tile(hilbert_prefix: u64, prefix_bits: u8) -> Result<u16
 pub fn array_vshards_for_slice(
     slice_hilbert_ranges: &[(u64, u64)],
     prefix_bits: u8,
-    total_shards: u16,
-) -> Result<Vec<u16>> {
+    total_shards: u32,
+) -> Result<Vec<u32>> {
     if total_shards == 0 {
         return Ok(Vec::new());
     }
     validate_prefix_bits(prefix_bits)?;
 
-    let stride = vshard_stride(prefix_bits) as u32;
-    let mut out: Vec<u16> = Vec::new();
+    let stride = vshard_stride(prefix_bits);
+    let mut out: Vec<u32> = Vec::new();
 
     // Unbounded slice: return one canonical primary vShard per bucket.
     // Within a bucket all vShards serve the same Hilbert range, so fanning
     // out to every member would multiply the result by `stride`.
     if slice_hilbert_ranges.is_empty() {
         let mut vshard_id: u32 = 0;
-        while vshard_id < total_shards as u32 && vshard_id < VSHARD_COUNT as u32 {
-            out.push(vshard_id as u16);
+        while vshard_id < total_shards && vshard_id < VSHARD_COUNT {
+            out.push(vshard_id);
             vshard_id = vshard_id.saturating_add(stride);
             if stride == 0 {
                 break;
@@ -106,14 +106,14 @@ fn validate_prefix_bits(prefix_bits: u8) -> Result<()> {
 }
 
 /// Extract the top `prefix_bits` bits of a Hilbert prefix as a bucket index.
-fn prefix_bucket(hilbert_prefix: u64, prefix_bits: u8) -> u16 {
+fn prefix_bucket(hilbert_prefix: u64, prefix_bits: u8) -> u32 {
     // Shift right so the top `prefix_bits` bits are in the low-order position.
     let shift = 64u8.saturating_sub(prefix_bits);
-    (hilbert_prefix >> shift) as u16
+    (hilbert_prefix >> shift) as u32
 }
 
 /// Map a bucket index to the primary vShard in that bucket's range.
-fn bucket_to_vshard(bucket: u16, prefix_bits: u8) -> u16 {
+fn bucket_to_vshard(bucket: u32, prefix_bits: u8) -> u32 {
     let stride = vshard_stride(prefix_bits);
     bucket.saturating_mul(stride)
 }
@@ -123,11 +123,11 @@ fn bucket_to_vshard(bucket: u16, prefix_bits: u8) -> u16 {
 /// With `P` prefix bits there are `2^P` buckets and `VSHARD_COUNT`
 /// total vShards. Stride = `VSHARD_COUNT >> P`. When `P >= log2(VSHARD_COUNT)`
 /// the stride is 1 (one vShard per bucket or less).
-fn vshard_stride(prefix_bits: u8) -> u16 {
+fn vshard_stride(prefix_bits: u8) -> u32 {
     // VSHARD_COUNT is a power of two (1024 = 2^10).
     // Right-shifting by prefix_bits gives the stride, floored at 1.
-    let shifted = (VSHARD_COUNT as u32) >> (prefix_bits as u32);
-    shifted.max(1) as u16
+    let shifted = VSHARD_COUNT >> (prefix_bits as u32);
+    shifted.max(1)
 }
 
 #[cfg(test)]

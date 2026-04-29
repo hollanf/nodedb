@@ -142,9 +142,9 @@ impl UringWriter {
     /// The record is NOT durable until `submit_and_sync()` is called.
     pub fn append(
         &mut self,
-        record_type: u16,
+        record_type: u32,
         tenant_id: u32,
-        vshard_id: u16,
+        vshard_id: u32,
         payload: &[u8],
     ) -> Result<u64> {
         if self.sealed {
@@ -317,10 +317,10 @@ mod tests {
         {
             let mut writer = UringWriter::open_without_direct_io(&path).unwrap();
             writer
-                .append(RecordType::Put as u16, 1, 0, b"hello-uring")
+                .append(RecordType::Put as u32, 1, 0, b"hello-uring")
                 .unwrap();
             writer
-                .append(RecordType::Put as u16, 2, 1, b"world-uring")
+                .append(RecordType::Put as u32, 2, 1, b"world-uring")
                 .unwrap();
             writer.submit_and_sync().unwrap();
         }
@@ -347,7 +347,7 @@ mod tests {
             for i in 0..1000u32 {
                 let payload = format!("record-{i}");
                 writer
-                    .append(RecordType::Put as u16, 1, 0, payload.as_bytes())
+                    .append(RecordType::Put as u32, 1, 0, payload.as_bytes())
                     .unwrap();
             }
             writer.submit_and_sync().unwrap();
@@ -370,10 +370,10 @@ mod tests {
         {
             let mut writer = UringWriter::open_without_direct_io(&path).unwrap();
             writer
-                .append(RecordType::Put as u16, 1, 0, b"first")
+                .append(RecordType::Put as u32, 1, 0, b"first")
                 .unwrap();
             writer
-                .append(RecordType::Put as u16, 1, 0, b"second")
+                .append(RecordType::Put as u32, 1, 0, b"second")
                 .unwrap();
             writer.submit_and_sync().unwrap();
         }
@@ -382,7 +382,7 @@ mod tests {
             let mut writer = UringWriter::open_without_direct_io(&path).unwrap();
             assert_eq!(writer.next_lsn(), 3);
             let lsn = writer
-                .append(RecordType::Put as u16, 1, 0, b"third")
+                .append(RecordType::Put as u32, 1, 0, b"third")
                 .unwrap();
             assert_eq!(lsn, 3);
             writer.submit_and_sync().unwrap();

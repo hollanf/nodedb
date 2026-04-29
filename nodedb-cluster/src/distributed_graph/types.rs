@@ -25,7 +25,7 @@ pub struct SuperstepBarrier {
 )]
 pub struct BoundaryContributions {
     pub iteration: u32,
-    pub source_shard: u16,
+    pub source_shard: u32,
     pub contributions: Vec<(String, f64)>,
 }
 
@@ -34,7 +34,7 @@ pub struct BoundaryContributions {
     Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
 )]
 pub struct SuperstepAck {
-    pub shard_id: u16,
+    pub shard_id: u32,
     pub iteration: u32,
     pub local_delta: f64,
     pub vertex_count: usize,

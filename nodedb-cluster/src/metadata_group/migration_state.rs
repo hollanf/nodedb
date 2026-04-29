@@ -74,7 +74,7 @@ pub enum MigrationPhaseTag {
 pub enum MigrationCheckpointPayload {
     /// Written just before `propose_conf_change(AddLearner)`.
     AddLearner {
-        vshard_id: u16,
+        vshard_id: u32,
         source_node: u64,
         target_node: u64,
         source_group: u64,
@@ -83,7 +83,7 @@ pub enum MigrationCheckpointPayload {
     },
     /// Written just after `AddLearner` conf-change commits.
     CatchUp {
-        vshard_id: u16,
+        vshard_id: u32,
         /// Log index at which `AddLearner` committed.  The resuming
         /// coordinator uses this to skip re-proposing `AddLearner` if
         /// the learner is already present in the group.
@@ -91,13 +91,13 @@ pub enum MigrationCheckpointPayload {
     },
     /// Written just after `PromoteLearner` conf-change commits.
     PromoteLearner {
-        vshard_id: u16,
+        vshard_id: u32,
         target_node: u64,
         source_group: u64,
     },
     /// Written just before `propose_and_wait(LeadershipTransfer)`.
     LeadershipTransfer {
-        vshard_id: u16,
+        vshard_id: u32,
         /// Whether `PromoteLearner` has already committed.
         target_is_voter: bool,
         new_leader_node_id: u64,
@@ -106,13 +106,13 @@ pub enum MigrationCheckpointPayload {
     /// Written after `propose_and_wait(LeadershipTransfer)` returns
     /// success (cut-over committed).
     Cutover {
-        vshard_id: u16,
+        vshard_id: u32,
         new_leader_node_id: u64,
         source_group: u64,
     },
     /// Written after the ghost stub is installed and `save_ghosts` succeeds.
     Complete {
-        vshard_id: u16,
+        vshard_id: u32,
         actual_pause_us: u64,
         ghost_stub_installed: bool,
     },

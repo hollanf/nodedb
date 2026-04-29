@@ -23,7 +23,7 @@ fn append_record(
     payload: &[u8],
 ) -> u64 {
     writer
-        .append(record_type as u16, tenant_id, 0, payload)
+        .append(record_type as u32, tenant_id, 0, payload)
         .unwrap()
 }
 
@@ -48,7 +48,7 @@ fn tombstone_record_roundtrips_through_wal() {
     assert_eq!(records.len(), 1);
     assert_eq!(
         records[0].logical_record_type(),
-        RecordType::CollectionTombstoned as u16
+        RecordType::CollectionTombstoned as u32
     );
     let decoded = CollectionTombstonePayload::from_bytes(&records[0].payload).unwrap();
     assert_eq!(decoded.collection, "users");

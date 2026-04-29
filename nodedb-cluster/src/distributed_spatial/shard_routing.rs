@@ -14,7 +14,7 @@ use std::collections::HashMap;
 /// Per-shard spatial extent for a collection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardSpatialExtent {
-    pub shard_id: u16,
+    pub shard_id: u32,
     /// Bounding box covering all geometries in this shard for this collection.
     /// None if the shard has no spatial data for this collection.
     pub extent: Option<BoundingBox>,
@@ -28,7 +28,7 @@ pub struct ShardSpatialExtent {
 /// coordinator to avoid fanning out to shards that can't possibly match.
 pub struct SpatialRoutingTable {
     /// collection_name → shard_id → extent.
-    extents: HashMap<String, HashMap<u16, ShardSpatialExtent>>,
+    extents: HashMap<String, HashMap<u32, ShardSpatialExtent>>,
 }
 
 impl SpatialRoutingTable {
@@ -42,7 +42,7 @@ impl SpatialRoutingTable {
     pub fn update_extent(
         &mut self,
         collection: &str,
-        shard_id: u16,
+        shard_id: u32,
         extent: Option<BoundingBox>,
         entry_count: usize,
     ) {
@@ -66,8 +66,8 @@ impl SpatialRoutingTable {
         &self,
         collection: &str,
         query_bbox: &BoundingBox,
-        all_shard_ids: &[u16],
-    ) -> Vec<u16> {
+        all_shard_ids: &[u32],
+    ) -> Vec<u32> {
         let Some(shard_extents) = self.extents.get(collection) else {
             // No extent data at all — fan out to all shards (conservative).
             return all_shard_ids.to_vec();

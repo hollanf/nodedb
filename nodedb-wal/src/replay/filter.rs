@@ -132,7 +132,7 @@ mod tests {
             .to_bytes()
             .unwrap();
         WalRecord::new(
-            RecordType::CollectionTombstoned as u16,
+            RecordType::CollectionTombstoned as u32,
             record_lsn,
             tenant,
             0,
@@ -183,7 +183,7 @@ mod tests {
         let records = vec![
             tombstone_record(1, "users", 100, 10),
             WalRecord::new(
-                RecordType::Put as u16,
+                RecordType::Put as u32,
                 11,
                 1,
                 0,
@@ -192,7 +192,7 @@ mod tests {
                 None,
             )
             .unwrap(),
-            WalRecord::new(RecordType::Noop as u16, 12, 1, 0, vec![], None, None).unwrap(),
+            WalRecord::new(RecordType::Noop as u32, 12, 1, 0, vec![], None, None).unwrap(),
         ];
         let set = extract_tombstones(&records);
         assert_eq!(set.len(), 1);
@@ -202,7 +202,7 @@ mod tests {
     fn extract_tolerates_corrupt_payload() {
         // Build a tombstone-typed record whose payload is too short to decode.
         let bogus = WalRecord::new(
-            RecordType::CollectionTombstoned as u16,
+            RecordType::CollectionTombstoned as u32,
             5,
             1,
             0,

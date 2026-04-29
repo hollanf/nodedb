@@ -25,7 +25,7 @@ type GroupKey = (u32, String, String);
 pub struct OffsetStore {
     db: Database,
     /// In-memory cache: GroupKey → { partition_id → committed_lsn }.
-    cache: std::sync::RwLock<HashMap<GroupKey, HashMap<u16, u64>>>,
+    cache: std::sync::RwLock<HashMap<GroupKey, HashMap<u32, u64>>>,
 }
 
 impl OffsetStore {
@@ -60,7 +60,7 @@ impl OffsetStore {
         }
 
         // Load all offsets into cache.
-        let mut cache: HashMap<(u32, String, String), HashMap<u16, u64>> = HashMap::new();
+        let mut cache: HashMap<(u32, String, String), HashMap<u32, u64>> = HashMap::new();
         {
             let txn = db.begin_read().map_err(|e| crate::Error::Storage {
                 engine: "event_plane".into(),
@@ -124,7 +124,7 @@ impl OffsetStore {
         tenant_id: u32,
         stream: &str,
         group: &str,
-        partition_id: u16,
+        partition_id: u32,
         lsn: u64,
     ) -> crate::Result<()> {
         {
@@ -182,7 +182,7 @@ impl OffsetStore {
 
     /// Get the committed offset for a specific partition.
     /// Returns 0 if no offset has been committed.
-    pub fn get_offset(&self, tenant_id: u32, stream: &str, group: &str, partition_id: u16) -> u64 {
+    pub fn get_offset(&self, tenant_id: u32, stream: &str, group: &str, partition_id: u32) -> u64 {
         let cache = self.cache.read().unwrap_or_else(|p| p.into_inner());
         cache
             .get(&(tenant_id, stream.to_string(), group.to_string()))
@@ -215,7 +215,7 @@ impl OffsetStore {
     /// Delete all offsets for a group (on DROP CONSUMER GROUP).
     pub fn delete_group(&self, tenant_id: u32, stream: &str, group: &str) -> crate::Result<()> {
         // Remove from cache first to get partition IDs.
-        let partitions: Vec<u16> = {
+        let partitions: Vec<u32> = {
             let mut cache = self.cache.write().unwrap_or_else(|p| p.into_inner());
             let key = (tenant_id, stream.to_string(), group.to_string());
             cache
@@ -250,11 +250,11 @@ impl OffsetStore {
     }
 }
 
-fn offset_key(tenant_id: u32, stream: &str, group: &str, partition_id: u16) -> String {
+fn offset_key(tenant_id: u32, stream: &str, group: &str, partition_id: u32) -> String {
     format!("{tenant_id}:{stream}:{group}:{partition_id}")
 }
 
-fn parse_offset_key(key: &str) -> Option<(u32, String, String, u16)> {
+fn parse_offset_key(key: &str) -> Option<(u32, String, String, u32)> {
     let parts: Vec<&str> = key.splitn(4, ':').collect();
     if parts.len() == 4 {
         let tenant = parts[0].parse().ok()?;

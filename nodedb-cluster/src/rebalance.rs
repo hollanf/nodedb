@@ -21,7 +21,7 @@ use crate::topology::ClusterTopology;
 /// A single planned migration move.
 #[derive(Debug, Clone)]
 pub struct PlannedMove {
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     pub source_node: u64,
     pub target_node: u64,
     pub source_group: u64,
@@ -63,7 +63,7 @@ pub fn compute_plan(routing: &RoutingTable, topology: &ClusterTopology) -> Resul
 
     // Count vShards per node (via group leadership).
     // A node "owns" a vShard if it's the leader of the vShard's group.
-    let mut node_vshards: HashMap<u64, Vec<u16>> =
+    let mut node_vshards: HashMap<u64, Vec<u32>> =
         active_nodes.iter().map(|&id| (id, Vec::new())).collect();
 
     for vshard_id in 0..crate::routing::VSHARD_COUNT {
@@ -99,7 +99,7 @@ pub fn compute_plan(routing: &RoutingTable, topology: &ClusterTopology) -> Resul
     }
 
     // Build donor and receiver lists.
-    let mut donors: Vec<(u64, Vec<u16>)> = Vec::new(); // (node, vshards to give away)
+    let mut donors: Vec<(u64, Vec<u32>)> = Vec::new(); // (node, vshards to give away)
     let mut receivers: Vec<(u64, usize)> = Vec::new(); // (node, vshards needed)
 
     for &node_id in &sorted_nodes {
@@ -111,7 +111,7 @@ pub fn compute_plan(routing: &RoutingTable, topology: &ClusterTopology) -> Resul
             let excess = current - target;
             let vshards = node_vshards.get(&node_id).cloned().unwrap_or_default();
             // Donate from the tail (arbitrary but deterministic).
-            let to_donate: Vec<u16> = vshards.into_iter().rev().take(excess).collect();
+            let to_donate: Vec<u32> = vshards.into_iter().rev().take(excess).collect();
             donors.push((node_id, to_donate));
         } else if current < target {
             let deficit = target - current;

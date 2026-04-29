@@ -24,7 +24,7 @@ pub struct CrossShardTransaction {
     pub tenant_id: u32,
     /// Per-shard write sets: `(vshard_id, serialized_writes)`.
     /// Each entry is the MessagePack-encoded writes for that shard.
-    pub shard_writes: Vec<(u16, Vec<u8>)>,
+    pub shard_writes: Vec<(u32, Vec<u8>)>,
     /// Coordinator node ID (the node that initiated the transaction).
     pub coordinator_node: u64,
     /// Coordinator's Raft log index where this transaction was proposed.
@@ -41,7 +41,7 @@ pub struct ForwardEntry {
     /// The writes to apply on this shard (serialized PhysicalPlan operations).
     pub writes: Vec<u8>,
     /// Source shard that originated the transaction.
-    pub source_vshard: u16,
+    pub source_vshard: u32,
     /// Coordinator's log index for ordering.
     pub coordinator_log_index: u64,
 }
@@ -63,7 +63,7 @@ pub struct GsiForwardEntry {
     pub tenant_id: u32,
     pub collection: String,
     pub document_id: String,
-    pub source_vshard: u16,
+    pub source_vshard: u32,
     /// Whether to add or remove the GSI entry.
     pub action: GsiAction,
 }
@@ -90,9 +90,9 @@ pub enum GsiAction {
 )]
 pub struct EdgeValidationRequest {
     pub src_id: String,
-    pub src_vshard: u16,
+    pub src_vshard: u32,
     pub dst_id: String,
-    pub dst_vshard: u16,
+    pub dst_vshard: u32,
     pub label: String,
 }
 
@@ -126,9 +126,9 @@ pub struct TransactionCoordinator {
 struct TxnState {
     txn: CrossShardTransaction,
     /// Shards that have acknowledged applying the forwarded writes.
-    acks_received: std::collections::HashSet<u16>,
+    acks_received: std::collections::HashSet<u32>,
     /// Shards that need to acknowledge.
-    acks_needed: std::collections::HashSet<u16>,
+    acks_needed: std::collections::HashSet<u32>,
     /// Whether the transaction is fully committed (all shards acked).
     committed: bool,
 }
@@ -149,13 +149,13 @@ impl TransactionCoordinator {
     pub fn begin(
         &mut self,
         tenant_id: u32,
-        shard_writes: Vec<(u16, Vec<u8>)>,
+        shard_writes: Vec<(u32, Vec<u8>)>,
         coordinator_log_index: u64,
     ) -> CrossShardTransaction {
         let txn_id = self.next_txn_id;
         self.next_txn_id += 1;
 
-        let acks_needed: std::collections::HashSet<u16> =
+        let acks_needed: std::collections::HashSet<u32> =
             shard_writes.iter().map(|(s, _)| *s).collect();
 
         let txn = CrossShardTransaction {
@@ -183,7 +183,7 @@ impl TransactionCoordinator {
     /// Record an acknowledgment from a shard that applied the forwarded writes.
     ///
     /// Returns `true` if all shards have acked (transaction fully committed).
-    pub fn ack(&mut self, txn_id: u64, vshard_id: u16) -> bool {
+    pub fn ack(&mut self, txn_id: u64, vshard_id: u32) -> bool {
         if let Some(state) = self.pending.get_mut(&txn_id) {
             state.acks_received.insert(vshard_id);
             if state.acks_received == state.acks_needed {
@@ -229,7 +229,7 @@ impl TransactionCoordinator {
     ///
     /// Called after the coordinator's Raft group commits the transaction.
     /// Each entry is sent to the target shard's Raft group for replication.
-    pub fn generate_forwards(txn: &CrossShardTransaction) -> Vec<(u16, ForwardEntry)> {
+    pub fn generate_forwards(txn: &CrossShardTransaction) -> Vec<(u32, ForwardEntry)> {
         txn.shard_writes
             .iter()
             .map(|(vshard, writes)| {

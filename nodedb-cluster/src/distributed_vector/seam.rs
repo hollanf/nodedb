@@ -86,7 +86,7 @@ pub enum VectorSeamError {
     #[error("direct shard-to-shard messaging is not supported by this implementation")]
     DirectMessagingUnsupported,
     #[error("build-time exchange failed for shard {peer_shard}: {detail}")]
-    BuildExchangeFailed { peer_shard: u16, detail: String },
+    BuildExchangeFailed { peer_shard: u32, detail: String },
     #[error("cluster transport error during seam call: {0}")]
     Transport(#[from] ClusterError),
 }
@@ -115,7 +115,7 @@ pub struct ShardRef {
     /// The peer node ID.
     pub node_id: u64,
     /// The vShard ID on that node.
-    pub vshard_id: u16,
+    pub vshard_id: u32,
 }
 
 /// Subset of shards selected for a query phase.
@@ -128,7 +128,7 @@ pub enum ShardSubset {
     /// Contact all shards in the collection (default scatter-gather).
     All,
     /// Contact only this subset of shard IDs.
-    Subset(Vec<u16>),
+    Subset(Vec<u32>),
 }
 
 impl ShardSubset {
@@ -136,7 +136,7 @@ impl ShardSubset {
     ///
     /// Returns the shards to actually contact: either the full list (for
     /// `All`) or the stored subset filtered to those present in `all_shards`.
-    pub fn resolve<'a>(&'a self, all_shards: &'a [u16]) -> &'a [u16] {
+    pub fn resolve<'a>(&'a self, all_shards: &'a [u32]) -> &'a [u32] {
         match self {
             ShardSubset::All => all_shards,
             ShardSubset::Subset(ids) => ids.as_slice(),
@@ -165,7 +165,7 @@ pub trait VectorShardSeam: Send + Sync + 'static {
     /// previously obtained shard descriptors and return a pruned
     /// `ShardSubset::Subset`. The coordinator calls this before building
     /// scatter envelopes.
-    fn select_shards(&self, _query_vector: &[f32], _all_shards: &[u16]) -> ShardSubset {
+    fn select_shards(&self, _query_vector: &[f32], _all_shards: &[u32]) -> ShardSubset {
         ShardSubset::All
     }
 
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn default_select_shards_returns_all() {
         let seam = DefaultSeam;
-        let all = [0u16, 1, 2, 3];
+        let all = [0u32, 1, 2, 3];
         let result = seam.select_shards(&[0.1, 0.2], &all);
         assert!(matches!(result, ShardSubset::All));
         assert_eq!(result.resolve(&all), &all);
@@ -298,16 +298,16 @@ mod tests {
 
     #[test]
     fn shard_subset_resolve_subset() {
-        let all = [0u16, 1, 2, 3, 4];
+        let all = [0u32, 1, 2, 3, 4];
         let subset = ShardSubset::Subset(vec![1, 3]);
-        assert_eq!(subset.resolve(&all), &[1u16, 3]);
+        assert_eq!(subset.resolve(&all), &[1u32, 3]);
     }
 
     #[test]
     fn shard_subset_resolve_all() {
-        let all = [0u16, 1, 2];
+        let all = [0u32, 1, 2];
         let subset = ShardSubset::All;
-        assert_eq!(subset.resolve(&all), &[0u16, 1, 2]);
+        assert_eq!(subset.resolve(&all), &[0u32, 1, 2]);
     }
 
     #[test]

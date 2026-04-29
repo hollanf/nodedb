@@ -81,7 +81,7 @@ impl CdcRouter {
         // copies of the payload + diffs.
         let cdc_event = Arc::new(CdcEvent {
             sequence: event.sequence,
-            partition: event.vshard_id.as_u16(),
+            partition: event.vshard_id.as_u32(),
             collection: event.collection.to_string(),
             op: op_str.clone(),
             row_id: event.row_id.as_str().to_string(),
@@ -104,7 +104,7 @@ impl CdcRouter {
                 continue;
             }
 
-            let partition_wm = watermark_tracker.partition_watermark(event.vshard_id.as_u16());
+            let partition_wm = watermark_tracker.partition_watermark(event.vshard_id.as_u32());
             let is_late = event.lsn.as_u64() <= partition_wm && partition_wm > 0;
 
             if is_late {
@@ -131,7 +131,7 @@ impl CdcRouter {
                     .get_or_insert_with(|| {
                         Arc::new(CdcEvent {
                             sequence: event.sequence,
-                            partition: event.vshard_id.as_u16(),
+                            partition: event.vshard_id.as_u32(),
                             collection: event.collection.to_string(),
                             op: "RECOMPUTE".to_string(),
                             row_id: event.row_id.as_str().to_string(),

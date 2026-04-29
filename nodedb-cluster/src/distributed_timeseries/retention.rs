@@ -28,7 +28,7 @@ pub struct RetentionCommand {
 /// Result from a single shard's retention execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardRetentionResult {
-    pub shard_id: u16,
+    pub shard_id: u32,
     pub partitions_dropped: usize,
     pub bytes_reclaimed: u64,
     pub success: bool,

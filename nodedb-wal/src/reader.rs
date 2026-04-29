@@ -225,13 +225,13 @@ mod tests {
         {
             let mut writer = WalWriter::open_without_direct_io(&path).unwrap();
             writer
-                .append(RecordType::Put as u16, 1, 0, b"first")
+                .append(RecordType::Put as u32, 1, 0, b"first")
                 .unwrap();
             writer
-                .append(RecordType::Put as u16, 2, 1, b"second")
+                .append(RecordType::Put as u32, 2, 1, b"second")
                 .unwrap();
             writer
-                .append(RecordType::Delete as u16, 1, 0, b"third")
+                .append(RecordType::Delete as u32, 1, 0, b"third")
                 .unwrap();
             writer.sync().unwrap();
         }
@@ -251,7 +251,7 @@ mod tests {
         assert_eq!(records[1].payload, b"second");
 
         assert_eq!(records[2].header.lsn, 3);
-        assert_eq!(records[2].header.record_type, RecordType::Delete as u16);
+        assert_eq!(records[2].header.record_type, RecordType::Delete as u32);
         assert_eq!(records[2].payload, b"third");
     }
 
@@ -280,7 +280,7 @@ mod tests {
         {
             let mut writer = WalWriter::open_without_direct_io(&path).unwrap();
             writer
-                .append(RecordType::Put as u16, 1, 0, b"good-record")
+                .append(RecordType::Put as u32, 1, 0, b"good-record")
                 .unwrap();
             writer.sync().unwrap();
         }
@@ -311,7 +311,7 @@ mod tests {
         // exhaust the stack and panic. After the fix converts the skip to a
         // loop, all 50 000 are skipped without overflow and the one valid
         // record at the end is returned.
-        const UNKNOWN_OPTIONAL: u16 = 99; // no 0x8000 bit → optional, not in enum
+        const UNKNOWN_OPTIONAL: u32 = 99; // no 0x8000 bit → optional, not in enum
         const SKIP_COUNT: usize = 50_000;
 
         let dir = tempfile::tempdir().unwrap();
@@ -323,7 +323,7 @@ mod tests {
                 writer.append(UNKNOWN_OPTIONAL, 1, 0, b"skip-me").unwrap();
             }
             writer
-                .append(RecordType::Put as u16, 1, 0, b"keep-me")
+                .append(RecordType::Put as u32, 1, 0, b"keep-me")
                 .unwrap();
             writer.sync().unwrap();
         }

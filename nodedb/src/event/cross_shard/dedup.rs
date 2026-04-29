@@ -21,7 +21,7 @@ const HWM_TABLE: TableDefinition<u64, u64> = TableDefinition::new("cross_shard_h
 /// read by dedup checks on incoming events.
 pub struct HwmStore {
     /// In-memory cache: source_vshard → highest processed LSN.
-    marks: RwLock<HashMap<u16, u64>>,
+    marks: RwLock<HashMap<u32, u64>>,
     /// Durable storage for crash recovery.
     db: Database,
 }
@@ -69,7 +69,7 @@ impl HwmStore {
 
     /// Check if an event is a duplicate (source_lsn <= hwm).
     /// Returns `true` if the event should be dropped.
-    pub fn is_duplicate(&self, source_vshard: u16, source_lsn: u64) -> bool {
+    pub fn is_duplicate(&self, source_vshard: u32, source_lsn: u64) -> bool {
         let marks = self.marks.read().unwrap_or_else(|p| p.into_inner());
         marks
             .get(&source_vshard)
@@ -78,7 +78,7 @@ impl HwmStore {
 
     /// Advance the HWM for a source vShard after successful processing.
     /// Only advances forward (monotonic).
-    pub fn advance(&self, source_vshard: u16, source_lsn: u64) {
+    pub fn advance(&self, source_vshard: u32, source_lsn: u64) {
         let mut marks = self.marks.write().unwrap_or_else(|p| p.into_inner());
         let current = marks.entry(source_vshard).or_insert(0);
         if source_lsn > *current {
@@ -96,13 +96,13 @@ impl HwmStore {
     }
 
     /// Get the current HWM for a source vShard.
-    pub fn get(&self, source_vshard: u16) -> u64 {
+    pub fn get(&self, source_vshard: u32) -> u64 {
         let marks = self.marks.read().unwrap_or_else(|p| p.into_inner());
         marks.get(&source_vshard).copied().unwrap_or(0)
     }
 
     /// Persist a single HWM to redb.
-    fn persist(&self, source_vshard: u16, lsn: u64) -> crate::Result<()> {
+    fn persist(&self, source_vshard: u32, lsn: u64) -> crate::Result<()> {
         let txn = self.db.begin_write().map_err(|e| crate::Error::Storage {
             engine: "event_plane".into(),
             detail: format!("begin_write: {e}"),
@@ -129,7 +129,7 @@ impl HwmStore {
     }
 
     /// Load all HWMs from redb on startup.
-    fn load_marks(db: &Database) -> crate::Result<HashMap<u16, u64>> {
+    fn load_marks(db: &Database) -> crate::Result<HashMap<u32, u64>> {
         let txn = db.begin_read().map_err(|e| crate::Error::Storage {
             engine: "event_plane".into(),
             detail: format!("begin_read: {e}"),
@@ -151,7 +151,7 @@ impl HwmStore {
                 engine: "event_plane".into(),
                 detail: format!("entry: {e}"),
             })?;
-            let vshard = guard.0.value() as u16;
+            let vshard = guard.0.value() as u32;
             let lsn = guard.1.value();
             marks.insert(vshard, lsn);
         }

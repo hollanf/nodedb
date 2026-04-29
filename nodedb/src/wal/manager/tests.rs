@@ -46,7 +46,7 @@ fn crdt_delta_roundtrip() {
 
     let records = wal.replay().unwrap();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].header.record_type, RecordType::CrdtDelta as u16);
+    assert_eq!(records[0].header.record_type, RecordType::CrdtDelta as u32);
     assert_eq!(records[0].header.tenant_id, 5);
     assert_eq!(records[0].header.vshard_id, 42);
     assert_eq!(records[0].payload, b"loro-delta-bytes");

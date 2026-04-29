@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::error::{ClusterError, Result};
 
 /// Number of virtual shards.
-pub const VSHARD_COUNT: u16 = 1024;
+pub const VSHARD_COUNT: u32 = 1024;
 
 /// Maps vShards to Raft groups and Raft groups to nodes.
 ///
@@ -113,7 +113,7 @@ impl RoutingTable {
     }
 
     /// Look up which Raft group owns a vShard.
-    pub fn group_for_vshard(&self, vshard_id: u16) -> Result<u64> {
+    pub fn group_for_vshard(&self, vshard_id: u32) -> Result<u64> {
         self.vshard_to_group
             .get(vshard_id as usize)
             .copied()
@@ -121,7 +121,7 @@ impl RoutingTable {
     }
 
     /// Look up the leader node for a vShard.
-    pub fn leader_for_vshard(&self, vshard_id: u16) -> Result<u64> {
+    pub fn leader_for_vshard(&self, vshard_id: u32) -> Result<u64> {
         let group_id = self.group_for_vshard(vshard_id)?;
         let info = self
             .group_members
@@ -144,19 +144,19 @@ impl RoutingTable {
 
     /// Atomically reassign a vShard to a different Raft group.
     /// Used during Phase 3 (atomic cut-over) of shard migration.
-    pub fn reassign_vshard(&mut self, vshard_id: u16, new_group_id: u64) {
+    pub fn reassign_vshard(&mut self, vshard_id: u32, new_group_id: u64) {
         if (vshard_id as usize) < self.vshard_to_group.len() {
             self.vshard_to_group[vshard_id as usize] = new_group_id;
         }
     }
 
     /// All vShards assigned to a given group.
-    pub fn vshards_for_group(&self, group_id: u64) -> Vec<u16> {
+    pub fn vshards_for_group(&self, group_id: u64) -> Vec<u32> {
         self.vshard_to_group
             .iter()
             .enumerate()
             .filter(|(_, gid)| **gid == group_id)
-            .map(|(i, _)| i as u16)
+            .map(|(i, _)| i as u32)
             .collect()
     }
 
@@ -257,11 +257,11 @@ impl RoutingTable {
 ///
 /// Must match `VShardId::from_collection()` in the nodedb types module
 /// exactly — uses u16 accumulator with multiplier 31.
-pub fn vshard_for_collection(collection: &str) -> u16 {
+pub fn vshard_for_collection(collection: &str) -> u32 {
     let hash = collection
         .as_bytes()
         .iter()
-        .fold(0u16, |h, &b| h.wrapping_mul(31).wrapping_add(b as u16));
+        .fold(0u32, |h, &b| h.wrapping_mul(31).wrapping_add(b as u32));
     hash % VSHARD_COUNT
 }
 
@@ -277,6 +277,17 @@ pub fn fnv1a_hash(key: &str) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+/// Hash `key` using the algorithm recorded in the cluster's [`PlacementHashId`].
+///
+/// Callers load the `PlacementHashId` from `ClusterSettings` once at
+/// startup and pass it through every shard-split / shuffle operation.
+/// The underlying implementations live in
+/// [`crate::catalog::placement_hash`]; this function is the routing-layer
+/// entry point so callers do not need to import the catalog module directly.
+pub fn partition_hash(placement_hash_id: crate::catalog::PlacementHashId, key: &str) -> u64 {
+    crate::catalog::placement_hash(placement_hash_id, key.as_bytes())
 }
 
 #[cfg(test)]
@@ -358,5 +369,28 @@ mod tests {
         let rt = RoutingTable::uniform(2, &[1, 2], 2);
         // All 1024 are mapped, so this shouldn't fail.
         assert!(rt.group_for_vshard(1023).is_ok());
+    }
+
+    #[test]
+    fn partition_hash_fnv1a_vs_xxhash3_differ() {
+        use crate::catalog::PlacementHashId;
+        let key = "some-partition-key";
+        let fnv = partition_hash(PlacementHashId::Fnv1a, key);
+        let xx3 = partition_hash(PlacementHashId::XxHash3, key);
+        assert_ne!(fnv, xx3, "FNV-1a and XxHash3 must produce distinct values");
+    }
+
+    #[test]
+    fn partition_hash_deterministic() {
+        use crate::catalog::PlacementHashId;
+        let key = "some-partition-key";
+        assert_eq!(
+            partition_hash(PlacementHashId::Fnv1a, key),
+            partition_hash(PlacementHashId::Fnv1a, key)
+        );
+        assert_eq!(
+            partition_hash(PlacementHashId::XxHash3, key),
+            partition_hash(PlacementHashId::XxHash3, key)
+        );
     }
 }

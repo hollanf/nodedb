@@ -119,7 +119,7 @@ async fn delivery_loop(
                 if delivered > 0 {
                     // Find the max LSN per partition among delivered events.
                     let delivered_events = &consume_result.events[..delivered as usize];
-                    let mut partition_max: std::collections::HashMap<u16, u64> =
+                    let mut partition_max: std::collections::HashMap<u32, u64> =
                         std::collections::HashMap::new();
                     for e in delivered_events {
                         let entry = partition_max.entry(e.partition).or_insert(0);

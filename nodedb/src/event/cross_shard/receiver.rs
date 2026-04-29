@@ -161,7 +161,7 @@ impl CrossShardReceiver {
     }
 
     /// Build a simple ACK response for fire-and-forget messages.
-    fn build_ack_response(&self, target_node: u64, vshard_id: u16) -> Vec<u8> {
+    fn build_ack_response(&self, target_node: u64, vshard_id: u32) -> Vec<u8> {
         let env = VShardEnvelope {
             version: WIRE_VERSION,
             msg_type: VShardMessageType::NotifyBroadcastAck,
@@ -196,7 +196,7 @@ impl CrossShardReceiver {
     fn build_response(
         &self,
         target_node: u64,
-        vshard_id: u16,
+        vshard_id: u32,
         response: &CrossShardWriteResponse,
     ) -> Vec<u8> {
         let payload = zerompk::to_msgpack_vec(response).unwrap_or_default();
@@ -215,7 +215,7 @@ impl CrossShardReceiver {
     fn error_response(
         &self,
         target_node: u64,
-        vshard_id: u16,
+        vshard_id: u32,
         source_lsn: u64,
         error: &str,
     ) -> Vec<u8> {

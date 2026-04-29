@@ -228,7 +228,7 @@ impl Gateway {
             let initial_decision = route.decision.clone();
             let vshard_id_for_retry = crate::types::VShardId::new(route.vshard_id);
             let plan_for_retry = route.plan.clone();
-            let vshard_id_u16 = route.vshard_id;
+            let vshard_id_u32 = route.vshard_id;
 
             let routing_ref = self.shared.cluster_routing.as_deref();
 
@@ -268,7 +268,7 @@ impl Gateway {
                                 None
                             };
                         resolve_decision(
-                            vshard_id_u16,
+                            vshard_id_u32,
                             shared.node_id,
                             routing_guard.as_deref(),
                             live_lookup,
@@ -277,7 +277,7 @@ impl Gateway {
                     let route = TaskRoute {
                         plan,
                         decision,
-                        vshard_id: vshard_id_u16,
+                        vshard_id: vshard_id_u32,
                     };
                     dispatch_route(
                         route,
@@ -293,7 +293,7 @@ impl Gateway {
             .await
             .map_err(|e| {
                 debug!(
-                    vshard_id = vshard_id_for_retry.as_u16(),
+                    vshard_id = vshard_id_for_retry.as_u32(),
                     decision = ?initial_decision,
                     error = %e,
                     "gateway: dispatch failed"

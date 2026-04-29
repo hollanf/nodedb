@@ -35,7 +35,7 @@ fn write_n_records(wal_dir: &std::path::Path, records: usize) -> Vec<u64> {
     let mut lsns = Vec::new();
     for i in 0..records {
         let payload = vec![b'a' + (i as u8 % 26); 256];
-        lsns.push(wal.append(RecordType::Put as u16, 1, 0, &payload).unwrap());
+        lsns.push(wal.append(RecordType::Put as u32, 1, 0, &payload).unwrap());
         wal.sync().unwrap();
     }
     lsns

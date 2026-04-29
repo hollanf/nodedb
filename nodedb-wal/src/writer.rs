@@ -264,9 +264,9 @@ impl WalWriter {
     /// flush to disk and make the write durable.
     pub fn append(
         &mut self,
-        record_type: u16,
+        record_type: u32,
         tenant_id: u32,
-        vshard_id: u16,
+        vshard_id: u32,
         payload: &[u8],
     ) -> Result<u64> {
         if self.sealed {
@@ -430,7 +430,7 @@ mod tests {
 
         let mut writer = WalWriter::open_without_direct_io(&path).unwrap();
         let lsn = writer
-            .append(RecordType::Put as u16, 1, 0, b"hello")
+            .append(RecordType::Put as u32, 1, 0, b"hello")
             .unwrap();
         assert_eq!(lsn, 1);
 
@@ -446,13 +446,13 @@ mod tests {
         let mut writer = WalWriter::open_without_direct_io(&path).unwrap();
 
         let lsn1 = writer
-            .append(RecordType::Put as u16, 1, 0, b"first")
+            .append(RecordType::Put as u32, 1, 0, b"first")
             .unwrap();
         let lsn2 = writer
-            .append(RecordType::Put as u16, 1, 0, b"second")
+            .append(RecordType::Put as u32, 1, 0, b"second")
             .unwrap();
         let lsn3 = writer
-            .append(RecordType::Put as u16, 1, 0, b"third")
+            .append(RecordType::Put as u32, 1, 0, b"third")
             .unwrap();
 
         assert_eq!(lsn1, 1);
@@ -469,7 +469,7 @@ mod tests {
         writer.seal().unwrap();
 
         assert!(matches!(
-            writer.append(RecordType::Put as u16, 1, 0, b"rejected"),
+            writer.append(RecordType::Put as u32, 1, 0, b"rejected"),
             Err(WalError::Sealed)
         ));
     }

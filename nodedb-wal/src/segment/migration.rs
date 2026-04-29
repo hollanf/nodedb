@@ -75,10 +75,10 @@ mod tests {
             let mut writer =
                 crate::writer::WalWriter::open_without_direct_io(&legacy_path).unwrap();
             writer
-                .append(crate::record::RecordType::Put as u16, 1, 0, b"hello")
+                .append(crate::record::RecordType::Put as u32, 1, 0, b"hello")
                 .unwrap();
             writer
-                .append(crate::record::RecordType::Put as u16, 1, 0, b"world")
+                .append(crate::record::RecordType::Put as u32, 1, 0, b"world")
                 .unwrap();
             writer.sync().unwrap();
         }

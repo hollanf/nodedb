@@ -71,7 +71,7 @@ pub async fn dispatch_route(
             // re-resolves the routing table on the next attempt — never
             // silently serve from a possibly-stale local replica.
             Err(Error::NotLeader {
-                vshard_id: VShardId::new(vshard_id as u16),
+                vshard_id: VShardId::new(vshard_id as u32),
                 leader_node: 0,
                 leader_addr: String::new(),
             })
@@ -159,7 +159,7 @@ async fn dispatch_remote(args: RemoteDispatchArgs<'_>) -> Result<Vec<Vec<u8>>, E
         // locally (leader == 0 → local) and let the local Raft state
         // resolve to the actual leader.
         Error::NotLeader {
-            vshard_id: VShardId::new(vshard_id.min(u16::MAX as u64) as u16),
+            vshard_id: VShardId::new((vshard_id % VShardId::COUNT as u64) as u32),
             leader_node: 0,
             leader_addr: format!("node-{node_id} (transport error: {e})"),
         }
@@ -191,7 +191,7 @@ fn map_typed_cluster_error(err: TypedClusterError, vshard_id: u64) -> Error {
             leader_addr,
             ..
         } => Error::NotLeader {
-            vshard_id: VShardId::new(vshard_id.min(u16::MAX as u64) as u16),
+            vshard_id: VShardId::new((vshard_id % VShardId::COUNT as u64) as u32),
             leader_node: leader_node_id.unwrap_or(0),
             leader_addr: leader_addr.unwrap_or_default(),
         },

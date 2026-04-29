@@ -28,9 +28,9 @@ use crate::routing::RoutingTable;
 #[derive(Debug, Clone)]
 pub struct SplitPlan {
     /// Source vShard being split.
-    pub source_vshard: u16,
+    pub source_vshard: u32,
     /// New vShard ID for the second half.
-    pub new_vshard: u16,
+    pub new_vshard: u32,
     /// Target node for the new shard.
     pub target_node: u64,
     /// Document IDs that move to the new shard.
@@ -64,8 +64,8 @@ pub enum SplitStrategy {
 /// shards via scatter-gather, collects top-k from each, and merges by
 /// distance on the Control Plane.
 pub fn plan_vector_split(
-    source_vshard: u16,
-    new_vshard: u16,
+    source_vshard: u32,
+    new_vshard: u32,
     target_node: u64,
     document_ids: &[String],
 ) -> SplitPlan {
@@ -108,8 +108,8 @@ pub fn plan_vector_split(
 /// This is a greedy heuristic — not optimal like METIS, but O(V+E) and
 /// practical for online splitting without blocking queries.
 pub fn plan_graph_split(
-    source_vshard: u16,
-    new_vshard: u16,
+    source_vshard: u32,
+    new_vshard: u32,
     target_node: u64,
     node_ids: &[String],
     edges: &[(String, String)],
@@ -209,12 +209,12 @@ pub fn plan_graph_split(
 /// Returns additional vShard IDs to include in the scatter batch for
 /// reduced round-trip latency.
 pub fn speculative_prefetch_shards(
-    query_vshards: &[u16],
+    query_vshards: &[u32],
     _routing: &RoutingTable,
     tenant_collections: &[(u32, String)],
-) -> Vec<u16> {
-    let mut prefetch: HashSet<u16> = HashSet::new();
-    let queried: HashSet<u16> = query_vshards.iter().copied().collect();
+) -> Vec<u32> {
+    let mut prefetch: HashSet<u32> = HashSet::new();
+    let queried: HashSet<u32> = query_vshards.iter().copied().collect();
 
     // For each tenant+collection, find all vShards that might hold
     // data for the same collection (co-located shards).
@@ -224,7 +224,7 @@ pub fn speculative_prefetch_shards(
 
         // Adjacent vShards (±1, ±2) are likely to hold related data
         // due to hash distribution locality.
-        for offset in [1u16, 2] {
+        for offset in [1u32, 2] {
             let adjacent_low = primary.wrapping_sub(offset);
             let adjacent_high = primary.wrapping_add(offset);
             if !queried.contains(&adjacent_low) {

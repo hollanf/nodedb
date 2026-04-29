@@ -48,7 +48,7 @@ use super::wire::{
 pub struct ArrayCoordParams {
     pub source_node: u64,
     /// Pre-computed target shard IDs (overlapping shards for reads).
-    pub shard_ids: Vec<u16>,
+    pub shard_ids: Vec<u32>,
     /// Per-shard RPC timeout in milliseconds.
     pub timeout_ms: u64,
     /// Hilbert routing granularity (1–16). 0 means no shard-side routing
@@ -85,9 +85,9 @@ pub struct CoordSliceResult {
 /// Each bucket `b = shard_id / stride` covers the Hilbert range
 /// `[b << (64 - prefix_bits), ((b + 1) << (64 - prefix_bits)) - 1]`.
 /// The stride is `VSHARD_COUNT >> prefix_bits` (floored at 1).
-fn shard_hilbert_range_for_vshard(shard_id: u16, prefix_bits: u8) -> (u64, u64) {
+fn shard_hilbert_range_for_vshard(shard_id: u32, prefix_bits: u8) -> (u64, u64) {
     use crate::routing::VSHARD_COUNT;
-    let stride = ((VSHARD_COUNT as u32) >> (prefix_bits as u32)).max(1) as u16;
+    let stride = (VSHARD_COUNT >> (prefix_bits as u32)).max(1);
     let bucket = shard_id / stride;
     let shift = 64u8.saturating_sub(prefix_bits);
     let lo = (bucket as u64) << shift;
@@ -131,7 +131,7 @@ impl ArrayCoordinator {
         timeout_ms: u64,
         slice_hilbert_ranges: &[(u64, u64)],
         prefix_bits: u8,
-        total_shards: u16,
+        total_shards: u32,
         dispatch: Arc<dyn ShardRpcDispatch>,
         circuit_breaker: Arc<CircuitBreaker>,
     ) -> crate::error::Result<Self> {
@@ -172,7 +172,7 @@ impl ArrayCoordinator {
         coordinator_limit: u32,
     ) -> Result<CoordSliceResult> {
         let prefix_bits = self.params.prefix_bits;
-        let per_shard: Vec<(u16, Vec<u8>)> = self
+        let per_shard: Vec<(u32, Vec<u8>)> = self
             .params
             .shard_ids
             .iter()
@@ -225,7 +225,7 @@ impl ArrayCoordinator {
     /// a single Data Plane executor (e.g. single-node harnesses).
     pub async fn coord_agg(&self, req: ArrayShardAggReq) -> Result<Vec<ArrayAggPartial>> {
         let prefix_bits = self.params.prefix_bits;
-        let per_shard: Vec<(u16, Vec<u8>)> = self
+        let per_shard: Vec<(u32, Vec<u8>)> = self
             .params
             .shard_ids
             .iter()
@@ -324,7 +324,7 @@ impl ArrayCoordinator {
 /// has no dependency on `nodedb-array`.
 pub async fn coord_put_partitioned(
     params: &ArrayWriteCoordParams,
-    per_shard: Vec<(u16, ArrayShardPutReq)>,
+    per_shard: Vec<(u32, ArrayShardPutReq)>,
     dispatch: &Arc<dyn ShardRpcDispatch>,
     circuit_breaker: &Arc<CircuitBreaker>,
 ) -> Result<Vec<ArrayShardPutResp>> {
@@ -337,7 +337,7 @@ pub async fn coord_put_partitioned(
         source_node: params.source_node,
     };
 
-    let encoded: Result<Vec<(u16, Vec<u8>)>> = per_shard
+    let encoded: Result<Vec<(u32, Vec<u8>)>> = per_shard
         .iter()
         .map(|(shard_id, req)| {
             zerompk::to_msgpack_vec(req)
@@ -388,7 +388,7 @@ pub async fn coord_put(
 
     let buckets = partition_put_cells(cells, prefix_bits)?;
 
-    let per_shard: Vec<(u16, ArrayShardPutReq)> = buckets
+    let per_shard: Vec<(u32, ArrayShardPutReq)> = buckets
         .into_iter()
         .map(|b| {
             let req = ArrayShardPutReq {
@@ -432,7 +432,7 @@ pub async fn coord_delete(
         source_node: params.source_node,
     };
 
-    let encoded: Result<Vec<(u16, Vec<u8>)>> = buckets
+    let encoded: Result<Vec<(u32, Vec<u8>)>> = buckets
         .into_iter()
         .map(|b| {
             let req = ArrayShardDeleteReq {
@@ -463,7 +463,7 @@ pub async fn coord_delete(
 }
 
 /// Deserialise a slice of raw `(shard_id, bytes)` pairs into typed responses.
-fn decode_resps<T>(raw: &[(u16, Vec<u8>)]) -> Result<Vec<T>>
+fn decode_resps<T>(raw: &[(u32, Vec<u8>)]) -> Result<Vec<T>>
 where
     T: for<'a> zerompk::FromMessagePack<'a>,
 {
@@ -544,7 +544,7 @@ mod tests {
     }
 
     fn make_coordinator(
-        shard_ids: Vec<u16>,
+        shard_ids: Vec<u32>,
         dispatch: Arc<dyn ShardRpcDispatch>,
     ) -> ArrayCoordinator {
         ArrayCoordinator::new(

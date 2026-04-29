@@ -33,11 +33,11 @@ use crate::writer::WalWriter;
 #[derive(Debug)]
 pub struct PendingWrite {
     /// Record type discriminant.
-    pub record_type: u16,
+    pub record_type: u32,
     /// Tenant ID.
     pub tenant_id: u32,
     /// Virtual shard ID.
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     /// Payload bytes.
     pub payload: Vec<u8>,
 }
@@ -209,7 +209,7 @@ mod tests {
             .submit(
                 &writer,
                 PendingWrite {
-                    record_type: RecordType::Put as u16,
+                    record_type: RecordType::Put as u32,
                     tenant_id: 1,
                     vshard_id: 0,
                     payload: b"hello".to_vec(),
@@ -252,7 +252,7 @@ mod tests {
                     .submit(
                         &w,
                         PendingWrite {
-                            record_type: RecordType::Put as u16,
+                            record_type: RecordType::Put as u32,
                             tenant_id: 1,
                             vshard_id: 0,
                             payload: payload.into_bytes(),

@@ -12,7 +12,7 @@ pub struct SpatialHit {
     /// Document ID.
     pub doc_id: String,
     /// Which shard produced this hit.
-    pub shard_id: u16,
+    pub shard_id: u32,
     /// Distance to query geometry in meters (for ST_DWithin ordering).
     /// 0.0 for non-distance predicates (ST_Contains, ST_Intersects).
     pub distance_meters: f64,
@@ -21,7 +21,7 @@ pub struct SpatialHit {
 /// Results from a single shard's local spatial query.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardSpatialResult {
-    pub shard_id: u16,
+    pub shard_id: u32,
     pub hits: Vec<SpatialHit>,
     pub success: bool,
     pub error: Option<String>,

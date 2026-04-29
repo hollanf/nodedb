@@ -303,7 +303,7 @@ pub async fn coordinate_cross_shard_hop(
         let shard_id = batch.target_shard;
         let leader_node = {
             let rt = routing.read().unwrap_or_else(|p| p.into_inner());
-            match rt.leader_for_vshard(shard_id.as_u16()) {
+            match rt.leader_for_vshard(shard_id.as_u32()) {
                 Ok(node) => node,
                 Err(e) => {
                     warn!(%shard_id, error = %e, "no leader for shard, skipping batch");
@@ -437,7 +437,7 @@ pub fn partition_local_remote(
     for node_id in node_ids {
         let shard = VShardId::from_key(node_id.as_bytes());
         let leader = routing
-            .leader_for_vshard(shard.as_u16())
+            .leader_for_vshard(shard.as_u32())
             .unwrap_or(local_node_id);
 
         if leader == local_node_id {
@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn fan_out_under_soft_limit() {
         let mut env = ScatterEnvelope::new();
-        for i in 0..5u16 {
+        for i in 0..5u32 {
             env.add(VShardId::new(i), format!("node_{i}"));
         }
 
@@ -489,7 +489,7 @@ mod tests {
     #[test]
     fn fan_out_between_soft_and_hard() {
         let mut env = ScatterEnvelope::new();
-        for i in 0..14u16 {
+        for i in 0..14u32 {
             env.add(VShardId::new(i), format!("node_{i}"));
         }
 
@@ -508,7 +508,7 @@ mod tests {
     #[test]
     fn fan_out_exceeded_no_partial() {
         let mut env = ScatterEnvelope::new();
-        for i in 0..20u16 {
+        for i in 0..20u32 {
             env.add(VShardId::new(i), format!("node_{i}"));
         }
 
@@ -536,7 +536,7 @@ mod tests {
     #[test]
     fn fan_out_exceeded_with_partial() {
         let mut env = ScatterEnvelope::new();
-        for i in 0..20u16 {
+        for i in 0..20u32 {
             env.add(VShardId::new(i), format!("node_{i}"));
         }
 
@@ -580,7 +580,7 @@ mod tests {
     #[test]
     fn custom_limits() {
         let mut env = ScatterEnvelope::new();
-        for i in 0..10u16 {
+        for i in 0..10u32 {
             env.add(VShardId::new(i), format!("node_{i}"));
         }
 

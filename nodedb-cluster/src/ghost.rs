@@ -11,7 +11,7 @@ use tracing::{debug, info};
     zerompk::FromMessagePack,
 )]
 struct PersistedGhostStub {
-    target_shard: u16,
+    target_shard: u32,
     refcount: u32,
     created_at_ms: u64,
 }
@@ -28,7 +28,7 @@ pub struct GhostStub {
     /// The node ID that was moved.
     pub node_id: String,
     /// The target vShard where the node now lives.
-    pub target_shard: u16,
+    pub target_shard: u32,
     /// Number of local edges that still reference this ghost.
     pub refcount: u32,
     /// When this ghost was created.
@@ -36,7 +36,7 @@ pub struct GhostStub {
 }
 
 impl GhostStub {
-    pub fn new(node_id: String, target_shard: u16, initial_refcount: u32) -> Self {
+    pub fn new(node_id: String, target_shard: u32, initial_refcount: u32) -> Self {
         Self {
             node_id,
             target_shard,
@@ -141,7 +141,7 @@ impl GhostTable {
     /// The sweeper runs at lowest I/O priority and is rate-limited.
     pub fn sweep<F>(&mut self, verify_fn: F) -> SweepReport
     where
-        F: Fn(&str, u16) -> SweepVerdict,
+        F: Fn(&str, u32) -> SweepVerdict,
     {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -217,7 +217,7 @@ impl GhostTable {
 
     /// Resolve a node lookup: if the node is a ghost, return the target shard
     /// for scatter-gather. Otherwise return None.
-    pub fn resolve(&self, node_id: &str) -> Option<u16> {
+    pub fn resolve(&self, node_id: &str) -> Option<u32> {
         self.stubs.get(node_id).map(|s| s.target_shard)
     }
 }

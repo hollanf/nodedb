@@ -14,7 +14,7 @@ pub struct CrossShardWriteRequest {
     /// Tenant context for the execution.
     pub tenant_id: u32,
     /// Source vShard that generated this event (for HWM dedup).
-    pub source_vshard: u16,
+    pub source_vshard: u32,
     /// Source LSN — used for high-water-mark dedup on the target.
     /// Events with `source_lsn <= hwm[source_vshard]` are duplicates.
     pub source_lsn: u64,
@@ -25,7 +25,7 @@ pub struct CrossShardWriteRequest {
     /// Source collection that triggered this cross-shard write.
     pub source_collection: String,
     /// Target vShard ID for routing verification on the receiver.
-    pub target_vshard: u16,
+    pub target_vshard: u32,
 }
 
 /// Response from the target shard after processing a cross-shard write.

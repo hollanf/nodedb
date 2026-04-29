@@ -18,7 +18,7 @@ pub struct ShardRow {
     /// Encoded as comparable bytes (big-endian for numbers, UTF-8 for strings).
     pub sort_key: Vec<u8>,
     /// Which shard produced this row.
-    pub shard_id: u16,
+    pub shard_id: u32,
 }
 
 /// Sort direction for ORDER BY.

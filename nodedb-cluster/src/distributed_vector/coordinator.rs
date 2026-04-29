@@ -21,13 +21,13 @@ pub struct VectorScatterGather {
     /// Source node ID (this coordinator's node).
     pub source_node: u64,
     /// Target shard IDs to fan out to.
-    pub shard_ids: Vec<u16>,
+    pub shard_ids: Vec<u32>,
     /// Merger collecting shard responses.
     merger: VectorMerger,
 }
 
 impl VectorScatterGather {
-    pub fn new(source_node: u64, shard_ids: Vec<u16>) -> Self {
+    pub fn new(source_node: u64, shard_ids: Vec<u32>) -> Self {
         let count = shard_ids.len();
         Self {
             source_node,
@@ -47,7 +47,7 @@ impl VectorScatterGather {
         top_k: usize,
         ef_search: usize,
         filter_bitmap: Option<&[u8]>,
-    ) -> Vec<(u16, VShardEnvelope)> {
+    ) -> Vec<(u32, VShardEnvelope)> {
         let msg = VectorScatterPayload {
             collection: collection.to_string(),
             query_vector: query_vector.to_vec(),

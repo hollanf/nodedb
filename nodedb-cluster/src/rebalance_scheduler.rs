@@ -85,7 +85,7 @@ pub struct RebalanceScheduler {
     /// Last time a rebalance completed.
     last_rebalance: Option<Instant>,
     /// Currently active migrations: `(vshard_id → tenant_id)`.
-    active_migrations: HashMap<u16, u32>,
+    active_migrations: HashMap<u32, u32>,
 }
 
 impl RebalanceScheduler {
@@ -174,12 +174,12 @@ impl RebalanceScheduler {
     }
 
     /// Record that a migration has started.
-    pub fn migration_started(&mut self, vshard_id: u16, tenant_id: u32) {
+    pub fn migration_started(&mut self, vshard_id: u32, tenant_id: u32) {
         self.active_migrations.insert(vshard_id, tenant_id);
     }
 
     /// Record that a migration has completed.
-    pub fn migration_completed(&mut self, vshard_id: u16) {
+    pub fn migration_completed(&mut self, vshard_id: u32) {
         self.active_migrations.remove(&vshard_id);
         if self.active_migrations.is_empty() {
             self.last_rebalance = Some(Instant::now());

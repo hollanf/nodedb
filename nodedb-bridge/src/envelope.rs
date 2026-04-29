@@ -14,7 +14,7 @@ pub struct Request {
     pub tenant_id: u32,
 
     /// Virtual shard this request targets.
-    pub vshard_id: u16,
+    pub vshard_id: u32,
 
     /// Opaque execution plan digest (interpreted by the Data Plane).
     pub plan: Plan,

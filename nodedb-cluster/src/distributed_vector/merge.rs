@@ -17,7 +17,7 @@ pub struct VectorHit {
     /// Distance to the query vector (lower = closer for L2/cosine).
     pub distance: f32,
     /// Which shard produced this hit.
-    pub shard_id: u16,
+    pub shard_id: u32,
     /// Optional document ID associated with this vector.
     pub doc_id: Option<String>,
 }
@@ -25,7 +25,7 @@ pub struct VectorHit {
 /// Results from a single shard's local k-NN search.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardSearchResult {
-    pub shard_id: u16,
+    pub shard_id: u32,
     pub hits: Vec<VectorHit>,
     pub success: bool,
     pub error: Option<String>,

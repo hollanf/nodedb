@@ -25,10 +25,10 @@ impl WalRecord {
     /// the ciphertext to its segment (preamble-swap defense). Pass `None`
     /// for unencrypted records (the argument is ignored in that case).
     pub fn new(
-        record_type: u16,
+        record_type: u32,
         lsn: u64,
         tenant_id: u32,
-        vshard_id: u16,
+        vshard_id: u32,
         payload: Vec<u8>,
         encryption_key: Option<&crate::crypto::WalEncryptionKey>,
         preamble_bytes: Option<&[u8; PREAMBLE_SIZE]>,
@@ -49,6 +49,7 @@ impl WalRecord {
                 tenant_id,
                 vshard_id,
                 payload_len: 0,
+                reserved: [0u8; 16],
                 crc32c: 0,
             };
             let header_bytes = temp_header.to_bytes();
@@ -75,6 +76,7 @@ impl WalRecord {
             tenant_id,
             vshard_id,
             payload_len: final_payload.len() as u32,
+            reserved: [0u8; 16],
             crc32c: 0,
         };
 
@@ -149,7 +151,7 @@ impl WalRecord {
     }
 
     /// Logical record type with the encryption flag stripped.
-    pub fn logical_record_type(&self) -> u16 {
+    pub fn logical_record_type(&self) -> u32 {
         self.header.record_type & !ENCRYPTED_FLAG
     }
 
@@ -201,7 +203,7 @@ mod tests {
     fn checksum_roundtrip() {
         let payload = b"hello nodedb";
         let record = WalRecord::new(
-            RecordType::Put as u16,
+            RecordType::Put as u32,
             1,
             0,
             0,
@@ -217,7 +219,7 @@ mod tests {
     fn checksum_detects_corruption() {
         let payload = b"hello nodedb";
         let mut record = WalRecord::new(
-            RecordType::Put as u16,
+            RecordType::Put as u32,
             1,
             0,
             0,
@@ -237,7 +239,7 @@ mod tests {
     fn payload_too_large_rejected() {
         let big_payload = vec![0u8; MAX_WAL_PAYLOAD_SIZE + 1];
         assert!(matches!(
-            WalRecord::new(RecordType::Put as u16, 1, 0, 0, big_payload, None, None),
+            WalRecord::new(RecordType::Put as u32, 1, 0, 0, big_payload, None, None),
             Err(WalError::PayloadTooLarge { .. })
         ));
     }
@@ -247,7 +249,7 @@ mod tests {
         use super::super::anchor::LsnMsAnchorPayload;
         let anchor = LsnMsAnchorPayload::new(42, 1_700_000_000_000);
         let record = WalRecord::new(
-            RecordType::LsnMsAnchor as u16,
+            RecordType::LsnMsAnchor as u32,
             42,
             0,
             0,
@@ -257,7 +259,7 @@ mod tests {
         )
         .unwrap();
         record.verify_checksum().unwrap();
-        assert_eq!(record.logical_record_type(), RecordType::LsnMsAnchor as u16);
+        assert_eq!(record.logical_record_type(), RecordType::LsnMsAnchor as u32);
         let decoded = LsnMsAnchorPayload::from_bytes(&record.payload).unwrap();
         assert_eq!(decoded, anchor);
     }

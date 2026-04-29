@@ -37,7 +37,7 @@ pub fn process_write_event_for_mvs(event: &WriteEvent, registry: &MvRegistry, st
     // Build a lightweight CdcEvent for the MV processor.
     let cdc_event = CdcEvent {
         sequence: event.sequence,
-        partition: event.vshard_id.as_u16(),
+        partition: event.vshard_id.as_u32(),
         collection: event.collection.to_string(),
         op: op_str,
         row_id: event.row_id.as_str().to_string(),

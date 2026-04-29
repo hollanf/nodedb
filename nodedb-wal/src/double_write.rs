@@ -462,7 +462,7 @@ mod tests {
         let mut dwb = open_buffered(&dwb_path);
 
         let record = WalRecord::new(
-            RecordType::Put as u16,
+            RecordType::Put as u32,
             42,
             1,
             0,
@@ -500,7 +500,7 @@ mod tests {
         {
             let mut dwb = open_buffered(&dwb_path);
             let record = WalRecord::new(
-                RecordType::Put as u16,
+                RecordType::Put as u32,
                 7,
                 1,
                 0,
@@ -527,7 +527,7 @@ mod tests {
 
         for lsn in 1..=5u64 {
             let record = WalRecord::new(
-                RecordType::Put as u16,
+                RecordType::Put as u32,
                 lsn,
                 1,
                 0,
@@ -564,7 +564,7 @@ mod tests {
         assert!(!dwb.dirty);
 
         let record = WalRecord::new(
-            RecordType::Put as u16,
+            RecordType::Put as u32,
             1,
             1,
             0,
@@ -606,7 +606,7 @@ mod tests {
         let total = DWB_CAPACITY as u64 + 5;
         for lsn in 1..=total {
             let record = WalRecord::new(
-                RecordType::Put as u16,
+                RecordType::Put as u32,
                 lsn,
                 1,
                 0,
@@ -648,7 +648,7 @@ mod tests {
 
         let mut dwb = open_buffered(&dwb_path);
         let rec = WalRecord::new(
-            RecordType::Put as u16,
+            RecordType::Put as u32,
             1,
             1,
             0,

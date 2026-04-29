@@ -14,7 +14,7 @@
 //! ```text
 //! let mut reader = LazyWalReader::open(path)?;
 //! while let Some(header) = reader.next_header()? {
-//!     if header.record_type == RecordType::VectorPut as u16 {
+//!     if header.record_type == RecordType::VectorPut as u32 {
 //!         let payload = reader.read_payload(&header)?;
 //!         // process vector record
 //!     } else {
@@ -212,10 +212,10 @@ mod tests {
 
         {
             let mut w = WalWriter::open_without_direct_io(&path).unwrap();
-            w.append(RecordType::Put as u16, 1, 0, b"hello").unwrap();
-            w.append(RecordType::VectorPut as u16, 1, 0, b"vector-data")
+            w.append(RecordType::Put as u32, 1, 0, b"hello").unwrap();
+            w.append(RecordType::VectorPut as u32, 1, 0, b"vector-data")
                 .unwrap();
-            w.append(RecordType::Put as u16, 2, 1, b"world").unwrap();
+            w.append(RecordType::Put as u32, 2, 1, b"world").unwrap();
             w.sync().unwrap();
         }
 
@@ -239,13 +239,13 @@ mod tests {
         {
             let mut w = WalWriter::open_without_direct_io(&path).unwrap();
             // 3 big TS records, 1 small vector record.
-            w.append(RecordType::TimeseriesBatch as u16, 1, 0, &[0u8; 10000])
+            w.append(RecordType::TimeseriesBatch as u32, 1, 0, &[0u8; 10000])
                 .unwrap();
-            w.append(RecordType::TimeseriesBatch as u16, 1, 0, &[0u8; 10000])
+            w.append(RecordType::TimeseriesBatch as u32, 1, 0, &[0u8; 10000])
                 .unwrap();
-            w.append(RecordType::VectorPut as u16, 1, 0, b"small-vec")
+            w.append(RecordType::VectorPut as u32, 1, 0, b"small-vec")
                 .unwrap();
-            w.append(RecordType::TimeseriesBatch as u16, 1, 0, &[0u8; 10000])
+            w.append(RecordType::TimeseriesBatch as u32, 1, 0, &[0u8; 10000])
                 .unwrap();
             w.sync().unwrap();
         }
@@ -279,8 +279,8 @@ mod tests {
 
         {
             let mut w = WalWriter::open_without_direct_io(&path).unwrap();
-            w.append(RecordType::Put as u16, 1, 0, b"a").unwrap();
-            w.append(RecordType::Put as u16, 1, 0, b"b").unwrap();
+            w.append(RecordType::Put as u32, 1, 0, b"a").unwrap();
+            w.append(RecordType::Put as u32, 1, 0, b"b").unwrap();
             w.sync().unwrap();
         }
 

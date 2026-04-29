@@ -37,8 +37,8 @@ use super::wire::{
 /// Returns the zerompk-encoded response body on success, ready to be placed
 /// into a response `VShardEnvelope`.
 pub async fn handle_array_shard_rpc(
-    opcode: u16,
-    local_vshard_id: u16,
+    opcode: u32,
+    local_vshard_id: u32,
     payload: &[u8],
     executor: &Arc<dyn ArrayLocalExecutor>,
 ) -> Result<Vec<u8>> {
@@ -57,7 +57,7 @@ pub async fn handle_array_shard_rpc(
 }
 
 async fn handle_slice(
-    local_vshard_id: u16,
+    local_vshard_id: u32,
     payload: &[u8],
     executor: &Arc<dyn ArrayLocalExecutor>,
 ) -> Result<Vec<u8>> {
@@ -81,7 +81,7 @@ async fn handle_slice(
 }
 
 async fn handle_agg(
-    local_vshard_id: u16,
+    local_vshard_id: u32,
     payload: &[u8],
     executor: &Arc<dyn ArrayLocalExecutor>,
 ) -> Result<Vec<u8>> {
@@ -101,7 +101,7 @@ async fn handle_agg(
 }
 
 async fn handle_put(
-    local_vshard_id: u16,
+    local_vshard_id: u32,
     payload: &[u8],
     executor: &Arc<dyn ArrayLocalExecutor>,
 ) -> Result<Vec<u8>> {
@@ -126,7 +126,7 @@ async fn handle_put(
 }
 
 async fn handle_delete(
-    local_vshard_id: u16,
+    local_vshard_id: u32,
     payload: &[u8],
     executor: &Arc<dyn ArrayLocalExecutor>,
 ) -> Result<Vec<u8>> {
@@ -148,7 +148,7 @@ async fn handle_delete(
 }
 
 async fn handle_surrogate_bitmap(
-    local_vshard_id: u16,
+    local_vshard_id: u32,
     payload: &[u8],
     executor: &Arc<dyn ArrayLocalExecutor>,
 ) -> Result<Vec<u8>> {
@@ -174,7 +174,7 @@ async fn handle_surrogate_bitmap(
 /// (which means the request predates Hilbert routing and skips validation).
 /// Returns `Err(ClusterError::WrongOwner)` when the coordinator used a stale
 /// routing table; the coordinator should refresh and retry.
-fn validate_put_routing(req: &ArrayShardPutReq, local_vshard_id: u16) -> Result<()> {
+fn validate_put_routing(req: &ArrayShardPutReq, local_vshard_id: u32) -> Result<()> {
     if req.prefix_bits == 0 {
         return Ok(());
     }
@@ -194,13 +194,17 @@ fn validate_put_routing(req: &ArrayShardPutReq, local_vshard_id: u16) -> Result<
 /// `local_vshard_id` falls within the Hilbert ranges carried by the request.
 /// Returns `Err(ClusterError::WrongOwner)` when this shard no longer covers
 /// any of the requested ranges, indicating a stale routing table.
-fn validate_slice_routing(req: &ArrayShardSliceReq, local_vshard_id: u16) -> Result<()> {
+fn validate_slice_routing(req: &ArrayShardSliceReq, local_vshard_id: u32) -> Result<()> {
     if req.prefix_bits == 0 || req.slice_hilbert_ranges.is_empty() {
         return Ok(());
     }
     // Compute which vShards overlap the slice ranges. If local_vshard_id is not
     // among them, this node no longer owns the required Hilbert range.
-    let covered = array_vshards_for_slice(&req.slice_hilbert_ranges, req.prefix_bits, u16::MAX)?;
+    let covered = array_vshards_for_slice(
+        &req.slice_hilbert_ranges,
+        req.prefix_bits,
+        crate::routing::VSHARD_COUNT,
+    )?;
     if covered.binary_search(&local_vshard_id).is_err() {
         return Err(ClusterError::WrongOwner {
             vshard_id: local_vshard_id,
@@ -214,7 +218,7 @@ fn validate_slice_routing(req: &ArrayShardSliceReq, local_vshard_id: u16) -> Res
 ///
 /// Returns `Ok(())` when routing is correct or when `prefix_bits == 0`.
 /// Returns `Err(ClusterError::WrongOwner)` on misroute.
-fn validate_delete_routing(req: &ArrayShardDeleteReq, local_vshard_id: u16) -> Result<()> {
+fn validate_delete_routing(req: &ArrayShardDeleteReq, local_vshard_id: u32) -> Result<()> {
     if req.prefix_bits == 0 {
         return Ok(());
     }
@@ -403,7 +407,7 @@ mod tests {
         assert!((resp.partials[0].sum - 42.0).abs() < f64::EPSILON);
     }
 
-    fn make_put_req_bytes(vshard_id: u16, prefix_bits: u8) -> Vec<u8> {
+    fn make_put_req_bytes(vshard_id: u32, prefix_bits: u8) -> Vec<u8> {
         // Build a minimal ArrayShardPutReq with routing metadata set so
         // validate_put_routing can confirm the request is destined for
         // the right shard. Use prefix_bits=0 to skip routing validation

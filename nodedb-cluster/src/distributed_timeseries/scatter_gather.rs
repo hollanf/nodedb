@@ -23,14 +23,14 @@ pub struct ScatterGatherPlan {
     /// Time bucket interval (0 = single aggregate over entire range).
     pub bucket_interval_ms: i64,
     /// Target shard IDs to fan out to.
-    pub shard_ids: Vec<u16>,
+    pub shard_ids: Vec<u32>,
 }
 
 /// Result from a single shard.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardResult {
     /// Which shard produced this result.
-    pub shard_id: u16,
+    pub shard_id: u32,
     /// Partial aggregates per time bucket.
     pub partials: Vec<PartialAgg>,
 }
@@ -52,7 +52,7 @@ pub fn merge_shard_results(shard_results: &[ShardResult]) -> Vec<PartialAgg> {
 /// hash routing. This function returns all shard IDs that might contain
 /// data for the collection (conservative — includes all shards that could
 /// have received data via the routing function).
-pub fn shards_for_collection(_collection: &str, total_shards: u16) -> Vec<u16> {
+pub fn shards_for_collection(_collection: &str, total_shards: u32) -> Vec<u32> {
     if total_shards == 0 {
         return Vec::new();
     }

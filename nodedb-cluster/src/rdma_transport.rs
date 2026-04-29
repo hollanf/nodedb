@@ -113,7 +113,7 @@ impl RdmaTransport {
     ///
     /// Returns `Err` with `Unavailable` if RDMA is not available —
     /// caller should fall back to QUIC `send_migration_segment()`.
-    pub fn send_segment(&mut self, _peer: SocketAddr, vshard_id: u16, data: &[u8]) -> Result<()> {
+    pub fn send_segment(&mut self, _peer: SocketAddr, vshard_id: u32, data: &[u8]) -> Result<()> {
         if !self.is_available() {
             return Err(ClusterError::Transport {
                 detail: "RDMA not available — use QUIC fallback".into(),

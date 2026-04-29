@@ -28,9 +28,9 @@ use serde::{Deserialize, Serialize};
 )]
 pub struct PatternContinuation {
     /// Target shard that should continue execution.
-    pub target_shard: u16,
+    pub target_shard: u32,
     /// Source shard that generated this continuation.
-    pub source_shard: u16,
+    pub source_shard: u32,
     /// Current variable bindings (node_name → value).
     pub bindings: HashMap<String, String>,
     /// Index of the next triple to execute in the chain.
@@ -47,7 +47,7 @@ pub struct PatternContinuation {
 )]
 pub struct ShardMatchResult {
     /// Shard that produced these results.
-    pub shard_id: u16,
+    pub shard_id: u32,
     /// Completed binding rows (fully matched patterns).
     pub completed_rows: Vec<HashMap<String, String>>,
     /// Partial rows that need continuation on other shards.
@@ -63,7 +63,7 @@ pub struct DistributedMatchCoordinator {
     /// Completed result rows from all shards.
     pub completed: Vec<HashMap<String, String>>,
     /// Pending continuations grouped by target shard.
-    pub pending: HashMap<u16, Vec<PatternContinuation>>,
+    pub pending: HashMap<u32, Vec<PatternContinuation>>,
     /// Round counter (for debugging / max-round termination).
     pub round: u32,
     /// Maximum rounds before forced termination (prevent infinite loops).
@@ -97,12 +97,12 @@ impl DistributedMatchCoordinator {
     }
 
     /// Take all pending continuations for a target shard.
-    pub fn take_pending(&mut self, shard_id: u16) -> Vec<PatternContinuation> {
+    pub fn take_pending(&mut self, shard_id: u32) -> Vec<PatternContinuation> {
         self.pending.remove(&shard_id).unwrap_or_default()
     }
 
     /// Take all pending continuations, grouped by target shard.
-    pub fn take_all_pending(&mut self) -> HashMap<u16, Vec<PatternContinuation>> {
+    pub fn take_all_pending(&mut self) -> HashMap<u32, Vec<PatternContinuation>> {
         std::mem::take(&mut self.pending)
     }
 

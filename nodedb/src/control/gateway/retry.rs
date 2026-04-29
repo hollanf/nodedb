@@ -54,7 +54,7 @@ where
             }) => {
                 debug!(
                     attempt,
-                    vshard_id = vshard_id.as_u16(),
+                    vshard_id = vshard_id.as_u32(),
                     leader_node,
                     "gateway: NotLeader — will retry with new leader hint"
                 );
@@ -66,7 +66,7 @@ where
                 //     local dispatch rather than retrying the same dead node.
                 if let Some(rt) = routing
                     && let Ok(mut table) = rt.write()
-                    && let Ok(group_id) = table.group_for_vshard(vshard_id.as_u16())
+                    && let Ok(group_id) = table.group_for_vshard(vshard_id.as_u32())
                 {
                     table.set_leader(group_id, leader_node);
                 }

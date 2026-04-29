@@ -309,7 +309,7 @@ mod tests {
     use crate::types::*;
     use std::time::{Duration, Instant};
 
-    fn make_request(vshard: u16) -> envelope::Request {
+    fn make_request(vshard: u32) -> envelope::Request {
         envelope::Request {
             request_id: RequestId::new(1),
             tenant_id: TenantId::new(1),

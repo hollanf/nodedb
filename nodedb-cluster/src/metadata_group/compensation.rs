@@ -43,7 +43,7 @@ pub enum Compensation {
 
     /// Remove a ghost stub that was speculatively inserted before the
     /// cut-over commit, and the commit subsequently failed.
-    RemoveGhostStub { vshard_id: u16 },
+    RemoveGhostStub { vshard_id: u32 },
 }
 
 #[cfg(test)]

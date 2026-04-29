@@ -73,7 +73,7 @@ pub fn route_plan(
 ///
 /// Single-node mode (`routing == None`) always routes locally.
 pub fn resolve_decision(
-    vshard_id: u16,
+    vshard_id: u32,
     local_node_id: u64,
     routing: Option<&RoutingTable>,
     live_leader_for_group: Option<&dyn Fn(u64) -> u64>,
@@ -126,7 +126,7 @@ fn route_broadcast(
     use nodedb_cluster::routing::VSHARD_COUNT;
 
     let mut routes = Vec::with_capacity(VSHARD_COUNT as usize);
-    for vshard_id in 0u16..VSHARD_COUNT {
+    for vshard_id in 0u32..VSHARD_COUNT {
         let decision = resolve_decision(vshard_id, local_node_id, Some(routing), None);
         routes.push(TaskRoute {
             plan: plan.clone(),
@@ -140,7 +140,7 @@ fn route_broadcast(
 /// Determine the primary vShard for a plan by hashing the first collection name.
 ///
 /// Falls back to vShard 0 for plans that have no named collection (Meta ops).
-fn primary_vshard(plan: &PhysicalPlan) -> u16 {
+fn primary_vshard(plan: &PhysicalPlan) -> u32 {
     touched_collections(plan)
         .into_iter()
         .next()
@@ -236,7 +236,7 @@ mod tests {
     }
 
     /// Find a collection name that hashes to the given vShard.
-    fn find_collection_for_vshard(target: u16) -> String {
+    fn find_collection_for_vshard(target: u32) -> String {
         for i in 0u64.. {
             let name = format!("col_{i}");
             if vshard_for_collection(&name) == target {

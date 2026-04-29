@@ -40,13 +40,13 @@ pub enum ClusterError {
     Raft(#[from] nodedb_raft::RaftError),
 
     #[error("vshard {vshard_id} not mapped to any raft group")]
-    VShardNotMapped { vshard_id: u16 },
+    VShardNotMapped { vshard_id: u32 },
 
     #[error("raft group {group_id} not found on this node")]
     GroupNotFound { group_id: u64 },
 
     #[error("migration in progress for vshard {vshard_id}")]
-    MigrationInProgress { vshard_id: u16 },
+    MigrationInProgress { vshard_id: u32 },
 
     #[error("migration refused: estimated pause {estimated_us}µs exceeds budget {budget_us}µs")]
     MigrationPauseBudgetExceeded { estimated_us: u64, budget_us: u64 },
@@ -55,7 +55,7 @@ pub enum ClusterError {
     NodeUnreachable { node_id: u64 },
 
     #[error("ghost stub not found: node={node_id} on shard={shard_id}")]
-    GhostNotFound { node_id: String, shard_id: u16 },
+    GhostNotFound { node_id: String, shard_id: u32 },
 
     #[error("transport error: {detail}")]
     Transport { detail: String },
@@ -96,7 +96,7 @@ pub enum ClusterError {
          {}", if let Some(n) = expected_owner_node { format!("; current owner may be node {n}") } else { String::new() }
     )]
     WrongOwner {
-        vshard_id: u16,
+        vshard_id: u32,
         expected_owner_node: Option<u64>,
     },
 }

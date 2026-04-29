@@ -28,7 +28,7 @@ fn unix_now_ms() -> u64 {
 /// Standardized per-vShard observations.
 #[derive(Debug)]
 pub struct PerVShardMetrics {
-    vshard_id: u16,
+    vshard_id: u32,
     requests_total: AtomicU64,
     latency: AtomicHistogram,
     /// Requests observed in the currently-open window.
@@ -43,7 +43,7 @@ pub struct PerVShardMetrics {
 /// A read-only snapshot of per-vShard metrics at a single moment.
 #[derive(Debug, Clone)]
 pub struct VShardStatsSnapshot {
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     pub requests_total: u64,
     pub qps: f64,
     pub p50_us: u64,
@@ -54,7 +54,7 @@ pub struct VShardStatsSnapshot {
 }
 
 impl PerVShardMetrics {
-    pub fn new(vshard_id: u16) -> Arc<Self> {
+    pub fn new(vshard_id: u32) -> Arc<Self> {
         Arc::new(Self {
             vshard_id,
             requests_total: AtomicU64::new(0),
@@ -65,7 +65,7 @@ impl PerVShardMetrics {
         })
     }
 
-    pub fn vshard_id(&self) -> u16 {
+    pub fn vshard_id(&self) -> u32 {
         self.vshard_id
     }
 
@@ -127,7 +127,7 @@ impl PerVShardMetrics {
 /// instance lives for the life of the process inside `SharedState`.
 #[derive(Debug, Default)]
 pub struct PerVShardMetricsRegistry {
-    map: RwLock<HashMap<u16, Arc<PerVShardMetrics>>>,
+    map: RwLock<HashMap<u32, Arc<PerVShardMetrics>>>,
 }
 
 impl PerVShardMetricsRegistry {
@@ -136,7 +136,7 @@ impl PerVShardMetricsRegistry {
     }
 
     /// Return (creating if needed) the metrics entry for `vshard_id`.
-    pub fn get_or_create(&self, vshard_id: u16) -> Arc<PerVShardMetrics> {
+    pub fn get_or_create(&self, vshard_id: u32) -> Arc<PerVShardMetrics> {
         // Fast path: read lock only.
         if let Ok(g) = self.map.read()
             && let Some(m) = g.get(&vshard_id)
@@ -152,11 +152,11 @@ impl PerVShardMetricsRegistry {
 
     /// Record one observation. Convenience helper used by the dispatch
     /// site so call sites don't have to hold the `Arc` themselves.
-    pub fn observe(&self, vshard_id: u16, latency_us: u64) {
+    pub fn observe(&self, vshard_id: u32, latency_us: u64) {
         self.get_or_create(vshard_id).observe(latency_us);
     }
 
-    pub fn snapshot(&self, vshard_id: u16) -> Option<VShardStatsSnapshot> {
+    pub fn snapshot(&self, vshard_id: u32) -> Option<VShardStatsSnapshot> {
         let g = self.map.read().unwrap_or_else(|p| p.into_inner());
         g.get(&vshard_id).map(|m| m.snapshot())
     }

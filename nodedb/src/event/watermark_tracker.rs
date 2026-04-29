@@ -28,7 +28,7 @@ struct PartitionWatermark {
 /// read by streaming MV finalization and CDC late-data enforcement.
 pub struct WatermarkTracker {
     /// partition_id → watermark state.
-    partitions: RwLock<HashMap<u16, PartitionWatermark>>,
+    partitions: RwLock<HashMap<u32, PartitionWatermark>>,
     /// Global watermark LSN: min(per_partition_lsns).
     global_watermark_lsn: AtomicU64,
     /// Global watermark event_time: min(per_partition_event_times).
@@ -50,7 +50,7 @@ impl WatermarkTracker {
     /// Called after processing each event. Both LSN and event_time
     /// advance monotonically (later events have higher LSN and
     /// typically higher event_time).
-    pub fn advance(&self, partition_id: u16, lsn: u64, event_time_ms: u64) {
+    pub fn advance(&self, partition_id: u32, lsn: u64, event_time_ms: u64) {
         let mut partitions = self.partitions.write().unwrap_or_else(|p| p.into_inner());
         let current = partitions
             .entry(partition_id)
@@ -83,7 +83,7 @@ impl WatermarkTracker {
 
     /// Advance watermark with LSN only (for heartbeats that don't carry event_time).
     /// Uses the partition's existing event_time (heartbeats don't generate new wall-clock data).
-    pub fn advance_lsn_only(&self, partition_id: u16, lsn: u64) {
+    pub fn advance_lsn_only(&self, partition_id: u32, lsn: u64) {
         let mut partitions = self.partitions.write().unwrap_or_else(|p| p.into_inner());
         let current = partitions
             .entry(partition_id)
@@ -119,7 +119,7 @@ impl WatermarkTracker {
     }
 
     /// Get the LSN watermark for a specific partition.
-    pub fn partition_watermark(&self, partition_id: u16) -> u64 {
+    pub fn partition_watermark(&self, partition_id: u32) -> u64 {
         let partitions = self.partitions.read().unwrap_or_else(|p| p.into_inner());
         partitions.get(&partition_id).map(|w| w.lsn).unwrap_or(0)
     }
@@ -139,9 +139,9 @@ impl WatermarkTracker {
     }
 
     /// Get all partition watermarks as a sorted vec.
-    pub fn all_partitions(&self) -> Vec<(u16, u64)> {
+    pub fn all_partitions(&self) -> Vec<(u32, u64)> {
         let partitions = self.partitions.read().unwrap_or_else(|p| p.into_inner());
-        let mut result: Vec<(u16, u64)> = partitions.iter().map(|(&k, w)| (k, w.lsn)).collect();
+        let mut result: Vec<(u32, u64)> = partitions.iter().map(|(&k, w)| (k, w.lsn)).collect();
         result.sort_by_key(|(pid, _)| *pid);
         result
     }

@@ -111,7 +111,7 @@ pub fn start_raft(
                 let target = dispatch_by_type(&envelope);
                 match target {
                     DispatchTarget::ArrayShard => {
-                        let opcode = envelope.msg_type as u16;
+                        let opcode = envelope.msg_type as u32;
                         let resp_payload = handle_array_shard_rpc(
                             opcode,
                             envelope.vshard_id,
@@ -402,14 +402,14 @@ pub fn start_raft(
 /// so this helper stays in sync with the wire format without duplicating the
 /// match table. Returns `ClusterError::Codec` for unknown opcodes.
 fn resolve_vshard_msg_type(
-    opcode: u16,
+    opcode: u32,
 ) -> nodedb_cluster::error::Result<nodedb_cluster::wire::VShardMessageType> {
     // A minimal 26-byte envelope with the target opcode and all other fields
     // set to zero. `from_bytes` parses only the header — the empty payload is
     // valid (payload_len = 0).
     let mut scratch = [0u8; 26];
     scratch[0..2].copy_from_slice(&1u16.to_le_bytes()); // version
-    scratch[2..4].copy_from_slice(&opcode.to_le_bytes()); // msg_type
+    scratch[2..4].copy_from_slice(&(opcode as u16).to_le_bytes()); // msg_type (opcodes 80-89 fit u16)
     // bytes[4..22] = source_node(0) + target_node(0) + vshard_id(0)
     // bytes[22..26] = payload_len(0)
 

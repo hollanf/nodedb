@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use tracing::info;
 
-use crate::catalog::ClusterCatalog;
+use crate::catalog::{ClusterCatalog, ClusterSettings};
 use crate::error::Result;
 use crate::multi_raft::MultiRaft;
 use crate::routing::RoutingTable;
@@ -57,6 +57,7 @@ pub(super) fn bootstrap(config: &ClusterConfig, catalog: &ClusterCatalog) -> Res
     // Generate cluster ID and persist everything.
     let cluster_id = generate_cluster_id();
     catalog.save_cluster_id(cluster_id)?;
+    catalog.save_cluster_settings(&ClusterSettings::from_config(config))?;
     catalog.save_topology(&topology)?;
     catalog.save_routing(&routing)?;
 
@@ -122,6 +123,8 @@ mod tests {
         assert_eq!(multi_raft.group_count(), 5);
 
         assert!(catalog.is_bootstrapped().unwrap());
+        let settings = catalog.load_cluster_settings().unwrap().unwrap();
+        assert_eq!(settings.replication_factor, 1); // clamped to 1 for single node
         let loaded_topo = catalog.load_topology().unwrap().unwrap();
         assert_eq!(loaded_topo.node_count(), 1);
         let loaded_rt = catalog.load_routing().unwrap().unwrap();

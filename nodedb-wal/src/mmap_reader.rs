@@ -425,10 +425,10 @@ mod tests {
         {
             let mut writer = test_writer(&path);
             writer
-                .append(RecordType::Put as u16, 1, 0, b"hello")
+                .append(RecordType::Put as u32, 1, 0, b"hello")
                 .unwrap();
             writer
-                .append(RecordType::Put as u16, 1, 0, b"world")
+                .append(RecordType::Put as u32, 1, 0, b"world")
                 .unwrap();
             writer.sync().unwrap();
         }
@@ -474,9 +474,9 @@ mod tests {
         let config = crate::segmented::SegmentedWalConfig::for_testing(wal_dir.clone());
         let mut wal = crate::segmented::SegmentedWal::open(config).unwrap();
 
-        let lsn1 = wal.append(RecordType::Put as u16, 1, 0, b"a").unwrap();
-        let lsn2 = wal.append(RecordType::Put as u16, 1, 0, b"b").unwrap();
-        let lsn3 = wal.append(RecordType::Put as u16, 1, 0, b"c").unwrap();
+        let lsn1 = wal.append(RecordType::Put as u32, 1, 0, b"a").unwrap();
+        let lsn2 = wal.append(RecordType::Put as u32, 1, 0, b"b").unwrap();
+        let lsn3 = wal.append(RecordType::Put as u32, 1, 0, b"c").unwrap();
         wal.sync().unwrap();
 
         // Replay from lsn2 — should get records b and c.

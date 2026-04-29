@@ -47,7 +47,7 @@ pub enum MigrationPhase {
 #[derive(Debug, Clone)]
 pub struct MigrationState {
     /// vShard being migrated.
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     /// Source Raft group.
     pub source_group: u64,
     /// Target Raft group.
@@ -66,7 +66,7 @@ pub struct MigrationState {
 
 impl MigrationState {
     pub fn new(
-        vshard_id: u16,
+        vshard_id: u32,
         source_group: u64,
         target_group: u64,
         source_node: u64,
@@ -214,7 +214,7 @@ impl MigrationState {
         self.started_at.map(|s| s.elapsed())
     }
 
-    pub fn vshard_id(&self) -> u16 {
+    pub fn vshard_id(&self) -> u32 {
         self.vshard_id
     }
 

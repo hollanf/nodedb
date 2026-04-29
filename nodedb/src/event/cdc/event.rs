@@ -13,7 +13,7 @@ pub struct CdcEvent {
     /// Monotonic sequence within this stream's partition.
     pub sequence: u64,
     /// Partition ID (vShard). Events within a partition are strictly ordered.
-    pub partition: u16,
+    pub partition: u32,
     /// Collection that was written.
     pub collection: String,
     /// Operation type: "INSERT", "UPDATE", or "DELETE".
@@ -80,7 +80,7 @@ impl zerompk::ToMessagePack for CdcEvent {
         writer.write_string("sequence")?;
         writer.write_u64(self.sequence)?;
         writer.write_string("partition")?;
-        writer.write_u16(self.partition)?;
+        writer.write_u32(self.partition)?;
         writer.write_string("collection")?;
         writer.write_string(&self.collection)?;
         writer.write_string("op")?;
@@ -123,7 +123,7 @@ impl<'a> zerompk::FromMessagePack<'a> for CdcEvent {
     fn read<R: zerompk::Read<'a>>(reader: &mut R) -> zerompk::Result<Self> {
         let len = reader.read_map_len()?;
         let mut sequence: u64 = 0;
-        let mut partition: u16 = 0;
+        let mut partition: u32 = 0;
         let mut collection = String::new();
         let mut op = String::new();
         let mut row_id = String::new();
@@ -140,7 +140,7 @@ impl<'a> zerompk::FromMessagePack<'a> for CdcEvent {
             let key = reader.read_string()?.into_owned();
             match key.as_str() {
                 "sequence" => sequence = reader.read_u64()?,
-                "partition" => partition = reader.read_u16()?,
+                "partition" => partition = reader.read_u32()?,
                 "collection" => collection = reader.read_string()?.into_owned(),
                 "op" => op = reader.read_string()?.into_owned(),
                 "row_id" => row_id = reader.read_string()?.into_owned(),

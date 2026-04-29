@@ -3,11 +3,14 @@
 //! Types 0-255 are reserved for NodeDB core.
 //! Types 256+ are available for NodeDB-specific records.
 //!
-//! Bit 15 (0x8000) marks a record as **required** — unknown required records
-//! cause a replay failure. Unknown records without bit 15 are safely skipped.
+//! Bit 15 (0x0000_8000) marks a record as **required** — unknown required
+//! records cause a replay failure. Unknown records without bit 15 are safely
+//! skipped.
+//!
+//! The repr is u32 to match the widened `record_type` field in `RecordHeader`.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u16)]
+#[repr(u32)]
 pub enum RecordType {
     /// No-op / padding record (skipped during replay).
     Noop = 0,
@@ -53,7 +56,7 @@ pub enum RecordType {
 
     /// Atomic transaction: wraps multiple sub-records into a single WAL
     /// group. On replay, either all sub-records apply or none.
-    /// Payload: MessagePack-encoded `Vec<(record_type: u16, payload: Vec<u8>)>`.
+    /// Payload: MessagePack-encoded `Vec<(record_type: u32, payload: Vec<u8>)>`.
     Transaction = 50 | 0x8000,
 
     /// Surrogate allocator: high-watermark flush record.
@@ -114,12 +117,12 @@ pub enum RecordType {
 
 impl RecordType {
     /// Whether this record type is required (must be understood for correct replay).
-    pub fn is_required(raw: u16) -> bool {
+    pub fn is_required(raw: u32) -> bool {
         raw & 0x8000 != 0
     }
 
-    /// Convert a raw u16 to a known RecordType, or None if unknown.
-    pub fn from_raw(raw: u16) -> Option<Self> {
+    /// Convert a raw u32 to a known RecordType, or None if unknown.
+    pub fn from_raw(raw: u32) -> Option<Self> {
         match raw {
             0 => Some(Self::Noop),
             x if x == 1 | 0x8000 => Some(Self::Put),
@@ -151,14 +154,14 @@ mod tests {
 
     #[test]
     fn record_type_required_flag() {
-        assert!(RecordType::is_required(RecordType::Put as u16));
-        assert!(RecordType::is_required(RecordType::Delete as u16));
-        assert!(RecordType::is_required(RecordType::Checkpoint as u16));
-        assert!(!RecordType::is_required(RecordType::Noop as u16));
-        assert!(!RecordType::is_required(RecordType::TimeseriesBatch as u16));
-        assert!(!RecordType::is_required(RecordType::LogBatch as u16));
-        assert!(!RecordType::is_required(RecordType::LsnMsAnchor as u16));
-        assert!(RecordType::is_required(RecordType::TemporalPurge as u16));
+        assert!(RecordType::is_required(RecordType::Put as u32));
+        assert!(RecordType::is_required(RecordType::Delete as u32));
+        assert!(RecordType::is_required(RecordType::Checkpoint as u32));
+        assert!(!RecordType::is_required(RecordType::Noop as u32));
+        assert!(!RecordType::is_required(RecordType::TimeseriesBatch as u32));
+        assert!(!RecordType::is_required(RecordType::LogBatch as u32));
+        assert!(!RecordType::is_required(RecordType::LsnMsAnchor as u32));
+        assert!(RecordType::is_required(RecordType::TemporalPurge as u32));
     }
 
     #[test]
@@ -184,7 +187,7 @@ mod tests {
             RecordType::LsnMsAnchor,
             RecordType::TemporalPurge,
         ] {
-            assert_eq!(RecordType::from_raw(ty as u16), Some(ty));
+            assert_eq!(RecordType::from_raw(ty as u32), Some(ty));
         }
         assert_eq!(RecordType::from_raw(0xFFFE), None);
     }

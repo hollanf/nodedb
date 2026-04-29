@@ -13,8 +13,8 @@ pub struct BspCoordinator {
     pub iteration: u32,
     pub max_iterations: u32,
     pub tolerance: f64,
-    pub shard_ids: Vec<u16>,
-    pub acks: HashMap<u16, SuperstepAck>,
+    pub shard_ids: Vec<u32>,
+    pub acks: HashMap<u32, SuperstepAck>,
     pub completed: bool,
     /// Bitemporal system-time ordinal for this run. Stamped onto every
     /// `SuperstepBarrier` so all shards materialize the same historical
@@ -27,7 +27,7 @@ impl BspCoordinator {
         algorithm: String,
         max_iterations: u32,
         tolerance: f64,
-        shard_ids: Vec<u16>,
+        shard_ids: Vec<u32>,
     ) -> Self {
         Self::new_as_of(algorithm, max_iterations, tolerance, shard_ids, None)
     }
@@ -36,7 +36,7 @@ impl BspCoordinator {
         algorithm: String,
         max_iterations: u32,
         tolerance: f64,
-        shard_ids: Vec<u16>,
+        shard_ids: Vec<u32>,
         system_as_of: Option<i64>,
     ) -> Self {
         Self {
@@ -117,7 +117,7 @@ mod tests {
     fn coordinator_convergence() {
         let mut coord = BspCoordinator::new("pagerank".into(), 20, 1e-6, vec![0, 1, 2]);
 
-        for id in 0..3u16 {
+        for id in 0..3u32 {
             coord.record_ack(SuperstepAck {
                 shard_id: id,
                 iteration: 1,
@@ -130,7 +130,7 @@ mod tests {
         assert!((coord.global_delta() - 0.9).abs() < 1e-10);
         assert!(coord.advance());
 
-        for id in 0..3u16 {
+        for id in 0..3u32 {
             coord.record_ack(SuperstepAck {
                 shard_id: id,
                 iteration: 2,

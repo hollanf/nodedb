@@ -1,4 +1,4 @@
-//! WAL record header: fixed 30-byte prefix + constants.
+//! WAL record header: fixed 50-byte prefix + constants.
 
 use crate::error::{Result, WalError};
 
@@ -12,32 +12,45 @@ pub const WAL_MAGIC: u32 = 0x5359_4E57; // "SYNW"
 /// `system_from_ms` in versioned keys.
 ///
 /// v3 introduces the 16-byte segment preamble (`WALP` magic) written at offset
-/// 0 of every WAL segment file. The preamble persists the AES-256-GCM epoch,
-/// `cipher_alg`, and `kid`, making encrypted segments self-describing and
-/// enabling correct nonce reconstruction after a process restart.
-/// Pre-release — no v1/v2 readers supported.
-pub const WAL_FORMAT_VERSION: u16 = 3;
+/// 0 of every WAL segment file.
+///
+/// v4 widens `record_type` u16→u32 and `vshard_id` u16→u32, adds 16 reserved
+/// bytes (covered by CRC32C) before the checksum, and bumps `HEADER_SIZE` to
+/// 50 bytes. Pre-release — no v1/v2/v3 readers supported.
+pub const WAL_FORMAT_VERSION: u16 = 4;
 
 /// Maximum WAL record payload size (64 MiB). Distinct from cluster RPC's limit.
 pub const MAX_WAL_PAYLOAD_SIZE: usize = 64 * 1024 * 1024;
 
 /// Size of the record header in bytes.
-pub const HEADER_SIZE: usize = 30;
+///
+/// Layout (all little-endian):
+///   magic(4) | format_version(2) | record_type(4) | lsn(8) | tenant_id(4)
+///   | vshard_id(4) | payload_len(4) | reserved(16) | crc32c(4)
+pub const HEADER_SIZE: usize = 50;
 
-/// Bit 14 in record_type signals the payload is AES-256-GCM encrypted.
-/// Separate from bit 15 (required flag).
-pub const ENCRYPTED_FLAG: u16 = 0x4000;
+/// Bit 14 in `record_type` signals the payload is AES-256-GCM encrypted.
+/// Separate from bit 15 (required flag). Both bits keep their positions;
+/// the type is now u32 so the constants are widened accordingly.
+pub const ENCRYPTED_FLAG: u32 = 0x0000_4000;
 
-/// WAL record header (fixed 30 bytes).
+/// Bit 15: required-flag. Records with this bit set and an unknown type
+/// must not be silently skipped.
+pub const REQUIRED_FLAG: u32 = 0x0000_8000;
+
+/// WAL record header (fixed 50 bytes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecordHeader {
     pub magic: u32,
     pub format_version: u16,
-    pub record_type: u16,
+    pub record_type: u32,
     pub lsn: u64,
     pub tenant_id: u32,
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     pub payload_len: u32,
+    /// Reserved for future use; must be zero on write; ignored on read
+    /// (but covered by CRC32C).
+    pub reserved: [u8; 16],
     pub crc32c: u32,
 }
 
@@ -46,31 +59,38 @@ impl RecordHeader {
         let mut buf = [0u8; HEADER_SIZE];
         buf[0..4].copy_from_slice(&self.magic.to_le_bytes());
         buf[4..6].copy_from_slice(&self.format_version.to_le_bytes());
-        buf[6..8].copy_from_slice(&self.record_type.to_le_bytes());
-        buf[8..16].copy_from_slice(&self.lsn.to_le_bytes());
-        buf[16..20].copy_from_slice(&self.tenant_id.to_le_bytes());
-        buf[20..22].copy_from_slice(&self.vshard_id.to_le_bytes());
-        buf[22..26].copy_from_slice(&self.payload_len.to_le_bytes());
-        buf[26..30].copy_from_slice(&self.crc32c.to_le_bytes());
+        buf[6..10].copy_from_slice(&self.record_type.to_le_bytes());
+        buf[10..18].copy_from_slice(&self.lsn.to_le_bytes());
+        buf[18..22].copy_from_slice(&self.tenant_id.to_le_bytes());
+        buf[22..26].copy_from_slice(&self.vshard_id.to_le_bytes());
+        buf[26..30].copy_from_slice(&self.payload_len.to_le_bytes());
+        buf[30..46].copy_from_slice(&self.reserved);
+        buf[46..50].copy_from_slice(&self.crc32c.to_le_bytes());
         buf
     }
 
     pub fn from_bytes(buf: &[u8; HEADER_SIZE]) -> Self {
+        let mut reserved = [0u8; 16];
+        reserved.copy_from_slice(&buf[30..46]);
         Self {
             magic: u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
             format_version: u16::from_le_bytes([buf[4], buf[5]]),
-            record_type: u16::from_le_bytes([buf[6], buf[7]]),
+            record_type: u32::from_le_bytes([buf[6], buf[7], buf[8], buf[9]]),
             lsn: u64::from_le_bytes([
-                buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
+                buf[10], buf[11], buf[12], buf[13], buf[14], buf[15], buf[16], buf[17],
             ]),
-            tenant_id: u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]),
-            vshard_id: u16::from_le_bytes([buf[20], buf[21]]),
-            payload_len: u32::from_le_bytes([buf[22], buf[23], buf[24], buf[25]]),
-            crc32c: u32::from_le_bytes([buf[26], buf[27], buf[28], buf[29]]),
+            tenant_id: u32::from_le_bytes([buf[18], buf[19], buf[20], buf[21]]),
+            vshard_id: u32::from_le_bytes([buf[22], buf[23], buf[24], buf[25]]),
+            payload_len: u32::from_le_bytes([buf[26], buf[27], buf[28], buf[29]]),
+            reserved,
+            crc32c: u32::from_le_bytes([buf[46], buf[47], buf[48], buf[49]]),
         }
     }
 
     /// CRC32C over header (excluding the crc32c field) + payload.
+    ///
+    /// The 16 reserved bytes are included in the CRC so they cannot be
+    /// silently modified without detection.
     pub fn compute_checksum(&self, payload: &[u8]) -> u32 {
         let header_bytes = self.to_bytes();
         let mut digest = crc32c::crc32c(&header_bytes[..HEADER_SIZE - 4]);
@@ -79,7 +99,7 @@ impl RecordHeader {
     }
 
     /// Logical record type with the encryption flag stripped.
-    pub fn logical_record_type(&self) -> u16 {
+    pub fn logical_record_type(&self) -> u32 {
         self.record_type & !ENCRYPTED_FLAG
     }
 
@@ -105,34 +125,69 @@ impl RecordHeader {
 mod tests {
     use super::*;
 
-    #[test]
-    fn header_roundtrip() {
-        let header = RecordHeader {
+    fn make_header(record_type: u32, vshard_id: u32) -> RecordHeader {
+        RecordHeader {
             magic: WAL_MAGIC,
             format_version: WAL_FORMAT_VERSION,
-            record_type: 1 | 0x8000,
+            record_type,
             lsn: 42,
             tenant_id: 7,
-            vshard_id: 3,
+            vshard_id,
             payload_len: 100,
+            reserved: [0u8; 16],
             crc32c: 0xDEAD_BEEF,
-        };
+        }
+    }
+
+    #[test]
+    fn header_roundtrip() {
+        let header = make_header(1 | REQUIRED_FLAG, 3);
         let bytes = header.to_bytes();
         assert_eq!(header, RecordHeader::from_bytes(&bytes));
     }
 
     #[test]
-    fn invalid_magic_detected() {
+    fn header_golden_50_bytes_exact_offsets() {
+        // magic at 0..4, format_version at 4..6, record_type at 6..10,
+        // lsn at 10..18, tenant_id at 18..22, vshard_id at 22..26,
+        // payload_len at 26..30, reserved at 30..46, crc32c at 46..50.
         let header = RecordHeader {
-            magic: 0xBAD0_F00D,
+            magic: WAL_MAGIC,
             format_version: WAL_FORMAT_VERSION,
-            record_type: 0,
-            lsn: 0,
-            tenant_id: 0,
-            vshard_id: 0,
-            payload_len: 0,
-            crc32c: 0,
+            record_type: 1,
+            lsn: 0x0102_0304_0506_0708,
+            tenant_id: 0xDEAD_BEEF,
+            vshard_id: 0xCAFE_BABE,
+            payload_len: 256,
+            reserved: [0u8; 16],
+            crc32c: 0x1234_5678,
         };
+        let b = header.to_bytes();
+        assert_eq!(b.len(), 50);
+        // magic
+        assert_eq!(&b[0..4], &WAL_MAGIC.to_le_bytes());
+        // format_version
+        assert_eq!(&b[4..6], &WAL_FORMAT_VERSION.to_le_bytes());
+        // record_type
+        assert_eq!(&b[6..10], &1u32.to_le_bytes());
+        // lsn
+        assert_eq!(&b[10..18], &0x0102_0304_0506_0708u64.to_le_bytes());
+        // tenant_id
+        assert_eq!(&b[18..22], &0xDEAD_BEEFu32.to_le_bytes());
+        // vshard_id
+        assert_eq!(&b[22..26], &0xCAFE_BABEu32.to_le_bytes());
+        // payload_len
+        assert_eq!(&b[26..30], &256u32.to_le_bytes());
+        // reserved — all zero
+        assert_eq!(&b[30..46], &[0u8; 16]);
+        // crc32c
+        assert_eq!(&b[46..50], &0x1234_5678u32.to_le_bytes());
+    }
+
+    #[test]
+    fn invalid_magic_detected() {
+        let mut header = make_header(0, 0);
+        header.magic = 0xBAD0_F00D;
         assert!(matches!(
             header.validate(0),
             Err(WalError::InvalidMagic { .. })
@@ -141,19 +196,56 @@ mod tests {
 
     #[test]
     fn unsupported_version_detected() {
-        let header = RecordHeader {
-            magic: WAL_MAGIC,
-            format_version: WAL_FORMAT_VERSION + 1,
-            record_type: 0,
-            lsn: 0,
-            tenant_id: 0,
-            vshard_id: 0,
-            payload_len: 0,
-            crc32c: 0,
-        };
+        let mut header = make_header(0, 0);
+        header.format_version = WAL_FORMAT_VERSION + 1;
         assert!(matches!(
             header.validate(0),
             Err(WalError::UnsupportedVersion { .. })
         ));
+    }
+
+    #[test]
+    fn version_3_rejected() {
+        // Regression: bumping from v3 to v4 — a v3 header must be rejected.
+        let mut header = make_header(0, 0);
+        header.format_version = 3;
+        assert!(matches!(
+            header.validate(0),
+            Err(WalError::UnsupportedVersion { version: 3, .. })
+        ));
+    }
+
+    #[test]
+    fn large_vshard_id_roundtrip() {
+        // 0x1234_5678 is well above old u16::MAX; ensure no truncation.
+        let header = make_header(1, 0x1234_5678);
+        let bytes = header.to_bytes();
+        let decoded = RecordHeader::from_bytes(&bytes);
+        assert_eq!(decoded.vshard_id, 0x1234_5678u32);
+    }
+
+    #[test]
+    fn encrypted_flag_is_u32() {
+        let header = make_header(1 | ENCRYPTED_FLAG, 0);
+        assert_eq!(header.logical_record_type(), 1);
+        assert!(header.record_type & ENCRYPTED_FLAG != 0);
+    }
+
+    #[test]
+    fn large_record_type_roundtrip() {
+        // 0x0001_0001 has bits above old u16 max set; verify u32 width preserved.
+        let header = make_header(0x0001_0001, 0);
+        let bytes = header.to_bytes();
+        let decoded = RecordHeader::from_bytes(&bytes);
+        assert_eq!(decoded.record_type, 0x0001_0001u32);
+        // Flags in bit-14 and bit-15 positions still work alongside high bits.
+        let with_flags = make_header(0x0001_0001 | ENCRYPTED_FLAG | REQUIRED_FLAG, 0);
+        let bytes2 = with_flags.to_bytes();
+        let decoded2 = RecordHeader::from_bytes(&bytes2);
+        assert_eq!(
+            decoded2.record_type,
+            0x0001_0001 | ENCRYPTED_FLAG | REQUIRED_FLAG
+        );
+        assert_eq!(decoded2.logical_record_type(), 0x0001_0001 | REQUIRED_FLAG);
     }
 }

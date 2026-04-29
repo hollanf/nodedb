@@ -35,15 +35,15 @@ pub struct TsCoordinator {
     /// Source node ID (this coordinator's node).
     pub source_node: u64,
     /// Target shard IDs to fan out to.
-    pub shard_ids: Vec<u16>,
+    pub shard_ids: Vec<u32>,
     /// Collected responses, keyed by shard ID.
-    responses: HashMap<u16, Vec<PartialAgg>>,
+    responses: HashMap<u32, Vec<PartialAgg>>,
     /// Whether the scatter phase is complete.
     pub complete: bool,
 }
 
 impl TsCoordinator {
-    pub fn new(source_node: u64, shard_ids: Vec<u16>) -> Self {
+    pub fn new(source_node: u64, shard_ids: Vec<u32>) -> Self {
         Self {
             source_node,
             shard_ids,
@@ -64,7 +64,7 @@ impl TsCoordinator {
         end_ms: i64,
         value_column: &str,
         bucket_interval_ms: i64,
-    ) -> Vec<(u16, VShardEnvelope)> {
+    ) -> Vec<(u32, VShardEnvelope)> {
         let msg = TsScatterPayload {
             collection: collection.to_string(),
             start_ms,
@@ -91,7 +91,7 @@ impl TsCoordinator {
     }
 
     /// Record a shard's response (partial aggregates).
-    pub fn record_response(&mut self, shard_id: u16, partials: Vec<PartialAgg>) {
+    pub fn record_response(&mut self, shard_id: u32, partials: Vec<PartialAgg>) {
         self.responses.insert(shard_id, partials);
         if self.responses.len() == self.shard_ids.len() {
             self.complete = true;
@@ -121,7 +121,7 @@ impl TsCoordinator {
     pub fn build_retention_envelopes(
         &self,
         command: &RetentionCommand,
-    ) -> Vec<(u16, VShardEnvelope)> {
+    ) -> Vec<(u32, VShardEnvelope)> {
         let payload_bytes =
             zerompk::to_msgpack_vec(command).expect("RetentionCommand is always serializable");
 
@@ -146,7 +146,7 @@ impl TsCoordinator {
         collection: &str,
         archive_before_ts: i64,
         s3_prefix: &str,
-    ) -> Vec<(u16, VShardEnvelope)> {
+    ) -> Vec<(u32, VShardEnvelope)> {
         let msg = TsArchivePayload {
             collection: collection.to_string(),
             archive_before_ts,

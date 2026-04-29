@@ -19,14 +19,14 @@ pub struct ConsumerGroupDef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct PartitionOffset {
     /// Partition ID (vShard ID).
-    pub partition_id: u16,
+    pub partition_id: u32,
     /// Last committed LSN for this partition. Events with LSN > this
     /// are unconsumed. Zero means no offset committed yet.
     pub committed_lsn: u64,
 }
 
 impl PartitionOffset {
-    pub fn new(partition_id: u16, committed_lsn: u64) -> Self {
+    pub fn new(partition_id: u32, committed_lsn: u64) -> Self {
         Self {
             partition_id,
             committed_lsn,

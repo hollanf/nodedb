@@ -26,7 +26,7 @@
 //! - `coord.len() != tile_extents.len()`: fallback.
 
 /// Number of virtual shards — must match `VShardId::COUNT` in `nodedb::types`.
-pub const VSHARD_COUNT: u16 = 1024;
+pub const VSHARD_COUNT: u32 = 1024;
 
 // ─── Collection-level fallback hash ──────────────────────────────────────────
 
@@ -34,23 +34,23 @@ pub const VSHARD_COUNT: u16 = 1024;
 ///
 /// Mirrors `VShardId::from_collection` in `nodedb::types::id` so callers
 /// get consistent results when falling back.
-pub fn vshard_from_collection(array_name: &str) -> u16 {
+pub fn vshard_from_collection(array_name: &str) -> u32 {
     let hash = array_name
         .as_bytes()
         .iter()
-        .fold(0u16, |h, &b| h.wrapping_mul(31).wrapping_add(b as u16));
+        .fold(0u32, |h, &b| h.wrapping_mul(31).wrapping_add(b as u32));
     hash % VSHARD_COUNT
 }
 
 /// Compute a vShard ID from an arbitrary byte key.
 ///
 /// Mirrors `VShardId::from_key` in `nodedb::types::id`.
-fn vshard_from_key(key: &[u8]) -> u16 {
+fn vshard_from_key(key: &[u8]) -> u32 {
     let mut h: u64 = 0;
     for &b in key {
         h = h.wrapping_mul(0x100000001B3).wrapping_add(b as u64);
     }
-    (h % VSHARD_COUNT as u64) as u16
+    (h % VSHARD_COUNT as u64) as u32
 }
 
 // ─── Tile-id computation ──────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ pub fn tile_id_of_coord(coord: &[u64], tile_extents: &[u64]) -> Option<u64> {
 /// - Any `tile_extents[i]` is zero.
 ///
 /// Returns a raw `u16` in `0..1023`. Callers wrap it in `VShardId::new(…)`.
-pub fn vshard_for_array_coord(array_name: &str, coord: &[u64], tile_extents: &[u64]) -> u16 {
+pub fn vshard_for_array_coord(array_name: &str, coord: &[u64], tile_extents: &[u64]) -> u32 {
     match tile_id_of_coord(coord, tile_extents) {
         Some(tile_id) => vshard_for_array_tile(array_name, tile_id),
         None => vshard_from_collection(array_name),
@@ -129,7 +129,7 @@ pub fn vshard_for_array_coord(array_name: &str, coord: &[u64], tile_extents: &[u
 /// snapshot metadata) and coord re-derivation is unnecessary.
 ///
 /// Returns a raw `u16` in `0..1023`. Callers wrap it in `VShardId::new(…)`.
-pub fn vshard_for_array_tile(array_name: &str, tile_id: u64) -> u16 {
+pub fn vshard_for_array_tile(array_name: &str, tile_id: u64) -> u32 {
     let mut buf = Vec::with_capacity(array_name.len() + 8);
     buf.extend_from_slice(array_name.as_bytes());
     buf.extend_from_slice(&tile_id.to_le_bytes());
@@ -223,7 +223,7 @@ mod tests {
     fn different_tiles_likely_different_vshards() {
         // extent = 1 → every coord is its own tile.
         // With 256 distinct tiles we expect high shard diversity.
-        let shards: Vec<u16> = (0u64..256)
+        let shards: Vec<u32> = (0u64..256)
             .map(|i| vshard_for_array_coord("matrix", &[i], &[1]))
             .collect();
 

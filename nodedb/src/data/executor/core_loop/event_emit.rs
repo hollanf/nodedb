@@ -149,7 +149,7 @@ impl CoreLoop {
             // Default tenant; vshard derived from core_id for partition routing.
             tenant_id: crate::types::TenantId::new(0),
             vshard_id: crate::types::VShardId::new(
-                (self.core_id % crate::types::VShardId::COUNT as usize) as u16,
+                (self.core_id % crate::types::VShardId::COUNT as usize) as u32,
             ),
             source: crate::event::EventSource::User,
             new_value: None,

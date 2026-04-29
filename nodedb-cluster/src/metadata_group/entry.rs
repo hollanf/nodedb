@@ -257,7 +257,7 @@ pub enum TopologyChange {
 pub enum RoutingChange {
     /// Move a vShard to a new raft group leaseholder.
     ReassignVShard {
-        vshard_id: u16,
+        vshard_id: u32,
         new_group_id: u64,
         new_leaseholder_node_id: u64,
     },

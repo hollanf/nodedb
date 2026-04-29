@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 /// Per-shard document frequency report (Phase 1 response).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardDfReport {
-    pub shard_id: u16,
+    pub shard_id: u32,
     /// Total documents on this shard.
     pub total_docs: u64,
     /// Sum of all document lengths on this shard (for global avg_doc_len).
@@ -46,7 +46,7 @@ pub struct GlobalIdf {
 pub struct ScoredHit {
     pub doc_id: String,
     pub bm25_score: f64,
-    pub shard_id: u16,
+    pub shard_id: u32,
 }
 
 /// Coordinator for 2-phase distributed BM25.

@@ -79,7 +79,7 @@ use super::rpc::ShardRpcDispatch;
 /// Parameters governing a single fan-out round.
 pub struct FanOutParams {
     /// Shard IDs to contact (broadcast target list).
-    pub shard_ids: Vec<u16>,
+    pub shard_ids: Vec<u32>,
     /// Per-shard RPC timeout in milliseconds.
     pub timeout_ms: u64,
     /// Source node ID (used to tag outgoing envelopes).
@@ -106,11 +106,11 @@ pub struct FanOutPartitionedParams {
 /// Returns `Vec<(shard_id, response_payload_bytes)>` in arrival order.
 pub async fn fan_out(
     params: &FanOutParams,
-    opcode: u16,
+    opcode: u32,
     req_bytes: &[u8],
     dispatch: &Arc<dyn ShardRpcDispatch>,
     circuit_breaker: &CircuitBreaker,
-) -> Result<Vec<(u16, Vec<u8>)>> {
+) -> Result<Vec<(u32, Vec<u8>)>> {
     if params.shard_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -165,11 +165,11 @@ pub async fn fan_out(
 /// Returns `(shard_id, response_payload_bytes)` in arrival order.
 pub async fn fan_out_partitioned(
     params: &FanOutPartitionedParams,
-    opcode: u16,
-    per_shard: &[(u16, Vec<u8>)],
+    opcode: u32,
+    per_shard: &[(u32, Vec<u8>)],
     dispatch: &Arc<dyn ShardRpcDispatch>,
     circuit_breaker: &CircuitBreaker,
-) -> Result<Vec<(u16, Vec<u8>)>> {
+) -> Result<Vec<(u32, Vec<u8>)>> {
     if per_shard.is_empty() {
         return Ok(Vec::new());
     }
@@ -219,7 +219,7 @@ pub async fn fan_out_partitioned(
 ///
 /// All array opcodes are in the range 80–89. Any other value is a
 /// programming error in the coordinator, not a runtime condition.
-fn msg_type_from_opcode(opcode: u16) -> Result<VShardMessageType> {
+fn msg_type_from_opcode(opcode: u32) -> Result<VShardMessageType> {
     match opcode {
         80 => Ok(VShardMessageType::ArrayShardSliceReq),
         81 => Ok(VShardMessageType::ArrayShardSliceResp),
@@ -258,7 +258,7 @@ mod tests {
     impl ShardRpcDispatch for EchoDispatch {
         async fn call(&self, req: VShardEnvelope, _timeout_ms: u64) -> Result<VShardEnvelope> {
             // Echo back a response envelope of the corresponding resp opcode.
-            let resp_opcode = req.msg_type as u16 + 1;
+            let resp_opcode = req.msg_type as u32 + 1;
             let resp_type = super::msg_type_from_opcode(resp_opcode)?;
             Ok(VShardEnvelope::new(
                 resp_type,
@@ -311,7 +311,7 @@ mod tests {
             assert_eq!(payload.as_slice(), req_bytes);
         }
         // All three shard IDs should be present.
-        let mut ids: Vec<u16> = results.iter().map(|(id, _)| *id).collect();
+        let mut ids: Vec<u32> = results.iter().map(|(id, _)| *id).collect();
         ids.sort_unstable();
         assert_eq!(ids, vec![0, 1, 2]);
     }
@@ -367,8 +367,8 @@ mod tests {
             source_node: 1,
         };
         let per_shard = vec![
-            (0u16, b"shard0-data".to_vec()),
-            (1u16, b"shard1-data".to_vec()),
+            (0u32, b"shard0-data".to_vec()),
+            (1u32, b"shard1-data".to_vec()),
         ];
         let results = fan_out_partitioned(
             &params,
@@ -441,7 +441,7 @@ mod tests {
                     expected_owner_node: None,
                 });
             }
-            let resp_opcode = req.msg_type as u16 + 1;
+            let resp_opcode = req.msg_type as u32 + 1;
             let resp_type = super::msg_type_from_opcode(resp_opcode)?;
             Ok(VShardEnvelope::new(
                 resp_type,

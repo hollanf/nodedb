@@ -20,9 +20,9 @@ struct GroupAssignment {
     /// Active consumer IDs (sorted for deterministic assignment).
     consumers: BTreeSet<String>,
     /// Known partition IDs in this stream (discovered as events arrive).
-    partitions: BTreeSet<u16>,
+    partitions: BTreeSet<u32>,
     /// Current assignment: consumer_id → set of partition IDs.
-    assignments: BTreeMap<String, Vec<u16>>,
+    assignments: BTreeMap<String, Vec<u32>>,
 }
 
 impl GroupAssignment {
@@ -43,7 +43,7 @@ impl GroupAssignment {
         }
 
         let consumers: Vec<&String> = self.consumers.iter().collect();
-        let partitions: Vec<u16> = self.partitions.iter().copied().collect();
+        let partitions: Vec<u32> = self.partitions.iter().copied().collect();
         let n_consumers = consumers.len();
         let n_partitions = partitions.len();
 
@@ -54,7 +54,7 @@ impl GroupAssignment {
         let mut offset = 0;
         for (i, consumer) in consumers.iter().enumerate() {
             let count = base + if i < remainder { 1 } else { 0 };
-            let assigned: Vec<u16> = partitions[offset..offset + count].to_vec();
+            let assigned: Vec<u32> = partitions[offset..offset + count].to_vec();
             self.assignments.insert(consumer.to_string(), assigned);
             offset += count;
         }
@@ -104,7 +104,7 @@ impl ConsumerAssignments {
     }
 
     /// Register a partition as known (called when events with new partition IDs are seen).
-    pub fn register_partition(&self, tenant_id: u32, stream: &str, group: &str, partition_id: u16) {
+    pub fn register_partition(&self, tenant_id: u32, stream: &str, group: &str, partition_id: u32) {
         let key = (tenant_id, stream.to_string(), group.to_string());
         let mut groups = self.groups.write().unwrap_or_else(|p| p.into_inner());
         if let Some(state) = groups.get_mut(&key)
@@ -122,7 +122,7 @@ impl ConsumerAssignments {
         stream: &str,
         group: &str,
         consumer_id: &str,
-    ) -> Option<Vec<u16>> {
+    ) -> Option<Vec<u32>> {
         let key = (tenant_id, stream.to_string(), group.to_string());
         let groups = self.groups.read().unwrap_or_else(|p| p.into_inner());
         groups
@@ -189,7 +189,7 @@ mod tests {
         assert_eq!(c1.len(), 2);
         assert_eq!(c2.len(), 2);
         // No overlap.
-        let all: BTreeSet<u16> = c1.iter().chain(c2.iter()).copied().collect();
+        let all: BTreeSet<u32> = c1.iter().chain(c2.iter()).copied().collect();
         assert_eq!(all.len(), 4);
     }
 

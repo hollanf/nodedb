@@ -159,7 +159,7 @@ pub enum DispatchTarget {
 pub fn build_ts_scatter_response(
     source_node: u64,
     target_node: u64,
-    vshard_id: u16,
+    vshard_id: u32,
     partials_json: &[u8],
 ) -> VShardEnvelope {
     VShardEnvelope::new(
@@ -175,7 +175,7 @@ pub fn build_ts_scatter_response(
 pub fn build_ts_retention_ack(
     source_node: u64,
     target_node: u64,
-    vshard_id: u16,
+    vshard_id: u32,
     result_json: &[u8],
 ) -> VShardEnvelope {
     VShardEnvelope::new(

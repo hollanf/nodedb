@@ -14,7 +14,7 @@ pub struct TaskRoute {
     /// Where to execute it.
     pub decision: RouteDecision,
     /// vShard ID that owns this task.
-    pub vshard_id: u16,
+    pub vshard_id: u32,
 }
 
 /// Where a task should be executed.

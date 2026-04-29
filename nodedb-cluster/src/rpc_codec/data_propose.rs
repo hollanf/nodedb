@@ -16,7 +16,7 @@ use crate::error::{ClusterError, Result};
 /// belongs to. `bytes` is the serialized `ReplicatedEntry`.
 #[derive(Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct DataProposeRequest {
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     pub bytes: Vec<u8>,
 }
 

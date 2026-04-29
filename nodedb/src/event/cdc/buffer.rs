@@ -28,7 +28,7 @@ pub struct StreamBuffer {
     /// Survives retention eviction — the source of truth for
     /// `COMMIT OFFSETS` auto-commit, which would otherwise miss
     /// partitions whose events have aged out of the ring.
-    partition_tails: RwLock<HashMap<u16, u64>>,
+    partition_tails: RwLock<HashMap<u32, u64>>,
     /// Retention config.
     retention: RetentionConfig,
     /// Total events ever pushed (monotonic counter).
@@ -105,7 +105,7 @@ impl StreamBuffer {
     /// the buffer — NOT bounded by retention. This is the correct source
     /// of truth for `COMMIT OFFSETS` auto-commit; scanning the retention
     /// ring loses partitions whose events have been evicted.
-    pub fn partition_tails(&self) -> HashMap<u16, u64> {
+    pub fn partition_tails(&self) -> HashMap<u32, u64> {
         self.partition_tails
             .read()
             .unwrap_or_else(|p| p.into_inner())
@@ -129,7 +129,7 @@ impl StreamBuffer {
     /// Partition = vShard ID. Scans the buffer and filters by partition.
     pub fn read_partition_from_lsn(
         &self,
-        partition_id: u16,
+        partition_id: u32,
         from_lsn: u64,
         limit: usize,
     ) -> Vec<Arc<CdcEvent>> {
@@ -326,7 +326,7 @@ mod tests {
         assert_eq!(events[2].lsn, 30);
     }
 
-    fn make_event_on_partition(seq: u64, partition: u16, lsn: u64) -> CdcEvent {
+    fn make_event_on_partition(seq: u64, partition: u32, lsn: u64) -> CdcEvent {
         let mut e = make_event(seq, lsn);
         e.partition = partition;
         e

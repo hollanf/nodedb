@@ -19,10 +19,12 @@
 //!   and is the single place where future breaking schema
 //!   changes land as explicit `v{N} → v{N+1}` arms.
 
+pub mod cluster_settings;
 pub mod core;
 pub mod ghosts;
 pub mod migration;
 pub mod ops;
 pub mod schema;
 
+pub use cluster_settings::{ClusterSettings, PlacementHashId, placement_hash};
 pub use core::ClusterCatalog;

@@ -197,14 +197,14 @@ async fn consumer_loop(config: ConsumerConfig, metrics: Arc<CoreMetrics>) {
                                 .unwrap_or_default()
                                 .as_millis() as u64;
                             shared_state.watermark_tracker.advance(
-                                event.vshard_id.as_u16(),
+                                event.vshard_id.as_u32(),
                                 event.lsn.as_u64(),
                                 event_time_ms,
                             );
                         } else {
                             shared_state
                                 .watermark_tracker
-                                .advance_lsn_only(event.vshard_id.as_u16(), event.lsn.as_u64());
+                                .advance_lsn_only(event.vshard_id.as_u32(), event.lsn.as_u64());
                             continue;
                         }
 

@@ -12,7 +12,7 @@ impl ClusterCatalog {
     ///
     /// Called after each sweep or after ghost table mutations to ensure
     /// refcounts survive crash/restart.
-    pub fn save_ghosts(&self, vshard_id: u16, ghost_table: &GhostTable) -> Result<()> {
+    pub fn save_ghosts(&self, vshard_id: u32, ghost_table: &GhostTable) -> Result<()> {
         let bytes = ghost_table.to_bytes();
         let key = format!("ghosts:{vshard_id}");
 
@@ -28,7 +28,7 @@ impl ClusterCatalog {
     }
 
     /// Load ghost stubs for a vShard. Returns None if no ghosts persisted.
-    pub fn load_ghosts(&self, vshard_id: u16) -> Result<Option<GhostTable>> {
+    pub fn load_ghosts(&self, vshard_id: u32) -> Result<Option<GhostTable>> {
         let key = format!("ghosts:{vshard_id}");
 
         let txn = self.db.begin_read().map_err(catalog_err)?;
@@ -43,7 +43,7 @@ impl ClusterCatalog {
     /// Load all persisted ghost tables across all vShards.
     ///
     /// Returns `(vshard_id, GhostTable)` pairs for all vShards that have ghosts.
-    pub fn load_all_ghosts(&self) -> Result<Vec<(u16, GhostTable)>> {
+    pub fn load_all_ghosts(&self) -> Result<Vec<(u32, GhostTable)>> {
         let txn = self.db.begin_read().map_err(catalog_err)?;
         let table = txn.open_table(GHOST_TABLE).map_err(catalog_err)?;
 
@@ -53,7 +53,7 @@ impl ClusterCatalog {
             let (key, value) = entry.map_err(catalog_err)?;
             let key_str = key.value();
             if let Some(id_str) = key_str.strip_prefix("ghosts:")
-                && let Ok(vshard_id) = id_str.parse::<u16>()
+                && let Ok(vshard_id) = id_str.parse::<u32>()
                 && let Some(ghost_table) = GhostTable::from_bytes(value.value())
             {
                 results.push((vshard_id, ghost_table));
@@ -63,7 +63,7 @@ impl ClusterCatalog {
     }
 
     /// Delete persisted ghosts for a vShard (after all ghosts purged).
-    pub fn delete_ghosts(&self, vshard_id: u16) -> Result<()> {
+    pub fn delete_ghosts(&self, vshard_id: u32) -> Result<()> {
         let key = format!("ghosts:{vshard_id}");
 
         let txn = self.db.begin_write().map_err(catalog_err)?;

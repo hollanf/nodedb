@@ -132,7 +132,7 @@ mod tests {
 
         assert_eq!(loaded.num_groups(), 5);
         assert_eq!(loaded.vshard_to_group().len(), 1024);
-        for i in 0..1024u16 {
+        for i in 0..1024u32 {
             assert_eq!(
                 rt.group_for_vshard(i).unwrap(),
                 loaded.group_for_vshard(i).unwrap()

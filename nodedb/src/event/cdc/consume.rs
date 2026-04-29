@@ -22,7 +22,7 @@ pub struct ConsumeParams<'a> {
     pub stream_name: &'a str,
     pub group_name: &'a str,
     /// Optional: consume from a specific partition only.
-    pub partition: Option<u16>,
+    pub partition: Option<u32>,
     /// Maximum events to return.
     pub limit: usize,
 }
@@ -33,7 +33,7 @@ pub struct ConsumeResult {
     /// so consumer fan-out (webhook, Kafka, SHOW, commit) doesn't deep-clone.
     pub events: Vec<Arc<CdcEvent>>,
     /// Per-partition latest LSN seen in this batch (for offset tracking).
-    pub partition_offsets: Vec<(u16, u64)>,
+    pub partition_offsets: Vec<(u32, u64)>,
 }
 
 /// Consume events from a change stream using consumer group offsets.
@@ -155,7 +155,7 @@ pub fn consume_local(
     };
 
     // Compute per-partition max LSN for the returned batch.
-    let mut partition_offsets: std::collections::BTreeMap<u16, u64> =
+    let mut partition_offsets: std::collections::BTreeMap<u32, u64> =
         std::collections::BTreeMap::new();
     for e in &events {
         let entry = partition_offsets.entry(e.partition).or_insert(0);
@@ -174,7 +174,7 @@ pub fn consume_local(
 ///
 /// Returns `Some(remote_node_id)` if the leader is remote, `None` if local
 /// or if we're in single-node mode.
-fn remote_partition_leader(state: &SharedState, partition_id: u16) -> Option<u64> {
+fn remote_partition_leader(state: &SharedState, partition_id: u32) -> Option<u64> {
     let routing_lock = state.cluster_routing.as_ref()?;
     let routing = routing_lock.read().unwrap_or_else(|p| p.into_inner());
     let leader = routing.leader_for_vshard(partition_id).ok()?;
@@ -265,7 +265,7 @@ pub async fn consume_remote(
     };
 
     // Compute per-partition max LSN for the returned batch.
-    let mut partition_offsets: std::collections::BTreeMap<u16, u64> =
+    let mut partition_offsets: std::collections::BTreeMap<u32, u64> =
         std::collections::BTreeMap::new();
     for e in &events {
         let entry = partition_offsets.entry(e.partition).or_insert(0);
@@ -289,7 +289,7 @@ pub enum ConsumeError {
     BufferEmpty(String),
     /// Partition is on a remote node — caller should use `consume_remote()`.
     RemotePartition {
-        partition_id: u16,
+        partition_id: u32,
         leader_node: u64,
     },
     /// Remote consume failed.

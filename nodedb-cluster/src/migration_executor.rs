@@ -43,7 +43,7 @@ use crate::transport::NexarTransport;
 /// Configuration for a vShard migration.
 #[derive(Debug, Clone)]
 pub struct MigrationRequest {
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     pub source_node: u64,
     pub target_node: u64,
     /// Maximum allowed write pause during Phase 3 (microseconds).
@@ -64,7 +64,7 @@ impl Default for MigrationRequest {
 /// Result of a completed migration.
 #[derive(Debug)]
 pub struct MigrationResult {
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     pub source_node: u64,
     pub target_node: u64,
     pub phase: MigrationPhase,
@@ -656,7 +656,7 @@ impl Default for MigrationTracker {
 /// Observability snapshot of a migration.
 #[derive(Debug, Clone)]
 pub struct MigrationSnapshot {
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     pub phase: String,
     pub elapsed_ms: u64,
     pub is_active: bool,

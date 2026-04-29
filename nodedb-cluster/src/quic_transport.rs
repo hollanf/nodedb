@@ -134,7 +134,7 @@ impl QuicTransport {
     pub fn send_migration_segment(
         &self,
         peer: SocketAddr,
-        vshard_id: u16,
+        vshard_id: u32,
         segment_data: &[u8],
     ) -> Result<()> {
         let envelope = VShardEnvelope::new(

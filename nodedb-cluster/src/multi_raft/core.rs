@@ -220,7 +220,7 @@ impl MultiRaft {
     }
 
     /// Get the leader for a given vShard (from local group state).
-    pub fn leader_for_vshard(&self, vshard_id: u16) -> Result<Option<u64>> {
+    pub fn leader_for_vshard(&self, vshard_id: u32) -> Result<Option<u64>> {
         let group_id = self.routing.group_for_vshard(vshard_id)?;
         let node = self
             .groups
@@ -233,7 +233,7 @@ impl MultiRaft {
     /// Propose a command to the Raft group that owns the given vShard.
     ///
     /// Returns `(group_id, log_index)` on success.
-    pub fn propose(&mut self, vshard_id: u16, data: Vec<u8>) -> Result<(u64, u64)> {
+    pub fn propose(&mut self, vshard_id: u32, data: Vec<u8>) -> Result<(u64, u64)> {
         let group_id = self.routing.group_for_vshard(vshard_id)?;
         let node = self
             .groups

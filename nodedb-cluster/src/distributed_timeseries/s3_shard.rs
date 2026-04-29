@@ -18,17 +18,17 @@ pub struct ShardedS3Config {
     /// Key prefix (e.g., "nodedb/v1/cluster-abc").
     pub prefix: String,
     /// Total number of shards in the cluster.
-    pub total_shards: u16,
+    pub total_shards: u32,
 }
 
 impl ShardedS3Config {
     /// Generate the S3 key prefix for a specific shard.
-    pub fn shard_prefix(&self, shard_id: u16) -> String {
+    pub fn shard_prefix(&self, shard_id: u32) -> String {
         format!("{}/shard-{:04}", self.prefix, shard_id)
     }
 
     /// Generate the full S3 key for a partition on a specific shard.
-    pub fn partition_key(&self, shard_id: u16, collection: &str, partition_name: &str) -> String {
+    pub fn partition_key(&self, shard_id: u32, collection: &str, partition_name: &str) -> String {
         format!(
             "{}/shard-{:04}/{collection}/{partition_name}",
             self.prefix, shard_id
@@ -38,7 +38,7 @@ impl ShardedS3Config {
     /// Generate S3 key for the packed partition file.
     pub fn packed_partition_key(
         &self,
-        shard_id: u16,
+        shard_id: u32,
         collection: &str,
         min_ts: i64,
         max_ts: i64,
@@ -72,7 +72,7 @@ pub struct ArchivedPartition {
     /// S3 key.
     pub s3_key: String,
     /// Which shard archived this.
-    pub shard_id: u16,
+    pub shard_id: u32,
     /// Collection name.
     pub collection: String,
     /// Time range.
@@ -92,7 +92,7 @@ pub struct ArchivePlan {
     /// Target S3 key.
     pub target_key: String,
     /// Shard that owns this partition.
-    pub shard_id: u16,
+    pub shard_id: u32,
     /// Collection name.
     pub collection: String,
     /// Partition time range.
@@ -104,7 +104,7 @@ impl ShardedS3Config {
     /// Generate archive plans for partitions on a specific shard.
     pub fn plan_archive(
         &self,
-        shard_id: u16,
+        shard_id: u32,
         collection: &str,
         partitions: &[(String, i64, i64)], // (source_dir, min_ts, max_ts)
     ) -> Vec<ArchivePlan> {

@@ -3,66 +3,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 // ── Re-export shared types from nodedb-types ──
-pub use nodedb_types::id::{DocumentId, TenantId};
-
-// ── Origin-only types (not needed on Lite) ──
-
-/// Identifies a virtual shard (0..1023). Data is hashed to vShards by shard key.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    zerompk::ToMessagePack,
-    zerompk::FromMessagePack,
-)]
-pub struct VShardId(u16);
-
-impl VShardId {
-    /// Total number of virtual shards in the system.
-    pub const COUNT: u16 = 1024;
-
-    pub const fn new(id: u16) -> Self {
-        assert!(id < Self::COUNT, "vShard ID must be < 1024");
-        Self(id)
-    }
-
-    pub const fn as_u16(self) -> u16 {
-        self.0
-    }
-
-    /// Compute vShard from a collection name.
-    ///
-    /// Uses a simple DJB-like hash (multiply-31) for deterministic
-    /// collection-to-shard routing.
-    pub fn from_collection(collection: &str) -> Self {
-        let hash = collection
-            .as_bytes()
-            .iter()
-            .fold(0u16, |h, &b| h.wrapping_mul(31).wrapping_add(b as u16));
-        Self::new(hash % Self::COUNT)
-    }
-
-    /// Compute vShard from a shard key via consistent hashing.
-    pub fn from_key(key: &[u8]) -> Self {
-        // FxHash-style fast hash, modulo 1024.
-        let mut h: u64 = 0;
-        for &b in key {
-            h = h.wrapping_mul(0x100000001B3).wrapping_add(b as u64);
-        }
-        Self((h % Self::COUNT as u64) as u16)
-    }
-}
-
-impl fmt::Display for VShardId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "vshard:{}", self.0)
-    }
-}
+pub use nodedb_types::id::{DocumentId, TenantId, VShardId};
 
 /// Globally unique request identifier. Monotonic per connection, unique for >= 24h.
 #[derive(
@@ -111,7 +52,7 @@ mod tests {
         let a = VShardId::from_key(b"user:alice");
         let b = VShardId::from_key(b"user:alice");
         assert_eq!(a, b);
-        assert!(a.as_u16() < VShardId::COUNT);
+        assert!(a.as_u32() < VShardId::COUNT);
     }
 
     #[test]
@@ -119,7 +60,7 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for i in 0u32..1000 {
             let key = format!("tenant:{i}");
-            seen.insert(VShardId::from_key(key.as_bytes()).as_u16());
+            seen.insert(VShardId::from_key(key.as_bytes()).as_u32());
         }
         assert!(
             seen.len() > 100,

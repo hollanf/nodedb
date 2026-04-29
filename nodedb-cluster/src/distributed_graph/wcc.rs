@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 )]
 pub struct ComponentMergeRequest {
     pub round: u32,
-    pub source_shard: u16,
+    pub source_shard: u32,
     /// (target_vertex_name, source_component_label).
     pub merges: Vec<(String, String)>,
 }
@@ -25,7 +25,7 @@ pub struct ComponentMergeRequest {
     Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
 )]
 pub struct WccRoundAck {
-    pub shard_id: u16,
+    pub shard_id: u32,
     pub round: u32,
     pub labels_changed: usize,
     pub merges_sent: usize,
@@ -38,8 +38,8 @@ pub struct ShardWccState {
     parent: Vec<usize>,
     rank: Vec<u8>,
     pub global_labels: Vec<String>,
-    pub shard_id: u16,
-    pub boundary_edges: HashMap<u32, Vec<(String, u16)>>,
+    pub shard_id: u32,
+    pub boundary_edges: HashMap<u32, Vec<(String, u32)>>,
     node_names: Vec<String>,
 }
 
@@ -47,10 +47,10 @@ impl ShardWccState {
     /// Initialize WCC state for a local CSR partition.
     pub fn init(
         vertex_count: usize,
-        shard_id: u16,
+        shard_id: u32,
         node_names: Vec<String>,
         local_edges: &dyn Fn(u32) -> Vec<u32>,
-        ghost_edges: &dyn Fn(u32) -> Vec<(String, u16)>,
+        ghost_edges: &dyn Fn(u32) -> Vec<(String, u32)>,
     ) -> Self {
         let parent: Vec<usize> = (0..vertex_count).collect();
         let rank = vec![0u8; vertex_count];
@@ -116,8 +116,8 @@ impl ShardWccState {
     }
 
     /// Produce outbound merge requests for boundary edges.
-    pub fn round(&self) -> (HashMap<u16, Vec<(String, String)>>, usize) {
-        let mut outbound: HashMap<u16, Vec<(String, String)>> = HashMap::new();
+    pub fn round(&self) -> (HashMap<u32, Vec<(String, String)>>, usize) {
+        let mut outbound: HashMap<u32, Vec<(String, String)>> = HashMap::new();
 
         for (&local_id, ghost_list) in &self.boundary_edges {
             let root = find_static(&self.parent, local_id as usize);

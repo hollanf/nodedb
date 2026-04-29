@@ -21,12 +21,12 @@ pub struct SpatialScatterPayload {
 /// Scatter-gather coordinator for distributed spatial queries.
 pub struct SpatialScatterGather {
     pub source_node: u64,
-    pub shard_ids: Vec<u16>,
+    pub shard_ids: Vec<u32>,
     merger: SpatialResultMerger,
 }
 
 impl SpatialScatterGather {
-    pub fn new(source_node: u64, shard_ids: Vec<u16>) -> Self {
+    pub fn new(source_node: u64, shard_ids: Vec<u32>) -> Self {
         let count = shard_ids.len();
         Self {
             source_node,
@@ -47,7 +47,7 @@ impl SpatialScatterGather {
         query_geometry_json: &[u8],
         distance_meters: f64,
         limit: usize,
-    ) -> Vec<(u16, VShardEnvelope)> {
+    ) -> Vec<(u32, VShardEnvelope)> {
         let msg = SpatialScatterPayload {
             collection: collection.to_string(),
             field: field.to_string(),

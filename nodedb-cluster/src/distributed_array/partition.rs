@@ -30,7 +30,7 @@ use super::routing::array_vshard_for_tile;
 
 /// One bucket produced by `partition_put_cells`.
 pub struct PutBucket {
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     /// Hilbert prefix of the first cell added to this bucket. Used by the
     /// shard handler for routing validation (`validate_put_routing`).
     pub representative_hilbert_prefix: u64,
@@ -40,7 +40,7 @@ pub struct PutBucket {
 
 /// One bucket produced by `partition_delete_coords`.
 pub struct DeleteBucket {
-    pub vshard_id: u16,
+    pub vshard_id: u32,
     /// Hilbert prefix of the first coord added to this bucket. Used by the
     /// shard handler for routing validation (`validate_delete_routing`).
     pub representative_hilbert_prefix: u64,
@@ -61,7 +61,7 @@ pub fn partition_put_cells(cells: &[(u64, Vec<u8>)], prefix_bits: u8) -> Result<
     }
 
     // vshard_id → (representative_hilbert_prefix, per-cell byte blobs)
-    let mut buckets: HashMap<u16, (u64, Vec<Vec<u8>>)> = HashMap::new();
+    let mut buckets: HashMap<u32, (u64, Vec<Vec<u8>>)> = HashMap::new();
 
     for (hilbert_prefix, cell_bytes) in cells {
         let vshard_id = array_vshard_for_tile(*hilbert_prefix, prefix_bits)?;
@@ -99,7 +99,7 @@ pub fn partition_delete_coords(
     }
 
     // vshard_id → (representative_hilbert_prefix, coord byte blobs)
-    let mut buckets: HashMap<u16, (u64, Vec<Vec<u8>>)> = HashMap::new();
+    let mut buckets: HashMap<u32, (u64, Vec<Vec<u8>>)> = HashMap::new();
 
     for (hilbert_prefix, coord_bytes) in coords {
         let vshard_id = array_vshard_for_tile(*hilbert_prefix, prefix_bits)?;
@@ -152,7 +152,7 @@ mod tests {
     }
 
     // Helper: compute expected vshard for a given hilbert prefix and prefix_bits.
-    fn expected_vshard(prefix: u64, prefix_bits: u8) -> u16 {
+    fn expected_vshard(prefix: u64, prefix_bits: u8) -> u32 {
         array_vshard_for_tile(prefix, prefix_bits).unwrap()
     }
 
