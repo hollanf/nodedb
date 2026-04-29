@@ -6,7 +6,7 @@
 use nodedb::event::scheduler::cron::CronExpr;
 use nodedb::event::scheduler::executor::pending_minute_ticks;
 use nodedb::event::scheduler::history::JobHistoryStore;
-use nodedb::event::scheduler::types::{JobRun, MissedPolicy, ScheduleDef, ScheduleScope};
+use nodedb::event::scheduler::types::{JobRun, MissedPolicy};
 
 #[test]
 fn cron_every_minute() {
@@ -61,44 +61,6 @@ fn cron_invalid_rejected() {
     assert!(CronExpr::parse("").is_err());
     assert!(CronExpr::parse("* * *").is_err()); // Only 3 fields.
     assert!(CronExpr::parse("60 * * * *").is_err()); // Minute > 59.
-}
-
-#[test]
-fn schedule_def_target_collection() {
-    let def = ScheduleDef {
-        tenant_id: 1,
-        name: "cleanup".into(),
-        cron_expr: "0 0 * * *".into(),
-        body_sql: "DELETE FROM metrics WHERE ts < now() - INTERVAL '90 days'".into(),
-        scope: ScheduleScope::Normal,
-        missed_policy: MissedPolicy::Skip,
-        allow_overlap: true,
-        enabled: true,
-        target_collection: Some("metrics".into()),
-        owner: "admin".into(),
-        created_at: 0,
-    };
-    assert_eq!(def.target_collection.as_deref(), Some("metrics"));
-    assert_eq!(def.scope, ScheduleScope::Normal);
-}
-
-#[test]
-fn schedule_local_scope() {
-    let def = ScheduleDef {
-        tenant_id: 1,
-        name: "local_job".into(),
-        cron_expr: "* * * * *".into(),
-        body_sql: "SELECT 1".into(),
-        scope: ScheduleScope::Local,
-        missed_policy: MissedPolicy::Skip,
-        allow_overlap: false,
-        enabled: true,
-        target_collection: None,
-        owner: "admin".into(),
-        created_at: 0,
-    };
-    assert_eq!(def.scope, ScheduleScope::Local);
-    assert!(!def.allow_overlap);
 }
 
 #[test]

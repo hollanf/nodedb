@@ -382,25 +382,6 @@ fn definer_trigger_registered_and_matched() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn crdt_sync_events_skip_triggers() {
-    // CrdtSync events must NOT fire triggers — verified by the dispatcher
-    // checking event.source. This test validates the enum contract.
-    assert_ne!(EventSource::CrdtSync, EventSource::User);
-    assert_ne!(EventSource::CrdtSync, EventSource::Deferred);
-}
-
-#[test]
-fn raft_follower_events_skip_triggers() {
-    assert_ne!(EventSource::RaftFollower, EventSource::User);
-}
-
-#[test]
-fn trigger_events_skip_retriggering() {
-    // Trigger-generated events must not re-fire triggers.
-    assert_ne!(EventSource::Trigger, EventSource::User);
-}
-
-#[test]
 fn only_user_and_deferred_fire_triggers() {
     // Exhaustive check: only User and Deferred should fire.
     let sources = [

@@ -94,41 +94,12 @@ fn make_trigger_with_priority(name: &str, collection: &str, priority: i32) -> St
 }
 
 // ---------------------------------------------------------------------------
-// Event source cascade prevention
+// WriteOp data-event classification
 // ---------------------------------------------------------------------------
-
-#[test]
-fn event_source_user_is_triggerable() {
-    let event = make_event(EventSource::User, WriteOp::Insert, "orders");
-    assert_eq!(event.source, EventSource::User);
-    assert!(event.op.is_data_event());
-}
-
-#[test]
-fn event_source_trigger_not_retriggerable() {
-    let event = make_event(EventSource::Trigger, WriteOp::Insert, "audit_log");
-    assert_eq!(event.source, EventSource::Trigger);
-    assert_ne!(event.source, EventSource::User);
-}
-
-#[test]
-fn event_source_deferred_fires_deferred_mode() {
-    let event = make_event(EventSource::Deferred, WriteOp::Insert, "orders");
-    assert_eq!(event.source, EventSource::Deferred);
-    assert_ne!(event.source, EventSource::User);
-}
-
-#[test]
-fn event_source_crdt_sync_no_triggers() {
-    let event = make_event(EventSource::CrdtSync, WriteOp::Update, "users");
-    assert_eq!(event.source, EventSource::CrdtSync);
-}
-
-#[test]
-fn event_source_raft_follower_no_triggers() {
-    let event = make_event(EventSource::RaftFollower, WriteOp::Insert, "orders");
-    assert_eq!(event.source, EventSource::RaftFollower);
-}
+//
+// Event-source filtering (`User`/`Deferred` fire, others don't) is covered
+// exhaustively by `only_user_and_deferred_fire_triggers` in
+// `trigger_execution.rs`.
 
 #[test]
 fn heartbeat_is_not_data_event() {
