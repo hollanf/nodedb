@@ -26,6 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::align::{AlignedBuf, DEFAULT_ALIGNMENT};
 use crate::double_write::DwbMode;
 use crate::error::{Result, WalError};
+use crate::preamble::SegmentPreamble;
 use crate::record::{HEADER_SIZE, WalRecord};
 
 /// Default write buffer size: 2 MiB.
@@ -119,6 +120,11 @@ pub struct WalWriter {
     /// Optional key ring for payload encryption (supports key rotation).
     encryption_ring: Option<crate::crypto::KeyRing>,
 
+    /// Preamble written at the start of this segment (when encryption is active).
+    /// Its 16 bytes are included as part of the AAD on every encrypted record,
+    /// binding ciphertext to the segment it was written in.
+    segment_preamble: Option<SegmentPreamble>,
+
     /// Optional double-write buffer for torn write protection.
     /// Records are written here before the WAL for crash recovery.
     double_write: Option<crate::double_write::DoubleWriteBuffer>,
@@ -157,24 +163,53 @@ impl WalWriter {
             sealed: false,
             config,
             encryption_ring: None,
+            segment_preamble: None,
             double_write,
         })
     }
 
     /// Set the encryption key. When set, all subsequent records will have
     /// their payloads encrypted with AES-256-GCM.
-    pub fn set_encryption_key(&mut self, key: crate::crypto::WalEncryptionKey) {
-        self.encryption_ring = Some(crate::crypto::KeyRing::new(key));
+    ///
+    /// Writes the 16-byte WAL segment preamble at the current file offset.
+    /// Must be called before the first `append`. Calling it after records
+    /// have already been written to this file returns an error.
+    pub fn set_encryption_key(&mut self, key: crate::crypto::WalEncryptionKey) -> Result<()> {
+        self.set_encryption_ring(crate::crypto::KeyRing::new(key))
     }
 
     /// Set the key ring directly (for key rotation with dual-key reads).
-    pub fn set_encryption_ring(&mut self, ring: crate::crypto::KeyRing) {
+    ///
+    /// Writes the 16-byte WAL segment preamble at the current file offset.
+    /// Must be called before the first `append`. Calling it after records
+    /// have already been written to this file returns an error.
+    pub fn set_encryption_ring(&mut self, ring: crate::crypto::KeyRing) -> Result<()> {
+        if self.file_offset != 0 || !self.buffer.is_empty() {
+            return Err(WalError::EncryptionError {
+                detail: "set_encryption_ring must be called before writing any records".into(),
+            });
+        }
+        let epoch = *ring.current().epoch();
+        let preamble = SegmentPreamble::new_wal(epoch);
+        let preamble_bytes = preamble.to_bytes();
+
+        // Write preamble into the buffer so it gets flushed with the first
+        // record batch (or on the next sync).
+        self.buffer.write(&preamble_bytes);
+
         self.encryption_ring = Some(ring);
+        self.segment_preamble = Some(preamble);
+        Ok(())
     }
 
     /// Access the key ring (for decryption during replay).
     pub fn encryption_ring(&self) -> Option<&crate::crypto::KeyRing> {
         self.encryption_ring.as_ref()
+    }
+
+    /// The preamble for this segment, if encryption was enabled.
+    pub fn segment_preamble(&self) -> Option<&SegmentPreamble> {
+        self.segment_preamble.as_ref()
     }
 
     /// Open a new WAL segment file with a specific starting LSN.
@@ -207,6 +242,7 @@ impl WalWriter {
             sealed: false,
             config,
             encryption_ring: None,
+            segment_preamble: None,
             double_write,
         })
     }
@@ -238,6 +274,7 @@ impl WalWriter {
         }
 
         let lsn = self.next_lsn.fetch_add(1, Ordering::Relaxed);
+        let preamble_bytes = self.segment_preamble.as_ref().map(|p| p.to_bytes());
         let record = WalRecord::new(
             record_type,
             lsn,
@@ -245,6 +282,7 @@ impl WalWriter {
             vshard_id,
             payload.to_vec(),
             self.encryption_ring.as_ref().map(|r| r.current()),
+            preamble_bytes.as_ref(),
         )?;
 
         // Write to double-write buffer (deferred — no fsync yet).

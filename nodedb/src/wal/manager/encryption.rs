@@ -17,7 +17,8 @@ impl WalManager {
         let mut mgr = Self::open(path, use_direct_io)?;
         {
             let mut wal = mgr.wal.lock().unwrap_or_else(|p| p.into_inner());
-            wal.set_encryption_ring(ring.clone());
+            wal.set_encryption_ring(ring.clone())
+                .map_err(crate::Error::Wal)?;
         }
         mgr.encryption_ring = Some(ring);
         info!(key_path = %key_path.display(), "WAL encryption enabled");
@@ -42,7 +43,8 @@ impl WalManager {
         let mut mgr = Self::open(path, use_direct_io)?;
         {
             let mut wal = mgr.wal.lock().unwrap_or_else(|p| p.into_inner());
-            wal.set_encryption_ring(ring.clone());
+            wal.set_encryption_ring(ring.clone())
+                .map_err(crate::Error::Wal)?;
         }
         mgr.encryption_ring = Some(ring);
         info!(
@@ -57,6 +59,8 @@ impl WalManager {
     ///
     /// The new key becomes the current key for all future writes.
     /// The old current key becomes the previous key for dual-key reads.
+    /// Returns an error if the WAL has already written records to the active
+    /// segment — in that case, roll to a new segment first.
     pub fn rotate_key(&self, new_key_path: &Path) -> crate::Result<()> {
         let new_key = nodedb_wal::crypto::WalEncryptionKey::from_file(new_key_path)
             .map_err(crate::Error::Wal)?;
@@ -68,7 +72,8 @@ impl WalManager {
             nodedb_wal::crypto::KeyRing::new(new_key)
         };
 
-        wal.set_encryption_ring(new_ring);
+        wal.set_encryption_ring(new_ring)
+            .map_err(crate::Error::Wal)?;
         info!(new_key = %new_key_path.display(), "WAL encryption key rotated");
         Ok(())
     }
@@ -84,9 +89,13 @@ impl WalManager {
     }
 
     /// Set the encryption key ring. All subsequent records will be encrypted.
-    pub fn set_encryption_ring(&mut self, ring: nodedb_wal::crypto::KeyRing) {
+    ///
+    /// Must be called before any records are written to the active segment.
+    pub fn set_encryption_ring(&mut self, ring: nodedb_wal::crypto::KeyRing) -> crate::Result<()> {
         let mut wal = self.wal.lock().unwrap_or_else(|p| p.into_inner());
-        wal.set_encryption_ring(ring.clone());
+        wal.set_encryption_ring(ring.clone())
+            .map_err(crate::Error::Wal)?;
         self.encryption_ring = Some(ring);
+        Ok(())
     }
 }

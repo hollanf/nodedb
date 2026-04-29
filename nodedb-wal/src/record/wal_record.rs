@@ -4,6 +4,7 @@ use super::header::{
     ENCRYPTED_FLAG, HEADER_SIZE, MAX_WAL_PAYLOAD_SIZE, RecordHeader, WAL_FORMAT_VERSION, WAL_MAGIC,
 };
 use crate::error::{Result, WalError};
+use crate::preamble::PREAMBLE_SIZE;
 
 /// A complete WAL record: header + payload.
 #[derive(Debug, Clone)]
@@ -17,6 +18,12 @@ impl WalRecord {
     ///
     /// If `encryption_key` is provided, the payload is encrypted before
     /// CRC computation. The ciphertext includes a 16-byte auth tag.
+    ///
+    /// `preamble_bytes` — when encryption is active, the 16-byte segment
+    /// preamble that was written at offset 0 of this segment file. It is
+    /// concatenated with the record header bytes to form the AAD, binding
+    /// the ciphertext to its segment (preamble-swap defense). Pass `None`
+    /// for unencrypted records (the argument is ignored in that case).
     pub fn new(
         record_type: u16,
         lsn: u64,
@@ -24,6 +31,7 @@ impl WalRecord {
         vshard_id: u16,
         payload: Vec<u8>,
         encryption_key: Option<&crate::crypto::WalEncryptionKey>,
+        preamble_bytes: Option<&[u8; PREAMBLE_SIZE]>,
     ) -> Result<Self> {
         if payload.len() > MAX_WAL_PAYLOAD_SIZE {
             return Err(WalError::PayloadTooLarge {
@@ -44,7 +52,10 @@ impl WalRecord {
                 crc32c: 0,
             };
             let header_bytes = temp_header.to_bytes();
-            let ciphertext = key.encrypt(lsn, &header_bytes, &payload)?;
+            // AAD = preamble_bytes || header_bytes — binds ciphertext to both
+            // the segment it lives in and the record header it belongs to.
+            let aad = build_aad(preamble_bytes, &header_bytes);
+            let ciphertext = key.encrypt_aad(lsn, &aad, &payload)?;
             (ciphertext, true)
         } else {
             (payload, false)
@@ -76,9 +87,14 @@ impl WalRecord {
     }
 
     /// Decrypt the payload if the record is encrypted.
+    ///
+    /// `epoch` must come from the on-disk segment preamble, not from the
+    /// current in-memory key. `preamble_bytes` must be the same 16-byte
+    /// preamble that was used as part of the AAD during encryption.
     pub fn decrypt_payload(
         &self,
         epoch: &[u8; 4],
+        preamble_bytes: Option<&[u8; PREAMBLE_SIZE]>,
         encryption_key: Option<&crate::crypto::WalEncryptionKey>,
     ) -> Result<Vec<u8>> {
         if !self.is_encrypted() {
@@ -94,14 +110,19 @@ impl WalRecord {
         aad_header.payload_len = 0;
         aad_header.crc32c = 0;
         let header_bytes = aad_header.to_bytes();
+        let aad = build_aad(preamble_bytes, &header_bytes);
 
-        key.decrypt(epoch, self.header.lsn, &header_bytes, &self.payload)
+        key.decrypt_aad(epoch, self.header.lsn, &aad, &self.payload)
     }
 
     /// Decrypt the payload using a key ring (supports dual-key rotation).
+    ///
+    /// `epoch` must come from the on-disk segment preamble. `preamble_bytes`
+    /// must match the preamble bytes written at the start of this segment.
     pub fn decrypt_payload_ring(
         &self,
         epoch: &[u8; 4],
+        preamble_bytes: Option<&[u8; PREAMBLE_SIZE]>,
         ring: Option<&crate::crypto::KeyRing>,
     ) -> Result<Vec<u8>> {
         if !self.is_encrypted() {
@@ -117,8 +138,9 @@ impl WalRecord {
         aad_header.payload_len = 0;
         aad_header.crc32c = 0;
         let header_bytes = aad_header.to_bytes();
+        let aad = build_aad(preamble_bytes, &header_bytes);
 
-        ring.decrypt(epoch, self.header.lsn, &header_bytes, &self.payload)
+        ring.decrypt_aad(epoch, self.header.lsn, &aad, &self.payload)
     }
 
     /// Whether this record's payload is encrypted.
@@ -151,6 +173,25 @@ impl WalRecord {
     }
 }
 
+/// Build the AAD buffer: `preamble_bytes || header_bytes`.
+///
+/// When `preamble_bytes` is `None` (no encryption or legacy path), the AAD
+/// is just the header bytes. When present, the preamble is prepended.
+pub(crate) fn build_aad(
+    preamble_bytes: Option<&[u8; PREAMBLE_SIZE]>,
+    header_bytes: &[u8; HEADER_SIZE],
+) -> Vec<u8> {
+    match preamble_bytes {
+        Some(p) => {
+            let mut aad = Vec::with_capacity(PREAMBLE_SIZE + HEADER_SIZE);
+            aad.extend_from_slice(p);
+            aad.extend_from_slice(header_bytes);
+            aad
+        }
+        None => header_bytes.to_vec(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::types::RecordType;
@@ -159,16 +200,32 @@ mod tests {
     #[test]
     fn checksum_roundtrip() {
         let payload = b"hello nodedb";
-        let record =
-            WalRecord::new(RecordType::Put as u16, 1, 0, 0, payload.to_vec(), None).unwrap();
+        let record = WalRecord::new(
+            RecordType::Put as u16,
+            1,
+            0,
+            0,
+            payload.to_vec(),
+            None,
+            None,
+        )
+        .unwrap();
         record.verify_checksum().unwrap();
     }
 
     #[test]
     fn checksum_detects_corruption() {
         let payload = b"hello nodedb";
-        let mut record =
-            WalRecord::new(RecordType::Put as u16, 1, 0, 0, payload.to_vec(), None).unwrap();
+        let mut record = WalRecord::new(
+            RecordType::Put as u16,
+            1,
+            0,
+            0,
+            payload.to_vec(),
+            None,
+            None,
+        )
+        .unwrap();
         record.payload[0] ^= 0xFF;
         assert!(matches!(
             record.verify_checksum(),
@@ -180,7 +237,7 @@ mod tests {
     fn payload_too_large_rejected() {
         let big_payload = vec![0u8; MAX_WAL_PAYLOAD_SIZE + 1];
         assert!(matches!(
-            WalRecord::new(RecordType::Put as u16, 1, 0, 0, big_payload, None),
+            WalRecord::new(RecordType::Put as u16, 1, 0, 0, big_payload, None, None),
             Err(WalError::PayloadTooLarge { .. })
         ));
     }
@@ -195,6 +252,7 @@ mod tests {
             0,
             0,
             anchor.to_bytes().to_vec(),
+            None,
             None,
         )
         .unwrap();

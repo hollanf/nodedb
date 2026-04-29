@@ -18,12 +18,16 @@ use std::io::Read;
 use std::path::Path;
 
 use crate::error::{Result, WalError};
+use crate::preamble::{PREAMBLE_SIZE, SegmentPreamble, WAL_PREAMBLE_MAGIC};
 use crate::record::{HEADER_SIZE, RecordHeader, RecordType, WalRecord};
 
 /// Sequential WAL reader.
 pub struct WalReader {
     file: File,
     offset: u64,
+    /// Preamble read from offset 0 of this segment (present when encryption
+    /// is active). The epoch is used as part of the AAD for decryption.
+    segment_preamble: Option<SegmentPreamble>,
     /// Optional double-write buffer for torn write recovery.
     double_write: Option<crate::double_write::DoubleWriteBuffer>,
 }
@@ -31,10 +35,15 @@ pub struct WalReader {
 impl WalReader {
     /// Open a WAL file for reading.
     ///
+    /// If the file begins with a valid `WALP` preamble (16 bytes), it is
+    /// consumed and stored for use as AAD during decryption. Files without a
+    /// preamble (unencrypted segments or legacy format) start reading from
+    /// offset 0 directly.
+    ///
     /// Automatically opens the companion double-write buffer file
     /// (`*.dwb`) if it exists alongside the WAL file.
     pub fn open(path: &Path) -> Result<Self> {
-        let file = File::open(path)?;
+        let mut file = File::open(path)?;
         let dwb_path = path.with_extension("dwb");
         let double_write = if dwb_path.exists() {
             crate::double_write::DoubleWriteBuffer::open(
@@ -45,11 +54,25 @@ impl WalReader {
         } else {
             None
         };
+
+        // Attempt to read the preamble at offset 0.
+        // If the first 4 bytes match WAL_PREAMBLE_MAGIC, consume the full
+        // 16-byte preamble and validate it. Otherwise rewind to 0.
+        let (segment_preamble, start_offset) = try_read_preamble(&mut file)?;
+
         Ok(Self {
             file,
-            offset: 0,
+            offset: start_offset,
+            segment_preamble,
             double_write,
         })
+    }
+
+    /// The preamble read from this segment file, if present.
+    ///
+    /// Returns `None` for unencrypted segments (no preamble written).
+    pub fn segment_preamble(&self) -> Option<&SegmentPreamble> {
+        self.segment_preamble.as_ref()
     }
 
     /// Read the next record from the WAL.
@@ -136,6 +159,37 @@ impl WalReader {
         self.file.read_exact(buf)?;
         self.offset += buf.len() as u64;
         Ok(())
+    }
+}
+
+/// Attempt to read a WAL segment preamble from the start of a file.
+///
+/// Returns `(Some(preamble), PREAMBLE_SIZE)` if a valid `WALP` preamble is
+/// found, or `(None, 0)` if the file does not start with the preamble magic
+/// (unencrypted or legacy segment — seek back to 0).
+fn try_read_preamble(file: &mut File) -> Result<(Option<SegmentPreamble>, u64)> {
+    use std::io::Seek;
+
+    let mut buf = [0u8; PREAMBLE_SIZE];
+    match file.read_exact(&mut buf) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            // File is too short to hold a preamble — no preamble present.
+            file.seek(std::io::SeekFrom::Start(0))?;
+            return Ok((None, 0));
+        }
+        Err(e) => return Err(WalError::Io(e)),
+    }
+
+    if buf[0..4] == WAL_PREAMBLE_MAGIC {
+        // Parse and validate the preamble. An unsupported version is a hard
+        // error — do not silently fall through to record scanning.
+        let preamble = SegmentPreamble::from_bytes(&buf, &WAL_PREAMBLE_MAGIC)?;
+        Ok((Some(preamble), PREAMBLE_SIZE as u64))
+    } else {
+        // First bytes are not the preamble magic — rewind and read as records.
+        file.seek(std::io::SeekFrom::Start(0))?;
+        Ok((None, 0))
     }
 }
 

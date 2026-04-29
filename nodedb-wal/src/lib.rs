@@ -28,6 +28,7 @@ pub mod error;
 pub mod group_commit;
 pub mod lazy_reader;
 pub mod mmap_reader;
+pub mod preamble;
 pub mod reader;
 pub mod record;
 pub mod recovery;
@@ -44,6 +45,10 @@ pub use double_write::{DoubleWriteBuffer, DwbMode, wal_dwb_bytes_written_total};
 pub use error::{Result, WalError};
 pub use group_commit::GroupCommitter;
 pub use lazy_reader::LazyWalReader;
+pub use preamble::{
+    CIPHER_AES_256_GCM, PREAMBLE_SIZE, PREAMBLE_VERSION, SEG_PREAMBLE_MAGIC, SegmentPreamble,
+    WAL_PREAMBLE_MAGIC,
+};
 pub use record::{RecordHeader, RecordType, WalRecord};
 pub use recovery::{RecoveryInfo, recover};
 pub use replay::{TombstoneSet, extract_tombstones};

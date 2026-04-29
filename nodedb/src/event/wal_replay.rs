@@ -373,6 +373,15 @@ mod tests {
         vshard_id: u16,
         lsn: u64,
     ) -> WalRecord {
-        WalRecord::new(rt as u16, lsn, tenant_id, vshard_id, payload.to_vec(), None).unwrap()
+        WalRecord::new(
+            rt as u16,
+            lsn,
+            tenant_id,
+            vshard_id,
+            payload.to_vec(),
+            None,
+            None,
+        )
+        .unwrap()
     }
 }

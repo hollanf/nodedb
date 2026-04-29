@@ -9,8 +9,14 @@ pub const WAL_MAGIC: u32 = 0x5359_4E57; // "SYNW"
 ///
 /// v2 introduces bitemporal record layout: `LsnMsAnchor` records (type 102)
 /// provide stable LSN↔wall-clock interpolation, and engine-level writers emit
-/// `system_from_ms` in versioned keys. Pre-release — no v1 readers supported.
-pub const WAL_FORMAT_VERSION: u16 = 2;
+/// `system_from_ms` in versioned keys.
+///
+/// v3 introduces the 16-byte segment preamble (`WALP` magic) written at offset
+/// 0 of every WAL segment file. The preamble persists the AES-256-GCM epoch,
+/// `cipher_alg`, and `kid`, making encrypted segments self-describing and
+/// enabling correct nonce reconstruction after a process restart.
+/// Pre-release — no v1/v2 readers supported.
+pub const WAL_FORMAT_VERSION: u16 = 3;
 
 /// Maximum WAL record payload size (64 MiB). Distinct from cluster RPC's limit.
 pub const MAX_WAL_PAYLOAD_SIZE: usize = 64 * 1024 * 1024;
@@ -85,7 +91,7 @@ impl RecordHeader {
                 actual: self.magic,
             });
         }
-        if self.format_version > WAL_FORMAT_VERSION {
+        if self.format_version != WAL_FORMAT_VERSION {
             return Err(WalError::UnsupportedVersion {
                 version: self.format_version,
                 supported: WAL_FORMAT_VERSION,

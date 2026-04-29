@@ -1,13 +1,19 @@
 use std::io::{Read, Write};
 use std::path::Path;
 
+use nodedb_wal::preamble::{PREAMBLE_SIZE, SEG_PREAMBLE_MAGIC, SegmentPreamble};
+
 use crate::types::Lsn;
 
 /// Magic bytes identifying a NodeDB segment file.
 const SEGMENT_MAGIC: [u8; 4] = *b"SYNS";
 
 /// Current segment format version.
-const FORMAT_VERSION: u16 = 1;
+///
+/// v2 adds the 16-byte `SEGP` preamble at offset 0 of every encrypted segment.
+/// The preamble persists the AES-256-GCM epoch used for that segment, making
+/// decryption correct across process restarts. Pre-launch; no v1 migration.
+const FORMAT_VERSION: u16 = 2;
 
 /// Footer size in bytes: magic(4) + version(2) + created_by(32) + checksum(4) + min_lsn(8) + max_lsn(8) = 58.
 const FOOTER_SIZE: usize = 58;
@@ -121,29 +127,55 @@ impl SegmentFooter {
 
 /// Write a segment file with optional encryption.
 ///
-/// Layout: [encrypted_data | footer(58B plaintext)]
-/// If `key` is provided, data is AES-256-GCM encrypted with the footer's
-/// min_lsn as the nonce (deterministic, unique per segment).
+/// Layout (encrypted):
+///   `[preamble(16B plaintext)] [ciphertext(data_len + 16B auth_tag)] [footer(58B plaintext)]`
+///
+/// Layout (unencrypted):
+///   `[data] [footer(58B plaintext)]`
+///
+/// The preamble contains a freshly-generated random epoch. The nonce used for
+/// AES-256-GCM is `(preamble.epoch, min_lsn)`. The preamble bytes and a fixed
+/// AAD tag are included as Additional Authenticated Data, preventing preamble
+/// swap attacks.
+///
+/// Nonce uniqueness: `(preamble.epoch, min_lsn)` is globally unique because
+/// each call generates a fresh random epoch (4 bytes, 2^32 collision space).
+/// Two segments that share `min_lsn` (e.g. LSN=0 at bootstrap) will have
+/// different epochs and therefore non-colliding nonces.
 pub fn write_encrypted_segment(
     path: &Path,
     data: &[u8],
     footer: &SegmentFooter,
     key: Option<&nodedb_wal::crypto::WalEncryptionKey>,
 ) -> crate::Result<()> {
-    let final_data = if let Some(key) = key {
-        let mut aad = [0u8; nodedb_wal::record::HEADER_SIZE];
-        aad[..4].copy_from_slice(b"SEGM");
-        key.encrypt(footer.min_lsn.as_u64(), &aad, data)
+    let mut file = std::fs::File::create(path)?;
+
+    if let Some(key) = key {
+        // Create a fresh-epoch key for this segment. Each segment write gets
+        // its own epoch so even two segments with the same min_lsn (e.g.
+        // both starting at LSN 0 at bootstrap) have non-colliding nonces.
+        // `with_fresh_epoch` re-uses the same AES key bytes but generates a
+        // new random epoch — the nonce for encryption will use this epoch,
+        // and we record the same epoch in the preamble.
+        let fresh_key = key.with_fresh_epoch().map_err(crate::Error::Wal)?;
+        let epoch = *fresh_key.epoch();
+        let preamble = SegmentPreamble::new_seg(epoch);
+        let preamble_bytes = preamble.to_bytes();
+
+        // AAD = preamble_bytes (binds ciphertext to this segment's preamble).
+        let ciphertext = fresh_key
+            .encrypt_aad(footer.min_lsn.as_u64(), &preamble_bytes, data)
             .map_err(|e| crate::Error::Storage {
                 engine: "segment".into(),
                 detail: format!("segment encryption failed: {e}"),
-            })?
-    } else {
-        data.to_vec()
-    };
+            })?;
 
-    let mut file = std::fs::File::create(path)?;
-    file.write_all(&final_data)?;
+        file.write_all(&preamble_bytes)?;
+        file.write_all(&ciphertext)?;
+    } else {
+        file.write_all(data)?;
+    }
+
     file.write_all(&footer.to_bytes())?;
     file.flush()?;
     Ok(())
@@ -151,44 +183,73 @@ pub fn write_encrypted_segment(
 
 /// Read and decrypt a segment file's data portion.
 ///
+/// For encrypted segments, reads the 16-byte `SEGP` preamble at the start of
+/// the file to recover the epoch, then uses it for nonce reconstruction.
 /// Returns the plaintext data (footer is stripped and validated separately).
 pub fn read_encrypted_segment(
     path: &Path,
     key: Option<&nodedb_wal::crypto::WalEncryptionKey>,
 ) -> crate::Result<Vec<u8>> {
     let raw = std::fs::read(path)?;
-    if raw.len() < FOOTER_SIZE {
-        return Err(crate::Error::SegmentCorrupted {
-            detail: "file too small".into(),
-        });
-    }
-
-    let data = &raw[..raw.len() - FOOTER_SIZE];
-    let footer_bytes: [u8; FOOTER_SIZE] =
-        raw[raw.len() - FOOTER_SIZE..]
-            .try_into()
-            .map_err(|_| crate::Error::SegmentCorrupted {
-                detail: "footer size mismatch".into(),
-            })?;
-
-    let footer = SegmentFooter::from_bytes(&footer_bytes)?;
 
     if let Some(key) = key {
-        let mut aad = [0u8; nodedb_wal::record::HEADER_SIZE];
-        aad[..4].copy_from_slice(b"SEGM");
-        key.decrypt(key.epoch(), footer.min_lsn.as_u64(), &aad, data)
-            .map_err(|e| crate::Error::Storage {
-                engine: "segment".into(),
-                detail: format!("segment decryption failed: {e}"),
-            })
+        // Encrypted layout: [preamble(16)] [ciphertext] [footer(58)]
+        let min_len = PREAMBLE_SIZE + nodedb_wal::crypto::AUTH_TAG_SIZE + FOOTER_SIZE;
+        if raw.len() < min_len {
+            return Err(crate::Error::SegmentCorrupted {
+                detail: "encrypted segment file too small".into(),
+            });
+        }
+
+        // Read and validate the preamble.
+        let preamble_bytes: [u8; PREAMBLE_SIZE] = raw[..PREAMBLE_SIZE]
+            .try_into()
+            .expect("slice is PREAMBLE_SIZE bytes");
+        let preamble =
+            SegmentPreamble::from_bytes(&preamble_bytes, &SEG_PREAMBLE_MAGIC).map_err(|e| {
+                crate::Error::SegmentCorrupted {
+                    detail: format!("invalid segment preamble: {e}"),
+                }
+            })?;
+
+        // Footer is at the end.
+        let footer_bytes: [u8; FOOTER_SIZE] = raw[raw.len() - FOOTER_SIZE..]
+            .try_into()
+            .expect("slice is FOOTER_SIZE bytes");
+        let footer = SegmentFooter::from_bytes(&footer_bytes)?;
+
+        // Ciphertext is between preamble and footer.
+        let ciphertext = &raw[PREAMBLE_SIZE..raw.len() - FOOTER_SIZE];
+
+        // Decrypt: epoch from preamble, nonce input is min_lsn.
+        key.decrypt_aad(
+            preamble.epoch(),
+            footer.min_lsn.as_u64(),
+            &preamble_bytes,
+            ciphertext,
+        )
+        .map_err(|e| crate::Error::Storage {
+            engine: "segment".into(),
+            detail: format!("segment decryption failed: {e}"),
+        })
     } else {
-        Ok(data.to_vec())
+        // Unencrypted layout: [data] [footer(58)]
+        if raw.len() < FOOTER_SIZE {
+            return Err(crate::Error::SegmentCorrupted {
+                detail: "file too small".into(),
+            });
+        }
+        Ok(raw[..raw.len() - FOOTER_SIZE].to_vec())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_key() -> nodedb_wal::crypto::WalEncryptionKey {
+        nodedb_wal::crypto::WalEncryptionKey::from_bytes(&[0x42u8; 32]).unwrap()
+    }
 
     #[test]
     fn roundtrip_bytes() {
@@ -210,7 +271,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.seg");
 
-        // Write some data + footer.
+        // Write some data + footer (unencrypted path).
         std::fs::write(&path, b"segment data here").unwrap();
         let footer = SegmentFooter::new("test", 42, Lsn::new(1), Lsn::new(50));
         footer.write_to(&path).unwrap();
@@ -220,6 +281,123 @@ mod tests {
         assert_eq!(read_footer.checksum, 42);
         assert_eq!(read_footer.min_lsn, Lsn::new(1));
         assert_eq!(read_footer.max_lsn, Lsn::new(50));
+    }
+
+    #[test]
+    fn write_and_read_file_encrypted_restart_roundtrip() {
+        // G-01 equivalent for segment-store: write encrypted, simulate restart
+        // by creating a new key instance (same bytes, fresh in-memory epoch),
+        // and verify decryption still succeeds using the on-disk preamble epoch.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("enc.seg");
+
+        let data = b"secret segment payload";
+        let footer = SegmentFooter::new("node-1", 0xABCD, Lsn::new(5), Lsn::new(100));
+
+        // Write with key_v1 (epoch chosen randomly at construction).
+        let key_v1 = test_key();
+        write_encrypted_segment(&path, data, &footer, Some(&key_v1)).unwrap();
+
+        // Simulate restart: new key instance with same bytes but different
+        // in-memory epoch. Decryption MUST use the epoch from the on-disk preamble.
+        let key_v2 = test_key(); // fresh random epoch
+        let plaintext = read_encrypted_segment(&path, Some(&key_v2)).unwrap();
+        assert_eq!(plaintext, data);
+    }
+
+    #[test]
+    fn preamble_coexists_with_footer() {
+        // Verify the preamble-at-start and footer-at-end layout is consistent:
+        // the file has exactly preamble(16) + ciphertext(data+tag) + footer(58).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("layout.seg");
+
+        let data = b"layout test";
+        let footer = SegmentFooter::new("n", 0, Lsn::new(1), Lsn::new(1));
+        let key = test_key();
+
+        write_encrypted_segment(&path, data, &footer, Some(&key)).unwrap();
+
+        let raw = std::fs::read(&path).unwrap();
+        // Starts with SEGP magic.
+        assert_eq!(&raw[..4], b"SEGP");
+        // Ends with SYNS footer magic.
+        assert_eq!(
+            &raw[raw.len() - FOOTER_SIZE..raw.len() - FOOTER_SIZE + 4],
+            b"SYNS"
+        );
+        // Total size = preamble + ciphertext(data.len + 16B tag) + footer.
+        assert_eq!(
+            raw.len(),
+            PREAMBLE_SIZE + data.len() + nodedb_wal::crypto::AUTH_TAG_SIZE + FOOTER_SIZE
+        );
+    }
+
+    #[test]
+    fn two_segments_same_min_lsn_produce_different_ciphertext() {
+        // Nonce uniqueness: two segments with the same min_lsn=0 must produce
+        // different ciphertext because each segment gets a fresh random epoch.
+        let dir = tempfile::tempdir().unwrap();
+        let path1 = dir.path().join("seg1.seg");
+        let path2 = dir.path().join("seg2.seg");
+
+        let data = b"same data, same lsn";
+        let footer = SegmentFooter::new("n", 0, Lsn::ZERO, Lsn::ZERO);
+        let key = test_key();
+
+        write_encrypted_segment(&path1, data, &footer, Some(&key)).unwrap();
+        write_encrypted_segment(&path2, data, &footer, Some(&key)).unwrap();
+
+        let raw1 = std::fs::read(&path1).unwrap();
+        let raw2 = std::fs::read(&path2).unwrap();
+
+        // Epochs (bytes 8..12 of the preamble) must differ.
+        assert_ne!(
+            &raw1[8..12],
+            &raw2[8..12],
+            "epoch collision: two segments with the same min_lsn must use different epochs"
+        );
+        // Ciphertext (after preamble, before footer) must differ.
+        let ct1 = &raw1[PREAMBLE_SIZE..raw1.len() - FOOTER_SIZE];
+        let ct2 = &raw2[PREAMBLE_SIZE..raw2.len() - FOOTER_SIZE];
+        assert_ne!(ct1, ct2);
+    }
+
+    #[test]
+    fn preamble_tamper_rejected() {
+        // G-02 binding test: swapping the preamble (different epoch) must
+        // cause decryption to fail due to AAD mismatch.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tamper.seg");
+
+        let data = b"authentic payload";
+        let footer = SegmentFooter::new("n", 0, Lsn::new(10), Lsn::new(20));
+        let key = test_key();
+        write_encrypted_segment(&path, data, &footer, Some(&key)).unwrap();
+
+        // Flip a byte in the preamble epoch field (bytes 8-11).
+        let mut raw = std::fs::read(&path).unwrap();
+        raw[9] ^= 0xFF;
+        std::fs::write(&path, &raw).unwrap();
+
+        // Decryption must fail — preamble bytes are part of AAD.
+        assert!(
+            read_encrypted_segment(&path, Some(&key)).is_err(),
+            "preamble tamper must cause decryption failure"
+        );
+    }
+
+    #[test]
+    fn unencrypted_segment_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plain.seg");
+
+        let data = b"plain data";
+        let footer = SegmentFooter::new("n", 99, Lsn::new(1), Lsn::new(5));
+
+        write_encrypted_segment(&path, data, &footer, None).unwrap();
+        let read_back = read_encrypted_segment(&path, None).unwrap();
+        assert_eq!(read_back, data);
     }
 
     #[test]

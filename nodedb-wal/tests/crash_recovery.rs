@@ -101,6 +101,7 @@ fn torn_write_mid_payload() {
             0,
             b"full-payload".to_vec(),
             None,
+            None,
         )
         .unwrap();
         let header_bytes = record.header.to_bytes();

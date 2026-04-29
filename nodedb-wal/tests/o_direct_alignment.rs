@@ -133,6 +133,7 @@ fn dwb_direct_mode_write_and_recover() {
             0,
             format!("direct-{lsn}").into_bytes(),
             None,
+            None,
         )
         .unwrap();
         dwb.write_record_deferred(&rec).unwrap();

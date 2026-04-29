@@ -132,9 +132,13 @@ impl SegmentedWal {
     }
 
     /// Set the encryption key ring. All subsequent records will be encrypted.
-    pub fn set_encryption_ring(&mut self, ring: crate::crypto::KeyRing) {
-        self.writer.set_encryption_ring(ring.clone());
+    ///
+    /// Must be called before the first `append`. Returns an error if records
+    /// have already been written to the active segment.
+    pub fn set_encryption_ring(&mut self, ring: crate::crypto::KeyRing) -> Result<()> {
+        self.writer.set_encryption_ring(ring.clone())?;
         self.encryption_ring = Some(ring);
+        Ok(())
     }
 
     /// Get the encryption key ring (for replay decryption).
@@ -243,9 +247,15 @@ impl SegmentedWal {
         let mut new_writer =
             WalWriter::open_with_start_lsn(&new_path, self.writer_config.clone(), new_first_lsn)?;
 
-        // Propagate encryption ring to the new writer.
+        // Propagate encryption to the new writer with a fresh epoch.
+        // Each segment gets a new random epoch so the per-segment nonce space
+        // is independent. The ring's key material is preserved; only the epoch
+        // changes. The new preamble is written at the head of the new segment.
         if let Some(ref ring) = self.encryption_ring {
-            new_writer.set_encryption_ring(ring.clone());
+            let fresh_key = ring.current().with_fresh_epoch()?;
+            let new_ring = crate::crypto::KeyRing::new(fresh_key);
+            new_writer.set_encryption_ring(new_ring.clone())?;
+            self.encryption_ring = Some(new_ring);
         }
 
         self.writer = new_writer;
@@ -507,41 +517,191 @@ mod tests {
 
     #[test]
     fn encryption_persists_across_segments() {
+        // Rewritten: actually decrypts across a simulated restart.
+        //
+        // Lifecycle:
+        //  1. Write 10 records with encryption, forcing segment rollover.
+        //  2. Drop the WAL (simulating process exit).
+        //  3. Reopen a new reader and replay — records are marked encrypted.
+        //  4. For each segment, open the reader, read its preamble epoch, and
+        //     decrypt each record using that epoch. Verify payloads match.
         let dir = tempfile::tempdir().unwrap();
         let wal_dir = dir.path().join("wal");
-
-        let key = crate::crypto::WalEncryptionKey::from_bytes(&[42u8; 32]);
-        let ring = crate::crypto::KeyRing::new(key);
+        let key_bytes = [42u8; 32];
 
         let config = SegmentedWalConfig {
             wal_dir: wal_dir.clone(),
-            segment_target_size: 100, // Tiny to force rollover.
+            segment_target_size: 100,
             writer_config: WalWriterConfig {
                 use_direct_io: false,
                 ..Default::default()
             },
         };
 
-        let mut wal = SegmentedWal::open(config).unwrap();
-        wal.set_encryption_ring(ring);
+        // Step 1 & 2: write and drop.
+        {
+            let key = crate::crypto::WalEncryptionKey::from_bytes(&key_bytes).unwrap();
+            let ring = crate::crypto::KeyRing::new(key);
+            let mut wal = SegmentedWal::open(config.clone()).unwrap();
+            wal.set_encryption_ring(ring).unwrap();
 
-        // Write enough to trigger rollover.
-        for i in 0..10u32 {
-            wal.append(RecordType::Put as u16, 1, 0, format!("enc-{i}").as_bytes())
+            for i in 0..10u32 {
+                wal.append(RecordType::Put as u16, 1, 0, format!("enc-{i}").as_bytes())
+                    .unwrap();
+                wal.sync().unwrap();
+            }
+            assert!(wal.list_segments().unwrap().len() > 1);
+        }
+
+        // Step 3: reopen WAL (new in-memory epoch, simulates restart).
+        let segments = crate::segment::discover_segments(&wal_dir).unwrap();
+        assert!(
+            segments.len() > 1,
+            "expected multiple segments after rollover"
+        );
+
+        let key_for_read = crate::crypto::WalEncryptionKey::from_bytes(&key_bytes).unwrap();
+        let ring_for_read = crate::crypto::KeyRing::new(key_for_read);
+
+        let mut all_payloads = Vec::new();
+
+        // Step 4: per-segment read + decrypt.
+        for seg in &segments {
+            let reader = crate::reader::WalReader::open(&seg.path).unwrap();
+            // Read the epoch from the preamble written at segment open time.
+            let epoch = *reader
+                .segment_preamble()
+                .expect("encrypted segment must have a preamble")
+                .epoch();
+            let preamble_bytes = reader.segment_preamble().unwrap().to_bytes();
+
+            for record_result in reader.records() {
+                let record = record_result.unwrap();
+                assert!(record.is_encrypted(), "all records should be encrypted");
+                let plaintext = record
+                    .decrypt_payload_ring(&epoch, Some(&preamble_bytes), Some(&ring_for_read))
+                    .unwrap();
+                all_payloads.push(plaintext);
+            }
+        }
+
+        assert_eq!(all_payloads.len(), 10);
+        for (i, payload) in all_payloads.iter().enumerate() {
+            assert_eq!(payload, format!("enc-{i}").as_bytes());
+        }
+    }
+
+    /// G-01: WAL restart roundtrip with encryption.
+    ///
+    /// Writes encrypted records, simulates a process restart (different in-memory
+    /// epoch), replays, and verifies that decryption succeeds because the epoch
+    /// is read from the on-disk preamble rather than the current key's epoch.
+    #[test]
+    fn wal_encrypted_restart_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path().join("wal");
+        let key_bytes = [0xABu8; 32];
+
+        let config = SegmentedWalConfig::for_testing(wal_dir.clone());
+
+        // Write with key lifetime 1.
+        {
+            let key = crate::crypto::WalEncryptionKey::from_bytes(&key_bytes).unwrap();
+            let ring = crate::crypto::KeyRing::new(key);
+            let mut wal = SegmentedWal::open(config.clone()).unwrap();
+            wal.set_encryption_ring(ring).unwrap();
+
+            for i in 0..5u32 {
+                wal.append(
+                    RecordType::Put as u16,
+                    1,
+                    0,
+                    format!("restart-{i}").as_bytes(),
+                )
+                .unwrap();
+            }
+            wal.sync().unwrap();
+        }
+
+        // Simulate restart: new WalEncryptionKey with same bytes (fresh random epoch).
+        let key_restart = crate::crypto::WalEncryptionKey::from_bytes(&key_bytes).unwrap();
+        let ring_restart = crate::crypto::KeyRing::new(key_restart);
+
+        // Replay all segments and decrypt.
+        let segments = crate::segment::discover_segments(&wal_dir).unwrap();
+        let mut payloads = Vec::new();
+
+        for seg in &segments {
+            let reader = crate::reader::WalReader::open(&seg.path).unwrap();
+            let epoch = *reader
+                .segment_preamble()
+                .expect("segment must have preamble after encrypted write")
+                .epoch();
+            let preamble_bytes = reader.segment_preamble().unwrap().to_bytes();
+
+            for record_result in reader.records() {
+                let record = record_result.unwrap();
+                let pt = record
+                    .decrypt_payload_ring(&epoch, Some(&preamble_bytes), Some(&ring_restart))
+                    .unwrap();
+                payloads.push(pt);
+            }
+        }
+
+        assert_eq!(payloads.len(), 5);
+        for (i, pt) in payloads.iter().enumerate() {
+            assert_eq!(pt, format!("restart-{i}").as_bytes());
+        }
+    }
+
+    /// G-02: Epoch tamper rejection.
+    ///
+    /// After writing an encrypted segment, corrupt the preamble bytes on disk.
+    /// Decryption must fail because the preamble is part of the AAD.
+    #[test]
+    fn epoch_tamper_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path().join("wal");
+        let key_bytes = [0x55u8; 32];
+
+        let config = SegmentedWalConfig::for_testing(wal_dir.clone());
+
+        {
+            let key = crate::crypto::WalEncryptionKey::from_bytes(&key_bytes).unwrap();
+            let ring = crate::crypto::KeyRing::new(key);
+            let mut wal = SegmentedWal::open(config).unwrap();
+            wal.set_encryption_ring(ring).unwrap();
+            wal.append(RecordType::Put as u16, 1, 0, b"sensitive payload")
                 .unwrap();
             wal.sync().unwrap();
         }
 
-        // Verify multiple segments were created.
-        assert!(wal.list_segments().unwrap().len() > 1);
+        // Find the segment file and corrupt byte 9 of the preamble (epoch field).
+        let segments = crate::segment::discover_segments(&wal_dir).unwrap();
+        assert_eq!(segments.len(), 1);
+        let seg_path = &segments[0].path;
 
-        // Replay should work (reader handles encrypted records via DWB/checksum).
-        // Note: encrypted records are readable because the reader doesn't decrypt —
-        // decryption happens at the consumer level via decrypt_payload().
-        let records = wal.replay().unwrap();
-        assert_eq!(records.len(), 10);
-        // All records should be marked as encrypted.
-        assert!(records.iter().all(|r| r.is_encrypted()));
+        let mut raw = std::fs::read(seg_path).unwrap();
+        // Preamble is at offset 0; epoch is bytes 8..12. Flip byte 9.
+        raw[9] ^= 0xFF;
+        std::fs::write(seg_path, &raw).unwrap();
+
+        // Reading the preamble will succeed (bytes are valid), but the epoch
+        // in the preamble will be wrong, so the AAD during decryption won't
+        // match what was used at encryption time — decryption must fail.
+        let key_read = crate::crypto::WalEncryptionKey::from_bytes(&key_bytes).unwrap();
+        let ring_read = crate::crypto::KeyRing::new(key_read);
+
+        let reader = crate::reader::WalReader::open(seg_path).unwrap();
+        let epoch = *reader.segment_preamble().unwrap().epoch();
+        let preamble_bytes = reader.segment_preamble().unwrap().to_bytes();
+
+        let record = reader.records().next().unwrap().unwrap();
+        let result = record.decrypt_payload_ring(&epoch, Some(&preamble_bytes), Some(&ring_read));
+        assert!(
+            result.is_err(),
+            "decryption with tampered preamble epoch must fail"
+        );
     }
 
     #[test]

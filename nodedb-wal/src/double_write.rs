@@ -468,6 +468,7 @@ mod tests {
             0,
             b"hello double-write".to_vec(),
             None,
+            None,
         )
         .unwrap();
 
@@ -498,8 +499,16 @@ mod tests {
 
         {
             let mut dwb = open_buffered(&dwb_path);
-            let record =
-                WalRecord::new(RecordType::Put as u16, 7, 1, 0, b"durable".to_vec(), None).unwrap();
+            let record = WalRecord::new(
+                RecordType::Put as u16,
+                7,
+                1,
+                0,
+                b"durable".to_vec(),
+                None,
+                None,
+            )
+            .unwrap();
             dwb.write_record(&record).unwrap();
         }
 
@@ -523,6 +532,7 @@ mod tests {
                 1,
                 0,
                 format!("batch-{lsn}").into_bytes(),
+                None,
                 None,
             )
             .unwrap();
@@ -553,8 +563,16 @@ mod tests {
         dwb.flush().unwrap();
         assert!(!dwb.dirty);
 
-        let record =
-            WalRecord::new(RecordType::Put as u16, 1, 1, 0, b"data".to_vec(), None).unwrap();
+        let record = WalRecord::new(
+            RecordType::Put as u16,
+            1,
+            1,
+            0,
+            b"data".to_vec(),
+            None,
+            None,
+        )
+        .unwrap();
         dwb.write_record_deferred(&record).unwrap();
         dwb.flush().unwrap();
         dwb.flush().unwrap();
@@ -594,6 +612,7 @@ mod tests {
                 0,
                 format!("wrap-{lsn}").into_bytes(),
                 None,
+                None,
             )
             .unwrap();
             dwb.write_record_deferred(&record).unwrap();
@@ -628,8 +647,16 @@ mod tests {
         let before = wal_dwb_bytes_written_total();
 
         let mut dwb = open_buffered(&dwb_path);
-        let rec =
-            WalRecord::new(RecordType::Put as u16, 1, 1, 0, b"counted".to_vec(), None).unwrap();
+        let rec = WalRecord::new(
+            RecordType::Put as u16,
+            1,
+            1,
+            0,
+            b"counted".to_vec(),
+            None,
+            None,
+        )
+        .unwrap();
         dwb.write_record(&rec).unwrap();
 
         assert!(wal_dwb_bytes_written_total() > before);

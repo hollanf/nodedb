@@ -28,6 +28,8 @@ use crate::record::HEADER_SIZE;
 #[derive(Clone)]
 pub struct WalEncryptionKey {
     cipher: Aes256Gcm,
+    /// Raw key bytes (kept for producing new instances with a fresh epoch).
+    key_bytes: [u8; 32],
     /// Random 4-byte epoch: occupies the high 4 bytes of the 12-byte nonce.
     /// Disambiguates nonces across WAL lifetimes with the same key.
     epoch: [u8; 4],
@@ -35,13 +37,41 @@ pub struct WalEncryptionKey {
 
 impl WalEncryptionKey {
     /// Create from a 32-byte key with a fresh random epoch.
-    pub fn from_bytes(key: &[u8; 32]) -> Self {
+    ///
+    /// Returns an error if the OS RNG (`getrandom`) is unavailable. Without
+    /// a fresh epoch we cannot guarantee nonce uniqueness across WAL
+    /// lifetimes, so panicking would silently risk nonce reuse on RNG
+    /// failure — better to surface it.
+    pub fn from_bytes(key: &[u8; 32]) -> Result<Self> {
         let mut epoch = [0u8; 4];
-        getrandom::fill(&mut epoch).expect("getrandom failed");
+        getrandom::fill(&mut epoch).map_err(|e| WalError::EncryptionError {
+            detail: format!("getrandom failed while generating epoch: {e}"),
+        })?;
+        Ok(Self {
+            cipher: Aes256Gcm::new(key.into()),
+            key_bytes: *key,
+            epoch,
+        })
+    }
+
+    /// Create from a 32-byte key with a **caller-supplied epoch**.
+    ///
+    /// Use this when reopening a WAL segment whose epoch was read from the
+    /// on-disk preamble, so that the nonce is reconstructed identically to
+    /// the nonce used at encryption time.
+    pub fn with_epoch(key: &[u8; 32], epoch: [u8; 4]) -> Self {
         Self {
             cipher: Aes256Gcm::new(key.into()),
+            key_bytes: *key,
             epoch,
         }
+    }
+
+    /// Produce a new key instance with the same key material but a fresh
+    /// random epoch. Used when rolling to a new WAL segment — each segment
+    /// gets its own epoch so the per-segment nonce space is independent.
+    pub fn with_fresh_epoch(&self) -> Result<Self> {
+        Self::from_bytes(&self.key_bytes)
     }
 
     /// Load key from a file (must contain exactly 32 bytes).
@@ -55,9 +85,9 @@ impl WalEncryptionKey {
                 ),
             });
         }
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&key_bytes);
-        Ok(Self::from_bytes(&key))
+        let mut key_arr = [0u8; 32];
+        key_arr.copy_from_slice(&key_bytes);
+        Self::from_bytes(&key_arr)
     }
 
     /// Encrypt a payload. Returns ciphertext + auth_tag (16 bytes appended).
@@ -71,13 +101,19 @@ impl WalEncryptionKey {
         header_bytes: &[u8; HEADER_SIZE],
         plaintext: &[u8],
     ) -> Result<Vec<u8>> {
+        self.encrypt_aad(lsn, header_bytes, plaintext)
+    }
+
+    /// Encrypt with a caller-provided AAD slice (may be longer than HEADER_SIZE,
+    /// e.g. preamble bytes prepended to the header).
+    pub fn encrypt_aad(&self, lsn: u64, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
         let nonce = lsn_to_nonce(&self.epoch, lsn);
         self.cipher
             .encrypt(
                 &nonce,
                 aes_gcm::aead::Payload {
                     msg: plaintext,
-                    aad: header_bytes,
+                    aad,
                 },
             )
             .map_err(|_| WalError::EncryptionError {
@@ -92,7 +128,9 @@ impl WalEncryptionKey {
 
     /// Decrypt a payload. Input is ciphertext + auth_tag (16 bytes at end).
     ///
-    /// - `epoch`: the epoch that was used during encryption (from the segment header)
+    /// - `epoch`: must be the epoch that was used during encryption, read from
+    ///   the on-disk segment preamble — **not** `self.epoch`, which reflects
+    ///   the current in-memory lifetime and may differ after a restart.
     /// - `lsn`: must match the LSN used during encryption
     /// - `header_bytes`: must match the header used during encryption (AAD)
     /// - `ciphertext`: the encrypted payload (includes 16-byte auth tag)
@@ -103,13 +141,24 @@ impl WalEncryptionKey {
         header_bytes: &[u8; HEADER_SIZE],
         ciphertext: &[u8],
     ) -> Result<Vec<u8>> {
+        self.decrypt_aad(epoch, lsn, header_bytes, ciphertext)
+    }
+
+    /// Decrypt with a caller-provided AAD slice.
+    pub fn decrypt_aad(
+        &self,
+        epoch: &[u8; 4],
+        lsn: u64,
+        aad: &[u8],
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>> {
         let nonce = lsn_to_nonce(epoch, lsn);
         self.cipher
             .decrypt(
                 &nonce,
                 aes_gcm::aead::Payload {
                     msg: ciphertext,
-                    aad: header_bytes,
+                    aad,
                 },
             )
             .map_err(|_| WalError::EncryptionError {
@@ -156,9 +205,14 @@ impl KeyRing {
         self.current.encrypt(lsn, header_bytes, plaintext)
     }
 
+    /// Encrypt with a caller-provided AAD slice.
+    pub fn encrypt_aad(&self, lsn: u64, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
+        self.current.encrypt_aad(lsn, aad, plaintext)
+    }
+
     /// Decrypt: try current key first, then previous (if set).
     ///
-    /// `epoch` is the encryption epoch stored in the WAL segment header.
+    /// `epoch` is the encryption epoch stored in the WAL segment preamble.
     /// This enables seamless key rotation — old data encrypted with the
     /// previous key can still be read while new data uses the current key.
     pub fn decrypt(
@@ -168,12 +222,23 @@ impl KeyRing {
         header_bytes: &[u8; HEADER_SIZE],
         ciphertext: &[u8],
     ) -> Result<Vec<u8>> {
+        self.decrypt_aad(epoch, lsn, header_bytes, ciphertext)
+    }
+
+    /// Decrypt with a caller-provided AAD slice.
+    pub fn decrypt_aad(
+        &self,
+        epoch: &[u8; 4],
+        lsn: u64,
+        aad: &[u8],
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>> {
         match (
-            self.current.decrypt(epoch, lsn, header_bytes, ciphertext),
+            self.current.decrypt_aad(epoch, lsn, aad, ciphertext),
             self.previous.as_ref(),
         ) {
             (Ok(plaintext), _) => Ok(plaintext),
-            (Err(_), Some(prev)) => prev.decrypt(epoch, lsn, header_bytes, ciphertext),
+            (Err(_), Some(prev)) => prev.decrypt_aad(epoch, lsn, aad, ciphertext),
             (Err(e), None) => Err(e),
         }
     }
@@ -215,7 +280,7 @@ mod tests {
     use super::*;
 
     fn test_key() -> WalEncryptionKey {
-        WalEncryptionKey::from_bytes(&[0x42u8; 32])
+        WalEncryptionKey::from_bytes(&[0x42u8; 32]).unwrap()
     }
 
     fn test_header(lsn: u64) -> [u8; HEADER_SIZE] {
@@ -241,9 +306,9 @@ mod tests {
 
     #[test]
     fn wrong_key_fails() {
-        let key1 = WalEncryptionKey::from_bytes(&[0x01; 32]);
+        let key1 = WalEncryptionKey::from_bytes(&[0x01; 32]).unwrap();
         let epoch1 = *key1.epoch();
-        let key2 = WalEncryptionKey::from_bytes(&[0x02; 32]);
+        let key2 = WalEncryptionKey::from_bytes(&[0x02; 32]).unwrap();
         let header = test_header(1);
 
         let ciphertext = key1.encrypt(1, &header, b"secret").unwrap();
@@ -316,8 +381,8 @@ mod tests {
         // This models: write at LSN=1, wipe WAL, restart with same key,
         // write at LSN=1 again. The two ciphertexts must differ.
         let key_bytes = [0x42u8; 32];
-        let key1 = WalEncryptionKey::from_bytes(&key_bytes);
-        let key2 = WalEncryptionKey::from_bytes(&key_bytes);
+        let key1 = WalEncryptionKey::from_bytes(&key_bytes).unwrap();
+        let key2 = WalEncryptionKey::from_bytes(&key_bytes).unwrap();
         let header = test_header(1);
         let pt = b"same plaintext in two wal lifetimes";
 

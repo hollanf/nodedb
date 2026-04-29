@@ -138,6 +138,7 @@ mod tests {
             0,
             payload,
             None,
+            None,
         )
         .unwrap()
     }
@@ -181,8 +182,17 @@ mod tests {
     fn extract_ignores_non_tombstone_records() {
         let records = vec![
             tombstone_record(1, "users", 100, 10),
-            WalRecord::new(RecordType::Put as u16, 11, 1, 0, b"junk".to_vec(), None).unwrap(),
-            WalRecord::new(RecordType::Noop as u16, 12, 1, 0, vec![], None).unwrap(),
+            WalRecord::new(
+                RecordType::Put as u16,
+                11,
+                1,
+                0,
+                b"junk".to_vec(),
+                None,
+                None,
+            )
+            .unwrap(),
+            WalRecord::new(RecordType::Noop as u16, 12, 1, 0, vec![], None, None).unwrap(),
         ];
         let set = extract_tombstones(&records);
         assert_eq!(set.len(), 1);
@@ -197,6 +207,7 @@ mod tests {
             1,
             0,
             vec![0xFF, 0xFF, 0xFF], // truncated name_len, no body
+            None,
             None,
         )
         .unwrap();

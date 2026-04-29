@@ -68,6 +68,8 @@ pub struct UringWriter {
     config: UringWriterConfig,
     /// Optional encryption key for WAL-at-rest encryption.
     encryption_key: Option<crate::crypto::WalEncryptionKey>,
+    /// Preamble for this segment (written at offset 0 when encryption is set).
+    segment_preamble: Option<crate::preamble::SegmentPreamble>,
 }
 
 impl UringWriter {
@@ -102,6 +104,7 @@ impl UringWriter {
             sealed: false,
             config,
             encryption_key: None,
+            segment_preamble: None,
         })
     }
 
@@ -117,8 +120,21 @@ impl UringWriter {
     }
 
     /// Set the encryption key for WAL-at-rest encryption.
-    pub fn set_encryption_key(&mut self, key: crate::crypto::WalEncryptionKey) {
+    ///
+    /// Writes the 16-byte WAL preamble at the head of the segment.
+    /// Must be called before the first `append`.
+    pub fn set_encryption_key(&mut self, key: crate::crypto::WalEncryptionKey) -> Result<()> {
+        if self.file_offset != 0 || !self.buffer.is_empty() {
+            return Err(WalError::EncryptionError {
+                detail: "set_encryption_key must be called before writing any records".into(),
+            });
+        }
+        let epoch = *key.epoch();
+        let preamble = crate::preamble::SegmentPreamble::new_wal(epoch);
+        self.buffer.write(&preamble.to_bytes());
+        self.segment_preamble = Some(preamble);
         self.encryption_key = Some(key);
+        Ok(())
     }
 
     /// Append a record to the in-memory buffer. Returns the assigned LSN.
@@ -136,6 +152,7 @@ impl UringWriter {
         }
 
         let lsn = self.next_lsn.fetch_add(1, Ordering::Relaxed);
+        let preamble_bytes = self.segment_preamble.as_ref().map(|p| p.to_bytes());
         let record = WalRecord::new(
             record_type,
             lsn,
@@ -143,6 +160,7 @@ impl UringWriter {
             vshard_id,
             payload.to_vec(),
             self.encryption_key.as_ref(),
+            preamble_bytes.as_ref(),
         )?;
 
         let header_bytes = record.header.to_bytes();

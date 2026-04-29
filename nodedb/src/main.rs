@@ -169,7 +169,7 @@ async fn main() -> anyhow::Result<()> {
         if let Some(ref enc) = config.encryption {
             let key = nodedb_wal::crypto::WalEncryptionKey::from_file(&enc.key_path)
                 .map_err(nodedb::Error::Wal)?;
-            mgr.set_encryption_ring(nodedb_wal::crypto::KeyRing::new(key));
+            mgr.set_encryption_ring(nodedb_wal::crypto::KeyRing::new(key))?;
             info!(key_path = %enc.key_path.display(), "WAL encryption enabled");
         }
         Arc::new(mgr)
