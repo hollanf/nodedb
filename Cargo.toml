@@ -152,6 +152,9 @@ roaring = "0.11"
 # Zero-copy serialization
 rkyv = { version = "0.8", features = ["alloc"] }
 
+# Safe transmutation for f32/u8 slice casts
+bytemuck = { version = "1", features = ["derive"] }
+
 # WebSocket
 tokio-tungstenite = "0.29"
 
