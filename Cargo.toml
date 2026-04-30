@@ -78,10 +78,14 @@ crc32c = "0.6"
 
 # Crypto
 hmac = "0.12"
+hkdf = "0.12"
+subtle = "2"
 base64 = "0.22"
 getrandom = { version = "0.3", features = ["std"] }
 aes-gcm = "0.10"
 argon2 = "0.5"
+aws-sdk-kms = { version = "1", default-features = false, features = ["rustls"] }
+aws-config = { version = "1", default-features = false, features = ["rustls", "rt-tokio"] }
 
 # JWT / JWKS (EC key support for ES256/ES384)
 p256 = { version = "0.13", features = ["ecdsa"] }
