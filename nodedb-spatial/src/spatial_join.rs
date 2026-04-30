@@ -100,6 +100,7 @@ pub fn build_join_index(entries: &[(u64, Geometry)]) -> RTree {
 
 /// Which spatial predicate to use for the join.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum SpatialJoinPredicate {
     Intersects,
     Contains,

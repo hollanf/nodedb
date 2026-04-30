@@ -57,6 +57,9 @@ pub fn geometry_to_wkt(geom: &Geometry) -> String {
             let geoms: Vec<String> = geometries.iter().map(geometry_to_wkt).collect();
             format!("GEOMETRYCOLLECTION({})", geoms.join(", "))
         }
+
+        // Unknown future geometry type — emit empty geometry collection.
+        _ => "GEOMETRYCOLLECTION EMPTY".to_string(),
     }
 }
 

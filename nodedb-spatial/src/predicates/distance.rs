@@ -90,6 +90,9 @@ pub fn st_distance(a: &Geometry, b: &Geometry) -> f64 {
             .iter()
             .map(|g| st_distance(g, other))
             .fold(f64::INFINITY, f64::min),
+
+        // Unknown future geometry types — treat as infinite distance.
+        (&_, &_) => f64::INFINITY,
     }
 }
 

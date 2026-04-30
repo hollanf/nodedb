@@ -35,6 +35,7 @@ pub struct SpatialIndexMeta {
 )]
 #[msgpack(c_enum)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum SpatialIndexType {
     RTree = 0,
     Geohash = 1,
@@ -158,6 +159,7 @@ pub fn deserialize_meta(bytes: &[u8]) -> Result<SpatialIndexMeta, RTreeCheckpoin
 
 /// Errors during R-tree checkpoint operations.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum RTreeCheckpointError {
     #[error("R-tree checkpoint serialization failed: {0}")]
     Serialize(zerompk::Error),

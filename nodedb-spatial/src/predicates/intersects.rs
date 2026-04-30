@@ -84,6 +84,9 @@ pub fn st_intersects(a: &Geometry, b: &Geometry) -> bool {
         | (other, Geometry::GeometryCollection { geometries }) => {
             geometries.iter().any(|g| st_intersects(g, other))
         }
+
+        // Unknown future geometry types — conservatively non-intersecting.
+        (&_, &_) => false,
     }
 }
 

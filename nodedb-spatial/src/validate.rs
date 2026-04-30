@@ -26,23 +26,20 @@ pub fn is_valid(geom: &Geometry) -> bool {
 
 fn validate_recursive(geom: &Geometry, issues: &mut Vec<String>) {
     match geom {
-        Geometry::Point { coordinates } => {
+        Geometry::Point { coordinates }
             if coordinates[0].is_nan()
                 || coordinates[1].is_nan()
                 || coordinates[0].is_infinite()
-                || coordinates[1].is_infinite()
-            {
-                issues.push("Point has NaN or Infinite coordinate".to_string());
-            }
+                || coordinates[1].is_infinite() =>
+        {
+            issues.push("Point has NaN or Infinite coordinate".to_string());
         }
 
-        Geometry::LineString { coordinates } => {
-            if coordinates.len() < 2 {
-                issues.push(format!(
-                    "LineString has {} points, minimum is 2",
-                    coordinates.len()
-                ));
-            }
+        Geometry::LineString { coordinates } if coordinates.len() < 2 => {
+            issues.push(format!(
+                "LineString has {} points, minimum is 2",
+                coordinates.len()
+            ));
         }
 
         Geometry::Polygon { coordinates } => {
@@ -129,6 +126,9 @@ fn validate_recursive(geom: &Geometry, issues: &mut Vec<String>) {
                 validate_recursive(geom, issues);
             }
         }
+
+        // Unknown future geometry type — no validation rules yet.
+        _ => {}
     }
 }
 

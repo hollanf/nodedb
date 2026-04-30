@@ -118,6 +118,12 @@ fn write_geometry(buf: &mut Vec<u8>, geom: &Geometry) {
                 write_geometry(buf, g);
             }
         }
+
+        // Unknown future geometry type — write empty geometry collection.
+        _ => {
+            write_header(buf, WKB_GEOMETRYCOLLECTION);
+            write_u32(buf, 0);
+        }
     }
 }
 
