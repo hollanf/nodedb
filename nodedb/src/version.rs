@@ -8,14 +8,14 @@
 /// Current NodeDB version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Wire format version (incremented when SPSC bridge, WAL, or RPC formats change).
-/// Readers MUST reject messages with wire_version > their own.
-/// Readers SHOULD accept messages with wire_version == their own or one less (N-1).
-pub const WIRE_FORMAT_VERSION: u16 = 4;
-
-/// Minimum wire format version this build can read.
-/// Messages below this version are rejected.
-pub const MIN_WIRE_FORMAT_VERSION: u16 = 1;
+/// Wire format version. Re-exported from `nodedb_types::wire_version`,
+/// which is the single source of truth shared with `nodedb-cluster`
+/// and any other crate that stamps or interprets the value.
+///
+/// Readers MUST reject messages with wire_version > their own. Readers
+/// SHOULD accept messages with wire_version == their own or one less
+/// (N-1).
+pub use nodedb_types::wire_version::{MIN_WIRE_FORMAT_VERSION, WIRE_FORMAT_VERSION};
 
 /// Wire version assigned to legacy clients that send wire_version == 0.
 /// Must always equal MIN_WIRE_FORMAT_VERSION to prevent silent upgrades

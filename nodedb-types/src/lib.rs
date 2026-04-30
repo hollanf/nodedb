@@ -41,6 +41,7 @@ pub mod vector_ann;
 pub mod vector_distance;
 pub mod vector_index_stats;
 pub mod vector_model;
+pub mod wire_version;
 
 pub use approx::{CountMinSketch, HyperLogLog, SpaceSaving, TDigest};
 pub use array_cell::ArrayCell;
