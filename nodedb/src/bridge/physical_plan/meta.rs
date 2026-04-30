@@ -48,8 +48,8 @@ pub enum MetaOp {
     /// target type. The catalog update happens on the Control Plane after
     /// the Data Plane confirms success.
     ///
-    /// `target_type`: "document", "strict", "kv".
-    /// `schema_json`: for "strict"/"kv", JSON-serialized column definitions.
+    /// `target_type`: "document_schemaless", "document_strict", "kv".
+    /// `schema_json`: for "document_strict"/"kv", JSON-serialized column definitions.
     ConvertCollection {
         collection: String,
         target_type: String,

@@ -19,7 +19,7 @@ use crate::bridge::envelope::{Priority, Request, Status};
 use crate::control::array_sync::raft_apply::{apply_array_op, apply_array_schema};
 use crate::control::state::SharedState;
 use crate::control::wal_replication::{ReplicatedEntry, ReplicatedWrite, from_replicated_entry};
-use crate::types::ReadConsistency;
+use crate::types::{ReadConsistency, TraceId};
 
 // ── Propose tracker ─────────────────────────────────────────────────
 
@@ -411,7 +411,7 @@ pub async fn run_apply_loop(
                 plan,
                 deadline: Instant::now() + Duration::from_secs(30),
                 priority: Priority::Normal,
-                trace_id: 0,
+                trace_id: TraceId::generate(),
                 consistency: ReadConsistency::Strong,
                 idempotency_key: None,
                 event_source: crate::event::EventSource::User,

@@ -21,7 +21,7 @@ use tracing::{debug, warn};
 
 use crate::control::state::SharedState;
 use crate::engine::graph::traversal_options::{GraphResponseMeta, GraphTraversalOptions};
-use crate::types::{TenantId, VShardId};
+use crate::types::{TenantId, TraceId, VShardId};
 
 /// A batch of node IDs targeted at a specific shard.
 ///
@@ -336,7 +336,7 @@ pub async fn coordinate_cross_shard_hop(
 
                 let gw_ctx = crate::control::gateway::core::QueryContext {
                     tenant_id: crate::types::TenantId::new(tenant_id_u32),
-                    trace_id: 0,
+                    trace_id: TraceId::generate(),
                 };
 
                 // Build a fresh QueryContext per traversal using cloned inputs

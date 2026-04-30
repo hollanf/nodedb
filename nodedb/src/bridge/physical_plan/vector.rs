@@ -1,6 +1,6 @@
 //! Vector engine operations dispatched to the Data Plane.
 
-use nodedb_types::{Surrogate, SurrogateBitmap};
+use nodedb_types::{Surrogate, SurrogateBitmap, vector_distance::DistanceMetric};
 
 use crate::bridge::envelope::PhysicalPlan;
 
@@ -22,6 +22,9 @@ pub enum VectorOp {
         top_k: usize,
         /// Optional search beam width override. If 0, uses default `4 * top_k`.
         ef_search: usize,
+        /// Per-query distance metric override. Overrides the collection-default
+        /// metric configured at index creation time.
+        metric: DistanceMetric,
         /// Pre-computed bitmap of eligible surrogates (from filter evaluation).
         filter_bitmap: Option<SurrogateBitmap>,
         /// Named vector field to search. Empty string = default field.

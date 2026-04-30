@@ -538,6 +538,7 @@ pub(super) fn convert_vector_search(p: VectorSearchParams<'_>) -> crate::Result<
             query_vector: p.query_vector.to_vec(),
             top_k: *p.top_k,
             ef_search: *p.ef_search,
+            metric: *p.metric,
             filter_bitmap: None,
             field_name: p.field.to_string(),
             rls_filters: filter_bytes,
@@ -646,20 +647,27 @@ fn build_array_prefilter_plan(
 
 pub(super) fn convert_text_search(
     collection: &str,
-    query: &str,
+    query: &nodedb_sql::fts_types::FtsQuery,
     top_k: &usize,
-    fuzzy: &bool,
     tenant_id: TenantId,
 ) -> crate::Result<Vec<PhysicalTask>> {
+    let query_str = query
+        .to_plain_string()
+        .ok_or_else(|| crate::Error::BadRequest {
+            detail: "phrase and exclusion FTS queries are not yet supported by the FTS engine; \
+                     use plainto_tsquery or AND/OR combinations"
+                .into(),
+        })?;
+    let fuzzy = query.is_fuzzy();
     let vshard = VShardId::from_collection(collection);
     Ok(vec![PhysicalTask {
         tenant_id,
         vshard_id: vshard,
         plan: PhysicalPlan::Text(TextOp::Search {
             collection: collection.into(),
-            query: query.to_string(),
+            query: query_str,
             top_k: *top_k,
-            fuzzy: *fuzzy,
+            fuzzy,
             prefilter: None,
             rls_filters: Vec::new(),
         }),

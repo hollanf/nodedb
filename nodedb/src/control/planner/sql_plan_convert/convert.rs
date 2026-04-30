@@ -272,6 +272,7 @@ pub(super) fn convert_one(
             query_vector,
             top_k,
             ef_search,
+            metric,
             filters,
             array_prefilter,
             ann_options,
@@ -283,6 +284,7 @@ pub(super) fn convert_one(
             query_vector,
             top_k,
             ef_search,
+            metric,
             filters,
             array_prefilter: array_prefilter.as_ref(),
             ann_options,
@@ -296,9 +298,8 @@ pub(super) fn convert_one(
             collection,
             query,
             top_k,
-            fuzzy,
             ..
-        } => super::scan::convert_text_search(collection, query, top_k, fuzzy, tenant_id),
+        } => super::scan::convert_text_search(collection, query, top_k, tenant_id),
 
         SqlPlan::HybridSearch {
             collection,

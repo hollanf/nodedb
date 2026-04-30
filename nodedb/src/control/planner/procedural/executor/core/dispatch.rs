@@ -5,6 +5,7 @@ use super::StatementExecutor;
 use crate::control::planner::procedural::ast::SqlExpr;
 use crate::control::planner::procedural::executor::bindings::RowBindings;
 use crate::control::planner::procedural::executor::eval;
+use crate::types::TraceId;
 
 impl<'a> StatementExecutor<'a> {
     // ── ASSIGN handling ─────────────────────────────────────────────────
@@ -82,7 +83,7 @@ impl<'a> StatementExecutor<'a> {
                     task.tenant_id,
                     task.vshard_id,
                     task.plan,
-                    0,
+                    TraceId::ZERO,
                     self.event_source,
                 )
                 .await?;
@@ -170,7 +171,7 @@ impl<'a> StatementExecutor<'a> {
                     task.tenant_id,
                     task.vshard_id,
                     task.plan,
-                    0,
+                    TraceId::ZERO,
                     self.event_source,
                 )
                 .await?;
@@ -187,7 +188,7 @@ impl<'a> StatementExecutor<'a> {
                 tenant_id,
                 vshard_id,
                 batch_plan,
-                0,
+                TraceId::ZERO,
                 self.event_source,
             )
             .await?;

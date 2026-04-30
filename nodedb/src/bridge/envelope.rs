@@ -77,7 +77,7 @@ impl From<Arc<[u8]>> for Payload {
     }
 }
 use crate::event::types::EventSource;
-use crate::types::{Lsn, ReadConsistency, RequestId, TenantId, VShardId};
+use crate::types::{Lsn, ReadConsistency, RequestId, TenantId, TraceId, VShardId};
 
 /// Request envelope: Control Plane -> Data Plane.
 ///
@@ -103,7 +103,7 @@ pub struct Request {
     pub priority: Priority,
 
     /// Distributed trace identifier for cross-plane observability.
-    pub trace_id: u64,
+    pub trace_id: TraceId,
 
     /// Read consistency level for this request.
     pub consistency: ReadConsistency,
@@ -327,7 +327,7 @@ mod tests {
             }),
             deadline: Instant::now() + Duration::from_secs(5),
             priority: Priority::Normal,
-            trace_id: 0xABCD,
+            trace_id: TraceId::generate(),
             consistency: ReadConsistency::Strong,
             idempotency_key: None,
             event_source: crate::event::EventSource::User,
@@ -340,7 +340,7 @@ mod tests {
         let req = sample_request();
         assert_eq!(req.request_id, RequestId::new(1));
         assert_eq!(req.tenant_id, TenantId::new(1));
-        assert_eq!(req.trace_id, 0xABCD);
+        assert_ne!(req.trace_id, TraceId::ZERO);
     }
 
     #[test]
@@ -391,7 +391,7 @@ mod tests {
             }),
             deadline: Instant::now() + Duration::from_secs(1),
             priority: Priority::Critical,
-            trace_id: 0,
+            trace_id: TraceId::ZERO,
             consistency: ReadConsistency::Eventual,
             idempotency_key: None,
             event_source: crate::event::EventSource::User,

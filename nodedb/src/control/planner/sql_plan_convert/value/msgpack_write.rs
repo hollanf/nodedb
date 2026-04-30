@@ -68,6 +68,14 @@ pub(crate) fn write_msgpack_value(buf: &mut Vec<u8>, val: &SqlValue) {
             buf.push(0xCB);
             buf.extend_from_slice(&f.to_be_bytes());
         }
+        SqlValue::Decimal(d) => {
+            // Write as msgpack string of the decimal's canonical text representation.
+            // The Data Plane strict encoder accepts Value::String for Decimal columns
+            // and coerces via rust_decimal::Decimal::from_str. This matches the
+            // contract of write_msgpack_value: it produces standard msgpack that
+            // json_from_msgpack / value_from_msgpack can decode without loss.
+            write_msgpack_str(buf, &d.to_string());
+        }
         SqlValue::String(s) => write_msgpack_str(buf, s),
         SqlValue::Array(arr) => {
             write_msgpack_array_header(buf, arr.len());
@@ -76,6 +84,11 @@ pub(crate) fn write_msgpack_value(buf: &mut Vec<u8>, val: &SqlValue) {
             }
         }
         SqlValue::Bytes(b) => write_msgpack_bin(buf, b),
+        // Timestamp/Timestamptz: write as ISO 8601 string for the Data Plane
+        // to decode via its standard text-coercion path.
+        SqlValue::Timestamp(dt) | SqlValue::Timestamptz(dt) => {
+            write_msgpack_str(buf, &dt.to_iso8601())
+        }
     }
 }
 

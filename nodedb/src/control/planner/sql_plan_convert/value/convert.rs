@@ -8,6 +8,7 @@ pub(crate) fn sql_value_to_nodedb_value(v: &SqlValue) -> nodedb_types::Value {
     match v {
         SqlValue::Int(i) => nodedb_types::Value::Integer(*i),
         SqlValue::Float(f) => nodedb_types::Value::Float(*f),
+        SqlValue::Decimal(d) => nodedb_types::Value::Decimal(*d),
         SqlValue::String(s) => nodedb_types::Value::String(s.clone()),
         SqlValue::Bool(b) => nodedb_types::Value::Bool(*b),
         SqlValue::Null => nodedb_types::Value::Null,
@@ -15,6 +16,8 @@ pub(crate) fn sql_value_to_nodedb_value(v: &SqlValue) -> nodedb_types::Value {
             nodedb_types::Value::Array(arr.iter().map(sql_value_to_nodedb_value).collect())
         }
         SqlValue::Bytes(b) => nodedb_types::Value::Bytes(b.clone()),
+        SqlValue::Timestamp(dt) => nodedb_types::Value::NaiveDateTime(*dt),
+        SqlValue::Timestamptz(dt) => nodedb_types::Value::DateTime(*dt),
     }
 }
 
@@ -23,6 +26,7 @@ pub(crate) fn sql_value_to_string(v: &SqlValue) -> String {
         SqlValue::String(s) => s.clone(),
         SqlValue::Int(i) => i.to_string(),
         SqlValue::Float(f) => f.to_string(),
+        SqlValue::Decimal(d) => d.to_string(),
         SqlValue::Bool(b) => b.to_string(),
         _ => String::new(),
     }
@@ -33,6 +37,7 @@ pub(crate) fn sql_value_to_bytes(v: &SqlValue) -> Vec<u8> {
         SqlValue::String(s) => s.as_bytes().to_vec(),
         SqlValue::Bytes(b) => b.clone(),
         SqlValue::Int(i) => i.to_string().as_bytes().to_vec(),
+        SqlValue::Decimal(d) => d.to_string().as_bytes().to_vec(),
         _ => sql_value_to_string(v).into_bytes(),
     }
 }

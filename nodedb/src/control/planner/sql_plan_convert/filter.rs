@@ -54,15 +54,6 @@ fn filter_to_scan_filters(expr: &FilterExpr) -> Vec<nodedb_query::scan_filter::S
                 expr: None,
             }]
         }
-        FilterExpr::Like { field, pattern } => {
-            vec![ScanFilter {
-                field: field.clone(),
-                op: FilterOp::Like,
-                value: nodedb_types::Value::String(pattern.clone()),
-                clauses: Vec::new(),
-                expr: None,
-            }]
-        }
         FilterExpr::InList { field, values } => {
             let arr = values.iter().map(sql_value_to_nodedb_value).collect();
             vec![ScanFilter {
@@ -297,6 +288,7 @@ fn sql_expr_to_scan_filters(root: &SqlExpr) -> Vec<nodedb_query::scan_filter::Sc
             expr,
             pattern,
             negated,
+            case_insensitive,
         } => {
             let field = match expr.as_ref() {
                 SqlExpr::Column { table, name } => qualified_name(table.as_deref(), name),
@@ -306,13 +298,15 @@ fn sql_expr_to_scan_filters(root: &SqlExpr) -> Vec<nodedb_query::scan_filter::Sc
                 SqlExpr::Literal(SqlValue::String(s)) => s.clone(),
                 _ => return vec![expr_filter(root)],
             };
+            let op = match (*case_insensitive, *negated) {
+                (false, false) => FilterOp::Like,
+                (false, true) => FilterOp::NotLike,
+                (true, false) => FilterOp::Ilike,
+                (true, true) => FilterOp::NotIlike,
+            };
             vec![ScanFilter {
                 field,
-                op: if *negated {
-                    FilterOp::NotLike
-                } else {
-                    FilterOp::Like
-                },
+                op,
                 value: nodedb_types::Value::String(pat),
                 clauses: Vec::new(),
                 expr: None,
@@ -392,4 +386,51 @@ fn is_aggregate_function(name: &str) -> bool {
         name.to_ascii_lowercase().as_str(),
         "count" | "sum" | "avg" | "min" | "max"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nodedb_query::scan_filter::FilterOp;
+    use nodedb_sql::types::{SqlExpr, SqlValue};
+
+    fn like_expr(case_insensitive: bool, negated: bool) -> SqlExpr {
+        SqlExpr::Like {
+            expr: Box::new(SqlExpr::Column {
+                table: None,
+                name: "name".into(),
+            }),
+            pattern: Box::new(SqlExpr::Literal(SqlValue::String("foo%".into()))),
+            negated,
+            case_insensitive,
+        }
+    }
+
+    #[test]
+    fn like_emits_like_op() {
+        let filters = sql_expr_to_scan_filters(&like_expr(false, false));
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].op, FilterOp::Like);
+    }
+
+    #[test]
+    fn not_like_emits_not_like_op() {
+        let filters = sql_expr_to_scan_filters(&like_expr(false, true));
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].op, FilterOp::NotLike);
+    }
+
+    #[test]
+    fn ilike_emits_ilike_op() {
+        let filters = sql_expr_to_scan_filters(&like_expr(true, false));
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].op, FilterOp::Ilike);
+    }
+
+    #[test]
+    fn not_ilike_emits_not_ilike_op() {
+        let filters = sql_expr_to_scan_filters(&like_expr(true, true));
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].op, FilterOp::NotIlike);
+    }
 }

@@ -216,9 +216,11 @@ fn convert_expr_inner(expr: &SqlExpr, qualify: bool) -> crate::bridge::expr_eval
             expr,
             pattern,
             negated,
+            case_insensitive,
         } => {
+            let fn_name = if *case_insensitive { "ilike" } else { "like" };
             let call = BExpr::Function {
-                name: "like".into(),
+                name: fn_name.into(),
                 args: vec![
                     convert_expr_inner(expr, qualify),
                     convert_expr_inner(pattern, qualify),

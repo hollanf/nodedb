@@ -459,9 +459,9 @@ fn convert_column_type(ct: &nodedb_types::columnar::ColumnType) -> SqlDataType {
         ColumnType::Bool => SqlDataType::Bool,
         ColumnType::Bytes | ColumnType::Geometry | ColumnType::Json => SqlDataType::Bytes,
         ColumnType::Timestamp | ColumnType::SystemTimestamp => SqlDataType::Timestamp,
-        ColumnType::Decimal | ColumnType::Uuid | ColumnType::Ulid | ColumnType::Regex => {
-            SqlDataType::String
-        }
+        ColumnType::Timestamptz => SqlDataType::Timestamptz,
+        ColumnType::Decimal { .. } => SqlDataType::Decimal,
+        ColumnType::Uuid | ColumnType::Ulid | ColumnType::Regex => SqlDataType::String,
         ColumnType::Duration => SqlDataType::Int64,
         ColumnType::Array | ColumnType::Set | ColumnType::Range | ColumnType::Record => {
             SqlDataType::Bytes
@@ -471,7 +471,12 @@ fn convert_column_type(ct: &nodedb_types::columnar::ColumnType) -> SqlDataType {
 }
 
 fn parse_type_str(s: &str) -> SqlDataType {
-    match s.to_uppercase().as_str() {
+    let upper = s.to_uppercase();
+    // Handle DECIMAL/NUMERIC with optional (p,s) params.
+    if upper.starts_with("DECIMAL") || upper.starts_with("NUMERIC") {
+        return SqlDataType::Decimal;
+    }
+    match upper.as_str() {
         "INT" | "INTEGER" | "INT4" | "INT8" | "BIGINT" => SqlDataType::Int64,
         "FLOAT" | "FLOAT4" | "FLOAT8" | "FLOAT64" | "DOUBLE" | "REAL" => SqlDataType::Float64,
         "BOOL" | "BOOLEAN" => SqlDataType::Bool,

@@ -57,6 +57,7 @@ mod tests {
             query_vector: vec![0.1, 0.2, 0.3],
             top_k: 10,
             ef_search: 40,
+            metric: nodedb_types::vector_distance::DistanceMetric::L2,
             filter_bitmap: Some(nodedb_types::SurrogateBitmap::from_iter(
                 [1u32, 2].map(nodedb_types::Surrogate),
             )),

@@ -1,6 +1,8 @@
 //! Parameter structs for scan/search plan conversion functions.
 
-use nodedb_sql::types::{AggregateExpr, EngineType, Filter, Projection, SortKey, SqlPlan};
+use nodedb_sql::types::{
+    AggregateExpr, DistanceMetric, EngineType, Filter, Projection, SortKey, SqlPlan,
+};
 
 use crate::types::TenantId;
 
@@ -71,6 +73,8 @@ pub(super) struct VectorSearchParams<'a> {
     pub query_vector: &'a [f32],
     pub top_k: &'a usize,
     pub ef_search: &'a usize,
+    /// Per-query distance metric override (from `<->`, `<=>`, or `<#>`).
+    pub metric: &'a DistanceMetric,
     pub filters: &'a [Filter],
     pub array_prefilter: Option<&'a nodedb_sql::types::NdArrayPrefilter>,
     pub ann_options: &'a nodedb_sql::types::VectorAnnOptions,
