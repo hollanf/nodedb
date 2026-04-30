@@ -30,6 +30,7 @@ pub enum SimpleType {
     Bool,
     Bytes,
     Timestamp,
+    Timestamptz,
     Decimal,
     Uuid,
     Ulid,
@@ -123,7 +124,8 @@ fn parse_single(chars: &[char], pos: &mut usize, stop_at_gt: bool) -> Result<Typ
         "STRING" | "TEXT" | "VARCHAR" => Ok(TypeExpr::Simple(SimpleType::String)),
         "BOOL" | "BOOLEAN" => Ok(TypeExpr::Simple(SimpleType::Bool)),
         "BYTES" | "BYTEA" | "BLOB" => Ok(TypeExpr::Simple(SimpleType::Bytes)),
-        "TIMESTAMP" | "TIMESTAMPTZ" => Ok(TypeExpr::Simple(SimpleType::Timestamp)),
+        "TIMESTAMP" => Ok(TypeExpr::Simple(SimpleType::Timestamp)),
+        "TIMESTAMPTZ" => Ok(TypeExpr::Simple(SimpleType::Timestamptz)),
         "DECIMAL" | "NUMERIC" => Ok(TypeExpr::Simple(SimpleType::Decimal)),
         "UUID" => Ok(TypeExpr::Simple(SimpleType::Uuid)),
         "ULID" => Ok(TypeExpr::Simple(SimpleType::Ulid)),
@@ -290,6 +292,10 @@ fn value_matches_simple(value: &Value, simple: &SimpleType) -> bool {
         SimpleType::Bool => matches!(value, Value::Bool(_)),
         SimpleType::Bytes => matches!(value, Value::Bytes(_)),
         SimpleType::Timestamp => matches!(
+            value,
+            Value::NaiveDateTime(_) | Value::Integer(_) | Value::String(_)
+        ),
+        SimpleType::Timestamptz => matches!(
             value,
             Value::DateTime(_) | Value::Integer(_) | Value::String(_)
         ),
@@ -497,6 +503,26 @@ mod tests {
         let expr = parse_type_expr("TIMESTAMP").unwrap();
         assert!(value_matches_type(
             &Value::String("2024-01-01".into()),
+            &expr
+        ));
+        assert!(value_matches_type(&Value::Integer(1_700_000_000), &expr));
+    }
+
+    #[test]
+    fn parse_timestamptz() {
+        assert_eq!(
+            parse_type_expr("TIMESTAMPTZ").unwrap(),
+            TypeExpr::Simple(SimpleType::Timestamptz)
+        );
+    }
+
+    #[test]
+    fn match_timestamptz_coercions() {
+        let expr = parse_type_expr("TIMESTAMPTZ").unwrap();
+        let dt = nodedb_types::NdbDateTime::from_micros(1_700_000_000_000_000);
+        assert!(value_matches_type(&Value::DateTime(dt), &expr));
+        assert!(value_matches_type(
+            &Value::String("2024-01-01T00:00:00Z".into()),
             &expr
         ));
         assert!(value_matches_type(&Value::Integer(1_700_000_000), &expr));

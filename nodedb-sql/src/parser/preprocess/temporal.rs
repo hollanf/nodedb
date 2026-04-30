@@ -34,9 +34,11 @@
 //! Any other expression form is rejected with a typed `TemporalParseError`
 //! naming the unsupported form.
 
+use super::lex::keyword_position_outside_literals;
 use crate::temporal::{TemporalScope, ValidTime};
 
 /// Output of the temporal preprocess stage.
+#[derive(Debug)]
 pub struct Extracted {
     /// SQL with every temporal clause stripped, safe to hand to sqlparser.
     pub sql: String,
@@ -119,26 +121,24 @@ pub fn extract(sql: &str) -> Result<Option<Extracted>, TemporalParseError> {
 
 /// Match `FOR SYSTEM_TIME AS OF <integer>` case-insensitively and strip it.
 fn strip_system_time_as_of(sql: &str) -> Result<Option<(String, i64)>, TemporalParseError> {
-    let upper = sql.to_uppercase();
-    let Some(start) = upper.find("FOR SYSTEM_TIME") else {
+    let Some(start) = keyword_position_outside_literals(sql, "FOR SYSTEM_TIME") else {
         return Ok(None);
     };
     // Locate `AS OF` after the keyword.
     let after_kw = start + "FOR SYSTEM_TIME".len();
-    let tail = &upper[after_kw..];
-    let Some(as_of_rel) = tail.trim_start().strip_prefix("AS OF") else {
+    let tail_upper = sql[after_kw..].to_uppercase();
+    let Some(_as_of_rel) = tail_upper.trim_start().strip_prefix("AS OF") else {
         return Err(TemporalParseError(
             "FOR SYSTEM_TIME must be followed by AS OF <ms>".into(),
         ));
     };
-    let leading_ws = tail.len() - tail.trim_start().len();
+    let leading_ws = sql[after_kw..].len() - sql[after_kw..].trim_start().len();
     let as_of_abs = after_kw + leading_ws + "AS OF".len();
     let (ms, end_abs) = parse_trailing_i64(sql, as_of_abs)?;
     let mut out = String::with_capacity(sql.len());
     out.push_str(&sql[..start]);
     out.push(' ');
     out.push_str(&sql[end_abs..]);
-    let _ = as_of_rel; // silence unused-binding lint on case-normalised view
     Ok(Some((out, ms)))
 }
 
@@ -174,13 +174,14 @@ fn strip_system_as_of_function(sql: &str) -> Result<Option<(String, i64)>, Tempo
 /// Match `FOR VALID_TIME CONTAINS <int>` or
 /// `FOR VALID_TIME FROM <int> TO <int>` and strip whichever is present.
 fn strip_valid_time(sql: &str) -> Result<Option<(String, ValidTime)>, TemporalParseError> {
-    let upper = sql.to_uppercase();
-    let Some(start) = upper.find("FOR VALID_TIME") else {
+    let Some(start) = keyword_position_outside_literals(sql, "FOR VALID_TIME") else {
         return Ok(None);
     };
     let after_kw = start + "FOR VALID_TIME".len();
-    let tail_upper = upper[after_kw..].trim_start();
-    let leading_ws = upper[after_kw..].len() - tail_upper.len();
+    let tail_raw = &sql[after_kw..];
+    let tail_upper_owned = tail_raw.to_uppercase();
+    let tail_upper = tail_upper_owned.trim_start();
+    let leading_ws = tail_raw.len() - tail_raw.trim_start().len();
 
     if let Some(rest) = tail_upper.strip_prefix("CONTAINS") {
         let arg_abs = after_kw + leading_ws + "CONTAINS".len();
@@ -195,8 +196,10 @@ fn strip_valid_time(sql: &str) -> Result<Option<(String, ValidTime)>, TemporalPa
     if let Some(rest) = tail_upper.strip_prefix("FROM") {
         let arg_abs = after_kw + leading_ws + "FROM".len();
         let (lo, lo_end) = parse_trailing_i64(sql, arg_abs)?;
-        let after_lo_upper = upper[lo_end..].trim_start();
-        let leading_ws2 = upper[lo_end..].len() - after_lo_upper.len();
+        let after_lo_raw = &sql[lo_end..];
+        let after_lo_upper_owned = after_lo_raw.to_uppercase();
+        let after_lo_upper = after_lo_upper_owned.trim_start();
+        let leading_ws2 = after_lo_raw.len() - after_lo_raw.trim_start().len();
         let Some(_after_to) = after_lo_upper.strip_prefix("TO") else {
             return Err(TemporalParseError(
                 "FOR VALID_TIME FROM <ms> must be followed by TO <ms>".into(),
@@ -287,9 +290,8 @@ fn parse_temporal_expr(token: &str) -> Result<i64, TemporalParseError> {
 /// consistent and avoids mixing native sqlparser AS-OF support with custom
 /// preprocessing in the same pipeline.
 fn strip_as_of_system_time(sql: &str) -> Result<Option<(String, i64)>, TemporalParseError> {
-    let upper = sql.to_uppercase();
     let keyword = "AS OF SYSTEM TIME";
-    let Some(start) = upper.find(keyword) else {
+    let Some(start) = keyword_position_outside_literals(sql, keyword) else {
         return Ok(None);
     };
     let after_kw = start + keyword.len();
@@ -305,9 +307,8 @@ fn strip_as_of_system_time(sql: &str) -> Result<Option<(String, i64)>, TemporalP
 /// strip it. Same expression forms as `strip_as_of_system_time`. Returns `None`
 /// if the clause is absent.
 fn strip_as_of_valid_time(sql: &str) -> Result<Option<(String, i64)>, TemporalParseError> {
-    let upper = sql.to_uppercase();
     let keyword = "AS OF VALID TIME";
-    let Some(start) = upper.find(keyword) else {
+    let Some(start) = keyword_position_outside_literals(sql, keyword) else {
         return Ok(None);
     };
     let after_kw = start + keyword.len();
@@ -557,5 +558,24 @@ mod tests {
             extract("SELECT * FROM t AS OF SYSTEM TIME 100 AS OF SYSTEM TIME 200").is_err(),
             "duplicate AS OF SYSTEM TIME should be rejected"
         );
+    }
+
+    #[test]
+    fn system_time_in_string_literal_not_triggered() {
+        // `FOR SYSTEM_TIME` inside a string literal must NOT be detected as a
+        // temporal clause.
+        let result = extract("SELECT * FROM t WHERE name = 'FOR SYSTEM_TIME'").unwrap();
+        assert!(
+            result.is_none(),
+            "FOR SYSTEM_TIME inside string literal must not trigger, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn system_time_as_of_outside_literal_triggered() {
+        let ex = extract("SELECT * FROM t FOR SYSTEM_TIME AS OF 100")
+            .unwrap()
+            .unwrap();
+        assert_eq!(ex.temporal.system_as_of_ms, Some(100));
     }
 }

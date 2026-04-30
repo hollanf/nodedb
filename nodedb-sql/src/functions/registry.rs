@@ -1,7 +1,41 @@
 //! Built-in function registry for SQL planning.
 //!
-//! Tracks known functions, their categories, and whether they trigger
-//! special engine routing (e.g., vector_distance → VectorSearch).
+//! Tracks known functions, their categories, arg specs, return types,
+//! and whether they trigger special engine routing (e.g., vector_distance
+//! → VectorSearch).
+
+use nodedb_types::columnar::ColumnType;
+
+use super::builtins::builtin_functions;
+
+/// Semantic version for tracking when a function was introduced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Version {
+    pub major: u8,
+    pub minor: u8,
+    pub patch: u8,
+}
+
+impl Version {
+    pub const fn new(major: u8, minor: u8, patch: u8) -> Self {
+        Self {
+            major,
+            minor,
+            patch,
+        }
+    }
+}
+
+/// Specification for a single function argument position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArgTypeSpec {
+    /// Argument name, for documentation and error messages.
+    pub name: &'static str,
+    /// Accepted column types. Empty slice means any type is accepted (wildcard).
+    pub accepted: &'static [ColumnType],
+    /// If true on the last argument, this argument may repeat zero or more times.
+    pub variadic: bool,
+}
 
 /// Function category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +83,13 @@ pub struct FunctionMeta {
     pub min_args: usize,
     pub max_args: usize,
     pub search_trigger: SearchTrigger,
+    /// Static return type, when known at plan time. `None` means the type
+    /// is context-dependent or unknown (resolved at runtime).
+    pub return_type: Option<ColumnType>,
+    /// Per-position argument type specifications.
+    pub arg_types: &'static [ArgTypeSpec],
+    /// Version in which this function was introduced.
+    pub since: Version,
 }
 
 /// The function registry.
@@ -96,119 +137,6 @@ impl Default for FunctionRegistry {
     }
 }
 
-fn s(
-    name: &'static str,
-    cat: FunctionCategory,
-    min: usize,
-    max: usize,
-    trigger: SearchTrigger,
-) -> FunctionMeta {
-    FunctionMeta {
-        name,
-        category: cat,
-        min_args: min,
-        max_args: max,
-        search_trigger: trigger,
-    }
-}
-
-fn builtin_functions() -> Vec<FunctionMeta> {
-    use FunctionCategory::*;
-    use SearchTrigger::*;
-
-    vec![
-        // ── Standard aggregates ──
-        s("count", Aggregate, 0, 1, None),
-        s("sum", Aggregate, 1, 1, None),
-        s("avg", Aggregate, 1, 1, None),
-        s("min", Aggregate, 1, 1, None),
-        s("max", Aggregate, 1, 1, None),
-        // ── Standard window ──
-        s("row_number", Window, 0, 0, None),
-        s("rank", Window, 0, 0, None),
-        s("dense_rank", Window, 0, 0, None),
-        s("lag", Window, 1, 3, None),
-        s("lead", Window, 1, 3, None),
-        s("first_value", Window, 1, 1, None),
-        s("last_value", Window, 1, 1, None),
-        s("nth_value", Window, 2, 2, None),
-        // ── Vector search ──
-        s("vector_distance", Scalar, 2, 3, VectorSearch),
-        s("multi_vector_search", Scalar, 1, 2, MultiVectorSearch),
-        s("multi_vector_score", Scalar, 3, 3, None),
-        s("sparse_score", Scalar, 3, 3, None),
-        // ── Text search ──
-        s("bm25_score", Scalar, 2, 2, TextSearch),
-        s("search_score", Scalar, 2, 2, TextSearch),
-        s("text_match", Scalar, 2, 3, TextMatch),
-        // ── Hybrid search ──
-        s("rrf_score", Scalar, 2, 4, HybridSearch),
-        // ── Spatial ──
-        s("st_dwithin", Scalar, 3, 3, SpatialDWithin),
-        s("st_contains", Scalar, 2, 2, SpatialContains),
-        s("st_intersects", Scalar, 2, 2, SpatialIntersects),
-        s("st_within", Scalar, 2, 2, SpatialWithin),
-        s("st_distance", Scalar, 2, 2, None),
-        s("st_point", Scalar, 2, 2, None),
-        // ── Timeseries ──
-        s("time_bucket", Scalar, 2, 2, TimeBucket),
-        // ── Timeseries aggregates ──
-        s("ts_percentile", Aggregate, 2, 2, None),
-        s("ts_stddev", Aggregate, 1, 1, None),
-        s("ts_correlate", Aggregate, 2, 2, None),
-        // ── Timeseries window ──
-        s("ts_rate", Window, 1, 1, None),
-        s("ts_derivative", Window, 1, 1, None),
-        s("ts_moving_avg", Window, 2, 2, None),
-        s("ts_ema", Window, 2, 2, None),
-        s("ts_delta", Window, 1, 1, None),
-        s("ts_interpolate", Window, 1, 1, None),
-        s("ts_lag", Window, 1, 3, None),
-        s("ts_lead", Window, 1, 3, None),
-        s("ts_rank", Window, 0, 0, None),
-        // ── Approximate aggregates ──
-        s("approx_count_distinct", Aggregate, 1, 1, None),
-        s("approx_percentile", Aggregate, 2, 2, None),
-        s("approx_topk", Aggregate, 2, 2, None),
-        s("approx_count", Aggregate, 1, 1, None),
-        // ── Document helpers ──
-        s("doc_get", Scalar, 2, 3, None),
-        s("doc_exists", Scalar, 2, 2, None),
-        s("doc_array_contains", Scalar, 3, 3, None),
-        s("nav", Scalar, 2, 2, None),
-        // ── Utility ──
-        s("chunk_text", Scalar, 2, 3, None),
-        s("currency", Scalar, 1, 2, None),
-        s("distribute", Scalar, 2, 3, None),
-        s("allocate", Scalar, 2, 3, None),
-        s("resolve_permission", Scalar, 2, 3, None),
-        // ── Standard scalar ──
-        s("coalesce", Scalar, 1, 255, None),
-        s("nullif", Scalar, 2, 2, None),
-        s("abs", Scalar, 1, 1, None),
-        s("ceil", Scalar, 1, 1, None),
-        s("floor", Scalar, 1, 1, None),
-        s("round", Scalar, 1, 2, None),
-        s("lower", Scalar, 1, 1, None),
-        s("upper", Scalar, 1, 1, None),
-        s("length", Scalar, 1, 1, None),
-        s("trim", Scalar, 1, 1, None),
-        s("substring", Scalar, 2, 3, None),
-        s("concat", Scalar, 1, 255, None),
-        s("replace", Scalar, 3, 3, None),
-        s("now", Scalar, 0, 0, None),
-        s("current_timestamp", Scalar, 0, 0, None),
-        s("make_array", Scalar, 0, 255, None),
-        // ── Array engine ──
-        s("ndarray_slice", Scalar, 2, 4, NdArraySlice),
-        s("ndarray_project", Scalar, 2, 2, NdArrayProject),
-        s("ndarray_agg", Scalar, 3, 4, NdArrayAgg),
-        s("ndarray_elementwise", Scalar, 4, 4, NdArrayElementwise),
-        s("ndarray_flush", Scalar, 1, 1, NdArrayFlush),
-        s("ndarray_compact", Scalar, 1, 1, NdArrayCompact),
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +157,111 @@ mod tests {
             SearchTrigger::SpatialDWithin
         );
         assert_eq!(reg.search_trigger("time_bucket"), SearchTrigger::TimeBucket);
+    }
+
+    #[test]
+    fn chunk_text_renamed_to_ndb_chunk_text() {
+        let reg = FunctionRegistry::new();
+        assert!(
+            reg.lookup("ndb_chunk_text").is_some(),
+            "ndb_chunk_text must be registered"
+        );
+        assert!(
+            reg.lookup("chunk_text").is_none(),
+            "old name chunk_text must not exist"
+        );
+    }
+
+    #[test]
+    fn unimplemented_functions_removed() {
+        let reg = FunctionRegistry::new();
+        assert!(reg.lookup("currency").is_none());
+        assert!(reg.lookup("distribute").is_none());
+        assert!(reg.lookup("allocate").is_none());
+        assert!(reg.lookup("resolve_permission").is_none());
+        assert!(reg.lookup("convert_currency").is_none());
+    }
+
+    #[test]
+    fn all_builtins_have_since_set() {
+        let reg = FunctionRegistry::new();
+        let v0_1_0 = Version::new(0, 1, 0);
+        for f in &reg.functions {
+            assert_eq!(
+                f.since, v0_1_0,
+                "function '{}' must have since = Version::new(0, 1, 0)",
+                f.name
+            );
+        }
+    }
+
+    #[test]
+    fn all_builtins_arg_counts_consistent() {
+        let reg = FunctionRegistry::new();
+        for f in &reg.functions {
+            let n = f.arg_types.len();
+            let last_variadic = f.arg_types.last().is_some_and(|a| a.variadic);
+            if last_variadic {
+                // min_args must be <= arg_types.len()
+                assert!(
+                    f.min_args <= n,
+                    "function '{}': min_args ({}) > arg_types.len() ({}) with variadic last arg",
+                    f.name,
+                    f.min_args,
+                    n
+                );
+            } else {
+                // min_args <= n <= max_args
+                assert!(
+                    f.min_args <= n,
+                    "function '{}': min_args ({}) > arg_types.len() ({})",
+                    f.name,
+                    f.min_args,
+                    n
+                );
+                assert!(
+                    n <= f.max_args,
+                    "function '{}': arg_types.len() ({}) > max_args ({})",
+                    f.name,
+                    n,
+                    f.max_args
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn return_type_spot_checks() {
+        let reg = FunctionRegistry::new();
+        assert_eq!(
+            reg.lookup("now").and_then(|f| f.return_type),
+            Some(ColumnType::Timestamptz),
+            "now() must return Timestamptz"
+        );
+        assert_eq!(
+            reg.lookup("count").and_then(|f| f.return_type),
+            Some(ColumnType::Int64),
+            "count must return Int64"
+        );
+        assert_eq!(
+            reg.lookup("doc_exists").and_then(|f| f.return_type),
+            Some(ColumnType::Bool),
+            "doc_exists must return Bool"
+        );
+        assert_eq!(
+            reg.lookup("st_contains").and_then(|f| f.return_type),
+            Some(ColumnType::Bool),
+            "st_contains must return Bool"
+        );
+        assert_eq!(
+            reg.lookup("pg_fts_match").and_then(|f| f.return_type),
+            Some(ColumnType::Bool),
+            "pg_fts_match must return Bool"
+        );
+        assert_eq!(
+            reg.lookup("lower").and_then(|f| f.return_type),
+            Some(ColumnType::String),
+            "lower must return String"
+        );
     }
 }

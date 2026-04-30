@@ -34,7 +34,9 @@ pub fn value_to_sql_literal(value: &nodedb_types::Value) -> String {
         nodedb_types::Value::Object(_) => "NULL".to_string(),
         nodedb_types::Value::Uuid(u) => format!("'{u}'"),
         nodedb_types::Value::Ulid(u) => format!("'{u}'"),
-        nodedb_types::Value::DateTime(dt) => format!("'{dt}'"),
+        nodedb_types::Value::DateTime(dt) | nodedb_types::Value::NaiveDateTime(dt) => {
+            format!("'{dt}'")
+        }
         nodedb_types::Value::Duration(d) => format!("'{d}'"),
         nodedb_types::Value::Decimal(d) => d.to_string(),
         other => format!("'{}'", format!("{other:?}").replace('\'', "''")),

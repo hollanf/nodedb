@@ -1,41 +1,23 @@
 //! Rewrite pgvector's `<->` distance operator into a `vector_distance()`
 //! function call that standard sqlparser can parse.
 
+use super::lex::{SqlSegment, find_operator_positions, has_operator_outside_literals, segments};
+
 /// Rewrite all occurrences of `expr <-> expr` to `vector_distance(expr, expr)`.
 ///
 /// Handles: `column_name <-> ARRAY[...]`, `column <-> $param`, etc.
-/// Returns `None` if no valid `<->` patterns are found.
+/// Returns `None` if no valid `<->` patterns are found outside string
+/// literals, quoted identifiers, or comments.
 pub(super) fn rewrite_arrow_distance(sql: &str) -> Option<String> {
-    let mut result = String::with_capacity(sql.len());
-    let mut remaining = sql;
-    let mut found = false;
-
-    while let Some(arrow_pos) = remaining.find("<->") {
-        let before = &remaining[..arrow_pos];
-        let left = extract_left_operand(before)?;
-        let left_start = arrow_pos - left.len();
-
-        let after = &remaining[arrow_pos + 3..];
-        let (right, right_len) = extract_right_operand(after.trim_start())?;
-        let ws_skip = after.len() - after.trim_start().len();
-
-        result.push_str(&remaining[..left_start]);
-        result.push_str(&format!("vector_distance({left}, {right})"));
-        remaining = &remaining[arrow_pos + 3 + ws_skip + right_len..];
-        found = true;
-    }
-
-    if !found {
-        return None;
-    }
-
-    result.push_str(remaining);
-    Some(result)
+    rewrite_binary_op(sql, "<->", "vector_distance")
 }
 
 /// Extract the left operand before `<->`: a column name or dotted path.
 fn extract_left_operand(before: &str) -> Option<String> {
-    let trimmed = before.trim_end();
+    // Determine what the effective "before" text is by looking only at the
+    // last Text segment — the operand cannot span across a quoted literal.
+    let text_before = last_text_segment(before);
+    let trimmed = text_before.trim_end();
     let start = trimmed
         .rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.')
         .map(|p| p + 1)
@@ -44,7 +26,22 @@ fn extract_left_operand(before: &str) -> Option<String> {
     if ident.is_empty() {
         return None;
     }
+    // Reconstruct including the prefix text up to the ident within `before`.
+    // We need the ident string only (the caller uses its length for offset math
+    // and only the text content for the rewrite).
     Some(ident.to_string())
+}
+
+/// Return the content of the last `Text` segment in `sql`, or the whole
+/// string if there are no non-text segments.
+fn last_text_segment(sql: &str) -> &str {
+    let segs = segments(sql);
+    for seg in segs.iter().rev() {
+        if let SqlSegment::Text(t) = seg {
+            return t;
+        }
+    }
+    ""
 }
 
 /// Extract the right operand after `<->`: ARRAY[...], $param, or identifier.
@@ -81,5 +78,195 @@ fn extract_right_operand(after: &str) -> Option<(String, usize)> {
             return None;
         }
         Some((trimmed[..end].to_string(), end))
+    }
+}
+
+/// Rewrite all occurrences of `expr <=> expr` to `vector_cosine_distance(expr, expr)`.
+///
+/// Handles: `column_name <=> ARRAY[...]`, `column <=> $param`, etc.
+/// Returns `None` if no valid `<=>` patterns are found outside string
+/// literals, quoted identifiers, or comments.
+pub(super) fn rewrite_cosine_distance(sql: &str) -> Option<String> {
+    rewrite_binary_op(sql, "<=>", "vector_cosine_distance")
+}
+
+/// Rewrite all occurrences of `expr <#> expr` to `vector_neg_inner_product(expr, expr)`.
+///
+/// Handles: `column_name <#> ARRAY[...]`, `column <#> $param`, etc.
+/// Returns `None` if no valid `<#>` patterns are found outside string
+/// literals, quoted identifiers, or comments.
+pub(super) fn rewrite_neg_inner_product(sql: &str) -> Option<String> {
+    rewrite_binary_op(sql, "<#>", "vector_neg_inner_product")
+}
+
+/// Generic binary-operator rewriter: replaces all occurrences of `op`
+/// (outside literals/comments/quoted idents) with `func_name(left, right)`.
+fn rewrite_binary_op(sql: &str, op: &str, func_name: &str) -> Option<String> {
+    if !has_operator_outside_literals(sql, op) {
+        return None;
+    }
+
+    let positions = find_operator_positions(sql, op);
+    if positions.is_empty() {
+        return None;
+    }
+
+    let mut result = String::with_capacity(sql.len());
+    let mut consumed = 0usize;
+    let mut found = false;
+
+    for op_pos in positions {
+        if op_pos < consumed {
+            continue;
+        }
+
+        let before = &sql[consumed..op_pos];
+        let left = extract_left_operand(before)?;
+        let left_start = consumed + (before.len() - left.len());
+
+        let after_op = &sql[op_pos + op.len()..];
+        let (right, right_len) = extract_right_operand(after_op.trim_start())?;
+        let ws_skip = after_op.len() - after_op.trim_start().len();
+
+        result.push_str(&sql[consumed..left_start]);
+        result.push_str(&format!("{func_name}({left}, {right})"));
+        consumed = op_pos + op.len() + ws_skip + right_len;
+        found = true;
+    }
+
+    if !found {
+        return None;
+    }
+
+    result.push_str(&sql[consumed..]);
+    Some(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_match_returns_none() {
+        assert!(rewrite_arrow_distance("SELECT * FROM t").is_none());
+    }
+
+    #[test]
+    fn arrow_in_string_literal_ignored() {
+        // The `<->` is inside a string literal — no rewrite should happen.
+        assert!(rewrite_arrow_distance("SELECT '<->'").is_none());
+    }
+
+    #[test]
+    fn arrow_in_line_comment_ignored() {
+        assert!(rewrite_arrow_distance("SELECT col -- has <-> in comment\nFROM t").is_none());
+    }
+
+    #[test]
+    fn arrow_in_block_comment_ignored() {
+        assert!(rewrite_arrow_distance("SELECT /* <-> */ x").is_none());
+    }
+
+    #[test]
+    fn arrow_in_quoted_ident_ignored() {
+        assert!(rewrite_arrow_distance(r#"SELECT "col_<->""#).is_none());
+    }
+
+    #[test]
+    fn nested_block_comment_arrow_ignored() {
+        assert!(rewrite_arrow_distance("SELECT /* /* nested */ <-> */ x").is_none());
+    }
+
+    #[test]
+    fn basic_array_rewrite() {
+        let rewritten = rewrite_arrow_distance(
+            "SELECT title FROM articles ORDER BY embedding <-> ARRAY[0.1, 0.2, 0.3] LIMIT 5",
+        )
+        .unwrap();
+        assert!(
+            rewritten.contains("vector_distance(embedding, ARRAY[0.1, 0.2, 0.3])"),
+            "got: {rewritten}"
+        );
+        assert!(!rewritten.contains("<->"));
+    }
+
+    #[test]
+    fn rewrite_with_param() {
+        let rewritten =
+            rewrite_arrow_distance("SELECT * FROM docs WHERE embedding <-> $1 < 0.5").unwrap();
+        assert!(
+            rewritten.contains("vector_distance(embedding, $1)"),
+            "got: {rewritten}"
+        );
+    }
+
+    // ── <=> (cosine) ──────────────────────────────────────────────────────
+
+    #[test]
+    fn cosine_basic_array_rewrite() {
+        let rewritten = rewrite_cosine_distance(
+            "SELECT title FROM articles ORDER BY embedding <=> ARRAY[0.1, 0.2, 0.3] LIMIT 5",
+        )
+        .unwrap();
+        assert!(
+            rewritten.contains("vector_cosine_distance(embedding, ARRAY[0.1, 0.2, 0.3])"),
+            "got: {rewritten}"
+        );
+        assert!(!rewritten.contains("<=>"));
+    }
+
+    #[test]
+    fn cosine_in_string_literal_ignored() {
+        assert!(rewrite_cosine_distance("SELECT '<=>'").is_none());
+    }
+
+    #[test]
+    fn cosine_in_line_comment_ignored() {
+        assert!(rewrite_cosine_distance("SELECT col -- has <=> in comment\nFROM t").is_none());
+    }
+
+    #[test]
+    fn cosine_in_quoted_ident_ignored() {
+        assert!(rewrite_cosine_distance(r#"SELECT "col_<=>""#).is_none());
+    }
+
+    #[test]
+    fn cosine_no_match_returns_none() {
+        assert!(rewrite_cosine_distance("SELECT * FROM t").is_none());
+    }
+
+    // ── <#> (neg-inner-product) ───────────────────────────────────────────
+
+    #[test]
+    fn nip_basic_array_rewrite() {
+        let rewritten = rewrite_neg_inner_product(
+            "SELECT title FROM articles ORDER BY embedding <#> ARRAY[0.1, 0.2, 0.3] LIMIT 5",
+        )
+        .unwrap();
+        assert!(
+            rewritten.contains("vector_neg_inner_product(embedding, ARRAY[0.1, 0.2, 0.3])"),
+            "got: {rewritten}"
+        );
+        assert!(!rewritten.contains("<#>"));
+    }
+
+    #[test]
+    fn nip_in_string_literal_ignored() {
+        assert!(rewrite_neg_inner_product("SELECT '<#>'").is_none());
+    }
+
+    #[test]
+    fn nip_in_line_comment_ignored() {
+        assert!(rewrite_neg_inner_product("SELECT col -- has <#> in comment\nFROM t").is_none());
+    }
+
+    #[test]
+    fn nip_in_quoted_ident_ignored() {
+        assert!(rewrite_neg_inner_product(r#"SELECT "col_<#>""#).is_none());
+    }
+
+    #[test]
+    fn nip_no_match_returns_none() {
+        assert!(rewrite_neg_inner_product("SELECT * FROM t").is_none());
     }
 }

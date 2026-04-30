@@ -1,4 +1,5 @@
 pub mod function_args;
+pub mod lex;
 pub mod literal;
 pub mod object_literal_stmt;
 pub mod pipeline;

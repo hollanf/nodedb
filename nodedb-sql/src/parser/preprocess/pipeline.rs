@@ -9,13 +9,17 @@
 //! - `{ key: val }` in function args → JSON string literal
 
 use super::function_args::rewrite_object_literal_args;
+use super::lex::{first_sql_word, has_brace_outside_literals, has_operator_outside_literals};
 use super::object_literal_stmt::try_rewrite_object_literal;
 use super::temporal::extract as extract_temporal;
-use super::vector_ops::rewrite_arrow_distance;
+use super::vector_ops::{
+    rewrite_arrow_distance, rewrite_cosine_distance, rewrite_neg_inner_product,
+};
 use crate::error::SqlError;
 use crate::temporal::TemporalScope;
 
 /// Result of pre-processing a SQL string.
+#[derive(Debug)]
 pub struct PreprocessedSql {
     /// The rewritten SQL (standard SQL that sqlparser can handle).
     pub sql: String,
@@ -44,9 +48,11 @@ pub fn preprocess(sql: &str) -> Result<Option<PreprocessedSql>, SqlError> {
             None => (trimmed.to_string(), TemporalScope::default()),
         };
     let any_temporal = temporal != TemporalScope::default();
-    let upper = temporal_sql.to_uppercase();
 
-    let is_upsert = upper.starts_with("UPSERT INTO ");
+    let first_word = first_sql_word(&temporal_sql)
+        .map(|w| w.to_uppercase())
+        .unwrap_or_default();
+    let is_upsert = first_word == "UPSERT";
 
     if is_upsert {
         let rewritten = format!("INSERT INTO {}", &temporal_sql["UPSERT INTO ".len()..]);
@@ -64,7 +70,7 @@ pub fn preprocess(sql: &str) -> Result<Option<PreprocessedSql>, SqlError> {
         }));
     }
 
-    if upper.starts_with("INSERT INTO ")
+    if first_word == "INSERT"
         && let Some(result) = try_rewrite_object_literal(&temporal_sql)
     {
         return Ok(Some(PreprocessedSql {
@@ -77,14 +83,28 @@ pub fn preprocess(sql: &str) -> Result<Option<PreprocessedSql>, SqlError> {
     let mut sql_buf = temporal_sql;
     let mut any_rewrite = any_temporal;
 
-    if sql_buf.contains("<->")
+    if has_operator_outside_literals(&sql_buf, "<->")
         && let Some(rewritten) = rewrite_arrow_distance(&sql_buf)
     {
         sql_buf = rewritten;
         any_rewrite = true;
     }
 
-    if (sql_buf.contains("{ ") || sql_buf.contains("{f") || sql_buf.contains("{d"))
+    if has_operator_outside_literals(&sql_buf, "<=>")
+        && let Some(rewritten) = rewrite_cosine_distance(&sql_buf)
+    {
+        sql_buf = rewritten;
+        any_rewrite = true;
+    }
+
+    if has_operator_outside_literals(&sql_buf, "<#>")
+        && let Some(rewritten) = rewrite_neg_inner_product(&sql_buf)
+    {
+        sql_buf = rewritten;
+        any_rewrite = true;
+    }
+
+    if has_brace_outside_literals(&sql_buf)
         && let Some(rewritten) = rewrite_object_literal_args(&sql_buf)
     {
         sql_buf = rewritten;
@@ -255,5 +275,44 @@ mod tests {
     fn object_literal_not_rewritten_outside_function() {
         let result = pp("INSERT INTO docs { name: 'Alice' }").unwrap();
         assert!(result.sql.contains("VALUES"), "got: {}", result.sql);
+    }
+
+    #[test]
+    fn comment_prefix_insert_routes_correctly() {
+        // A block comment before INSERT must still trigger the INSERT path.
+        let result = pp("/* hint */ INSERT INTO t VALUES ({})");
+        // Either rewrites (object literal) or passes through as INSERT — must
+        // not trigger the UPSERT path.
+        if let Some(r) = result {
+            assert!(!r.is_upsert);
+        }
+    }
+
+    #[test]
+    fn comment_prefix_upsert_routes_correctly() {
+        // A block comment before UPSERT must still trigger the UPSERT path.
+        let result = pp("/* hint */ UPSERT INTO t (name) VALUES ('a')").unwrap();
+        assert!(result.is_upsert);
+    }
+
+    #[test]
+    fn line_comment_before_insert_does_not_trigger_insert() {
+        // `-- INSERT INTO t` is a comment; the real statement is SELECT 1.
+        // It must pass through without upsert rewriting.
+        let result = pp("-- INSERT INTO t\nSELECT 1");
+        assert!(
+            result.is_none(),
+            "line-commented INSERT must pass through, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn string_literal_brace_not_rewritten_as_object_literal() {
+        // `{ foo }` is inside a string literal — must not be touched.
+        let result = pp("SELECT func('{ foo }')");
+        assert!(
+            result.is_none() || !result.unwrap().sql.contains("\"foo\""),
+            "string literal brace must not be rewritten"
+        );
     }
 }
