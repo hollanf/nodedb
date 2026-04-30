@@ -31,7 +31,7 @@ fn parse_row_envelope(text: &str) -> serde_json::Map<String, serde_json::Value> 
 async fn kv_sql_point_select_returns_key_and_value() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION kv TYPE KEY_VALUE (key STRING PRIMARY KEY, value STRING)")
+        .exec("CREATE COLLECTION kv (key STRING PRIMARY KEY, value STRING) WITH (engine='kv')")
         .await
         .unwrap();
     server
@@ -65,7 +65,7 @@ async fn kv_sql_point_select_returns_key_and_value() {
 async fn kv_sql_full_scan_returns_all_rows() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION kv TYPE KEY_VALUE (key STRING PRIMARY KEY, value STRING)")
+        .exec("CREATE COLLECTION kv (key STRING PRIMARY KEY, value STRING) WITH (engine='kv')")
         .await
         .unwrap();
     server
@@ -116,7 +116,7 @@ async fn kv_sql_full_scan_returns_all_rows() {
 async fn kv_sql_star_projection_returns_all_columns() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION kv TYPE KEY_VALUE (key STRING PRIMARY KEY, value STRING)")
+        .exec("CREATE COLLECTION kv (key STRING PRIMARY KEY, value STRING) WITH (engine='kv')")
         .await
         .unwrap();
     server
@@ -145,7 +145,7 @@ async fn kv_sql_typed_columns_point_select() {
     let server = TestServer::start().await;
     server
         .exec(
-            "CREATE COLLECTION users TYPE KEY_VALUE (key STRING PRIMARY KEY, name STRING, age INT)",
+            "CREATE COLLECTION users (key STRING PRIMARY KEY, name STRING, age INT) WITH (engine='kv')",
         )
         .await
         .unwrap();
@@ -177,7 +177,7 @@ async fn kv_sql_typed_columns_point_select() {
 async fn kv_sql_single_column_projection() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION kv TYPE KEY_VALUE (key STRING PRIMARY KEY, value STRING)")
+        .exec("CREATE COLLECTION kv (key STRING PRIMARY KEY, value STRING) WITH (engine='kv')")
         .await
         .unwrap();
     server

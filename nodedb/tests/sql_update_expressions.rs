@@ -15,7 +15,7 @@ async fn update_column_increment_strict() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION counters TYPE DOCUMENT STRICT (id STRING PRIMARY KEY, n INT)")
+        .exec("CREATE COLLECTION counters (id STRING PRIMARY KEY, n INT) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -45,7 +45,7 @@ async fn update_column_decrement_strict() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION inventory TYPE DOCUMENT STRICT (id STRING PRIMARY KEY, stock INT)")
+        .exec("CREATE COLLECTION inventory (id STRING PRIMARY KEY, stock INT) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -112,9 +112,9 @@ async fn update_now_function_rhs_strict() {
 
     server
         .exec(
-            "CREATE COLLECTION rows TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION rows (\
                 id STRING PRIMARY KEY, \
-                updated_at TIMESTAMP)",
+                updated_at TIMESTAMP) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -147,9 +147,9 @@ async fn update_upper_function_rhs_strict() {
 
     server
         .exec(
-            "CREATE COLLECTION users TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION users (\
                 id STRING PRIMARY KEY, \
-                name STRING NOT NULL)",
+                name STRING NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -181,11 +181,11 @@ async fn update_string_concat_rhs_strict() {
 
     server
         .exec(
-            "CREATE COLLECTION users TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION users (\
                 id STRING PRIMARY KEY, \
                 first STRING NOT NULL, \
                 last STRING NOT NULL, \
-                full STRING)",
+                full STRING) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -217,10 +217,10 @@ async fn update_case_expression_rhs_strict() {
 
     server
         .exec(
-            "CREATE COLLECTION players TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION players (\
                 id STRING PRIMARY KEY, \
                 score INT NOT NULL, \
-                tier STRING)",
+                tier STRING) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -259,9 +259,9 @@ async fn upsert_do_update_with_column_arithmetic() {
 
     server
         .exec(
-            "CREATE COLLECTION counters TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION counters (\
                 id STRING PRIMARY KEY, \
-                n INT NOT NULL)",
+                n INT NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -298,9 +298,9 @@ async fn update_scalar_function_rhs_strict() {
 
     server
         .exec(
-            "CREATE COLLECTION scores TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION scores (\
                 id STRING PRIMARY KEY, \
-                confidence DOUBLE)",
+                confidence DOUBLE) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

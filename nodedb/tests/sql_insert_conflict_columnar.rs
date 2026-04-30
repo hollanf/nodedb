@@ -23,9 +23,9 @@ async fn columnar_insert_duplicate_pk_keeps_latest() {
 
     server
         .exec(
-            "CREATE COLLECTION metrics TYPE COLUMNAR (\
+            "CREATE COLLECTION metrics (\
                 id TEXT PRIMARY KEY, region TEXT, value FLOAT\
-            )",
+            ) WITH (engine='columnar')",
         )
         .await
         .unwrap();
@@ -72,7 +72,7 @@ async fn columnar_full_scan_hides_tombstoned_duplicate() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION m TYPE COLUMNAR (id TEXT PRIMARY KEY, v INT)")
+        .exec("CREATE COLLECTION m (id TEXT PRIMARY KEY, v INT) WITH (engine='columnar')")
         .await
         .unwrap();
 
@@ -117,7 +117,7 @@ async fn columnar_insert_on_conflict_do_nothing_keeps_original() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION m TYPE COLUMNAR (id TEXT PRIMARY KEY, v INT)")
+        .exec("CREATE COLLECTION m (id TEXT PRIMARY KEY, v INT) WITH (engine='columnar')")
         .await
         .unwrap();
 
@@ -145,7 +145,9 @@ async fn columnar_insert_on_conflict_do_update_merges_excluded() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION m TYPE COLUMNAR (id TEXT PRIMARY KEY, v INT, note TEXT)")
+        .exec(
+            "CREATE COLLECTION m (id TEXT PRIMARY KEY, v INT, note TEXT) WITH (engine='columnar')",
+        )
         .await
         .unwrap();
 
@@ -179,7 +181,7 @@ async fn columnar_upsert_keyword_overwrites_on_pk() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION m TYPE COLUMNAR (id TEXT PRIMARY KEY, v INT)")
+        .exec("CREATE COLLECTION m (id TEXT PRIMARY KEY, v INT) WITH (engine='columnar')")
         .await
         .unwrap();
 
@@ -207,9 +209,9 @@ async fn columnar_order_by_sort_key_accepted() {
     // sort column are allowed and all rows remain visible.
     server
         .exec(
-            "CREATE COLLECTION events TYPE COLUMNAR (\
+            "CREATE COLLECTION events (\
                 bucket TEXT, payload TEXT\
-             ) ORDER BY (bucket)",
+             ) WITH (engine='columnar') ORDER BY (bucket)",
         )
         .await
         .unwrap();
@@ -241,9 +243,9 @@ async fn spatial_insert_duplicate_pk_keeps_latest() {
 
     server
         .exec(
-            "CREATE COLLECTION places TYPE COLUMNAR (\
+            "CREATE COLLECTION places (\
                 id TEXT PRIMARY KEY, geom GEOMETRY SPATIAL_INDEX, label TEXT\
-            ) WITH profile = 'spatial'",
+            ) WITH (engine='spatial')",
         )
         .await
         .unwrap();

@@ -39,7 +39,7 @@ async fn pgwire_ddl_roundtrip() {
 
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
 
-    let conn_str = format!("host=127.0.0.1 port={port} user=admin dbname=nodedb");
+    let conn_str = format!("host=127.0.0.1 port={port} user=nodedb dbname=nodedb");
     let (client, connection) = tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)
         .await
         .unwrap();
@@ -57,7 +57,7 @@ async fn pgwire_ddl_roundtrip() {
         SimpleQueryMessage::Row(row) => row.get(0).map(|s| s.to_string()),
         _ => None,
     });
-    assert_eq!(username, Some("admin".to_string()));
+    assert_eq!(username, Some("nodedb".to_string()));
 
     assert!(state.credentials.get_user("wire_test").is_some());
 }

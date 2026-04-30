@@ -18,9 +18,9 @@ async fn infinite_loop_trigger_terminates_within_budget() {
 
     server
         .exec(
-            "CREATE COLLECTION fuel_test TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION fuel_test (\
                 id TEXT PRIMARY KEY, \
-                v INT)",
+                v INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -68,9 +68,9 @@ async fn bounded_loop_trigger_completes_normally() {
 
     server
         .exec(
-            "CREATE COLLECTION fuel_ok TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION fuel_ok (\
                 id TEXT PRIMARY KEY, \
-                counter INT DEFAULT 0)",
+                counter INT DEFAULT 0) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

@@ -12,7 +12,7 @@ async fn order_by_id_asc() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION ob TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, val INT)")
+        .exec("CREATE COLLECTION ob (id TEXT PRIMARY KEY, val INT) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -50,7 +50,9 @@ async fn order_by_val_asc_and_desc() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION obd TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, val INT)")
+        .exec(
+            "CREATE COLLECTION obd (id TEXT PRIMARY KEY, val INT) WITH (engine='document_strict')",
+        )
         .await
         .unwrap();
     server
@@ -106,7 +108,9 @@ async fn order_by_desc() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION obd TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, val INT)")
+        .exec(
+            "CREATE COLLECTION obd (id TEXT PRIMARY KEY, val INT) WITH (engine='document_strict')",
+        )
         .await
         .unwrap();
     server
@@ -144,7 +148,9 @@ async fn order_by_with_limit() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION obl TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, val INT)")
+        .exec(
+            "CREATE COLLECTION obl (id TEXT PRIMARY KEY, val INT) WITH (engine='document_strict')",
+        )
         .await
         .unwrap();
     for i in 1..=10 {
@@ -171,7 +177,7 @@ async fn order_by_string_column() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION obs TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, name TEXT)")
+        .exec("CREATE COLLECTION obs (id TEXT PRIMARY KEY, name TEXT) WITH (engine='document_strict')")
         .await
         .unwrap();
     server

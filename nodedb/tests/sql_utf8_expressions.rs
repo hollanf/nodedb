@@ -18,10 +18,10 @@ async fn generated_column_with_cjk_literal_does_not_panic() {
 
     let result = server
         .exec(
-            "CREATE COLLECTION utf_gen TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION utf_gen (\
                 id TEXT PRIMARY KEY, \
                 x TEXT, \
-                y TEXT GENERATED ALWAYS AS ('你' || x))",
+                y TEXT GENERATED ALWAYS AS ('你' || x)) WITH (engine='document_strict')",
         )
         .await;
     assert!(
@@ -54,10 +54,10 @@ async fn generated_column_with_emoji_does_not_panic() {
 
     let result = server
         .exec(
-            "CREATE COLLECTION utf_emoji TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION utf_emoji (\
                 id TEXT PRIMARY KEY, \
                 tag TEXT, \
-                display TEXT GENERATED ALWAYS AS ('🎉' || tag))",
+                display TEXT GENERATED ALWAYS AS ('🎉' || tag)) WITH (engine='document_strict')",
         )
         .await;
     assert!(
@@ -75,9 +75,9 @@ async fn check_constraint_with_utf8_near_operator() {
 
     server
         .exec(
-            "CREATE COLLECTION utf_ck TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION utf_ck (\
                 id TEXT PRIMARY KEY, \
-                name TEXT)",
+                name TEXT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -115,10 +115,10 @@ async fn generated_column_with_latin_diacritics() {
 
     let result = server
         .exec(
-            "CREATE COLLECTION utf_lat TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION utf_lat (\
                 id TEXT PRIMARY KEY, \
                 city TEXT, \
-                greeting TEXT GENERATED ALWAYS AS ('café in ' || city))",
+                greeting TEXT GENERATED ALWAYS AS ('café in ' || city)) WITH (engine='document_strict')",
         )
         .await;
     assert!(

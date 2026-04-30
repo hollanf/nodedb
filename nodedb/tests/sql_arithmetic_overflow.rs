@@ -86,9 +86,9 @@ async fn const_fold_overflow_in_insert_values() {
 
     server
         .exec(
-            "CREATE COLLECTION overflow_tbl TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION overflow_tbl (\
                 id TEXT PRIMARY KEY, \
-                v BIGINT)",
+                v BIGINT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -114,7 +114,7 @@ async fn procedural_eval_integer_overflow_returns_error() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION proc_ov TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, v BIGINT)")
+        .exec("CREATE COLLECTION proc_ov (id TEXT PRIMARY KEY, v BIGINT) WITH (engine='document_strict')")
         .await
         .unwrap();
 
@@ -164,7 +164,9 @@ async fn procedural_eval_float_div_neg_zero() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION fdiv TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, v FLOAT)")
+        .exec(
+            "CREATE COLLECTION fdiv (id TEXT PRIMARY KEY, v FLOAT) WITH (engine='document_strict')",
+        )
         .await
         .unwrap();
 

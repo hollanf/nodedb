@@ -28,7 +28,7 @@ pub fn make_state() -> Arc<SharedState> {
 pub fn superuser() -> AuthenticatedIdentity {
     AuthenticatedIdentity {
         user_id: 0,
-        username: "admin".into(),
+        username: "nodedb".into(),
         tenant_id: TenantId::new(0),
         auth_method: AuthMethod::Trust,
         roles: vec![Role::Superuser],

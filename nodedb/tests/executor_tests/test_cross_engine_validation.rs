@@ -7,6 +7,7 @@ use nodedb::bridge::dispatch::BridgeRequest;
 use nodedb::bridge::envelope::{PhysicalPlan, Status};
 use nodedb::bridge::physical_plan::{DocumentOp, GraphOp, TextOp, VectorOp};
 use nodedb::engine::graph::edge_store::Direction;
+use nodedb_types::vector_distance::DistanceMetric;
 
 use crate::helpers::*;
 
@@ -96,6 +97,7 @@ fn cross_model_query_vector_graph_relational() {
             ann_options: Default::default(),
             skip_payload_fetch: false,
             payload_filters: Vec::new(),
+            metric: DistanceMetric::L2,
         }),
     );
     let vector_json = payload_json(&vector_payload);

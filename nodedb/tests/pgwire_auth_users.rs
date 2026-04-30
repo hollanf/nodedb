@@ -62,7 +62,7 @@ async fn drop_user() {
 async fn drop_self_rejected() {
     let state = make_state();
     let su = superuser();
-    let err = ddl_err(&state, &su, "DROP USER admin").await;
+    let err = ddl_err(&state, &su, "DROP USER nodedb").await;
     assert!(err.contains("cannot drop your own"), "{err}");
 }
 

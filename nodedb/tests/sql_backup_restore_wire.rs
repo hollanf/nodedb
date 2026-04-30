@@ -90,8 +90,8 @@ async fn document_roundtrip() {
     let server = TestServer::start().await;
     server
         .exec(
-            "CREATE COLLECTION wire_docs TYPE DOCUMENT STRICT \
-             (id TEXT PRIMARY KEY, content TEXT)",
+            "CREATE COLLECTION wire_docs  \
+             (id TEXT PRIMARY KEY, content TEXT) WITH (engine='document_strict')",
         )
         .await
         .ok();

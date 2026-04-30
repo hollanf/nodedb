@@ -129,7 +129,7 @@ fn scheduler_fires_minute_even_when_observation_jittered() {
     // Spec: at now_secs = 61 with last_fired = 0, minute 1 MUST fire.
     // The old gate dropped it because 61 % 60 != 0.
     let cron = CronExpr::parse("* * * * *").unwrap();
-    let fired = pending_minute_ticks(Some(0), 61, &cron);
+    let fired = pending_minute_ticks(Some(0), 61, &cron, 0);
     assert_eq!(
         fired,
         vec![1],
@@ -142,7 +142,7 @@ fn scheduler_catches_up_across_skipped_minutes() {
     // Spec: if the loop stalls and observes seconds 195 after last
     // firing at minute 0, all matching minutes (1, 2, 3) must catch up.
     let cron = CronExpr::parse("* * * * *").unwrap();
-    let fired = pending_minute_ticks(Some(0), 195, &cron);
+    let fired = pending_minute_ticks(Some(0), 195, &cron, 0);
     assert_eq!(
         fired,
         vec![1, 2, 3],
@@ -156,7 +156,7 @@ fn scheduler_daily_cron_survives_jitter_on_trigger_minute() {
     // the tick observes 10821 (03:00:21) instead of 10800 (03:00:00).
     // Daily schedules missed this way don't fire for 24 hours.
     let cron = CronExpr::parse("0 3 * * *").unwrap();
-    let fired = pending_minute_ticks(Some(179), 10821, &cron);
+    let fired = pending_minute_ticks(Some(179), 10821, &cron, 0);
     assert_eq!(
         fired,
         vec![180],
@@ -171,7 +171,7 @@ fn scheduler_catchup_filters_through_cron() {
     // `*/5` matches minute 5 but not 1-4; catch-up from minute 0 at
     // second 303 (minute 5) must fire only minute 5.
     let cron = CronExpr::parse("*/5 * * * *").unwrap();
-    let fired = pending_minute_ticks(Some(0), 5 * 60 + 3, &cron);
+    let fired = pending_minute_ticks(Some(0), 5 * 60 + 3, &cron, 0);
     assert_eq!(
         fired,
         vec![5],
@@ -184,7 +184,7 @@ fn scheduler_does_not_refire_same_minute() {
     // Spec: after minute 1 has fired, subsequent within-minute ticks
     // (seconds 61..120) must not re-fire it.
     let cron = CronExpr::parse("* * * * *").unwrap();
-    let fired = pending_minute_ticks(Some(1), 80, &cron);
+    let fired = pending_minute_ticks(Some(1), 80, &cron, 0);
     assert!(
         fired.is_empty(),
         "minute 1 re-fired within its own minute window; got {fired:?}"

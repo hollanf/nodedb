@@ -88,7 +88,7 @@ impl TestStack {
             TenantId::new(1),
             VShardId::from_collection(collection),
             plan,
-            0,
+            TraceId::ZERO,
         )
         .await
         .expect("dispatch failed");
@@ -516,7 +516,7 @@ fn startup_replay_recovers_all_wal_data() {
                 plan: scan_plan,
                 deadline: std::time::Instant::now() + Duration::from_secs(10),
                 priority: Priority::Normal,
-                trace_id: 0,
+                trace_id: nodedb_types::TraceId::ZERO,
                 consistency: ReadConsistency::Strong,
                 idempotency_key: None,
                 event_source: nodedb::event::EventSource::User,

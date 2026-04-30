@@ -81,8 +81,8 @@ async fn prepared_select_strict_doc_returns_data() {
 
     server
         .exec(
-            "CREATE COLLECTION strict_ep TYPE DOCUMENT STRICT \
-             (id TEXT PRIMARY KEY, name TEXT)",
+            "CREATE COLLECTION strict_ep  \
+             (id TEXT PRIMARY KEY, name TEXT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

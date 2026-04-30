@@ -28,6 +28,7 @@ use nodedb::data::executor::core_loop::CoreLoop;
 use nodedb::data::executor::response_codec::decode_payload_to_json;
 use nodedb::types::*;
 use nodedb_bridge::buffer::{Consumer, Producer, RingBuffer};
+use nodedb_types::vector_distance::DistanceMetric;
 use nodedb_types::{Surrogate, SurrogateBitmap};
 
 // ── Harness ────────────────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ fn make_req(plan: PhysicalPlan) -> Request {
         plan,
         deadline: Instant::now() + Duration::from_secs(5),
         priority: Priority::Normal,
-        trace_id: 0,
+        trace_id: nodedb_types::TraceId::ZERO,
         consistency: ReadConsistency::Strong,
         idempotency_key: None,
         event_source: nodedb::event::EventSource::User,
@@ -209,6 +210,7 @@ fn fts_derived_bitmap_filters_vector_search() {
             ann_options: Default::default(),
             skip_payload_fetch: false,
             payload_filters: Vec::new(),
+            metric: DistanceMetric::L2,
         }),
     );
     let all_ids = extract_vector_surrogates(&all_payload);
@@ -243,6 +245,7 @@ fn fts_derived_bitmap_filters_vector_search() {
             ann_options: Default::default(),
             skip_payload_fetch: false,
             payload_filters: Vec::new(),
+            metric: DistanceMetric::L2,
         }),
     );
     let filtered_ids = extract_vector_surrogates(&filtered_payload);

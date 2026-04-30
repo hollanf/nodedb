@@ -116,8 +116,8 @@ async fn three_node_roundtrip_preserves_data() {
 
     cluster
         .exec_ddl_on_any_leader(
-            "CREATE COLLECTION cl_docs TYPE DOCUMENT STRICT \
-             (id TEXT PRIMARY KEY, content TEXT)",
+            "CREATE COLLECTION cl_docs  \
+             (id TEXT PRIMARY KEY, content TEXT) WITH (engine='document_strict')",
         )
         .await
         .expect("CREATE COLLECTION");
@@ -224,8 +224,8 @@ async fn backup_envelope_carries_nonzero_snapshot_watermark() {
 
     cluster
         .exec_ddl_on_any_leader(
-            "CREATE COLLECTION cl_docs TYPE DOCUMENT STRICT \
-             (id TEXT PRIMARY KEY, content TEXT)",
+            "CREATE COLLECTION cl_docs  \
+             (id TEXT PRIMARY KEY, content TEXT) WITH (engine='document_strict')",
         )
         .await
         .expect("CREATE COLLECTION");
@@ -260,8 +260,8 @@ async fn backup_watermark_advances_after_writes() {
 
     cluster
         .exec_ddl_on_any_leader(
-            "CREATE COLLECTION cl_docs TYPE DOCUMENT STRICT \
-             (id TEXT PRIMARY KEY, content TEXT)",
+            "CREATE COLLECTION cl_docs  \
+             (id TEXT PRIMARY KEY, content TEXT) WITH (engine='document_strict')",
         )
         .await
         .expect("CREATE COLLECTION");
@@ -329,8 +329,8 @@ async fn restore_from_different_topology_preserves_all_keys() {
     for cluster in [&cluster_a, &cluster_b] {
         cluster
             .exec_ddl_on_any_leader(
-                "CREATE COLLECTION cl_docs TYPE DOCUMENT STRICT \
-                 (id TEXT PRIMARY KEY, content TEXT)",
+                "CREATE COLLECTION cl_docs  \
+                 (id TEXT PRIMARY KEY, content TEXT) WITH (engine='document_strict')",
             )
             .await
             .expect("CREATE COLLECTION");
@@ -390,8 +390,8 @@ async fn restore_surfaces_failing_node_id_on_midflight_failure() {
 
     cluster
         .exec_ddl_on_any_leader(
-            "CREATE COLLECTION cl_docs TYPE DOCUMENT STRICT \
-             (id TEXT PRIMARY KEY, content TEXT)",
+            "CREATE COLLECTION cl_docs  \
+             (id TEXT PRIMARY KEY, content TEXT) WITH (engine='document_strict')",
         )
         .await
         .expect("CREATE COLLECTION");
@@ -482,8 +482,8 @@ async fn restore_refuses_stale_watermark() {
     let cluster = TestCluster::spawn_three().await.expect("cluster");
     cluster
         .exec_ddl_on_any_leader(
-            "CREATE COLLECTION cl_docs TYPE DOCUMENT STRICT \
-             (id TEXT PRIMARY KEY, content TEXT)",
+            "CREATE COLLECTION cl_docs  \
+             (id TEXT PRIMARY KEY, content TEXT) WITH (engine='document_strict')",
         )
         .await
         .expect("CREATE COLLECTION");

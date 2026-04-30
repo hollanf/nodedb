@@ -29,7 +29,7 @@ async fn kv_insert_duplicate_key_raises_unique_violation() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION c TYPE KEY_VALUE (key TEXT PRIMARY KEY, n INT)")
+        .exec("CREATE COLLECTION c (key TEXT PRIMARY KEY, n INT) WITH (engine='kv')")
         .await
         .unwrap();
 
@@ -70,7 +70,7 @@ async fn kv_insert_duplicate_key_preserves_original_row() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION c TYPE KEY_VALUE (key TEXT PRIMARY KEY, n INT)")
+        .exec("CREATE COLLECTION c (key TEXT PRIMARY KEY, n INT) WITH (engine='kv')")
         .await
         .unwrap();
 
@@ -110,7 +110,7 @@ async fn kv_insert_duplicate_key_resp_value_form_raises_unique_violation() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION c TYPE KEY_VALUE (key STRING PRIMARY KEY, value STRING)")
+        .exec("CREATE COLLECTION c (key STRING PRIMARY KEY, value STRING) WITH (engine='kv')")
         .await
         .unwrap();
 
@@ -159,7 +159,7 @@ async fn kv_insert_on_conflict_do_nothing_is_noop() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION c TYPE KEY_VALUE (key TEXT PRIMARY KEY, n INT)")
+        .exec("CREATE COLLECTION c (key TEXT PRIMARY KEY, n INT) WITH (engine='kv')")
         .await
         .unwrap();
 
@@ -194,7 +194,7 @@ async fn kv_insert_on_conflict_do_update_overwrites() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION c TYPE KEY_VALUE (key TEXT PRIMARY KEY, n INT)")
+        .exec("CREATE COLLECTION c (key TEXT PRIMARY KEY, n INT) WITH (engine='kv')")
         .await
         .unwrap();
 
@@ -226,7 +226,7 @@ async fn kv_upsert_keyword_overwrites() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION c TYPE KEY_VALUE (key TEXT PRIMARY KEY, n INT)")
+        .exec("CREATE COLLECTION c (key TEXT PRIMARY KEY, n INT) WITH (engine='kv')")
         .await
         .unwrap();
 

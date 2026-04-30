@@ -62,7 +62,7 @@ async fn grant_superuser_requires_superuser() {
 async fn revoke_own_superuser_rejected() {
     let state = make_state();
     let su = superuser();
-    let err = ddl_err(&state, &su, "REVOKE ROLE superuser FROM admin").await;
+    let err = ddl_err(&state, &su, "REVOKE ROLE superuser FROM nodedb").await;
     assert!(err.contains("cannot revoke your own superuser"), "{err}");
 }
 

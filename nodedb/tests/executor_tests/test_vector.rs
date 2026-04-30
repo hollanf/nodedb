@@ -3,6 +3,7 @@
 use nodedb::bridge::dispatch::BridgeRequest;
 use nodedb::bridge::envelope::{ErrorCode, PhysicalPlan, Status};
 use nodedb::bridge::physical_plan::VectorOp;
+use nodedb_types::vector_distance::DistanceMetric;
 
 use crate::helpers::*;
 
@@ -49,6 +50,7 @@ fn vector_insert_and_search() {
             ann_options: Default::default(),
             skip_payload_fetch: false,
             payload_filters: Vec::new(),
+            metric: DistanceMetric::L2,
         }),
     );
 
@@ -76,6 +78,7 @@ fn vector_search_no_index_returns_not_found() {
             ann_options: Default::default(),
             skip_payload_fetch: false,
             payload_filters: Vec::new(),
+            metric: DistanceMetric::L2,
         }),
     );
     assert_eq!(resp.status, Status::Error);

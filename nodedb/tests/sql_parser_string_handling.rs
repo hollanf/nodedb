@@ -21,7 +21,7 @@ async fn trigger_begin_inside_string_literal_does_not_corrupt_parse() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION items TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, label TEXT)")
+        .exec("CREATE COLLECTION items (id TEXT PRIMARY KEY, label TEXT) WITH (engine='document_strict')")
         .await
         .unwrap();
 
@@ -67,9 +67,9 @@ async fn insert_paren_inside_string_value_parses_correctly() {
 
     server
         .exec(
-            "CREATE COLLECTION msgs TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION msgs (\
                 id TEXT PRIMARY KEY, \
-                body TEXT)",
+                body TEXT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -98,10 +98,10 @@ async fn insert_multiple_parens_in_strings() {
 
     server
         .exec(
-            "CREATE COLLECTION notes TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION notes (\
                 id TEXT PRIMARY KEY, \
                 a TEXT, \
-                b TEXT)",
+                b TEXT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -131,10 +131,10 @@ async fn insert_array_with_paren_in_string_element() {
 
     server
         .exec(
-            "CREATE COLLECTION arr_test TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION arr_test (\
                 id TEXT PRIMARY KEY, \
                 tags TEXT, \
-                count INT)",
+                count INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -231,7 +231,7 @@ async fn materialized_view_with_cte_in_select() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION mv_src TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, val INT)")
+        .exec("CREATE COLLECTION mv_src (id TEXT PRIMARY KEY, val INT) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -260,7 +260,7 @@ async fn materialized_view_with_keyword_in_column_alias() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION mv_src2 TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, val INT)")
+        .exec("CREATE COLLECTION mv_src2 (id TEXT PRIMARY KEY, val INT) WITH (engine='document_strict')")
         .await
         .unwrap();
 

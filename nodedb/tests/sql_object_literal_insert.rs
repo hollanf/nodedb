@@ -75,7 +75,7 @@ async fn object_literal_insert_kv() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION kv_cache TYPE KEY_VALUE (key TEXT PRIMARY KEY)")
+        .exec("CREATE COLLECTION kv_cache (key TEXT PRIMARY KEY) WITH (engine='kv')")
         .await
         .unwrap();
 
@@ -116,9 +116,9 @@ async fn object_literal_insert_strict() {
 
     server
         .exec(
-            "CREATE COLLECTION strict_orders TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION strict_orders (\
                 id TEXT PRIMARY KEY, customer TEXT, amount FLOAT\
-            )",
+            ) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -144,9 +144,9 @@ async fn object_literal_insert_columnar() {
 
     server
         .exec(
-            "CREATE COLLECTION col_data TYPE COLUMNAR (\
+            "CREATE COLLECTION col_data (\
                 id TEXT, region TEXT, value FLOAT\
-            )",
+            ) WITH (engine='columnar')",
         )
         .await
         .unwrap();
@@ -169,9 +169,9 @@ async fn object_literal_insert_timeseries() {
 
     server
         .exec(
-            "CREATE COLLECTION ts_events TYPE COLUMNAR (\
+            "CREATE COLLECTION ts_events (\
                 id TEXT, ts TIMESTAMP TIME_KEY, value FLOAT, region TEXT\
-            ) WITH profile = 'timeseries'",
+            ) WITH (engine='timeseries')",
         )
         .await
         .unwrap();
@@ -194,9 +194,9 @@ async fn object_literal_insert_spatial() {
 
     server
         .exec(
-            "CREATE COLLECTION sp_locations TYPE COLUMNAR (\
+            "CREATE COLLECTION sp_locations (\
                 id TEXT, geom GEOMETRY SPATIAL_INDEX, label TEXT\
-            ) WITH profile = 'spatial'",
+            ) WITH (engine='spatial')",
         )
         .await
         .unwrap();
@@ -410,7 +410,7 @@ async fn kv_insert_with_ttl() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION ttl_cache TYPE KEY_VALUE (key TEXT PRIMARY KEY)")
+        .exec("CREATE COLLECTION ttl_cache (key TEXT PRIMARY KEY) WITH (engine='kv')")
         .await
         .unwrap();
 

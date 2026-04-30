@@ -7,6 +7,7 @@
 
 use nodedb::bridge::envelope::{PhysicalPlan, Status};
 use nodedb::bridge::physical_plan::{DocumentOp, GraphOp, VectorOp};
+use nodedb_types::vector_distance::DistanceMetric;
 
 use crate::helpers::*;
 
@@ -397,6 +398,7 @@ fn mixed_engine_isolation_no_cross_eviction() {
             ann_options: Default::default(),
             skip_payload_fetch: false,
             payload_filters: Vec::new(),
+            metric: DistanceMetric::L2,
         }),
     );
     assert_eq!(

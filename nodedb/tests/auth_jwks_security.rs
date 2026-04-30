@@ -182,7 +182,7 @@ query_budget_fraction      = 0.20
 
 [auth]
 mode                     = "password"
-superuser_name           = "admin"
+superuser_name           = "nodedb"
 superuser_password       = "test-password"
 min_password_length      = 8
 max_failed_logins        = 5
@@ -290,7 +290,7 @@ query_budget_fraction      = 0.20
 
 [auth]
 mode                     = "password"
-superuser_name           = "admin"
+superuser_name           = "nodedb"
 superuser_password       = "test-password"
 min_password_length      = 8
 max_failed_logins        = 5
@@ -333,7 +333,7 @@ query_budget_fraction      = 0.20
 
 [auth]
 mode                     = "password"
-superuser_name           = "admin"
+superuser_name           = "nodedb"
 superuser_password       = "test-password"
 min_password_length      = 8
 max_failed_logins        = 5
@@ -377,7 +377,7 @@ query_budget_fraction      = 0.20
 
 [auth]
 mode                     = "password"
-superuser_name           = "admin"
+superuser_name           = "nodedb"
 superuser_password       = "test-password"
 min_password_length      = 8
 max_failed_logins        = 5

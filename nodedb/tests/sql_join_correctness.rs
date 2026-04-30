@@ -14,28 +14,28 @@ use common::pgwire_harness::TestServer;
 async fn setup_join_tables(server: &TestServer) {
     server
         .exec(
-            "CREATE COLLECTION j_t1 TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION j_t1 (\
                 id TEXT PRIMARY KEY, \
                 name TEXT, \
-                x INT)",
+                x INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
     server
         .exec(
-            "CREATE COLLECTION j_t2 TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION j_t2 (\
                 id TEXT PRIMARY KEY, \
                 t1_id TEXT, \
-                y INT)",
+                y INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
     server
         .exec(
-            "CREATE COLLECTION j_t3 TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION j_t3 (\
                 id TEXT PRIMARY KEY, \
                 t2_id TEXT, \
-                z INT)",
+                z INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -139,19 +139,19 @@ async fn join_preserves_all_non_equi_predicates() {
 
     server
         .exec(
-            "CREATE COLLECTION jn_left TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION jn_left (\
                 id TEXT PRIMARY KEY, \
                 x INT, \
-                y INT)",
+                y INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
     server
         .exec(
-            "CREATE COLLECTION jn_right TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION jn_right (\
                 id TEXT PRIMARY KEY, \
                 x INT, \
-                y INT)",
+                y INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -208,20 +208,20 @@ async fn join_does_not_drop_second_non_equi_predicate() {
 
     server
         .exec(
-            "CREATE COLLECTION jd_a TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION jd_a (\
                 id TEXT PRIMARY KEY, \
                 val INT, \
                 lo INT, \
-                hi INT)",
+                hi INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
     server
         .exec(
-            "CREATE COLLECTION jd_b TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION jd_b (\
                 id TEXT PRIMARY KEY, \
                 val INT, \
-                bound INT)",
+                bound INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -282,17 +282,17 @@ async fn natural_join_is_not_cartesian() {
 
     server
         .exec(
-            "CREATE COLLECTION nat_a TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION nat_a (\
                 id TEXT PRIMARY KEY, \
-                shared_col TEXT)",
+                shared_col TEXT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
     server
         .exec(
-            "CREATE COLLECTION nat_b TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION nat_b (\
                 id TEXT PRIMARY KEY, \
-                shared_col TEXT)",
+                shared_col TEXT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

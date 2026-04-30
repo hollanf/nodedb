@@ -32,8 +32,8 @@ async fn bootstrap_tenant_user(server: &TestServer, user: &str, collection: &str
         .await
         .expect("tenant user connect");
     svc.simple_query(&format!(
-        "CREATE COLLECTION {collection} TYPE DOCUMENT STRICT \
-         (id TEXT PRIMARY KEY, content TEXT NOT NULL)"
+        "CREATE COLLECTION {collection}  \
+         (id TEXT PRIMARY KEY, content TEXT NOT NULL) WITH (engine='document_strict')"
     ))
     .await
     .expect("tenant user CREATE COLLECTION");
@@ -178,8 +178,8 @@ async fn tenant_user_cannot_see_other_tenants_collection_as_empty() {
     let server = TestServer::start().await;
     server
         .exec(
-            "CREATE COLLECTION t1_only TYPE DOCUMENT STRICT \
-             (id TEXT PRIMARY KEY, secret TEXT NOT NULL)",
+            "CREATE COLLECTION t1_only  \
+             (id TEXT PRIMARY KEY, secret TEXT NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

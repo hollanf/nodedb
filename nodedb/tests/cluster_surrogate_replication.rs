@@ -64,8 +64,8 @@ async fn surrogate_alloc_replicates_to_followers() {
     // The cluster harness retries on non-leader nodes transparently.
     cluster
         .exec_ddl_on_any_leader(
-            "CREATE COLLECTION sur_test TYPE DOCUMENT STRICT \
-             (id TEXT PRIMARY KEY, val TEXT)",
+            "CREATE COLLECTION sur_test  \
+             (id TEXT PRIMARY KEY, val TEXT) WITH (engine='document_strict')",
         )
         .await
         .expect("CREATE COLLECTION sur_test");
@@ -150,8 +150,8 @@ async fn surrogate_pk_scan_consistent_across_nodes() {
 
     cluster
         .exec_ddl_on_any_leader(
-            "CREATE COLLECTION sur_pg TYPE DOCUMENT STRICT \
-             (id TEXT PRIMARY KEY, payload TEXT)",
+            "CREATE COLLECTION sur_pg  \
+             (id TEXT PRIMARY KEY, payload TEXT) WITH (engine='document_strict')",
         )
         .await
         .expect("CREATE COLLECTION sur_pg");

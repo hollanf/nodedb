@@ -19,17 +19,17 @@ async fn different_trigger_bodies_execute_independently() {
 
     server
         .exec(
-            "CREATE COLLECTION cache_a TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION cache_a (\
                 id TEXT PRIMARY KEY, \
-                val TEXT DEFAULT 'none')",
+                val TEXT DEFAULT 'none') WITH (engine='document_strict')",
         )
         .await
         .unwrap();
     server
         .exec(
-            "CREATE COLLECTION cache_b TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION cache_b (\
                 id TEXT PRIMARY KEY, \
-                val TEXT DEFAULT 'none')",
+                val TEXT DEFAULT 'none') WITH (engine='document_strict')",
         )
         .await
         .unwrap();

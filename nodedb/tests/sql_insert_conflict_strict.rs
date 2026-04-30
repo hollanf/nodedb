@@ -16,8 +16,8 @@ async fn strict_insert_duplicate_pk_raises_unique_violation() {
 
     server
         .exec(
-            "CREATE COLLECTION t TYPE DOCUMENT STRICT \
-             (id STRING NOT NULL PRIMARY KEY, n INT)",
+            "CREATE COLLECTION t  \
+             (id STRING NOT NULL PRIMARY KEY, n INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -64,8 +64,8 @@ async fn strict_insert_duplicate_pk_preserves_original_row() {
 
     server
         .exec(
-            "CREATE COLLECTION t TYPE DOCUMENT STRICT \
-             (id STRING NOT NULL PRIMARY KEY, n INT)",
+            "CREATE COLLECTION t  \
+             (id STRING NOT NULL PRIMARY KEY, n INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -103,8 +103,8 @@ async fn strict_insert_on_conflict_do_nothing_is_noop() {
 
     server
         .exec(
-            "CREATE COLLECTION t TYPE DOCUMENT STRICT \
-             (id STRING NOT NULL PRIMARY KEY, n INT)",
+            "CREATE COLLECTION t  \
+             (id STRING NOT NULL PRIMARY KEY, n INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -141,8 +141,8 @@ async fn strict_insert_on_conflict_do_update_overwrites() {
 
     server
         .exec(
-            "CREATE COLLECTION t TYPE DOCUMENT STRICT \
-             (id STRING NOT NULL PRIMARY KEY, n INT)",
+            "CREATE COLLECTION t  \
+             (id STRING NOT NULL PRIMARY KEY, n INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -175,8 +175,8 @@ async fn strict_upsert_keyword_overwrites() {
 
     server
         .exec(
-            "CREATE COLLECTION t TYPE DOCUMENT STRICT \
-             (id STRING NOT NULL PRIMARY KEY, n INT)",
+            "CREATE COLLECTION t  \
+             (id STRING NOT NULL PRIMARY KEY, n INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

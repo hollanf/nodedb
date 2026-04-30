@@ -16,7 +16,7 @@ async fn recursive_cte_generates_sequence() {
 
     // We need a base collection for the query to target.
     server
-        .exec("CREATE COLLECTION cte_dummy TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY)")
+        .exec("CREATE COLLECTION cte_dummy (id TEXT PRIMARY KEY) WITH (engine='document_strict')")
         .await
         .unwrap();
 
@@ -71,7 +71,7 @@ async fn recursive_cte_union_all_preserves_duplicates() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION cte_dup TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, grp TEXT)")
+        .exec("CREATE COLLECTION cte_dup (id TEXT PRIMARY KEY, grp TEXT) WITH (engine='document_strict')")
         .await
         .unwrap();
 
@@ -108,9 +108,9 @@ async fn recursive_cte_tree_traversal() {
 
     server
         .exec(
-            "CREATE COLLECTION tree TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION tree (\
                 id TEXT PRIMARY KEY, \
-                parent_id TEXT)",
+                parent_id TEXT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

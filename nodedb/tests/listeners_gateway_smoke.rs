@@ -29,10 +29,10 @@ use nodedb::types::TenantId;
 
 use common::cluster_harness::TestClusterNode;
 
-fn test_ctx(trace_id: u64) -> QueryContext {
+fn test_ctx(_trace_id: u64) -> QueryContext {
     QueryContext {
         tenant_id: TenantId::new(0),
-        trace_id,
+        trace_id: nodedb_types::TraceId::ZERO,
     }
 }
 

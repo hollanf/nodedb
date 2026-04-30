@@ -17,9 +17,9 @@ async fn default_scalar_function_upper() {
 
     server
         .exec(
-            "CREATE COLLECTION def_fn TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION def_fn (\
                 id TEXT PRIMARY KEY, \
-                a TEXT DEFAULT upper('x'))",
+                a TEXT DEFAULT upper('x')) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -50,9 +50,9 @@ async fn default_scalar_function_lower() {
 
     server
         .exec(
-            "CREATE COLLECTION def_lower TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION def_lower (\
                 id TEXT PRIMARY KEY, \
-                tag TEXT DEFAULT lower('HELLO'))",
+                tag TEXT DEFAULT lower('HELLO')) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -81,9 +81,9 @@ async fn default_arithmetic_expression() {
 
     server
         .exec(
-            "CREATE COLLECTION def_arith TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION def_arith (\
                 id TEXT PRIMARY KEY, \
-                v INT DEFAULT 1 + 2)",
+                v INT DEFAULT 1 + 2) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -112,9 +112,9 @@ async fn default_concat_function() {
 
     server
         .exec(
-            "CREATE COLLECTION def_concat TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION def_concat (\
                 id TEXT PRIMARY KEY, \
-                label TEXT DEFAULT concat('hello', '_', 'world'))",
+                label TEXT DEFAULT concat('hello', '_', 'world')) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -144,10 +144,10 @@ async fn default_recognized_expressions_still_work() {
 
     server
         .exec(
-            "CREATE COLLECTION def_known TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION def_known (\
                 id TEXT PRIMARY KEY, \
                 status TEXT DEFAULT 'active', \
-                uid TEXT DEFAULT UUID_V7)",
+                uid TEXT DEFAULT UUID_V7) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

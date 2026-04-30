@@ -29,11 +29,11 @@ async fn create_index_on_strict_document_used_by_planner() {
     // Exact scenario from the reporter's bug repro.
     server
         .exec(
-            "CREATE COLLECTION events TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION events (\
                id STRING PRIMARY KEY, \
                tenant_id STRING NOT NULL, \
                user_id STRING NOT NULL, \
-               created_at TIMESTAMP)",
+               created_at TIMESTAMP) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

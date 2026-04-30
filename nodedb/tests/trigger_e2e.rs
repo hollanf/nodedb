@@ -63,7 +63,7 @@ async fn before_trigger_reject_does_not_persist_row() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION guarded TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, val INT)")
+        .exec("CREATE COLLECTION guarded (id TEXT PRIMARY KEY, val INT) WITH (engine='document_strict')")
         .await
         .unwrap();
 
@@ -102,7 +102,7 @@ async fn after_async_trigger_failure_does_not_block_write() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION async_src TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, val INT)")
+        .exec("CREATE COLLECTION async_src (id TEXT PRIMARY KEY, val INT) WITH (engine='document_strict')")
         .await
         .unwrap();
 
@@ -580,7 +580,7 @@ async fn publish_to_new_field_substitution_delivers_value() {
         .await
         .unwrap();
     server
-        .exec("CREATE COLLECTION memories TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, user_id TEXT)")
+        .exec("CREATE COLLECTION memories (id TEXT PRIMARY KEY, user_id TEXT) WITH (engine='document_strict')")
         .await
         .unwrap();
 

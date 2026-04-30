@@ -28,7 +28,7 @@ use common::cluster_harness::TestClusterNode;
 fn test_ctx() -> QueryContext {
     QueryContext {
         tenant_id: TenantId::new(0),
-        trace_id: 0xCAFE_1234,
+        trace_id: nodedb_types::TraceId::ZERO,
     }
 }
 

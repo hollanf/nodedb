@@ -46,7 +46,7 @@ fn make_kv_put_request(
         plan_bytes,
         tenant_id: 0,
         deadline_remaining_ms,
-        trace_id: 0xDEAD_CAFE_1234,
+        trace_id: [0u8; 16],
         descriptor_versions: vec![DescriptorVersionEntry {
             collection: collection.into(),
             version: descriptor_version,
@@ -201,7 +201,7 @@ async fn execute_request_cross_node_dispatch() {
         },
         tenant_id: 0,
         deadline_remaining_ms: 5000,
-        trace_id: 0xBEEF_FACE,
+        trace_id: [0u8; 16],
         descriptor_versions: vec![DescriptorVersionEntry {
             collection: "cross_node_kv".into(),
             version: 0, // Accept any version (pre-B.1 sentinel bypass)

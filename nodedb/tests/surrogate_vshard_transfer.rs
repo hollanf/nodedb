@@ -101,8 +101,8 @@ async fn surrogate_identity_survives_vshard_routing_cutover() {
     // ── DDL ──────────────────────────────────────────────────────────────────
     cluster
         .exec_ddl_on_any_leader(
-            "CREATE COLLECTION sur_vshard TYPE DOCUMENT STRICT \
-             (id TEXT PRIMARY KEY, payload TEXT)",
+            "CREATE COLLECTION sur_vshard  \
+             (id TEXT PRIMARY KEY, payload TEXT) WITH (engine='document_strict')",
         )
         .await
         .expect("CREATE COLLECTION sur_vshard");

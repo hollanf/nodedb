@@ -53,8 +53,8 @@ async fn surrogate_hwm_survives_leader_failover() {
     // via the SurrogateAssigner on the inserting node's Control Plane.
     cluster
         .exec_ddl_on_any_leader(
-            "CREATE COLLECTION failover_sr TYPE DOCUMENT STRICT \
-             (id TEXT PRIMARY KEY, val TEXT)",
+            "CREATE COLLECTION failover_sr  \
+             (id TEXT PRIMARY KEY, val TEXT) WITH (engine='document_strict')",
         )
         .await
         .expect("CREATE COLLECTION failover_sr");

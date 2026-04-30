@@ -304,7 +304,7 @@ async fn convert_to_strict_from_typeguards() {
 
     // Convert to strict WITHOUT explicit column defs — should infer from typeguards.
     server
-        .exec("CONVERT COLLECTION conv_tg TO strict")
+        .exec("CONVERT COLLECTION conv_tg TO document_strict")
         .await
         .unwrap();
 
@@ -337,7 +337,9 @@ async fn convert_to_strict_no_typeguards_no_cols_errors() {
     server.exec("CREATE COLLECTION conv_empty").await.unwrap();
 
     // No typeguards, no column defs — should fail.
-    let err = server.exec("CONVERT COLLECTION conv_empty TO strict").await;
+    let err = server
+        .exec("CONVERT COLLECTION conv_empty TO document_strict")
+        .await;
     assert!(
         err.is_err(),
         "should fail without typeguards or column defs: {err:?}"
@@ -360,7 +362,7 @@ async fn convert_to_strict_with_explicit_cols() {
 
     // Convert with explicit column defs (should still work as before).
     let result = server
-        .exec("CONVERT COLLECTION conv_explicit TO strict (id TEXT, val INT)")
+        .exec("CONVERT COLLECTION conv_explicit TO document_strict (id TEXT, val INT)")
         .await;
     assert!(result.is_ok(), "explicit convert should work");
 }
@@ -373,10 +375,10 @@ async fn strict_default_gen_uuid_v7() {
 
     server
         .exec(
-            "CREATE COLLECTION strict_uuid TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION strict_uuid (\
                  id TEXT PRIMARY KEY DEFAULT gen_uuid_v7(),\
                  name TEXT\
-             )",
+             ) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -400,10 +402,10 @@ async fn strict_default_now() {
 
     server
         .exec(
-            "CREATE COLLECTION strict_ts TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION strict_ts (\
                  id TEXT PRIMARY KEY,\
                  created_at TEXT DEFAULT now()\
-             )",
+             ) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

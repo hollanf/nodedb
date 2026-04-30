@@ -16,10 +16,10 @@ async fn rls_policy_nested_parens_preserved() {
 
     server
         .exec(
-            "CREATE COLLECTION rls_items TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION rls_items (\
                 id TEXT PRIMARY KEY, \
                 x INT, \
-                y INT)",
+                y INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -97,11 +97,11 @@ async fn rls_policy_triple_nested_parens() {
 
     server
         .exec(
-            "CREATE COLLECTION rls_deep TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION rls_deep (\
                 id TEXT PRIMARY KEY, \
                 a INT, \
                 b INT, \
-                c INT)",
+                c INT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

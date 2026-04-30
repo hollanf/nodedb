@@ -16,7 +16,7 @@ use tokio_postgres::types::Type;
 async fn extended_query_strict_doc_returns_decoded_columns() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION t TYPE DOCUMENT STRICT (id STRING PRIMARY KEY, name STRING)")
+        .exec("CREATE COLLECTION t (id STRING PRIMARY KEY, name STRING) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -148,7 +148,7 @@ async fn extended_query_pure_constant_projection() {
 async fn extended_query_star_projection_returns_all_columns() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION t TYPE DOCUMENT STRICT (id STRING PRIMARY KEY, name STRING, age INT)")
+        .exec("CREATE COLLECTION t (id STRING PRIMARY KEY, name STRING, age INT) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -181,7 +181,7 @@ async fn extended_query_star_projection_returns_all_columns() {
 async fn extended_query_count_aggregate_returns_count_column() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION t TYPE DOCUMENT STRICT (id STRING PRIMARY KEY, name STRING)")
+        .exec("CREATE COLLECTION t (id STRING PRIMARY KEY, name STRING) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -228,7 +228,7 @@ async fn extended_query_count_aggregate_returns_count_column() {
 async fn extended_query_kv_point_get() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION kv TYPE KEY_VALUE (key STRING PRIMARY KEY, value STRING)")
+        .exec("CREATE COLLECTION kv (key STRING PRIMARY KEY, value STRING) WITH (engine='kv')")
         .await
         .unwrap();
     server
@@ -292,7 +292,7 @@ async fn extended_query_pg_type_catalog_is_reachable() {
 async fn extended_query_untyped_numeric_limit_applies() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION t TYPE DOCUMENT STRICT (id STRING PRIMARY KEY, n INT)")
+        .exec("CREATE COLLECTION t (id STRING PRIMARY KEY, n INT) WITH (engine='document_strict')")
         .await
         .unwrap();
     for (id, n) in [("a", 1), ("b", 2), ("c", 3), ("d", 4), ("e", 5)] {
@@ -327,7 +327,7 @@ async fn extended_query_untyped_numeric_limit_applies() {
 async fn extended_query_untyped_numeric_offset_applies() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION t TYPE DOCUMENT STRICT (id STRING PRIMARY KEY, n INT)")
+        .exec("CREATE COLLECTION t (id STRING PRIMARY KEY, n INT) WITH (engine='document_strict')")
         .await
         .unwrap();
     for (id, n) in [("a", 1), ("b", 2), ("c", 3), ("d", 4), ("e", 5)] {
@@ -368,7 +368,7 @@ async fn extended_query_untyped_numeric_offset_applies() {
 async fn extended_query_untyped_numeric_where_equals() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION t TYPE DOCUMENT STRICT (id STRING PRIMARY KEY, n INT)")
+        .exec("CREATE COLLECTION t (id STRING PRIMARY KEY, n INT) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -404,7 +404,7 @@ async fn extended_query_untyped_numeric_where_equals() {
 async fn extended_query_dsl_search_vector_substitutes_params() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION v TYPE VECTOR (id STRING PRIMARY KEY, embedding VECTOR(3))")
+        .exec("CREATE COLLECTION v (id STRING PRIMARY KEY, embedding VECTOR(3)) WITH (engine='vector')")
         .await
         .unwrap();
     server
@@ -454,7 +454,7 @@ async fn extended_query_dsl_search_vector_substitutes_params() {
 async fn extended_query_dsl_upsert_substitutes_params() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION t TYPE DOCUMENT STRICT (id STRING NOT NULL PRIMARY KEY, n INT)")
+        .exec("CREATE COLLECTION t (id STRING NOT NULL PRIMARY KEY, n INT) WITH (engine='document_strict')")
         .await
         .unwrap();
 

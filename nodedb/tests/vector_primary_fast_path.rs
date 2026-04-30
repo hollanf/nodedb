@@ -34,8 +34,8 @@ async fn pure_vector_projection_skips_payload_fetch() {
     server
         .exec(
             "CREATE COLLECTION vp_fast_path \
-             TYPE VECTOR (id STRING PRIMARY KEY, embedding VECTOR(4), label STRING) \
-             WITH (primary = 'vector', vector_field = 'embedding', dim = 4)",
+              (id STRING PRIMARY KEY, embedding VECTOR(4), label STRING) \
+             WITH (engine='vector', primary = 'vector', vector_field = 'embedding', dim = 4)",
         )
         .await
         .unwrap();
@@ -124,8 +124,8 @@ async fn payload_bitmap_prefilter_restricts_candidates() {
     server
         .exec(
             "CREATE COLLECTION vp_payload \
-             TYPE VECTOR (id STRING PRIMARY KEY, vec VECTOR(3), category STRING) \
-             WITH (primary='vector', vector_field='vec', dim=3, payload_indexes=['category'])",
+              (id STRING PRIMARY KEY, vec VECTOR(3), category STRING) \
+             WITH (engine='vector', primary='vector', vector_field='vec', dim=3, payload_indexes=['category'])",
         )
         .await
         .unwrap();
@@ -191,8 +191,8 @@ async fn payload_in_list_prefilter() {
     server
         .exec(
             "CREATE COLLECTION vp_in \
-             TYPE VECTOR (id STRING PRIMARY KEY, vec VECTOR(3), category STRING) \
-             WITH (primary='vector', vector_field='vec', dim=3, payload_indexes=['category'])",
+              (id STRING PRIMARY KEY, vec VECTOR(3), category STRING) \
+             WITH (engine='vector', primary='vector', vector_field='vec', dim=3, payload_indexes=['category'])",
         )
         .await
         .unwrap();
@@ -232,8 +232,8 @@ async fn payload_range_prefilter() {
     server
         .exec(
             "CREATE COLLECTION vp_range \
-             TYPE VECTOR (id STRING PRIMARY KEY, vec VECTOR(3), n BIGINT) \
-             WITH (primary='vector', vector_field='vec', dim=3, payload_indexes=['n'])",
+              (id STRING PRIMARY KEY, vec VECTOR(3), n BIGINT) \
+             WITH (engine='vector', primary='vector', vector_field='vec', dim=3, payload_indexes=['n'])",
         )
         .await
         .unwrap();
@@ -271,8 +271,8 @@ async fn per_collection_arenas_reported_in_stats() {
         server
             .exec(&format!(
                 "CREATE COLLECTION {name} \
-                 TYPE VECTOR (id STRING PRIMARY KEY, vec VECTOR(3)) \
-                 WITH (primary = 'vector', vector_field = 'vec', dim = 3)"
+                  (id STRING PRIMARY KEY, vec VECTOR(3)) \
+                 WITH (engine='vector', primary = 'vector', vector_field = 'vec', dim = 3)"
             ))
             .await
             .unwrap();

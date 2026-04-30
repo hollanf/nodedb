@@ -4,6 +4,7 @@
 
 use nodedb::bridge::envelope::{PhysicalPlan, Status};
 use nodedb::bridge::physical_plan::VectorOp;
+use nodedb_types::vector_distance::DistanceMetric;
 
 use crate::helpers::*;
 
@@ -49,6 +50,7 @@ fn vector_search_isolated() {
             ann_options: Default::default(),
             skip_payload_fetch: false,
             payload_filters: Vec::new(),
+            metric: DistanceMetric::L2,
         }),
     );
     assert_eq!(resp_a.status, Status::Ok);
@@ -72,6 +74,7 @@ fn vector_search_isolated() {
             ann_options: Default::default(),
             skip_payload_fetch: false,
             payload_filters: Vec::new(),
+            metric: DistanceMetric::L2,
         }),
     );
     // Tenant B has no vector index for this collection — the engine returns

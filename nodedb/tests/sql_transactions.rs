@@ -9,7 +9,7 @@ async fn commit_persists_buffered_writes() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION txn_test TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, val INT)")
+        .exec("CREATE COLLECTION txn_test (id TEXT PRIMARY KEY, val INT) WITH (engine='document_strict')")
         .await
         .unwrap();
 
@@ -36,7 +36,7 @@ async fn rollback_discards_buffered_write_and_missing_row_is_empty() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION txn_test TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, val INT)")
+        .exec("CREATE COLLECTION txn_test (id TEXT PRIMARY KEY, val INT) WITH (engine='document_strict')")
         .await
         .unwrap();
 
@@ -59,7 +59,7 @@ async fn alter_table_add_column_refreshes_strict_schema() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION alter_test TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, name TEXT)")
+        .exec("CREATE COLLECTION alter_test (id TEXT PRIMARY KEY, name TEXT) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -93,9 +93,9 @@ async fn alter_collection_add_column_refreshes_strict_schema() {
 
     server
         .exec(
-            "CREATE COLLECTION memories TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION memories (\
                 id TEXT PRIMARY KEY, \
-                name TEXT NOT NULL)",
+                name TEXT NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -130,10 +130,10 @@ async fn alter_collection_drop_column() {
 
     server
         .exec(
-            "CREATE COLLECTION memories TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION memories (\
                 id TEXT PRIMARY KEY, \
                 name TEXT NOT NULL, \
-                scratch TEXT)",
+                scratch TEXT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -165,9 +165,9 @@ async fn alter_collection_rename_column() {
 
     server
         .exec(
-            "CREATE COLLECTION memories TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION memories (\
                 id TEXT PRIMARY KEY, \
-                name TEXT NOT NULL)",
+                name TEXT NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -199,9 +199,9 @@ async fn alter_collection_alter_column_type() {
 
     server
         .exec(
-            "CREATE COLLECTION measurements TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION measurements (\
                 id TEXT PRIMARY KEY, \
-                value INT NOT NULL)",
+                value INT NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -238,7 +238,7 @@ async fn add_column_preserves_pre_alter_row_existing_columns() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION ac_preserve TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, name TEXT)")
+        .exec("CREATE COLLECTION ac_preserve (id TEXT PRIMARY KEY, name TEXT) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -275,7 +275,7 @@ async fn add_column_returns_default_for_pre_alter_row() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION ac_default TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, name TEXT)")
+        .exec("CREATE COLLECTION ac_default (id TEXT PRIMARY KEY, name TEXT) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -306,7 +306,7 @@ async fn add_column_then_update_pre_alter_row() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION ac_update TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, name TEXT)")
+        .exec("CREATE COLLECTION ac_update (id TEXT PRIMARY KEY, name TEXT) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -347,7 +347,7 @@ async fn multiple_add_columns_preserves_pre_alter_row() {
     let server = TestServer::start().await;
 
     server
-        .exec("CREATE COLLECTION ac_multi TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, name TEXT)")
+        .exec("CREATE COLLECTION ac_multi (id TEXT PRIMARY KEY, name TEXT) WITH (engine='document_strict')")
         .await
         .unwrap();
     server
@@ -394,10 +394,10 @@ async fn drop_column_preserves_pre_alter_row_remaining_columns() {
 
     server
         .exec(
-            "CREATE COLLECTION dc_preserve TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION dc_preserve (\
                 id TEXT PRIMARY KEY, \
                 name TEXT NOT NULL, \
-                scratch TEXT)",
+                scratch TEXT) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -434,10 +434,10 @@ async fn rename_column_preserves_pre_alter_row_value() {
 
     server
         .exec(
-            "CREATE COLLECTION rc_preserve TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION rc_preserve (\
                 id TEXT PRIMARY KEY, \
                 name TEXT NOT NULL, \
-                score INT DEFAULT 0)",
+                score INT DEFAULT 0) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -470,9 +470,9 @@ async fn alter_column_type_preserves_pre_alter_row_value() {
 
     server
         .exec(
-            "CREATE COLLECTION at_preserve TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION at_preserve (\
                 id TEXT PRIMARY KEY, \
-                value INT NOT NULL)",
+                value INT NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

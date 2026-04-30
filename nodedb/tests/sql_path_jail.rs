@@ -184,7 +184,7 @@ async fn restore_rejects_path_form_tempdir() {
 async fn copy_from_rejects_path_form_relative() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION pjc TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, content TEXT)")
+        .exec("CREATE COLLECTION pjc (id TEXT PRIMARY KEY, content TEXT) WITH (engine='document_strict')")
         .await
         .ok();
 
@@ -196,7 +196,7 @@ async fn copy_from_rejects_path_form_relative() {
 async fn copy_from_rejects_path_form_absolute_system_file() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION pjc2 TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, content TEXT)")
+        .exec("CREATE COLLECTION pjc2 (id TEXT PRIMARY KEY, content TEXT) WITH (engine='document_strict')")
         .await
         .ok();
 
@@ -208,7 +208,7 @@ async fn copy_from_rejects_path_form_absolute_system_file() {
 async fn copy_from_rejects_path_form_tempdir() {
     let server = TestServer::start().await;
     server
-        .exec("CREATE COLLECTION pjc3 TYPE DOCUMENT STRICT (id TEXT PRIMARY KEY, content TEXT)")
+        .exec("CREATE COLLECTION pjc3 (id TEXT PRIMARY KEY, content TEXT) WITH (engine='document_strict')")
         .await
         .ok();
 

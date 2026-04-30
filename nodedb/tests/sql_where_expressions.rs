@@ -14,9 +14,9 @@ async fn lower_function_in_where_matches_row() {
 
     server
         .exec(
-            "CREATE COLLECTION entities TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION entities (\
                 id STRING PRIMARY KEY, \
-                canonical_name STRING NOT NULL)",
+                canonical_name STRING NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -51,9 +51,9 @@ async fn lower_function_in_where_excludes_nonmatching_row() {
 
     server
         .exec(
-            "CREATE COLLECTION entities TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION entities (\
                 id STRING PRIMARY KEY, \
-                canonical_name STRING NOT NULL)",
+                canonical_name STRING NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -80,9 +80,9 @@ async fn delete_with_scalar_function_in_where_is_scoped() {
 
     server
         .exec(
-            "CREATE COLLECTION entities TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION entities (\
                 id STRING PRIMARY KEY, \
-                canonical_name STRING NOT NULL)",
+                canonical_name STRING NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -112,10 +112,10 @@ async fn update_with_scalar_function_in_where_is_scoped() {
 
     server
         .exec(
-            "CREATE COLLECTION entities TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION entities (\
                 id STRING PRIMARY KEY, \
                 canonical_name STRING NOT NULL, \
-                status STRING)",
+                status STRING) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -151,11 +151,11 @@ async fn between_with_non_literal_bounds_is_evaluated() {
 
     server
         .exec(
-            "CREATE COLLECTION items TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION items (\
                 id STRING PRIMARY KEY, \
                 qty INT NOT NULL, \
                 lo INT NOT NULL, \
-                hi INT NOT NULL)",
+                hi INT NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -182,9 +182,9 @@ async fn not_expression_in_where_is_evaluated() {
 
     server
         .exec(
-            "CREATE COLLECTION items TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION items (\
                 id STRING PRIMARY KEY, \
-                status STRING NOT NULL)",
+                status STRING NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -211,9 +211,9 @@ async fn in_list_with_expression_element_is_evaluated() {
 
     server
         .exec(
-            "CREATE COLLECTION items TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION items (\
                 id STRING PRIMARY KEY, \
-                qty INT NOT NULL)",
+                qty INT NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();
@@ -244,9 +244,9 @@ async fn column_arithmetic_in_where_is_evaluated() {
 
     server
         .exec(
-            "CREATE COLLECTION items TYPE DOCUMENT STRICT (\
+            "CREATE COLLECTION items (\
                 id STRING PRIMARY KEY, \
-                qty INT NOT NULL)",
+                qty INT NOT NULL) WITH (engine='document_strict')",
         )
         .await
         .unwrap();

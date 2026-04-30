@@ -160,6 +160,7 @@ fn kv_protocol_command_sequence() {
 #[test]
 fn kv_and_vector_coexist() {
     use nodedb::bridge::physical_plan::VectorOp;
+    use nodedb_types::vector_distance::DistanceMetric;
 
     let (mut core, mut tx, mut rx, _dir) = make_core();
 
@@ -225,6 +226,7 @@ fn kv_and_vector_coexist() {
             ann_options: Default::default(),
             skip_payload_fetch: false,
             payload_filters: Vec::new(),
+            metric: DistanceMetric::L2,
         }),
     );
 }

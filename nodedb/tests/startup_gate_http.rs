@@ -150,3 +150,48 @@ async fn http_healthz_returns_200_after_gateway_enable() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["status"], "ok", "body.status should be 'ok'");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn http_health_bare_returns_404() {
+    // The bare /health route was removed in favour of /healthz (k8s convention).
+    // Requests to /health must fall through to axum's default 404 handler.
+    let (shared, _seq, gw_gate, _dir) = make_gated_state();
+
+    let listen: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let listener = tokio::net::TcpListener::bind(listen).await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+
+    let (shutdown_bus, _) =
+        nodedb::control::shutdown::ShutdownBus::new(Arc::clone(&shared.shutdown));
+    let shared_http = Arc::clone(&shared);
+    let bus_http = shutdown_bus.clone();
+    tokio::spawn(async move {
+        nodedb::control::server::http::server::run_with_listener(
+            listener,
+            shared_http,
+            AuthMode::Trust,
+            None,
+            bus_http,
+        )
+        .await
+        .ok();
+    });
+
+    // Fire the gate so the startup middleware doesn't interfere.
+    gw_gate.fire();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let base = format!("http://{local_addr}");
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/health"))
+        .send()
+        .await
+        .expect("GET /health failed");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::NOT_FOUND,
+        "/health (bare) must return 404 — use /healthz instead"
+    );
+}

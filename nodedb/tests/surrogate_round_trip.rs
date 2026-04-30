@@ -42,6 +42,7 @@ use nodedb_array::types::cell_value::value::CellValue;
 use nodedb_array::types::coord::value::CoordValue;
 use nodedb_array::types::domain::{Domain, DomainBound};
 use nodedb_bridge::buffer::{Consumer, Producer, RingBuffer};
+use nodedb_types::vector_distance::DistanceMetric;
 use nodedb_types::{Surrogate, SurrogateBitmap};
 
 // ── Harness ────────────────────────────────────────────────────────────────
@@ -74,7 +75,7 @@ fn make_req(plan: PhysicalPlan) -> Request {
         plan,
         deadline: Instant::now() + Duration::from_secs(5),
         priority: Priority::Normal,
-        trace_id: 0,
+        trace_id: nodedb_types::TraceId::ZERO,
         consistency: ReadConsistency::Strong,
         idempotency_key: None,
         event_source: nodedb::event::EventSource::User,
@@ -489,6 +490,7 @@ fn surrogate_round_trip_all_engines() {
             ann_options: Default::default(),
             skip_payload_fetch: false,
             payload_filters: Vec::new(),
+            metric: DistanceMetric::L2,
         }),
     );
     let all_vec_surs = extract_vector_surrogates(&all_vec);
@@ -513,6 +515,7 @@ fn surrogate_round_trip_all_engines() {
             ann_options: Default::default(),
             skip_payload_fetch: false,
             payload_filters: Vec::new(),
+            metric: DistanceMetric::L2,
         }),
     );
     let filtered_vec_surs = extract_vector_surrogates(&filtered_vec);

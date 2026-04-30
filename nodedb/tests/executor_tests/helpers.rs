@@ -78,7 +78,7 @@ pub fn make_request(plan: PhysicalPlan) -> Request {
         plan,
         deadline: Instant::now() + Duration::from_secs(5),
         priority: Priority::Normal,
-        trace_id: 0,
+        trace_id: nodedb_types::TraceId::ZERO,
         consistency: ReadConsistency::Strong,
         idempotency_key: None,
         event_source: nodedb::event::EventSource::User,
