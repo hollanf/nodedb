@@ -38,7 +38,7 @@ fn make_request(plan: PhysicalPlan, id: u64) -> Request {
         plan,
         deadline: Instant::now() + Duration::from_secs(5),
         priority: Priority::Normal,
-        trace_id: 0,
+        trace_id: TraceId::ZERO,
         consistency: ReadConsistency::Strong,
         idempotency_key: None,
         event_source: crate::event::EventSource::User,
@@ -557,6 +557,7 @@ fn elementwise_schema_hash_mismatch_errors() {
 #[test]
 fn vector_search_with_array_surrogate_prefilter() {
     use crate::bridge::physical_plan::VectorOp;
+    use nodedb_types::vector_distance::DistanceMetric;
 
     // 2D array tiling chr × pos, cells bound to surrogates 1..=10.
     // Row "chr=0" carries surrogates 1..=5; row "chr=1" carries 6..=10.
@@ -610,6 +611,7 @@ fn vector_search_with_array_surrogate_prefilter() {
         ann_options: Default::default(),
         skip_payload_fetch: false,
         payload_filters: Vec::new(),
+        metric: DistanceMetric::L2,
     }));
     assert_eq!(r.status, Status::Ok, "vector+prefilter failed: {r:?}");
 

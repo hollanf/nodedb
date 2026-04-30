@@ -270,7 +270,30 @@ fn coerce_value(val: &Value, col_type: &ColumnType, col_name: &str) -> Result<Va
             _ => Err(format!("column '{col_name}': expected BYTES, got {val:?}")),
         },
         ColumnType::Timestamp => match val {
+            Value::NaiveDateTime(_) => Ok(val.clone()),
+            Value::DateTime(dt) => Ok(Value::NaiveDateTime(*dt)),
+            Value::Integer(ms) => Ok(Value::NaiveDateTime(
+                nodedb_types::NdbDateTime::from_millis(*ms),
+            )),
+            Value::Float(f) => Ok(Value::NaiveDateTime(
+                nodedb_types::NdbDateTime::from_millis(*f as i64),
+            )),
+            Value::String(s) => {
+                if let Ok(ms) = s.parse::<i64>() {
+                    Ok(Value::NaiveDateTime(
+                        nodedb_types::NdbDateTime::from_millis(ms),
+                    ))
+                } else {
+                    Ok(Value::String(s.clone()))
+                }
+            }
+            _ => Err(format!(
+                "column '{col_name}': expected TIMESTAMP, got {val:?}"
+            )),
+        },
+        ColumnType::Timestamptz => match val {
             Value::DateTime(_) => Ok(val.clone()),
+            Value::NaiveDateTime(dt) => Ok(Value::DateTime(*dt)),
             Value::Integer(ms) => Ok(Value::DateTime(nodedb_types::NdbDateTime::from_millis(*ms))),
             Value::Float(f) => Ok(Value::DateTime(nodedb_types::NdbDateTime::from_millis(
                 *f as i64,
@@ -283,7 +306,7 @@ fn coerce_value(val: &Value, col_type: &ColumnType, col_name: &str) -> Result<Va
                 }
             }
             _ => Err(format!(
-                "column '{col_name}': expected TIMESTAMP, got {val:?}"
+                "column '{col_name}': expected TIMESTAMPTZ, got {val:?}"
             )),
         },
         ColumnType::SystemTimestamp => {
@@ -293,7 +316,7 @@ fn coerce_value(val: &Value, col_type: &ColumnType, col_name: &str) -> Result<Va
                 "column '{col_name}': SYSTEM_TIMESTAMP is engine-assigned, not user-supplied"
             ))
         }
-        ColumnType::Decimal => match val {
+        ColumnType::Decimal { .. } => match val {
             Value::Decimal(_) => Ok(val.clone()),
             Value::Float(f) => rust_decimal::Decimal::try_from(*f)
                 .map(Value::Decimal)
@@ -451,7 +474,7 @@ fn value_to_json(val: &Value) -> serde_json::Value {
             &base64::engine::general_purpose::STANDARD,
             b,
         )),
-        Value::DateTime(dt) => serde_json::json!(dt.micros / 1000),
+        Value::DateTime(dt) | Value::NaiveDateTime(dt) => serde_json::json!(dt.micros / 1000),
         Value::Duration(d) => serde_json::json!(d.as_millis()),
         Value::Decimal(d) => serde_json::Value::String(d.to_string()),
         Value::Array(arr) => serde_json::Value::Array(arr.iter().map(value_to_json).collect()),

@@ -308,6 +308,14 @@ fn json_to_value(
         }
         (ColumnType::Timestamp, serde_json::Value::String(s)) => {
             nodedb_types::datetime::NdbDateTime::parse(s)
+                .map(Value::NaiveDateTime)
+                .unwrap_or_else(|| Value::String(s.clone()))
+        }
+        (ColumnType::Timestamptz, serde_json::Value::Number(n)) => {
+            Value::Integer(n.as_i64().unwrap_or(0))
+        }
+        (ColumnType::Timestamptz, serde_json::Value::String(s)) => {
+            nodedb_types::datetime::NdbDateTime::parse(s)
                 .map(Value::DateTime)
                 .unwrap_or_else(|| Value::String(s.clone()))
         }

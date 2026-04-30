@@ -378,7 +378,7 @@ mod tests {
     use crate::bridge::physical_plan::SpatialOp;
     use crate::data::executor::task::ExecutionTask;
     use crate::engine::spatial::RTreeEntry;
-    use crate::types::{ReadConsistency, RequestId, TenantId, VShardId};
+    use crate::types::{ReadConsistency, RequestId, TenantId, TraceId, VShardId};
     use crate::util::fnv1a_hash;
     use nodedb_bridge::buffer::RingBuffer;
     use nodedb_types::{Surrogate, SurrogateBitmap};
@@ -412,7 +412,7 @@ mod tests {
             plan,
             deadline: Instant::now() + Duration::from_secs(5),
             priority: Priority::Normal,
-            trace_id: 0,
+            trace_id: TraceId::ZERO,
             consistency: ReadConsistency::Strong,
             idempotency_key: None,
             event_source: crate::event::EventSource::User,

@@ -123,8 +123,8 @@ impl CoreLoop {
         bitemporal: bool,
     ) -> Response {
         let mode_label = match storage_mode {
-            crate::bridge::physical_plan::StorageMode::Schemaless => "schemaless",
-            crate::bridge::physical_plan::StorageMode::Strict { .. } => "strict",
+            crate::bridge::physical_plan::StorageMode::Schemaless => "document_schemaless",
+            crate::bridge::physical_plan::StorageMode::Strict { .. } => "document_strict",
         };
         debug!(
             core = self.core_id,

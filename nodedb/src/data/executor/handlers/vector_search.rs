@@ -13,6 +13,7 @@ use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::vector::collection::VectorCollection;
+use crate::engine::vector::distance::DistanceMetric;
 
 /// Build a search hit from raw search result data. `id` is the bound
 /// surrogate when present, else the local node id (so headless rows
@@ -86,6 +87,9 @@ pub(in crate::data::executor) struct VectorSearchParams<'a> {
     pub query_vector: &'a [f32],
     pub top_k: usize,
     pub ef_search: usize,
+    /// Per-query distance metric (from SQL operator). Overrides the
+    /// collection-configured metric at search time.
+    pub metric: DistanceMetric,
     pub filter_bitmap: Option<&'a nodedb_types::SurrogateBitmap>,
     pub field_name: &'a str,
     /// RLS post-candidate filters. Applied after HNSW/IVF returns candidates.
@@ -155,6 +159,7 @@ impl CoreLoop {
             query_vector,
             top_k,
             ef_search,
+            metric,
             filter_bitmap,
             field_name,
             rls_filters,
@@ -318,12 +323,18 @@ impl CoreLoop {
             Some(local_bm) => {
                 let mut buf = Vec::with_capacity(local_bm.serialized_size());
                 if local_bm.serialize_into(&mut buf).is_ok() {
-                    collection_ref.search_with_bitmap_bytes(query_vector, fetch_k, ef, &buf)
+                    collection_ref.search_with_bitmap_bytes_and_metric(
+                        query_vector,
+                        fetch_k,
+                        ef,
+                        &buf,
+                        metric,
+                    )
                 } else {
-                    collection_ref.search(query_vector, fetch_k, ef)
+                    collection_ref.search_with_metric(query_vector, fetch_k, ef, metric)
                 }
             }
-            None => collection_ref.search(query_vector, fetch_k, ef),
+            None => collection_ref.search_with_metric(query_vector, fetch_k, ef, metric),
         };
 
         // Pure-vector fast path: projection contains only id/distance.

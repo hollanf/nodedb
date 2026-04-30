@@ -50,6 +50,7 @@ pub fn value_to_coord_value(v: &Value, expected: DimType) -> Result<CoordValue, 
             | Value::Uuid(_)
             | Value::Ulid(_)
             | Value::DateTime(_)
+            | Value::NaiveDateTime(_)
             | Value::Duration(_)
             | Value::Decimal(_)
             | Value::Geometry(_)
@@ -103,6 +104,7 @@ pub fn value_to_cell_value(v: &Value, expected: AttrType) -> Result<CellValue, N
             | Value::Uuid(_)
             | Value::Ulid(_)
             | Value::DateTime(_)
+            | Value::NaiveDateTime(_)
             | Value::Duration(_)
             | Value::Decimal(_)
             | Value::Geometry(_)
@@ -166,6 +168,7 @@ fn value_kind(v: &Value) -> &'static str {
         Value::Uuid(_) => "uuid",
         Value::Ulid(_) => "ulid",
         Value::DateTime(_) => "datetime",
+        Value::NaiveDateTime(_) => "naive_datetime",
         Value::Duration(_) => "duration",
         Value::Decimal(_) => "decimal",
         Value::Geometry(_) => "geometry",

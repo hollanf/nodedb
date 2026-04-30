@@ -26,7 +26,7 @@ pub(super) fn bitemporal_row_visible(
     {
         let ts = match v {
             Value::Integer(i) => *i,
-            Value::DateTime(dt) => dt.micros / 1000,
+            Value::DateTime(dt) | Value::NaiveDateTime(dt) => dt.micros / 1000,
             _ => return false,
         };
         if ts > cutoff {

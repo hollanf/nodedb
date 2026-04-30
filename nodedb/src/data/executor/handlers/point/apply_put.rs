@@ -289,6 +289,11 @@ impl CoreLoop {
                             .filter_map(|v| match v {
                                 nodedb_types::Value::Float(f) => Some(*f as f32),
                                 nodedb_types::Value::Integer(i) => Some(*i as f32),
+                                nodedb_types::Value::Decimal(d) => {
+                                    use rust_decimal::prelude::ToPrimitive;
+                                    d.to_f32()
+                                }
+                                nodedb_types::Value::String(s) => s.parse::<f32>().ok(),
                                 _ => None,
                             })
                             .collect();
@@ -349,6 +354,11 @@ impl CoreLoop {
                             .filter_map(|v| match v {
                                 nodedb_types::Value::Float(f) => Some(*f as f32),
                                 nodedb_types::Value::Integer(i) => Some(*i as f32),
+                                nodedb_types::Value::Decimal(d) => {
+                                    use rust_decimal::prelude::ToPrimitive;
+                                    d.to_f32()
+                                }
+                                nodedb_types::Value::String(s) => s.parse::<f32>().ok(),
                                 _ => None,
                             })
                             .collect();

@@ -4,6 +4,7 @@ use crate::bridge::envelope::{ErrorCode, PhysicalPlan, Response, Status};
 use crate::bridge::physical_plan::{CrdtOp, DocumentOp, GraphOp, MetaOp, VectorOp};
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
+use crate::types::TraceId;
 
 use super::undo::UndoEntry;
 
@@ -31,7 +32,7 @@ impl CoreLoop {
             }),
             deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
             priority: crate::bridge::envelope::Priority::Normal,
-            trace_id: 0,
+            trace_id: TraceId::ZERO,
             consistency: crate::types::ReadConsistency::Strong,
             idempotency_key: None,
             event_source: crate::event::EventSource::User,
@@ -273,7 +274,7 @@ impl CoreLoop {
                     plan: plan.clone(),
                     deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
                     priority: crate::bridge::envelope::Priority::Normal,
-                    trace_id: 0,
+                    trace_id: nodedb_types::TraceId::ZERO,
                     consistency: crate::types::ReadConsistency::Strong,
                     idempotency_key: None,
                     event_source: crate::event::EventSource::User,

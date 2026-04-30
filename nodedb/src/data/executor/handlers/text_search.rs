@@ -82,7 +82,7 @@ impl CoreLoop {
                     )
                     .collect();
                 if let Some(ref m) = self.metrics {
-                    m.record_text_search(0);
+                    m.record_fts_search(0);
                 }
                 match super::super::response_codec::encode(&hits) {
                     Ok(payload) => self.response_with_payload(task, payload),
@@ -272,7 +272,7 @@ impl CoreLoop {
             .collect();
 
         if let Some(ref m) = self.metrics {
-            m.record_text_search(0);
+            m.record_fts_search(0);
         }
         match super::super::response_codec::encode(&results) {
             Ok(payload) => self.response_with_payload(task, payload),

@@ -34,14 +34,25 @@ pub(super) fn ndb_field_to_value(val: Option<&Value>, col_type: &ColumnType) -> 
         (ColumnType::Bool, Value::Bool(_)) => val.clone(),
         (ColumnType::String, Value::String(_)) => val.clone(),
         (ColumnType::Timestamp, Value::Integer(n)) => {
-            Value::DateTime(nodedb_types::NdbDateTime::from_millis(*n))
+            Value::NaiveDateTime(nodedb_types::NdbDateTime::from_millis(*n))
         }
         (ColumnType::Timestamp, Value::Float(f)) => {
-            Value::DateTime(nodedb_types::NdbDateTime::from_millis(*f as i64))
+            Value::NaiveDateTime(nodedb_types::NdbDateTime::from_millis(*f as i64))
         }
         (ColumnType::Timestamp, Value::String(s)) => nodedb_types::datetime::NdbDateTime::parse(s)
-            .map(Value::DateTime)
+            .map(Value::NaiveDateTime)
             .unwrap_or_else(|| Value::String(s.clone())),
+        (ColumnType::Timestamptz, Value::Integer(n)) => {
+            Value::DateTime(nodedb_types::NdbDateTime::from_millis(*n))
+        }
+        (ColumnType::Timestamptz, Value::Float(f)) => {
+            Value::DateTime(nodedb_types::NdbDateTime::from_millis(*f as i64))
+        }
+        (ColumnType::Timestamptz, Value::String(s)) => {
+            nodedb_types::datetime::NdbDateTime::parse(s)
+                .map(Value::DateTime)
+                .unwrap_or_else(|| Value::String(s.clone()))
+        }
         (ColumnType::Uuid, Value::String(_)) => val.clone(),
         // Fallback: integers as floats, strings as strings.
         (ColumnType::Float64, _) => Value::Null,

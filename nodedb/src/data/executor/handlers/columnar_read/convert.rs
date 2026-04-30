@@ -14,7 +14,7 @@ pub(in crate::data::executor) fn value_to_json(
             .map(serde_json::Value::Number)
             .unwrap_or(serde_json::Value::Null),
         Value::String(s) => serde_json::Value::String(s.clone()),
-        Value::DateTime(dt) => serde_json::Value::String(dt.to_string()),
+        Value::DateTime(dt) | Value::NaiveDateTime(dt) => serde_json::Value::String(dt.to_string()),
         Value::Decimal(d) => serde_json::Value::String(d.to_string()),
         Value::Uuid(s) => serde_json::Value::String(s.clone()),
         Value::Bytes(b) => {

@@ -45,7 +45,10 @@ fn compare_values(
             .unwrap_or(std::cmp::Ordering::Equal),
         (Value::String(x), Value::String(y)) => x.cmp(y),
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
-        (Value::DateTime(x), Value::DateTime(y)) => x.unix_millis().cmp(&y.unix_millis()),
+        (Value::DateTime(x), Value::DateTime(y))
+        | (Value::NaiveDateTime(x), Value::NaiveDateTime(y))
+        | (Value::DateTime(x), Value::NaiveDateTime(y))
+        | (Value::NaiveDateTime(x), Value::DateTime(y)) => x.unix_millis().cmp(&y.unix_millis()),
         // Fallback: compare debug-formatted forms so the sort is
         // deterministic for exotic types that happen to coincide in a
         // sort key column.

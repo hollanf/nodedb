@@ -37,8 +37,8 @@ impl CoreLoop {
         );
 
         match target_type {
-            "strict" => self.convert_to_strict(task, tid, collection, schema_json),
-            "document" | "kv" => {
+            "document_strict" => self.convert_to_strict(task, tid, collection, schema_json),
+            "document_schemaless" | "kv" => {
                 // No re-encoding needed — sparse engine stores raw MessagePack bytes
                 // regardless of collection type. Catalog type update handled by
                 // Control Plane after this returns.
@@ -143,12 +143,12 @@ impl CoreLoop {
             }
         }
 
-        tracing::info!(%collection, converted, errors, "collection converted to strict");
+        tracing::info!(%collection, converted, errors, "collection converted to document_strict");
 
         let result = serde_json::json!({
             "converted": converted,
             "errors": errors,
-            "target_type": "strict",
+            "target_type": "document_strict",
             "collection": collection,
         });
         match response_codec::encode_json(&result) {
