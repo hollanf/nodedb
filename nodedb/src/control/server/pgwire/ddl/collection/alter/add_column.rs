@@ -11,28 +11,19 @@ use crate::control::state::SharedState;
 use super::super::super::super::types::sqlstate_error;
 use super::super::helpers::parse_origin_column_def;
 
-/// ALTER TABLE <name> ADD [COLUMN] <name> <type> [NOT NULL] [DEFAULT ...]
+/// ALTER TABLE/COLLECTION <name> ADD [COLUMN] <name> <type> [NOT NULL] [DEFAULT ...]
+///
+/// All fields arrive pre-parsed:
+/// - `table_name`: collection/table name.
+/// - `col_def_str`: raw column definition string, e.g. `"email TEXT NOT NULL DEFAULT ''"`.
 pub async fn alter_table_add_column(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
-    sql: &str,
+    table_name: &str,
+    col_def_str: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let table_name = parts
-        .get(2)
-        .ok_or_else(|| sqlstate_error("42601", "ALTER TABLE requires a table name"))?
-        .to_lowercase();
     let tenant_id = identity.tenant_id;
 
-    // Find column def after ADD [COLUMN].
-    let upper = sql.to_uppercase();
-    let add_pos = upper
-        .find("ADD COLUMN ")
-        .map(|p| p + 11)
-        .or_else(|| upper.find("ADD ").map(|p| p + 4))
-        .ok_or_else(|| sqlstate_error("42601", "expected ADD [COLUMN]"))?;
-
-    let col_def_str = sql[add_pos..].trim();
     let column = parse_origin_column_def(col_def_str).map_err(|e| sqlstate_error("42601", &e))?;
     let column_name = column.name.clone();
 
@@ -47,9 +38,8 @@ pub async fn alter_table_add_column(
         ));
     }
 
-    // Verify collection exists.
-    if let Some(catalog) = state.credentials.catalog() {
-        match catalog.get_collection(tenant_id.as_u32(), &table_name) {
+    let updated = if let Some(catalog) = state.credentials.catalog() {
+        match catalog.get_collection(tenant_id.as_u32(), table_name) {
             Ok(Some(coll)) if coll.is_active => {
                 if coll.collection_type.is_strict()
                     && let Some(config_json) = &coll.timeseries_config
@@ -63,9 +53,9 @@ pub async fn alter_table_add_column(
                         ));
                     }
                     let new_version = schema.version.saturating_add(1);
-                    let mut column = column;
-                    column.added_at_version = new_version;
-                    schema.columns.push(column);
+                    let mut col = column;
+                    col.added_at_version = new_version;
+                    schema.columns.push(col);
                     schema.version = new_version;
 
                     let mut updated = coll;
@@ -82,6 +72,9 @@ pub async fn alter_table_add_column(
                             .put_collection(&updated)
                             .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
                     }
+                    Some(updated)
+                } else {
+                    None
                 }
             }
             _ => {
@@ -91,9 +84,13 @@ pub async fn alter_table_add_column(
                 ));
             }
         }
-    }
+    } else {
+        None
+    };
 
-    super::super::create::dispatch_register_if_needed(state, identity, parts, sql).await;
+    if let Some(ref coll) = updated {
+        super::super::create::dispatch_register_from_stored(state, coll).await;
+    }
 
     state.audit_record(
         AuditEvent::AdminAction,

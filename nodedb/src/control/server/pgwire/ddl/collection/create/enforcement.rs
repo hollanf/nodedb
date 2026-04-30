@@ -79,6 +79,23 @@ pub fn parse_balanced_clause(upper: &str) -> Result<Option<BalancedConstraintDef
     }))
 }
 
+/// Parse a `BALANCED ON` clause from a pre-extracted raw inner string.
+///
+/// The raw string is the content inside the outer parens:
+/// `"group_key = txn_type, debit = 'DEBIT', credit = 'CREDIT', amount = amount"`.
+///
+/// Called by typed-AST handlers that receive `balanced_raw: Option<String>`.
+pub fn parse_balanced_clause_from_raw(
+    raw: &str,
+) -> Result<Option<crate::control::security::catalog::BalancedConstraintDef>, String> {
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+    // Reconstruct a minimal uppercase string for `parse_balanced_clause`.
+    let pseudo = format!("BALANCED ON ({raw})");
+    parse_balanced_clause(&pseudo.to_uppercase())
+}
+
 /// Find all materialized sum bindings where
 /// `source_collection == collection_name`.
 ///

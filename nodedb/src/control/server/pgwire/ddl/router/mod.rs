@@ -33,10 +33,20 @@ pub async fn dispatch(
     // once every legacy handler has been ported to accept a typed
     // NodedbStatement, the string-prefix routers below can be
     // removed entirely.
-    if let Some(stmt) = nodedb_sql::ddl_ast::parse(sql)
-        && let Some(r) = ast::try_dispatch(state, identity, &stmt)
-    {
-        return Some(r);
+    match nodedb_sql::ddl_ast::parse(sql) {
+        Some(Err(e)) => {
+            // Reserved-identifier or other parse error — surface immediately.
+            return Some(Err(super::super::types::sqlstate_error(
+                "42601",
+                &e.to_string(),
+            )));
+        }
+        Some(Ok(stmt)) => {
+            if let Some(r) = ast::try_dispatch(state, identity, &stmt).await {
+                return Some(r);
+            }
+        }
+        None => {}
     }
 
     let upper = sql.to_uppercase();

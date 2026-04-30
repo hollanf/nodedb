@@ -18,35 +18,20 @@ use crate::control::state::SharedState;
 
 use super::super::super::super::types::sqlstate_error;
 
+/// ALTER COLLECTION <name> ALTER COLUMN <column_name> TYPE <new_type>
+///
+/// All fields arrive pre-parsed:
+/// - `name`: collection name.
+/// - `column_name`: column to alter.
+/// - `new_type_str`: new type string (e.g. `"BIGINT"`).
 pub async fn alter_collection_alter_column_type(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
-    sql: &str,
+    name: &str,
+    column_name: &str,
+    new_type_str: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let name = parts
-        .get(2)
-        .ok_or_else(|| sqlstate_error("42601", "ALTER COLLECTION requires a name"))?
-        .to_lowercase();
     let tenant_id = identity.tenant_id;
-
-    // Expect: ALTER COLLECTION <name> ALTER COLUMN <col> TYPE <type>.
-    let col_idx = parts
-        .iter()
-        .position(|p| p.eq_ignore_ascii_case("COLUMN"))
-        .ok_or_else(|| sqlstate_error("42601", "expected ALTER COLUMN <name> TYPE <type>"))?;
-    let column_name = parts
-        .get(col_idx + 1)
-        .ok_or_else(|| sqlstate_error("42601", "missing column name"))?
-        .to_lowercase();
-    match parts.get(col_idx + 2) {
-        Some(tok) if tok.eq_ignore_ascii_case("TYPE") => {}
-        _ => return Err(sqlstate_error("42601", "expected TYPE keyword")),
-    }
-    let new_type_str = parts
-        .get(col_idx + 3)
-        .ok_or_else(|| sqlstate_error("42601", "missing new type"))?
-        .trim_end_matches(';');
 
     let new_type = nodedb_types::columnar::ColumnType::from_str(new_type_str)
         .map_err(|e| sqlstate_error("42601", &format!("invalid type '{new_type_str}': {e}")))?;
@@ -56,7 +41,7 @@ pub async fn alter_collection_alter_column_type(
     };
 
     let coll = catalog
-        .get_collection(tenant_id.as_u32(), &name)
+        .get_collection(tenant_id.as_u32(), name)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
         .filter(|c| c.is_active)
         .ok_or_else(|| sqlstate_error("42P01", &format!("collection '{name}' does not exist")))?;
@@ -77,7 +62,7 @@ pub async fn alter_collection_alter_column_type(
     let col = schema
         .columns
         .iter_mut()
-        .find(|c| c.name.eq_ignore_ascii_case(&column_name))
+        .find(|c| c.name.eq_ignore_ascii_case(column_name))
         .ok_or_else(|| {
             sqlstate_error(
                 "42703",
@@ -113,7 +98,7 @@ pub async fn alter_collection_alter_column_type(
             .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     }
 
-    super::super::create::dispatch_register_if_needed(state, identity, parts, sql).await;
+    super::super::create::dispatch_register_from_stored(state, &updated).await;
     state.schema_version.bump();
 
     state.audit_record(

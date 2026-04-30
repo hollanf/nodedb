@@ -4,7 +4,7 @@ use pgwire::error::PgWireResult;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 
-/// Execute `CHUNK_TEXT(text, chunk_size, overlap, strategy)` and return rows.
+/// Execute `NDB_CHUNK_TEXT(text, chunk_size, overlap, strategy)` and return rows.
 ///
 /// Parses named (`text => '...'`) or positional arguments from the SQL string,
 /// delegates to `nodedb_query::chunk_text`, and returns a pgwire result set.
@@ -14,17 +14,17 @@ pub(super) fn execute_chunk_text(
     use futures::stream;
     use pgwire::api::results::{DataRowEncoder, QueryResponse, Response};
 
-    // Extract the parenthesized args from CHUNK_TEXT(...).
-    let paren_start = sql
-        .find("CHUNK_TEXT(")
-        .or_else(|| sql.find("chunk_text("))
-        .or_else(|| sql.find("Chunk_Text("))
-        .and_then(|p| sql[p..].find('(').map(|off| p + off))
-        .ok_or_else(|| {
-            super::super::super::types::sqlstate_error("42601", "expected CHUNK_TEXT(...)")
+    // Extract the parenthesized args from NDB_CHUNK_TEXT(...).
+    let upper = sql.to_uppercase();
+    let fn_pos = upper.find("NDB_CHUNK_TEXT(").ok_or_else(|| {
+        super::super::super::types::sqlstate_error("42601", "expected NDB_CHUNK_TEXT(...)")
+    })?;
+    let paren_start = fn_pos
+        + sql[fn_pos..].find('(').ok_or_else(|| {
+            super::super::super::types::sqlstate_error("42601", "expected NDB_CHUNK_TEXT(...)")
         })?;
     let paren_end = sql.rfind(')').ok_or_else(|| {
-        super::super::super::types::sqlstate_error("42601", "expected closing ) for CHUNK_TEXT")
+        super::super::super::types::sqlstate_error("42601", "expected closing ) for NDB_CHUNK_TEXT")
     })?;
 
     let inner = &sql[paren_start + 1..paren_end];
@@ -41,7 +41,7 @@ pub(super) fn execute_chunk_text(
     if args.is_empty() {
         return Err(super::super::super::types::sqlstate_error(
             "42601",
-            "CHUNK_TEXT requires at least text and chunk_size arguments",
+            "NDB_CHUNK_TEXT requires at least text and chunk_size arguments",
         ));
     }
 
@@ -75,18 +75,18 @@ pub(super) fn execute_chunk_text(
                     other => {
                         return Err(super::super::super::types::sqlstate_error(
                             "42601",
-                            &format!("unknown CHUNK_TEXT parameter: {other}"),
+                            &format!("unknown NDB_CHUNK_TEXT parameter: {other}"),
                         ));
                     }
                 }
             }
         }
     } else {
-        // Positional: CHUNK_TEXT('text', chunk_size, overlap, 'strategy')
+        // Positional: NDB_CHUNK_TEXT('text', chunk_size, overlap, 'strategy')
         if args.len() < 2 {
             return Err(super::super::super::types::sqlstate_error(
                 "42601",
-                "CHUNK_TEXT requires at least (text, chunk_size)",
+                "NDB_CHUNK_TEXT requires at least (text, chunk_size)",
             ));
         }
         text_val = args[0]
@@ -114,13 +114,13 @@ pub(super) fn execute_chunk_text(
     if text_val.is_empty() {
         return Err(super::super::super::types::sqlstate_error(
             "42601",
-            "CHUNK_TEXT: text argument is required",
+            "NDB_CHUNK_TEXT: text argument is required",
         ));
     }
     if chunk_size == 0 {
         return Err(super::super::super::types::sqlstate_error(
             "42601",
-            "CHUNK_TEXT: chunk_size must be > 0",
+            "NDB_CHUNK_TEXT: chunk_size must be > 0",
         ));
     }
 

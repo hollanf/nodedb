@@ -1,8 +1,8 @@
-//! The `create_collection` pgwire handler.
+//! `CREATE TABLE` DDL handler — strict-default Postgres-style syntax.
 //!
-//! All DDL fields arrive pre-parsed from the `nodedb-sql` AST layer.
-//! Engine-specific option validation (deprecated axes, unknown engine names)
-//! and schema construction happen here using the typed input fields.
+//! `CREATE TABLE foo (col_list)` creates a strict relational collection by
+//! default. An explicit `WITH (engine='...')` overrides the engine type.
+//! All fields arrive pre-parsed from the `nodedb-sql` AST layer.
 
 use pgwire::api::results::{Response, Tag};
 use pgwire::error::PgWireResult;
@@ -20,15 +20,16 @@ use super::super::super::schema_validation::{
 use super::enforcement::parse_balanced_clause_from_raw;
 use super::engine_option::validate_engine_name;
 
-/// CREATE COLLECTION <name> [(<col> <type>, ...)] [WITH (engine='...')]
+/// Handle `CREATE [IF NOT EXISTS] TABLE <name> (<col_list>) [WITH (engine='...')]`.
 ///
 /// All fields are pre-parsed from the `nodedb-sql` AST:
-/// - `engine`: value of `engine=` from the WITH clause (lowercased), or `None` for default.
+/// - `engine`: value of `engine=` from the WITH clause (lowercased), or `None` for default
+///   (which is `document_strict` for CREATE TABLE).
 /// - `columns`: `(name, type)` pairs from the parenthesised column list.
 /// - `options`: remaining WITH clause `key=value` pairs (excluding `engine`).
 /// - `flags`: free-standing modifier keywords: `APPEND_ONLY`, `HASH_CHAIN`, `BITEMPORAL`.
 /// - `balanced_raw`: raw inner content of `BALANCED ON (...)`, if present.
-pub fn create_collection(
+pub async fn create_table(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
     req: &super::request::CreateCollectionRequest<'_>,
@@ -48,22 +49,27 @@ pub fn create_collection(
     {
         return Err(sqlstate_error(
             "42601",
-            &format!(
-                "invalid collection name '{name}': only letters, digits, '-', and '_' are allowed"
-            ),
+            &format!("invalid table name '{name}': only letters, digits, '-', and '_' are allowed"),
+        ));
+    }
+
+    // CREATE TABLE requires columns by convention.
+    if columns.is_empty() {
+        return Err(sqlstate_error(
+            "42601",
+            "CREATE TABLE requires a column list; for schemaless collections use CREATE COLLECTION",
         ));
     }
 
     let tenant_id = identity.tenant_id;
 
-    // Check if collection already exists.
     if let Some(catalog) = state.credentials.catalog()
         && let Ok(Some(existing)) = catalog.get_collection(tenant_id.as_u32(), name)
         && existing.is_active
     {
         return Err(sqlstate_error(
             "42P07",
-            &format!("collection '{name}' already exists"),
+            &format!("table '{name}' already exists"),
         ));
     }
 
@@ -72,19 +78,19 @@ pub fn create_collection(
         .unwrap_or_default()
         .as_secs();
 
-    // Validate engine name and deprecated axes.
-    let canonical_engine = validate_engine_name(engine, options)?;
-
     let bitemporal_flag = flags.iter().any(|f| f == "BITEMPORAL");
 
+    // Validate engine name. Default for CREATE TABLE is document_strict (None maps to strict).
+    let canonical_engine = validate_engine_name(engine, options)?;
+
     // Build CollectionType from the canonical engine name.
-    // CREATE COLLECTION default (engine=None) → schemaless.
+    // CREATE TABLE default (engine=None) → document_strict.
     let (collection_type, columnar_schema_columns) = nodedb_sql::ddl_ast::build_collection_type(
         canonical_engine,
         columns,
         options,
         bitemporal_flag,
-        false, // CREATE COLLECTION: None → schemaless
+        true, // CREATE TABLE: None → document_strict
     )
     .map_err(|e| sqlstate_error("42601", &e.to_string()))?;
 
@@ -120,7 +126,6 @@ pub fn create_collection(
                     &col_list,
                 )
                 .map_err(|e| sqlstate_error("42601", &e.to_string()))?;
-                // Infer dim from VECTOR(n) column type when not in WITH clause.
                 if let Some((_, type_str)) = col_list
                     .iter()
                     .find(|(n, _)| n.eq_ignore_ascii_case(&vp_cfg.vector_field))
@@ -244,8 +249,8 @@ pub fn create_collection(
         AuditEvent::AdminAction,
         Some(tenant_id),
         &identity.username,
-        &format!("created collection '{name}'"),
+        &format!("created table '{name}'"),
     );
 
-    Ok(vec![Response::Execution(Tag::new("CREATE COLLECTION"))])
+    Ok(vec![Response::Execution(Tag::new("CREATE TABLE"))])
 }

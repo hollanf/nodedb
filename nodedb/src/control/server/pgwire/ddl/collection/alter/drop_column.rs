@@ -17,33 +17,25 @@ use crate::control::state::SharedState;
 
 use super::super::super::super::types::sqlstate_error;
 
+/// ALTER COLLECTION <name> DROP COLUMN <column_name>
+///
+/// All fields arrive pre-parsed:
+/// - `name`: collection name.
+/// - `column_name`: column to drop.
 pub async fn alter_collection_drop_column(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
-    sql: &str,
+    name: &str,
+    column_name: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let name = parts
-        .get(2)
-        .ok_or_else(|| sqlstate_error("42601", "ALTER COLLECTION requires a name"))?
-        .to_lowercase();
     let tenant_id = identity.tenant_id;
-
-    // Locate "DROP COLUMN <col>" — `DROP` then `COLUMN` then the name.
-    let column_name = parts
-        .iter()
-        .position(|p| p.eq_ignore_ascii_case("COLUMN"))
-        .and_then(|i| parts.get(i + 1))
-        .ok_or_else(|| sqlstate_error("42601", "expected DROP COLUMN <name>"))?
-        .trim_end_matches(';')
-        .to_lowercase();
 
     let Some(catalog) = state.credentials.catalog() else {
         return Err(sqlstate_error("XX000", "no catalog available"));
     };
 
     let coll = catalog
-        .get_collection(tenant_id.as_u32(), &name)
+        .get_collection(tenant_id.as_u32(), name)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
         .filter(|c| c.is_active)
         .ok_or_else(|| sqlstate_error("42P01", &format!("collection '{name}' does not exist")))?;
@@ -64,7 +56,7 @@ pub async fn alter_collection_drop_column(
     let idx = schema
         .columns
         .iter()
-        .position(|c| c.name.eq_ignore_ascii_case(&column_name))
+        .position(|c| c.name.eq_ignore_ascii_case(column_name))
         .ok_or_else(|| {
             sqlstate_error(
                 "42703",
@@ -104,7 +96,7 @@ pub async fn alter_collection_drop_column(
             .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     }
 
-    super::super::create::dispatch_register_if_needed(state, identity, parts, sql).await;
+    super::super::create::dispatch_register_from_stored(state, &updated).await;
     state.schema_version.bump();
 
     state.audit_record(

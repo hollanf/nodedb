@@ -5,6 +5,7 @@ use pgwire::error::PgWireResult;
 
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
+use crate::types::TraceId;
 
 use super::super::sql_parse::{parse_sql_value, split_values};
 use crate::control::server::pgwire::types::sqlstate_error;
@@ -230,7 +231,11 @@ pub(super) async fn dispatch_plan(
         return Some(Err(sqlstate_error("XX000", &e.to_string())));
     }
     if let Err(e) = crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard_id, plan, 0,
+        state,
+        tenant_id,
+        vshard_id,
+        plan,
+        TraceId::ZERO,
     )
     .await
     {
@@ -337,7 +342,7 @@ pub(super) async fn plan_and_dispatch(
             tenant_id,
             task.vshard_id,
             task.plan,
-            0,
+            TraceId::ZERO,
         )
         .await
         .map_err(|e| sqlstate_error_raw("XX000", &e.to_string()))?;

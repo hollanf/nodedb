@@ -16,6 +16,9 @@ pub mod rename_column;
 pub use add_column::alter_table_add_column;
 pub use alter_type::alter_collection_alter_column_type;
 pub use drop_column::alter_collection_drop_column;
-pub use enforcement::alter_collection_enforcement;
+pub use enforcement::{
+    alter_collection_set_append_only, alter_collection_set_last_value_cache,
+    alter_collection_set_legal_hold, alter_collection_set_retention,
+};
 pub use materialized_sum::add_materialized_sum;
 pub use rename_column::alter_collection_rename_column;

@@ -10,11 +10,18 @@
 //! below — no callers outside this file need to change.
 
 pub mod enforcement;
+pub mod engine_option;
 pub mod handler;
 pub mod register;
+pub mod request;
+pub mod table;
 
 #[cfg(test)]
 mod tests;
 
 pub use handler::create_collection;
-pub use register::{dispatch_register_from_stored, dispatch_register_if_needed};
+pub use register::{
+    dispatch_register_by_name, dispatch_register_from_stored, dispatch_register_if_needed,
+};
+pub use request::CreateCollectionRequest;
+pub use table::create_table;

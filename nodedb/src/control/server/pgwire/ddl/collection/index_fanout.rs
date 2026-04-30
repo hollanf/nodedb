@@ -20,7 +20,7 @@ use std::time::Duration;
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::DocumentOp;
 use crate::control::state::SharedState;
-use crate::types::TenantId;
+use crate::types::{TenantId, TraceId};
 
 use crate::bridge::physical_plan::wire as plan_wire;
 use nodedb_cluster::rpc_codec::{ExecuteRequest, RaftRpc};
@@ -108,7 +108,7 @@ pub(super) async fn backfill_on_peers(
     // the catalog and the caller's error return leaves it that way
     // for a retry (DROP + CREATE) to clear.
     let deadline_ms = PEER_BACKFILL_DEADLINE.as_millis() as u64;
-    let trace_id = rand::random::<u64>();
+    let trace_id = TraceId::generate();
     let mut joins = Vec::with_capacity(peer_ids.len());
     for node_id in peer_ids {
         let transport = transport.clone();
@@ -117,7 +117,7 @@ pub(super) async fn backfill_on_peers(
             plan_bytes,
             tenant_id: args.tenant_id.as_u32(),
             deadline_remaining_ms: deadline_ms,
-            trace_id,
+            trace_id: trace_id.0,
             descriptor_versions: Vec::new(),
         });
         joins.push(tokio::spawn(async move {

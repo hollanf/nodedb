@@ -11,33 +11,16 @@ pub(super) async fn dispatch(
     upper: &str,
     parts: &[&str],
 ) -> Option<PgWireResult<Vec<Response>>> {
-    // Backup / Restore.
-    if upper.starts_with("BACKUP TENANT ") {
-        return Some(super::super::backup::backup_tenant(state, identity, parts).await);
-    }
-    if upper.starts_with("RESTORE TENANT ") {
-        if upper.ends_with(" DRY RUN") || upper.ends_with(" DRYRUN") {
-            return Some(super::super::backup::restore_tenant_dry_run(
-                state, identity, parts,
-            ));
-        }
-        return Some(super::super::backup::restore_tenant(state, identity, parts).await);
-    }
+    // BACKUP/RESTORE TENANT are fully dispatched via typed AST (ast.rs).
 
     // Schedules: CREATE/DROP/ALTER/SHOW SCHEDULE
-    if upper.starts_with("CREATE SCHEDULE ") {
-        return Some(super::super::schedule::create_schedule(
-            state, identity, sql,
-        ));
-    }
+    // CREATE SCHEDULE is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("DROP SCHEDULE ") {
         return Some(super::super::schedule::drop_schedule(
             state, identity, parts,
         ));
     }
-    if upper.starts_with("ALTER SCHEDULE ") {
-        return Some(super::super::schedule::alter_schedule(state, identity, sql));
-    }
+    // ALTER SCHEDULE is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("SHOW SCHEDULE HISTORY ") {
         let name = parts.get(3).unwrap_or(&"");
         return Some(super::super::schedule::show_schedule_history(
@@ -49,19 +32,13 @@ pub(super) async fn dispatch(
     }
 
     // Sequences: CREATE/DROP/ALTER/SHOW SEQUENCE
-    if upper.starts_with("CREATE SEQUENCE ") {
-        return Some(super::super::sequence::create_sequence(
-            state, identity, sql,
-        ));
-    }
+    // CREATE SEQUENCE is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("DROP SEQUENCE ") {
         return Some(super::super::sequence::drop_sequence(
             state, identity, parts,
         ));
     }
-    if upper.starts_with("ALTER SEQUENCE ") {
-        return Some(super::super::sequence::alter_sequence(state, identity, sql));
-    }
+    // ALTER SEQUENCE is fully dispatched via typed AST (ast.rs).
     if upper == "SHOW SEQUENCES" || upper.starts_with("SHOW SEQUENCES ") {
         return Some(super::super::sequence::show_sequences(state, identity));
     }
@@ -92,15 +69,11 @@ pub(super) async fn dispatch(
     }
 
     // Alert rules.
-    if upper.starts_with("CREATE ALERT ") {
-        return Some(super::super::alert::create_alert(state, identity, sql));
-    }
+    // CREATE ALERT is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("DROP ALERT ") {
         return Some(super::super::alert::drop_alert(state, identity, parts));
     }
-    if upper.starts_with("ALTER ALERT ") {
-        return Some(super::super::alert::alter_alert(state, identity, sql));
-    }
+    // ALTER ALERT is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("SHOW ALERT STATUS ") {
         let name = parts.get(4).unwrap_or(&"");
         return Some(super::super::alert::show_alert_status(
@@ -112,21 +85,13 @@ pub(super) async fn dispatch(
     }
 
     // Retention policies.
-    if upper.starts_with("CREATE RETENTION POLICY ") {
-        return Some(
-            super::super::retention_policy::create_retention_policy(state, identity, sql).await,
-        );
-    }
+    // CREATE RETENTION POLICY is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("DROP RETENTION POLICY ") {
         return Some(
             super::super::retention_policy::drop_retention_policy(state, identity, parts).await,
         );
     }
-    if upper.starts_with("ALTER RETENTION POLICY ") {
-        return Some(super::super::retention_policy::alter_retention_policy(
-            state, identity, sql,
-        ));
-    }
+    // ALTER RETENTION POLICY is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("SHOW RETENTION POLIC") {
         return Some(super::super::retention_policy::show_retention_policy(
             state, identity, parts,
@@ -134,11 +99,7 @@ pub(super) async fn dispatch(
     }
 
     // Continuous aggregates.
-    if upper.starts_with("CREATE CONTINUOUS AGGREGATE ") {
-        return Some(
-            super::super::continuous_agg::create_continuous_aggregate(state, identity, sql).await,
-        );
-    }
+    // CREATE CONTINUOUS AGGREGATE is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("DROP CONTINUOUS AGGREGATE ") {
         return Some(
             super::super::continuous_agg::drop_continuous_aggregate(state, identity, parts).await,
@@ -158,11 +119,7 @@ pub(super) async fn dispatch(
     }
 
     // Materialized views (HTAP).
-    if upper.starts_with("CREATE MATERIALIZED VIEW ") {
-        return Some(
-            super::super::materialized_view::create_materialized_view(state, identity, sql).await,
-        );
-    }
+    // CREATE MATERIALIZED VIEW is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("DROP MATERIALIZED VIEW ") {
         return Some(super::super::materialized_view::drop_materialized_view(
             state, identity, parts,
@@ -418,11 +375,7 @@ pub(super) async fn dispatch(
             state, identity, parts,
         ));
     }
-    if upper.starts_with("ALTER RAFT GROUP ") {
-        return Some(super::super::cluster::alter_raft_group(
-            state, identity, parts,
-        ));
-    }
+    // ALTER RAFT GROUP is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("SHOW MIGRATIONS") {
         return Some(super::super::cluster::show_migrations(state, identity));
     }

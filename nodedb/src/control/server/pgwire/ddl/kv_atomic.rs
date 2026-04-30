@@ -11,7 +11,7 @@ use pgwire::error::PgWireResult;
 use crate::bridge::physical_plan::{KvOp, PhysicalPlan};
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 /// Handle `SELECT KV_INCR(collection, key, delta [, TTL => seconds])`
 ///
@@ -171,7 +171,11 @@ async fn dispatch_and_respond(
     let tenant_id = identity.tenant_id;
 
     match crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard, plan, 0,
+        state,
+        tenant_id,
+        vshard,
+        plan,
+        TraceId::ZERO,
     )
     .await
     {

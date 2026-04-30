@@ -22,7 +22,6 @@ pub mod grant;
 pub mod graph_ops;
 pub mod impersonation_ddl;
 pub mod inspect;
-pub mod kv;
 pub mod kv_atomic;
 pub mod kv_sorted_index;
 pub mod last_value;

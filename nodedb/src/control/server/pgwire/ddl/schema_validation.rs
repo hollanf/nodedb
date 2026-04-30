@@ -57,6 +57,39 @@ pub(super) fn parse_fields_clause(parts: &[&str]) -> (Vec<(String, String)>, Vec
     (fields, serial_fields)
 }
 
+/// Expand pre-parsed `(name, type)` column pairs, handling SERIAL/BIGSERIAL.
+///
+/// Mirrors `parse_fields_clause` but operates on already-tokenised pairs
+/// instead of raw SQL parts. Used by the typed-AST collection handlers.
+///
+/// Returns `(fields, serial_fields)` where `serial_fields` holds the names
+/// of columns whose type was expanded from SERIAL / BIGSERIAL so the caller
+/// can create implicit sequences.
+pub(super) fn parse_fields_clause_from_pairs(
+    columns: &[(String, String)],
+) -> (Vec<(String, String)>, Vec<String>) {
+    let mut fields: Vec<(String, String)> = Vec::new();
+    let mut serial_fields: Vec<String> = Vec::new();
+
+    for (name, type_str) in columns {
+        let upper_type = type_str.to_uppercase();
+        let actual_type = match upper_type.as_str() {
+            "SERIAL" => {
+                serial_fields.push(name.clone());
+                "INT".to_string()
+            }
+            "BIGSERIAL" => {
+                serial_fields.push(name.clone());
+                "BIGINT".to_string()
+            }
+            _ => type_str.clone(),
+        };
+        fields.push((name.clone(), actual_type));
+    }
+
+    (fields, serial_fields)
+}
+
 /// Validate a JSON document against a collection's declared schema.
 ///
 /// Returns Ok(()) if valid, or Err with a descriptive message.

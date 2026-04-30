@@ -18,7 +18,7 @@ use sonic_rs;
 use crate::bridge::physical_plan::{KvOp, PhysicalPlan};
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 /// Handle `CREATE SORTED INDEX name ON collection (col DIR, ...) KEY key_col [WINDOW ...]`
 pub async fn create_sorted_index(
@@ -359,7 +359,7 @@ async fn dispatch_and_respond_tag(
         identity.tenant_id,
         vshard,
         plan,
-        0,
+        TraceId::ZERO,
     )
     .await
     {
@@ -383,7 +383,7 @@ async fn dispatch_and_respond_json(
         identity.tenant_id,
         vshard,
         plan,
-        0,
+        TraceId::ZERO,
     )
     .await
     {
@@ -415,7 +415,7 @@ async fn dispatch_and_respond_rows(
         identity.tenant_id,
         vshard,
         plan,
-        0,
+        TraceId::ZERO,
     )
     .await
     {

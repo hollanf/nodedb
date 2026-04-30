@@ -17,6 +17,7 @@
 use crate::control::security::catalog::StoredCollection;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
+use crate::types::TraceId;
 
 use super::enforcement::{build_generated_column_specs, find_materialized_sum_bindings};
 
@@ -44,6 +45,26 @@ pub async fn dispatch_register_if_needed(
     let mut indexes = derive_auto_indexes(fields.iter().map(|(n, _)| n.as_str()));
     extend_with_catalog_indexes(&mut indexes, &coll);
     let _ = sql; // Reserved for future CRDT detection from SQL.
+    dispatch_register_from_stored_inner(state, tenant_id, &coll, indexes).await;
+}
+
+/// Typed leader-side entry point: dispatch `DocumentOp::Register`
+/// after collection creation when the collection name is known but
+/// no raw SQL parts are available (typed AST path).
+pub async fn dispatch_register_by_name(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    name: &str,
+) {
+    let tenant_id = identity.tenant_id;
+    let Some(catalog) = state.credentials.catalog() else {
+        return;
+    };
+    let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), name) else {
+        return;
+    };
+    let mut indexes = derive_auto_indexes(coll.fields.iter().map(|(n, _)| n.as_str()));
+    extend_with_catalog_indexes(&mut indexes, &coll);
     dispatch_register_from_stored_inner(state, tenant_id, &coll, indexes).await;
 }
 
@@ -195,7 +216,11 @@ async fn dispatch_register_from_stored_inner(
     );
 
     if let Err(e) = crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard, plan, 0,
+        state,
+        tenant_id,
+        vshard,
+        plan,
+        TraceId::ZERO,
     )
     .await
     {

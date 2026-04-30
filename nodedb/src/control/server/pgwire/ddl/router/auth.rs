@@ -12,12 +12,7 @@ pub(super) async fn dispatch(
     parts: &[&str],
 ) -> Option<PgWireResult<Vec<Response>>> {
     // User management.
-    if upper.starts_with("CREATE USER ") {
-        return Some(super::super::user::create_user(state, identity, parts));
-    }
-    if upper.starts_with("ALTER USER ") {
-        return Some(super::super::user::alter_user(state, identity, parts));
-    }
+    // CREATE USER and ALTER USER are fully dispatched via typed AST (ast.rs).
     if upper.starts_with("DROP USER ") {
         return Some(super::super::user::drop_user(state, identity, parts));
     }

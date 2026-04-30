@@ -14,49 +14,27 @@ use crate::control::state::SharedState;
 
 use super::super::super::super::types::sqlstate_error;
 
+/// ALTER COLLECTION <name> RENAME COLUMN <old_name> TO <new_name>
+///
+/// All fields arrive pre-parsed:
+/// - `name`: collection name.
+/// - `old_name`: current column name.
+/// - `new_name`: new column name.
 pub async fn alter_collection_rename_column(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
-    sql: &str,
+    name: &str,
+    old_name: &str,
+    new_name: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let name = parts
-        .get(2)
-        .ok_or_else(|| sqlstate_error("42601", "ALTER COLLECTION requires a name"))?
-        .to_lowercase();
     let tenant_id = identity.tenant_id;
-
-    // Expect: ALTER COLLECTION <name> RENAME COLUMN <old> TO <new>.
-    let col_idx = parts
-        .iter()
-        .position(|p| p.eq_ignore_ascii_case("COLUMN"))
-        .ok_or_else(|| sqlstate_error("42601", "expected RENAME COLUMN <old> TO <new>"))?;
-    let old_name = parts
-        .get(col_idx + 1)
-        .ok_or_else(|| sqlstate_error("42601", "missing old column name"))?
-        .to_lowercase();
-    // TO keyword.
-    match parts.get(col_idx + 2) {
-        Some(tok) if tok.eq_ignore_ascii_case("TO") => {}
-        _ => {
-            return Err(sqlstate_error(
-                "42601",
-                "expected TO between old and new name",
-            ));
-        }
-    }
-    let new_name = parts
-        .get(col_idx + 3)
-        .ok_or_else(|| sqlstate_error("42601", "missing new column name"))?
-        .trim_end_matches(';')
-        .to_lowercase();
 
     let Some(catalog) = state.credentials.catalog() else {
         return Err(sqlstate_error("XX000", "no catalog available"));
     };
 
     let coll = catalog
-        .get_collection(tenant_id.as_u32(), &name)
+        .get_collection(tenant_id.as_u32(), name)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
         .filter(|c| c.is_active)
         .ok_or_else(|| sqlstate_error("42P01", &format!("collection '{name}' does not exist")))?;
@@ -77,7 +55,7 @@ pub async fn alter_collection_rename_column(
     if schema
         .columns
         .iter()
-        .any(|c| c.name.eq_ignore_ascii_case(&new_name))
+        .any(|c| c.name.eq_ignore_ascii_case(new_name))
     {
         return Err(sqlstate_error(
             "42P07",
@@ -88,14 +66,14 @@ pub async fn alter_collection_rename_column(
     let col = schema
         .columns
         .iter_mut()
-        .find(|c| c.name.eq_ignore_ascii_case(&old_name))
+        .find(|c| c.name.eq_ignore_ascii_case(old_name))
         .ok_or_else(|| {
             sqlstate_error(
                 "42703",
                 &format!("column '{old_name}' does not exist on '{name}'"),
             )
         })?;
-    col.name = new_name.clone();
+    col.name = new_name.to_string();
     schema.version = schema.version.saturating_add(1);
 
     let mut updated = coll;
@@ -112,7 +90,7 @@ pub async fn alter_collection_rename_column(
             .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     }
 
-    super::super::create::dispatch_register_if_needed(state, identity, parts, sql).await;
+    super::super::create::dispatch_register_from_stored(state, &updated).await;
     state.schema_version.bump();
 
     state.audit_record(

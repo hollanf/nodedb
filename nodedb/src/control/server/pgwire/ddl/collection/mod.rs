@@ -18,13 +18,18 @@ pub mod vector_metadata;
 
 // Re-export all public functions so existing callers via `super::collection::*` continue to work.
 pub use alter::{
-    alter_collection_alter_column_type, alter_collection_drop_column, alter_collection_enforcement,
-    alter_collection_rename_column, alter_table_add_column,
+    alter_collection_alter_column_type, alter_collection_drop_column,
+    alter_collection_rename_column, alter_collection_set_append_only,
+    alter_collection_set_last_value_cache, alter_collection_set_legal_hold,
+    alter_collection_set_retention, alter_table_add_column,
 };
-pub use create::{create_collection, dispatch_register_from_stored, dispatch_register_if_needed};
+pub use create::{
+    CreateCollectionRequest, create_collection, create_table, dispatch_register_by_name,
+    dispatch_register_from_stored, dispatch_register_if_needed,
+};
 pub use describe::{describe_collection, show_collections};
 pub use drop::drop_collection;
-pub use index::{create_index, drop_index, show_indexes};
+pub use index::{CreateIndexRequest, create_index, drop_index, show_indexes};
 pub use insert::insert_document;
 pub use undrop::undrop_collection;
 pub use upsert::upsert_document;
@@ -34,6 +39,3 @@ pub use vector_metadata::{
 
 // Re-export validate_document_schema from schema_validation (was re-exported from old collection.rs).
 pub use super::schema_validation::validate_document_schema;
-
-// Re-export parse_typed_schema for kv.rs which imports it as `super::collection::parse_typed_schema`.
-pub(in crate::control::server::pgwire::ddl) use helpers::parse_typed_schema;

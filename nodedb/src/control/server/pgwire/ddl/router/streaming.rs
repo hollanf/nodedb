@@ -12,11 +12,7 @@ pub(super) async fn dispatch(
     parts: &[&str],
 ) -> Option<PgWireResult<Vec<Response>>> {
     // Change Streams: CREATE/DROP/SHOW CHANGE STREAM ...
-    if upper.starts_with("CREATE CHANGE STREAM ") {
-        return Some(super::super::change_stream::create_change_stream(
-            state, identity, sql,
-        ));
-    }
+    // CREATE CHANGE STREAM is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("DROP CHANGE STREAM ") {
         return Some(super::super::change_stream::drop_change_stream(
             state, identity, parts,
@@ -29,11 +25,7 @@ pub(super) async fn dispatch(
     }
 
     // Consumer Groups: CREATE/DROP/SHOW CONSUMER GROUP + COMMIT OFFSET(S)
-    if upper.starts_with("CREATE CONSUMER GROUP ") {
-        return Some(super::super::consumer_group::create_consumer_group(
-            state, identity, parts,
-        ));
-    }
+    // CREATE CONSUMER GROUP is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("DROP CONSUMER GROUP ") {
         return Some(super::super::consumer_group::drop_consumer_group(
             state, identity, parts,
@@ -64,11 +56,7 @@ pub(super) async fn dispatch(
     }
 
     // Streaming materialized views: CREATE MATERIALIZED VIEW ... STREAMING AS ...
-    if upper.starts_with("CREATE MATERIALIZED VIEW ") && upper.contains(" STREAMING ") {
-        return Some(super::super::streaming_mv::create_streaming_mv(
-            state, identity, sql,
-        ));
-    }
+    // CREATE MATERIALIZED VIEW (including STREAMING mode) is fully dispatched via typed AST (ast.rs).
 
     // Topics: CREATE/DROP/SHOW TOPIC + PUBLISH TO
     if upper.starts_with("CREATE TOPIC ") {

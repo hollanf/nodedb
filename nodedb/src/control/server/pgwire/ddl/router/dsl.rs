@@ -4,6 +4,7 @@ use pgwire::error::PgWireResult;
 use crate::bridge::physical_plan::DocumentOp;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
+use crate::types::TraceId;
 
 pub(super) async fn dispatch(
     state: &SharedState,
@@ -42,9 +43,9 @@ pub(super) async fn dispatch(
         ));
     }
 
-    // CHUNK_TEXT table-valued function: SELECT * FROM CHUNK_TEXT(...).
-    if (upper.starts_with("SELECT ") && upper.contains("CHUNK_TEXT("))
-        || upper.starts_with("SELECT CHUNK_TEXT(")
+    // NDB_CHUNK_TEXT table-valued function: SELECT * FROM NDB_CHUNK_TEXT(...).
+    if (upper.starts_with("SELECT ") && upper.contains("NDB_CHUNK_TEXT("))
+        || upper.starts_with("SELECT NDB_CHUNK_TEXT(")
     {
         return Some(super::helpers::execute_chunk_text(sql));
     }
@@ -92,19 +93,31 @@ pub(super) async fn dispatch(
     // Graph DSL (`GRAPH ...`) and `MATCH` flow through the typed
     // AST. Parsing is done by `nodedb_sql::ddl_ast::graph_parse`,
     // which is quote- and brace-aware — handlers never see raw SQL.
-    if (upper.starts_with("GRAPH ")
+    if upper.starts_with("GRAPH ")
         || upper.starts_with("MATCH ")
-        || upper.starts_with("OPTIONAL MATCH "))
-        && let Some(stmt) = nodedb_sql::ddl_ast::parse(sql)
+        || upper.starts_with("OPTIONAL MATCH ")
     {
-        if matches!(
-            stmt,
-            nodedb_sql::ddl_ast::NodedbStatement::MatchQuery { .. }
-        ) {
-            return Some(super::super::match_ops::match_query(state, identity, sql).await);
-        }
-        if let Some(resp) = super::super::graph_ops::dispatch_typed(state, identity, stmt).await {
-            return Some(resp);
+        match nodedb_sql::ddl_ast::parse(sql) {
+            Some(Err(e)) => {
+                return Some(Err(super::super::super::types::sqlstate_error(
+                    "42601",
+                    &e.to_string(),
+                )));
+            }
+            Some(Ok(stmt)) => {
+                if matches!(
+                    stmt,
+                    nodedb_sql::ddl_ast::NodedbStatement::MatchQuery { .. }
+                ) {
+                    return Some(super::super::match_ops::match_query(state, identity, sql).await);
+                }
+                if let Some(resp) =
+                    super::super::graph_ops::dispatch_typed(state, identity, stmt).await
+                {
+                    return Some(resp);
+                }
+            }
+            None => {}
         }
     }
 
@@ -233,7 +246,11 @@ pub(super) async fn dispatch(
                         field,
                     });
                 match crate::control::server::dispatch_utils::dispatch_to_data_plane(
-                    state, tenant_id, vshard, plan, 0,
+                    state,
+                    tenant_id,
+                    vshard,
+                    plan,
+                    TraceId::ZERO,
                 )
                 .await
                 {

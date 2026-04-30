@@ -8,7 +8,7 @@
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::MetaOp;
 use crate::control::state::SharedState;
-use crate::types::{TenantId, VShardId};
+use crate::types::{TenantId, TraceId, VShardId};
 
 /// Dispatch `MetaOp::UnregisterCollection { tenant_id, name, purge_lsn }`
 /// to this node's Data Plane. Best-effort: failures log at warn but
@@ -30,7 +30,11 @@ pub async fn dispatch_unregister_collection(
     });
 
     if let Err(e) = crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant, vshard, plan, 0,
+        state,
+        tenant,
+        vshard,
+        plan,
+        TraceId::ZERO,
     )
     .await
     {

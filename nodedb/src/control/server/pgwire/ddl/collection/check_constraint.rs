@@ -16,6 +16,7 @@ use pgwire::error::PgWireResult;
 
 use crate::control::security::catalog::types::CheckConstraintDef;
 use crate::control::state::SharedState;
+use crate::types::TraceId;
 
 /// Evaluate all general CHECK constraints for a document being written.
 ///
@@ -124,7 +125,7 @@ async fn enforce_subquery_check(
             tenant_id,
             task.vshard_id,
             task.plan,
-            0,
+            TraceId::ZERO,
         )
         .await;
 
@@ -408,7 +409,9 @@ fn value_to_sql_literal(val: &nodedb_types::Value) -> String {
             let escaped = s.replace('\'', "''");
             format!("'{escaped}'")
         }
-        nodedb_types::Value::DateTime(dt) => format!("'{dt}'"),
+        nodedb_types::Value::DateTime(dt) | nodedb_types::Value::NaiveDateTime(dt) => {
+            format!("'{dt}'")
+        }
         _ => "NULL".to_string(),
     }
 }
