@@ -395,6 +395,53 @@ mod tests {
         assert!(parse("-- MATCH (a)\nSELECT 1").is_none());
     }
 
+    // ── MatchQuery.body field ─────────────────────────────────────────────────
+
+    #[test]
+    fn match_query_uses_body_field() {
+        let stmt = ok("MATCH (x)-[:l]->(y) RETURN x, y");
+        match stmt {
+            NodedbStatement::MatchQuery { body } => {
+                assert!(body.starts_with("MATCH"), "body must hold the original SQL");
+            }
+            other => panic!("expected MatchQuery, got {other:?}"),
+        }
+    }
+
+    // ── AddMaterializedSum typed parsing ─────────────────────────────────────
+
+    #[test]
+    fn parse_add_materialized_sum_typed() {
+        // Representative input: ALTER COLLECTION <target> ADD COLUMN <col> DECIMAL
+        // AS MATERIALIZED_SUM SOURCE <src> ON <src>.join_col = <target>.id VALUE <src>.amount
+        let stmt = ok(
+            "ALTER COLLECTION accounts ADD COLUMN balance DECIMAL AS MATERIALIZED_SUM \
+             SOURCE orders ON orders.account_id = accounts.id VALUE orders.amount",
+        );
+        match stmt {
+            NodedbStatement::AlterCollection { name, operation } => {
+                assert_eq!(name, "accounts");
+                match operation {
+                    crate::ddl_ast::AlterCollectionOp::AddMaterializedSum {
+                        target_collection,
+                        target_column,
+                        source_collection,
+                        join_column,
+                        value_expr,
+                    } => {
+                        assert_eq!(target_collection, "accounts");
+                        assert_eq!(target_column, "balance");
+                        assert_eq!(source_collection, "orders");
+                        assert_eq!(join_column, "account_id");
+                        assert_eq!(value_expr, "amount");
+                    }
+                    other => panic!("expected AddMaterializedSum, got {other:?}"),
+                }
+            }
+            other => panic!("expected AlterCollection, got {other:?}"),
+        }
+    }
+
     #[test]
     fn parse_grant_role() {
         let stmt = ok("GRANT ROLE admin TO alice");

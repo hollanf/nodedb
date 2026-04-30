@@ -36,7 +36,7 @@ pub fn try_parse(sql: &str) -> Option<NodedbStatement> {
 
     if upper.starts_with("MATCH ") || upper.starts_with("OPTIONAL MATCH ") {
         return Some(NodedbStatement::MatchQuery {
-            raw_sql: trimmed.to_string(),
+            body: trimmed.to_string(),
         });
     }
 
@@ -227,8 +227,8 @@ mod tests {
     fn parse_match_query_captures_raw() {
         let stmt = try_parse("MATCH (x)-[:l]->(y) RETURN x, y").unwrap();
         match stmt {
-            NodedbStatement::MatchQuery { raw_sql } => {
-                assert!(raw_sql.starts_with("MATCH"));
+            NodedbStatement::MatchQuery { body } => {
+                assert!(body.starts_with("MATCH"));
             }
             other => panic!("expected MatchQuery, got {other:?}"),
         }

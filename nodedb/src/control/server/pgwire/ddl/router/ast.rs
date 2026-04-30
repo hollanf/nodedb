@@ -3,8 +3,7 @@
 //! Runs before the legacy string-prefix routers. Handles
 //! `IF [NOT] EXISTS` at the dispatch level so individual handlers
 //! don't need to check. Falls through to legacy dispatch for
-//! `Other` variants and for statements where the typed path
-//! delegates to the existing handler (via `raw_sql`).
+//! statements where the typed path is not yet wired (returns `None`).
 
 use pgwire::api::results::{Response, Tag};
 use pgwire::error::PgWireResult;
@@ -499,7 +498,7 @@ pub(super) async fn try_dispatch(
             Some(alter_user(state, identity, username, op))
         }
 
-        // ── Batch 5: T3-14 typed dispatch ────────────────────────
+        // ── RLS policy typed dispatch ─────────────────────────────
         NodedbStatement::CreateRlsPolicy {
             name,
             collection,
@@ -707,9 +706,21 @@ async fn dispatch_alter_collection(
             alter_collection_set_legal_hold(state, identity, name, *enabled, tag)
         }
 
-        AlterCollectionOp::AddMaterializedSum { raw_sql } => {
-            add_materialized_sum(state, identity, raw_sql)
-        }
+        AlterCollectionOp::AddMaterializedSum {
+            target_collection,
+            target_column,
+            source_collection,
+            join_column,
+            value_expr,
+        } => add_materialized_sum(
+            state,
+            identity,
+            target_collection,
+            target_column,
+            source_collection,
+            join_column,
+            value_expr,
+        ),
     }
 }
 

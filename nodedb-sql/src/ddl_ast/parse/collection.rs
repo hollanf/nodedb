@@ -90,7 +90,7 @@ pub(super) fn try_parse(
                 None => return Ok(None),
                 Some(r) => r?,
             };
-            let operation = match parse_alter_operation(upper, parts, trimmed) {
+            let operation = match parse_alter_operation(upper, parts, trimmed, &name) {
                 None => return Ok(None),
                 Some(op) => op,
             };
@@ -491,7 +491,12 @@ fn extract_balanced_raw(upper_body: &str, body: &str) -> Option<String> {
 
 // ── ALTER COLLECTION sub-operation parsing ───────────────────────────────────
 
-fn parse_alter_operation(upper: &str, parts: &[&str], trimmed: &str) -> Option<AlterCollectionOp> {
+fn parse_alter_operation(
+    upper: &str,
+    parts: &[&str],
+    trimmed: &str,
+    collection_name: &str,
+) -> Option<AlterCollectionOp> {
     // Operations handled exclusively by the collaborative dispatcher (raw-SQL path).
     // Return None so try_parse returns Ok(None), letting the router fall through.
     if upper.contains("ADD CONSTRAINT")
@@ -505,9 +510,7 @@ fn parse_alter_operation(upper: &str, parts: &[&str], trimmed: &str) -> Option<A
 
     // MATERIALIZED_SUM takes priority over ADD COLUMN.
     if upper.contains("MATERIALIZED_SUM") {
-        return Some(AlterCollectionOp::AddMaterializedSum {
-            raw_sql: trimmed.to_string(),
-        });
+        return parse_materialized_sum(upper, parts, trimmed, collection_name);
     }
 
     if upper.contains("ADD COLUMN") || (upper.contains(" ADD ") && !upper.contains("MATERIALIZED"))
@@ -548,10 +551,90 @@ fn parse_alter_operation(upper: &str, parts: &[&str], trimmed: &str) -> Option<A
         let tag = extract_tag_value(upper)?;
         return Some(AlterCollectionOp::SetLegalHold { enabled, tag });
     }
-    // Fallback: unknown operation — store raw SQL so the legacy handler can attempt it.
+    None
+}
+
+/// Parse `ALTER COLLECTION <name> ADD [COLUMN] <col> ... MATERIALIZED_SUM SOURCE <src>
+/// ON <join> VALUE <expr>` into a typed [`AlterCollectionOp::AddMaterializedSum`].
+///
+/// Returns `None` if any required keyword is absent — the router will surface a
+/// parse error to the client.
+fn parse_materialized_sum(
+    upper: &str,
+    parts: &[&str],
+    trimmed: &str,
+    collection_name: &str,
+) -> Option<AlterCollectionOp> {
+    // Target column: token after ADD [COLUMN].
+    let col_idx = parts
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case("COLUMN"))
+        .or_else(|| parts.iter().position(|p| p.eq_ignore_ascii_case("ADD")))?;
+    let target_column = parts.get(col_idx + 1)?.to_lowercase();
+
+    // Source collection: token after SOURCE.
+    let source_idx = parts
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case("SOURCE"))?;
+    let source_collection = parts.get(source_idx + 1)?.to_lowercase();
+
+    // Join column: extract from ON clause `source.col = target.id`.
+    let on_pos = upper.find(" ON ")?;
+    let after_on = &trimmed[on_pos + 4..];
+    let join_column = extract_join_column(after_on, &source_collection)?;
+
+    // Value expression: token(s) after VALUE keyword.
+    let value_pos = upper.find(" VALUE ")?;
+    let value_expr_raw = trimmed[value_pos + 7..].trim().trim_end_matches(';');
+    let value_expr = extract_value_expr(value_expr_raw, &source_collection)?;
+
     Some(AlterCollectionOp::AddMaterializedSum {
-        raw_sql: trimmed.to_string(),
+        target_collection: collection_name.to_lowercase(),
+        target_column,
+        source_collection,
+        join_column,
+        value_expr,
     })
+}
+
+/// Extract the join column from `source.col = target.id` — returns the source side column.
+fn extract_join_column(join_clause: &str, source_coll: &str) -> Option<String> {
+    let eq_parts: Vec<&str> = join_clause.splitn(2, '=').collect();
+    if eq_parts.len() != 2 {
+        return None;
+    }
+    let left = eq_parts[0].trim().to_lowercase();
+    let right = eq_parts[1].trim().to_lowercase();
+
+    let prefix = format!("{source_coll}.");
+    let col = if left.starts_with(&prefix) {
+        left.strip_prefix(&prefix).unwrap_or(&left).to_string()
+    } else if right.starts_with(&prefix) {
+        right.strip_prefix(&prefix).unwrap_or(&right).to_string()
+    } else {
+        left.split('.').next_back().unwrap_or(&left).to_string()
+    };
+
+    Some(col.split_whitespace().next().unwrap_or(&col).to_string())
+}
+
+/// Extract value expression — simple column reference or qualified `source.column`.
+/// Returns `None` for complex expressions that require a pre-computed column.
+fn extract_value_expr(expr_str: &str, source_coll: &str) -> Option<String> {
+    let lower = expr_str.trim().to_lowercase();
+    let prefix = format!("{source_coll}.");
+    let col_name = if lower.starts_with(&prefix) {
+        lower.strip_prefix(&prefix).unwrap_or(&lower).to_string()
+    } else {
+        lower.to_string()
+    };
+
+    if col_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        Some(col_name)
+    } else {
+        // Complex expression — caller must use a pre-computed column.
+        None
+    }
 }
 
 fn parse_add_column(parts: &[&str]) -> Option<AlterCollectionOp> {

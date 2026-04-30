@@ -567,9 +567,12 @@ pub enum NodedbStatement {
     /// `MATCH (x)-[:l]->(y) RETURN x, y` — the query body is
     /// compiled deep inside the Data Plane via
     /// `engine::graph::pattern::compiler::parse`, so the AST
-    /// variant just captures the raw SQL for that consumer.
+    /// variant just captures the original SQL for that consumer.
     MatchQuery {
-        raw_sql: String,
+        /// Full original SQL forwarded verbatim to
+        /// `engine::graph::pattern::compiler::parse`.
+        /// `nodedb-sql` does not interpret its contents.
+        body: String,
     },
 
     /// `GRAPH RAG FUSION ON <collection> QUERY ARRAY[…] [options…]`
@@ -583,14 +586,6 @@ pub enum NodedbStatement {
     GraphRagFusion {
         collection: String,
         params: crate::ddl_ast::graph_parse::FusionParams,
-    },
-
-    /// Catch-all for DDL-like commands not yet promoted to their
-    /// own variant. Preserves the raw SQL for the legacy dispatch
-    /// path so new variants can be added incrementally without
-    /// breaking existing handlers.
-    Other {
-        raw_sql: String,
     },
 }
 
@@ -628,9 +623,22 @@ pub enum AlterCollectionOp {
     SetLastValueCache { enabled: bool },
     /// `SET LEGAL_HOLD = TRUE|FALSE TAG '<tag>'`
     SetLegalHold { enabled: bool, tag: String },
-    /// `ADD COLUMN ... AS MATERIALIZED_SUM ...` — the full raw SQL is
-    /// forwarded to `add_materialized_sum` which has its own deep parser.
-    AddMaterializedSum { raw_sql: String },
+    /// `ADD [COLUMN] <target_column> ... AS MATERIALIZED_SUM SOURCE <source_collection>
+    /// ON <join_column> VALUE <value_expr>` — fully parsed by
+    /// `nodedb-sql`; the handler receives typed fields and never
+    /// rescans raw SQL.
+    AddMaterializedSum {
+        /// Target collection name (lowercased).
+        target_collection: String,
+        /// Target column name to hold the sum (lowercased).
+        target_column: String,
+        /// Source collection name (lowercased).
+        source_collection: String,
+        /// Join column on the source side (lowercased).
+        join_column: String,
+        /// Value expression (column name or qualified `source.column`, lowercased).
+        value_expr: String,
+    },
 }
 
 /// Typed sub-operation for `ALTER USER <name> ...`.
