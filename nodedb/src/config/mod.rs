@@ -4,4 +4,4 @@ pub mod server;
 
 pub use auth::AuthConfig;
 pub use engine::EngineConfig;
-pub use server::ServerConfig;
+pub use server::{LogFormat, ServerConfig};

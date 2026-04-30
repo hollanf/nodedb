@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::prelude::*;
 
 use nodedb::ServerConfig;
 use nodedb::bridge::dispatch::Dispatcher;
@@ -63,8 +64,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Resolve config file path.
     // Priority: CLI arg (highest) > NODEDB_CONFIG env var > default.
-    let config_path: Option<PathBuf> = std::env::args()
-        .nth(1)
+    let config_path: Option<PathBuf> = cli_args
+        .iter()
+        .find(|a| !a.starts_with("--"))
         .map(PathBuf::from)
         .or_else(|| std::env::var("NODEDB_CONFIG").ok().map(PathBuf::from));
 
@@ -85,18 +87,41 @@ async fn main() -> anyhow::Result<()> {
     // Initialize tracing with format from config.
     // Default to warn level for clean startup. Use RUST_LOG=info for verbose.
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
-    if config.log_format == "json" {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_writer(std::io::stderr)
-            .json()
+    if config.log_format == nodedb::config::LogFormat::Json {
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .json()
+                    .flatten_event(true)
+                    .with_filter(filter),
+            )
             .init();
     } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_writer(std::io::stderr)
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .with_filter(filter),
+            )
             .init();
     }
+
+    // Root span: entered for the lifetime of the process. Provides structured
+    // context fields (service name, version, host, pid, node_id) on every log
+    // event. node_id starts at 0 for single-node; cluster wiring records the
+    // real value below once the cluster handle is resolved.
+    let root_span = tracing::info_span!(
+        "service",
+        service.name = "nodedb",
+        service.version = nodedb::version::VERSION,
+        host = %nodedb::version::hostname(),
+        pid = std::process::id(),
+        node_id = 0u64,
+    );
+    // Use enter() (borrows) rather than entered() (consumes) so that root_span
+    // remains accessible for the late record() call after cluster wiring.
+    let _root_guard = root_span.enter();
 
     // Re-apply env overrides now that tracing is initialised so that
     // info!/warn! messages are actually emitted for operators.
@@ -116,11 +141,17 @@ async fn main() -> anyhow::Result<()> {
     }
 
     info!(
+        target: "boot",
+        version = nodedb::version::VERSION,
+        git_commit = env!("NODEDB_GIT_COMMIT"),
+        build_date = env!("NODEDB_BUILD_DATE"),
+        wire_format_version = nodedb::version::WIRE_FORMAT_VERSION,
+        features = nodedb::version::features_str(),
         host = %config.host,
         native_port = config.ports.native,
         cores = config.data_plane_cores,
         memory_limit = config.memory_limit,
-        "starting nodedb"
+        "nodedb starting",
     );
 
     // Validate engine config.
@@ -443,6 +474,8 @@ async fn main() -> anyhow::Result<()> {
         // wait on.
         state.metadata_cache = Arc::clone(&handle.metadata_cache);
         state.group_watchers = Arc::clone(&handle.group_watchers);
+        // Update the root span so all subsequent events carry the real node_id.
+        root_span.record("node_id", handle.node_id);
     }
 
     // Initialise JWKS registry if JWT providers are configured.
@@ -505,6 +538,7 @@ async fn main() -> anyhow::Result<()> {
         };
         state.debug_endpoints_enabled = config.observability.debug_endpoints_enabled;
         state.data_dir = config.data_dir.clone();
+        state.scheduler_config = config.scheduler.clone();
     }
 
     // Construct the gateway and install it (plus its DDL invalidator) on
@@ -561,7 +595,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Bootstrap credentials.
     let auth_mode = config.auth.mode.clone();
-    match config.auth.resolve_superuser_password() {
+    match config.auth.resolve_superuser_password(&config.data_dir) {
         Ok(Some(password)) => {
             shared
                 .credentials

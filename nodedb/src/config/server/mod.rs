@@ -4,6 +4,7 @@ mod cold_storage;
 mod env;
 mod observability;
 mod retention;
+pub mod scheduler;
 mod tls;
 
 pub use checkpoint::CheckpointSettings;
@@ -15,6 +16,7 @@ pub use observability::{
     apply_observability_env, validate_feature_availability,
 };
 pub use retention::RetentionSettings;
+pub use scheduler::{CronTimezone, SchedulerConfig};
 pub use tls::{EncryptionSettings, TlsSettings};
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -24,6 +26,20 @@ use nodedb_types::config::TuningConfig;
 use serde::{Deserialize, Serialize};
 
 use super::EngineConfig;
+
+/// Log output format selection.
+///
+/// Serializes as lowercase strings `"text"` and `"json"`. Any other value is
+/// rejected by serde at deserialization time — there is no silent fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+    /// Human-readable, coloured output (default).
+    #[default]
+    Text,
+    /// Structured JSON lines, suitable for log aggregators.
+    Json,
+}
 
 /// Port configuration for all protocol listeners.
 ///
@@ -116,9 +132,10 @@ pub struct ServerConfig {
     #[serde(default)]
     pub encryption: Option<EncryptionSettings>,
 
-    /// Log output format: "text" (default, human-readable) or "json" (structured).
-    #[serde(default = "default_log_format")]
-    pub log_format: String,
+    /// Log output format: `"text"` (default, human-readable) or `"json"` (structured).
+    /// Unknown values are rejected at startup — there is no silent fallback.
+    #[serde(default)]
+    pub log_format: LogFormat,
 
     /// Checkpoint and WAL management settings.
     #[serde(default)]
@@ -151,6 +168,10 @@ pub struct ServerConfig {
     /// Requires corresponding cargo features (`promql`, `otel`) at compile time.
     #[serde(default)]
     pub observability: ObservabilityConfig,
+
+    /// Cron scheduler settings (timezone offset, future tuning knobs).
+    #[serde(default)]
+    pub scheduler: SchedulerConfig,
 }
 
 fn default_host() -> IpAddr {
@@ -174,13 +195,14 @@ impl Default for ServerConfig {
             auth: super::AuthConfig::default(),
             tls: None,
             encryption: None,
-            log_format: "text".into(),
+            log_format: LogFormat::Text,
             checkpoint: CheckpointSettings::default(),
             retention: RetentionSettings::default(),
             cluster: None,
             cold_storage: None,
             tuning: TuningConfig::default(),
             observability: ObservabilityConfig::default(),
+            scheduler: SchedulerConfig::default(),
         }
     }
 }
@@ -257,10 +279,6 @@ impl ServerConfig {
 
 fn default_max_connections() -> usize {
     4096
-}
-
-fn default_log_format() -> String {
-    "text".into()
 }
 
 /// Default data directory following platform conventions.
@@ -343,5 +361,48 @@ mod tests {
         let cfg = ServerConfig::default();
         let toml_str = toml::to_string_pretty(&cfg).expect("serialize");
         let _parsed: ServerConfig = toml::from_str(&toml_str).expect("deserialize");
+    }
+
+    #[test]
+    fn log_format_default_is_text() {
+        assert_eq!(LogFormat::default(), LogFormat::Text);
+        let cfg = ServerConfig::default();
+        assert_eq!(cfg.log_format, LogFormat::Text);
+    }
+
+    fn config_toml_with_log_format(value: &str) -> String {
+        let cfg = ServerConfig::default();
+        let raw = toml::to_string_pretty(&cfg).expect("serialize");
+        raw.lines()
+            .map(|line| {
+                if line.trim_start().starts_with("log_format") {
+                    format!("log_format = {value}")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn log_format_toml_text_parses() {
+        let raw = config_toml_with_log_format("\"text\"");
+        let cfg: ServerConfig = toml::from_str(&raw).expect("deserialize");
+        assert_eq!(cfg.log_format, LogFormat::Text);
+    }
+
+    #[test]
+    fn log_format_toml_json_parses() {
+        let raw = config_toml_with_log_format("\"json\"");
+        let cfg: ServerConfig = toml::from_str(&raw).expect("deserialize");
+        assert_eq!(cfg.log_format, LogFormat::Json);
+    }
+
+    #[test]
+    fn log_format_toml_unknown_rejected() {
+        let raw = config_toml_with_log_format("\"yaml\"");
+        let result: Result<ServerConfig, _> = toml::from_str(&raw);
+        assert!(result.is_err(), "unknown log_format value must be rejected");
     }
 }

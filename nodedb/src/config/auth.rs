@@ -367,8 +367,8 @@ fn default_session_miss_spike_window_secs() -> u64 {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            mode: AuthMode::Trust,
-            superuser_name: "admin".into(),
+            mode: AuthMode::Password,
+            superuser_name: "nodedb".into(),
             superuser_password: None,
             min_password_length: 8,
             max_failed_logins: 5,
@@ -386,35 +386,81 @@ impl Default for AuthConfig {
 }
 
 impl AuthConfig {
-    /// Resolve the superuser password from config or environment variable.
-    /// Returns None in trust mode (no password needed).
-    pub fn resolve_superuser_password(&self) -> crate::Result<Option<String>> {
+    /// Resolve the superuser password from env var, config, or persisted
+    /// auto-generated file. Returns None in trust mode (no password needed).
+    ///
+    /// Resolution order:
+    /// 1. `NODEDB_SUPERUSER_PASSWORD` env var
+    /// 2. `auth.superuser_password` config field
+    /// 3. Persisted file at `<data_dir>/.superuser_password` (auto-generated
+    ///    on first run when neither of the above is set)
+    pub fn resolve_superuser_password(
+        &self,
+        data_dir: &std::path::Path,
+    ) -> crate::Result<Option<String>> {
         if self.mode == AuthMode::Trust {
             return Ok(None);
         }
 
-        // Check env var first (higher priority, avoids storing in config file).
         if let Ok(env_pw) = std::env::var("NODEDB_SUPERUSER_PASSWORD")
             && !env_pw.is_empty()
         {
             return Ok(Some(env_pw));
         }
 
-        // Fall back to config file.
         if let Some(ref pw) = self.superuser_password
             && !pw.is_empty()
         {
             return Ok(Some(pw.clone()));
         }
 
-        Err(crate::Error::Config {
-            detail: format!(
-                "auth mode is '{:?}' but no superuser password provided. \
-                 Set 'auth.superuser_password' in config or NODEDB_SUPERUSER_PASSWORD env var.",
-                self.mode
-            ),
-        })
+        // Auto-generate on first run, persist to data dir for subsequent runs.
+        let pw_path = data_dir.join(".superuser_password");
+        if let Ok(existing) = std::fs::read_to_string(&pw_path) {
+            let trimmed = existing.trim().to_string();
+            if !trimmed.is_empty() {
+                return Ok(Some(trimmed));
+            }
+        }
+
+        let generated = generate_superuser_password();
+        if let Some(parent) = pw_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| crate::Error::Config {
+                detail: format!("failed to create data dir {parent:?}: {e}"),
+            })?;
+        }
+        std::fs::write(&pw_path, &generated).map_err(|e| crate::Error::Config {
+            detail: format!("failed to persist superuser password to {pw_path:?}: {e}"),
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&pw_path, std::fs::Permissions::from_mode(0o600));
+        }
+
+        eprintln!();
+        eprintln!("  ╔══════════════════════════════════════════════════════════════╗");
+        eprintln!("  ║         AUTO-GENERATED SUPERUSER PASSWORD (FIRST RUN)        ║");
+        eprintln!("  ╠══════════════════════════════════════════════════════════════╣");
+        eprintln!("  ║  user:     {:<50}║", self.superuser_name);
+        eprintln!("  ║  password: {generated:<50}║");
+        eprintln!("  ║  saved to: {:<50}║", pw_path.display().to_string());
+        eprintln!("  ║                                                              ║");
+        eprintln!("  ║  Override via NODEDB_SUPERUSER_PASSWORD or auth config.      ║");
+        eprintln!("  ╚══════════════════════════════════════════════════════════════╝");
+        eprintln!();
+
+        Ok(Some(generated))
     }
+}
+
+fn generate_superuser_password() -> String {
+    use rand::Rng;
+    const ALPHABET: &[u8] = b"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let mut rng = rand::rng();
+    (0..24)
+        .map(|_| ALPHABET[rng.random_range(0..ALPHABET.len())] as char)
+        .collect()
 }
 
 #[cfg(test)]
@@ -422,9 +468,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_is_trust() {
+    fn default_is_password() {
         let cfg = AuthConfig::default();
-        assert_eq!(cfg.mode, AuthMode::Trust);
+        assert_eq!(cfg.mode, AuthMode::Password);
     }
 
     #[test]
@@ -433,23 +479,27 @@ mod tests {
             mode: AuthMode::Trust,
             ..Default::default()
         };
-        let result = cfg.resolve_superuser_password();
+        let dir = tempfile::tempdir().unwrap();
+        let result = cfg.resolve_superuser_password(dir.path());
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
     #[test]
-    fn password_mode_requires_password() {
+    fn password_auto_generated_on_first_run() {
         let cfg = AuthConfig {
             mode: AuthMode::Password,
             superuser_password: None,
             ..Default::default()
         };
-        // Clear env var if set.
-        // SAFETY: This test is single-threaded and no other thread reads this var.
+        // SAFETY: single-threaded test, no other thread reads this var.
         unsafe { std::env::remove_var("NODEDB_SUPERUSER_PASSWORD") };
-        let result = cfg.resolve_superuser_password();
-        assert!(result.is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let first = cfg.resolve_superuser_password(dir.path()).unwrap();
+        assert!(first.as_ref().is_some_and(|p| p.len() == 24));
+        // Second call returns the persisted value.
+        let second = cfg.resolve_superuser_password(dir.path()).unwrap();
+        assert_eq!(first, second);
     }
 
     #[test]
@@ -459,7 +509,8 @@ mod tests {
             superuser_password: Some("secret123".into()),
             ..Default::default()
         };
-        let pw = cfg.resolve_superuser_password().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let pw = cfg.resolve_superuser_password(dir.path()).unwrap();
         assert_eq!(pw, Some("secret123".into()));
     }
 

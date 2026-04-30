@@ -150,6 +150,11 @@ fn apply_bool_env(var: &str, target: &mut bool) {
 ///
 /// `NODEDB_CONFIG` (config file path) is handled upstream in `main.rs`
 /// before this function is called, so it is not processed here.
+///
+/// `NODEDB_SUPERUSER_PASSWORD` is intentionally absent from this list. It is
+/// handled separately by `crate::config::auth::AuthConfig::resolve_superuser_password()`
+/// (called from `main.rs`) so that the value is never passed through logging
+/// code paths or stored in `ServerConfig` where it could appear in debug output.
 pub fn apply_env_overrides(config: &mut ServerConfig) {
     // ── Host and ports ─────────────────────────────────────────────
 
@@ -311,20 +316,31 @@ pub fn apply_env_overrides(config: &mut ServerConfig) {
     }
 
     if let Ok(val) = std::env::var("NODEDB_LOG_FORMAT") {
-        let val = val.trim().to_lowercase();
-        if val == "text" || val == "json" {
-            tracing::info!(
-                env_var = "NODEDB_LOG_FORMAT",
-                value = %val,
-                "environment variable override applied"
-            );
-            config.log_format = val;
-        } else {
-            tracing::warn!(
-                env_var = "NODEDB_LOG_FORMAT",
-                value = %val,
-                "ignoring malformed environment variable (expected \"text\" or \"json\"), using config value"
-            );
+        let normalised = val.trim().to_lowercase();
+        match normalised.as_str() {
+            "text" => {
+                tracing::info!(
+                    env_var = "NODEDB_LOG_FORMAT",
+                    value = "text",
+                    "environment variable override applied"
+                );
+                config.log_format = super::LogFormat::Text;
+            }
+            "json" => {
+                tracing::info!(
+                    env_var = "NODEDB_LOG_FORMAT",
+                    value = "json",
+                    "environment variable override applied"
+                );
+                config.log_format = super::LogFormat::Json;
+            }
+            _ => {
+                tracing::warn!(
+                    env_var = "NODEDB_LOG_FORMAT",
+                    value = %val,
+                    "ignoring malformed environment variable (expected \"text\" or \"json\"), using config value"
+                );
+            }
         }
     }
 
