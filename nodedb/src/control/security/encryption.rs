@@ -1,22 +1,18 @@
-//! AES-256-XTS encryption at rest for local storage volumes.
-//!
-//! Beyond the WAL encryption (AES-256-GCM per record), this provides
-//! full volume-level encryption for all persistent data:
-//!
-//! - redb database files (sparse engine, edge store, GSI)
-//! - HNSW checkpoint files
-//! - mmap vector segment files
-//! - Sort spill temp files
-//!
-//! XTS mode is designed for disk encryption: it handles arbitrary-length
-//! sectors without authentication overhead (since integrity is handled
-//! separately by checksums in each data format).
+//! Master-key + DEK envelope used for the WAL's AES-256-GCM record
+//! encryption. The DEK is generated at random per file, wrapped under
+//! the master key with AES-256-GCM (authenticated key wrapping), and
+//! stored in [`EncryptedFileHeader`].
 //!
 //! Key management:
 //! - Master key derived from a key file or KMS
 //! - Per-file data encryption key (DEK) generated randomly
-//! - DEK encrypted by master key, stored in file header
+//! - DEK encrypted (wrapped) by master key, stored in file header
 //! - Key rotation: re-encrypt DEKs with new master key (no data rewrite)
+//!
+//! No segment-level "volume" cipher is implemented: redb files, HNSW
+//! checkpoints, and mmap vector segments rely on filesystem-level
+//! encryption (LUKS / FileVault / dm-crypt) for at-rest protection.
+//! The [`VolumeEncryption`] surface here only handles DEK lifecycle.
 
 use std::path::{Path, PathBuf};
 
@@ -40,17 +36,23 @@ impl Default for VolumeEncryptionConfig {
         Self {
             master_key_path: None,
             enabled: false,
-            algorithm: EncryptionAlgorithm::Aes256Xts,
+            algorithm: EncryptionAlgorithm::Aes256Gcm,
         }
     }
 }
 
 /// Supported encryption algorithms.
+///
+/// Only authenticated AES-256-GCM is currently implemented; previous
+/// builds carried an aspirational `Aes256Xts` variant with no
+/// corresponding cipher. That variant has been removed so the type
+/// surface matches what the code actually does. If a non-authenticated
+/// volume cipher is wired in later, add the new variant alongside
+/// `Aes256Gcm` rather than reviving the unimplemented one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EncryptionAlgorithm {
-    /// AES-256-XTS for volume encryption (no authentication — checksums handle integrity).
-    Aes256Xts,
-    /// AES-256-GCM for authenticated encryption (used by WAL).
+    /// AES-256-GCM authenticated encryption — used to wrap DEKs and by
+    /// the WAL for per-record encryption.
     Aes256Gcm,
 }
 
@@ -299,7 +301,7 @@ mod tests {
 
     #[test]
     fn header_validation() {
-        let header = EncryptedFileHeader::new(EncryptionAlgorithm::Aes256Xts, vec![0; 32]);
+        let header = EncryptedFileHeader::new(EncryptionAlgorithm::Aes256Gcm, vec![0; 32]);
         assert!(header.is_valid());
         assert_eq!(header.version, 1);
     }
@@ -315,7 +317,7 @@ mod tests {
         let mut enc = VolumeEncryption::new(VolumeEncryptionConfig {
             master_key_path: Some(key_path),
             enabled: true,
-            algorithm: EncryptionAlgorithm::Aes256Xts,
+            algorithm: EncryptionAlgorithm::Aes256Gcm,
         });
         enc.load_master_key().unwrap();
         assert!(enc.is_active());

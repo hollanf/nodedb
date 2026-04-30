@@ -97,28 +97,9 @@ mod tests {
         }
     }
 
-    /// Pin the canonical hash for a specific AuthSuccess entry so any change
-    /// to the hash algorithm is immediately detected. The expected hex was
-    /// produced by the first correct discriminant-based implementation and
-    /// is intentionally hardcoded — it IS the stability test.
-    #[test]
-    fn hash_is_stable_across_debug_format_changes() {
-        let entry = make_entry(1, AuditEvent::AuthSuccess, "");
-        let h = hash_entry(&entry);
-        // If this assertion fails, the canonical hash format changed.
-        // Update only after a deliberate, versioned migration of the chain.
-        assert_eq!(
-            h,
-            hash_entry(&entry),
-            "hash_entry must be deterministic for the same input"
-        );
-        // The hash must be a 64-character lowercase hex string.
-        assert_eq!(h.len(), 64, "SHA-256 hex must be 64 chars");
-        assert!(h.chars().all(|c| c.is_ascii_hexdigit()), "must be hex");
-    }
-
-    /// Hardcoded golden hash — pins the canonical encoding.
-    /// Recomputed from the first correct implementation of discriminant+zerompk.
+    /// Hardcoded golden hash — pins the canonical encoding for an AuthSuccess
+    /// entry. The expected hex was produced by the first correct
+    /// discriminant-based implementation and is intentionally frozen here.
     #[test]
     fn hash_golden_value() {
         let entry = AuditEntry {
@@ -134,11 +115,29 @@ mod tests {
             prev_hash: String::new(),
         };
         let h = hash_entry(&entry);
-        // Golden value: compute once, then freeze. Changing any byte in
-        // the canonical layout must produce a different hex here.
-        let recomputed = hash_entry(&entry);
-        assert_eq!(h, recomputed, "hash must be deterministic");
-        assert_eq!(h.len(), 64);
+        // Pinned hash. Updating this string requires explicit reasoning — encoding changes break audit chain compatibility.
+        assert_eq!(
+            h,
+            "0394994e7dda6e6ea99b47a9d6a73b305056ed8d34d5573286b2e42b158a7985",
+            "canonical hash changed — audit chain encoding must not drift"
+        );
+    }
+
+    /// Pins the canonical hash for the highest-discriminant `AuditEvent`
+    /// variant (`AuditCheckpoint = 25`). Because the hash encodes the
+    /// `#[repr(u8)]` discriminant directly, any new variant added above 25
+    /// would have a different discriminant and therefore a different hash —
+    /// proving that existing entries are unaffected by new variants.
+    #[test]
+    fn hash_pinned_for_high_discriminant_variant() {
+        let entry = make_entry(1, AuditEvent::AuditCheckpoint, "");
+        let h = hash_entry(&entry);
+        // Pinned hash. Updating this string requires explicit reasoning — encoding changes break audit chain compatibility.
+        assert_eq!(
+            h,
+            "a7eac81c35ed115b7345ad6ac9e1ccbfb78d46c5af9b4647ebe6d2560d4a00c2",
+            "canonical hash for AuditCheckpoint (discriminant 25) must not drift"
+        );
     }
 
     #[test]
