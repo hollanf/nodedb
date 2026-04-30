@@ -268,7 +268,7 @@ mod tests {
             org_id: "acme".into(),
             tenant_id: 1,
             collection: "orders".into(),
-            engine: "document".into(),
+            engine: "document_schemaless".into(),
             operation: "point_get".into(),
             tokens,
             timestamp_secs: 1700000000,

@@ -11,11 +11,11 @@ impl SystemMetrics {
     /// Called by [`to_prometheus()`](Self::to_prometheus) — not directly by handlers.
     pub(in crate::control::metrics) fn prometheus_core(&self, out: &mut String) {
         // ── WAL ──
-        gauge(
+        gauge_f64(
             out,
-            "nodedb_wal_fsync_latency_us",
-            "WAL fsync latency in microseconds",
-            self.wal_fsync_latency_us.load(Ordering::Relaxed),
+            "nodedb_wal_fsync_latency_seconds",
+            "WAL fsync latency in seconds",
+            self.wal_fsync_latency_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
         );
         counter(
             out,
@@ -173,17 +173,17 @@ impl SystemMetrics {
             "Queries exceeding 100ms",
             self.slow_queries_total.load(Ordering::Relaxed),
         );
-        gauge(
+        gauge_f64(
             out,
-            "nodedb_query_planning_us",
-            "Last query planning time us",
-            self.query_planning_us.load(Ordering::Relaxed),
+            "nodedb_query_planning_seconds",
+            "Last query planning time in seconds",
+            self.query_planning_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
         );
-        gauge(
+        gauge_f64(
             out,
-            "nodedb_query_execution_us",
-            "Last query execution time us",
-            self.query_execution_us.load(Ordering::Relaxed),
+            "nodedb_query_execution_seconds",
+            "Last query execution time in seconds",
+            self.query_execution_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
         );
         self.query_latency.write_prometheus(
             out,

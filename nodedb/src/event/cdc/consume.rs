@@ -226,7 +226,7 @@ pub async fn consume_remote(
 
     let gw_ctx = crate::control::gateway::core::QueryContext {
         tenant_id: crate::types::TenantId::new(tenant_id),
-        trace_id: 0,
+        trace_id: nodedb_types::TraceId::generate(),
     };
 
     let query_ctx = crate::control::planner::context::QueryContext::for_state(state);

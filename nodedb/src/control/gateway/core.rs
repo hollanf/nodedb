@@ -25,7 +25,7 @@ use tracing::{Instrument, debug, info_span};
 use crate::Error;
 use crate::bridge::physical_plan::PhysicalPlan;
 use crate::control::state::SharedState;
-use crate::types::TenantId;
+use crate::types::{TenantId, TraceId};
 
 use super::dispatcher::{default_deadline_ms, dispatch_route};
 use super::fuser::fuse_payloads;
@@ -38,7 +38,7 @@ use super::version_set::GatewayVersionSet;
 /// Context passed to [`Gateway::execute`].
 pub struct QueryContext {
     pub tenant_id: TenantId,
-    pub trace_id: u64,
+    pub trace_id: TraceId,
 }
 
 /// The gateway: routes, dispatches, retries, and caches physical plans.
@@ -83,7 +83,7 @@ impl Gateway {
     ) -> Result<Vec<Vec<u8>>, Error> {
         let span = info_span!(
             "gateway.execute",
-            trace_id = ctx.trace_id,
+            trace_id = %ctx.trace_id,
             tenant_id = ctx.tenant_id.as_u32()
         );
         let start = SystemTime::now();

@@ -19,7 +19,7 @@ use crate::bridge::physical_plan::DocumentOp;
 use crate::control::security::catalog::trigger_types::TriggerExecutionMode;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
-use crate::types::TenantId;
+use crate::types::{TenantId, TraceId};
 
 use super::fire_after;
 use super::fire_before;
@@ -276,7 +276,11 @@ pub async fn fetch_old_row(
     let vshard_id = crate::types::VShardId::from_key(document_id.as_bytes());
 
     let resp = match crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard_id, plan, 0,
+        state,
+        tenant_id,
+        vshard_id,
+        plan,
+        TraceId::ZERO,
     )
     .await
     {

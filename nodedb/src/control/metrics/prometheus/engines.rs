@@ -29,11 +29,11 @@ impl SystemMetrics {
             "Vectors stored",
             self.vector_vectors_stored.load(Ordering::Relaxed),
         );
-        gauge(
+        gauge_f64(
             out,
-            "nodedb_vector_avg_latency_us",
-            "Vector search avg latency us",
-            self.vector_avg_latency_us.load(Ordering::Relaxed),
+            "nodedb_vector_avg_latency_seconds",
+            "Vector search average latency in seconds",
+            self.vector_avg_latency_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
         );
 
         // ── Graph engine ──
@@ -99,21 +99,21 @@ impl SystemMetrics {
         // ── FTS engine ──
         counter(
             out,
-            "nodedb_text_searches_total",
-            "Text search operations",
-            self.text_searches.load(Ordering::Relaxed),
+            "nodedb_fts_searches_total",
+            "Full-text search operations",
+            self.fts_searches.load(Ordering::Relaxed),
         );
         gauge(
             out,
-            "nodedb_text_indexes",
-            "Text search indexes",
-            self.text_indexes.load(Ordering::Relaxed),
+            "nodedb_fts_indexes",
+            "Full-text search indexes",
+            self.fts_indexes.load(Ordering::Relaxed),
         );
-        gauge(
+        gauge_f64(
             out,
-            "nodedb_text_avg_latency_us",
-            "Text search avg latency us",
-            self.text_avg_latency_us.load(Ordering::Relaxed),
+            "nodedb_fts_avg_latency_seconds",
+            "Full-text search average latency in seconds",
+            self.fts_avg_latency_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
         );
 
         // ── KV engine ──
@@ -173,11 +173,11 @@ impl SystemMetrics {
             "io_uring completions",
             self.io_uring_completions.load(Ordering::Relaxed),
         );
-        gauge(
+        gauge_f64(
             out,
-            "nodedb_tpc_utilization_pct",
-            "TPC event loop utilization percent",
-            self.tpc_utilization_pct.load(Ordering::Relaxed),
+            "nodedb_tpc_utilization_ratio",
+            "TPC event loop utilization as a fraction (0.0–1.0)",
+            self.tpc_utilization_ratio.load(Ordering::Relaxed) as f64 / 100.0,
         );
         gauge(
             out,

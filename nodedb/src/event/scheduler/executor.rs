@@ -55,6 +55,7 @@ pub fn pending_minute_ticks(
     last_fired_minute: Option<u64>,
     now_secs: u64,
     cron: &CronExpr,
+    utc_offset_seconds: i32,
 ) -> Vec<u64> {
     let now_min = now_secs / 60;
     let start = match last_fired_minute {
@@ -62,7 +63,7 @@ pub fn pending_minute_ticks(
         None => now_min,
     };
     (start..=now_min)
-        .filter(|m| cron.matches_epoch(m.saturating_mul(60)))
+        .filter(|m| cron.matches_epoch_with_offset(m.saturating_mul(60), utc_offset_seconds))
         .collect()
 }
 
@@ -160,7 +161,8 @@ async fn scheduler_loop(
             // minute whose tick landed at second != 0.
             let sched_key = (sched.tenant_id, sched.name.clone());
             let last = last_fired_minute.get(&sched_key).copied();
-            let pending = pending_minute_ticks(last, now_secs, &cron);
+            let tz_offset = state.scheduler_config.cron_timezone.offset_seconds();
+            let pending = pending_minute_ticks(last, now_secs, &cron, tz_offset);
             if pending.is_empty() {
                 // Still advance the marker on first observation so that
                 // a schedule whose cron never matches the current minute

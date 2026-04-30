@@ -134,6 +134,38 @@ impl AtomicHistogram {
         let _ = writeln!(out, "{name}_sum {}", self.sum_us() as f64 / 1_000_000.0);
         let _ = writeln!(out, "{name}_count {total}");
     }
+
+    /// Create a point-in-time snapshot of this histogram as a new
+    /// `AtomicHistogram` with the same bucket boundaries and the same
+    /// current counts/sum. The snapshot is independent of the original.
+    pub fn snapshot(&self) -> Self {
+        let snap = Self::with_buckets(self.boundaries);
+        for (i, bucket) in self.buckets.iter().enumerate() {
+            snap.buckets[i].store(bucket.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
+        snap.count
+            .store(self.count.load(Ordering::Relaxed), Ordering::Relaxed);
+        snap.sum
+            .store(self.sum.load(Ordering::Relaxed), Ordering::Relaxed);
+        snap
+    }
+
+    /// Merge another histogram's counts into this one.
+    ///
+    /// Both histograms must share the same bucket boundaries — if they do
+    /// not, the merge is a no-op for safety.
+    pub fn merge(&self, other: &AtomicHistogram) {
+        if self.boundaries.len() != other.boundaries.len() {
+            return;
+        }
+        for (dst, src) in self.buckets.iter().zip(other.buckets.iter()) {
+            dst.fetch_add(src.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
+        self.count
+            .fetch_add(other.count.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.sum
+            .fetch_add(other.sum.load(Ordering::Relaxed), Ordering::Relaxed);
+    }
 }
 
 impl Default for AtomicHistogram {

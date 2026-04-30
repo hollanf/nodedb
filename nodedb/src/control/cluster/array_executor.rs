@@ -36,7 +36,7 @@ use crate::bridge::physical_plan::{ArrayOp, ArrayReducer, PhysicalPlan};
 use crate::control::state::SharedState;
 use crate::data::executor::response_codec::ArraySliceResponse;
 use crate::event::types::EventSource;
-use crate::types::{ReadConsistency, TenantId, VShardId};
+use crate::types::{ReadConsistency, TenantId, TraceId, VShardId};
 
 /// Timeout for a single shard-side array operation dispatched through the
 /// local SPSC bridge. This bounds how long the cluster handler waits for the
@@ -73,7 +73,7 @@ impl DataPlaneArrayExecutor {
             plan,
             deadline: Instant::now() + LOCAL_DISPATCH_TIMEOUT,
             priority: Priority::Normal,
-            trace_id: 0,
+            trace_id: TraceId::generate(),
             consistency: ReadConsistency::Strong,
             idempotency_key: None,
             event_source: EventSource::User,

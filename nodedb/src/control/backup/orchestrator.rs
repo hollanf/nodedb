@@ -22,7 +22,7 @@ use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::{MetaOp, wire as plan_wire};
 use crate::control::server::pgwire::ddl::sync_dispatch;
 use crate::control::state::SharedState;
-use crate::types::TenantId;
+use crate::types::{TenantId, TraceId};
 
 /// Default per-node snapshot dispatch timeout.
 const NODE_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -200,7 +200,7 @@ async fn snapshot_remote(
         plan_bytes,
         tenant_id,
         deadline_remaining_ms: NODE_SNAPSHOT_TIMEOUT.as_millis() as u64,
-        trace_id: 0,
+        trace_id: TraceId::generate().0,
         descriptor_versions: Vec::new(),
     });
 

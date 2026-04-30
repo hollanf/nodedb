@@ -376,7 +376,14 @@ async fn ingest_ilp(
         wal_lsn: None,
         surrogates: Vec::new(),
     });
-    dispatch_to_data_plane(shared, TenantId::new(1), VShardId::new(0), plan, 0).await?;
+    dispatch_to_data_plane(
+        shared,
+        TenantId::new(1),
+        VShardId::new(0),
+        plan,
+        nodedb_types::TraceId::ZERO,
+    )
+    .await?;
     Ok(1)
 }
 

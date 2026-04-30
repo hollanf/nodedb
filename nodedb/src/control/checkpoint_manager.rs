@@ -30,7 +30,7 @@ use crate::bridge::dispatch::Dispatcher;
 use crate::bridge::envelope::{PhysicalPlan, Priority, Request, Status};
 use crate::bridge::physical_plan::MetaOp;
 use crate::control::request_tracker::RequestTracker;
-use crate::types::{Lsn, ReadConsistency, RequestId, TenantId, VShardId};
+use crate::types::{Lsn, ReadConsistency, RequestId, TenantId, TraceId, VShardId};
 use crate::wal::WalManager;
 
 /// Monotonic counter for checkpoint request IDs.
@@ -93,7 +93,7 @@ pub async fn run_checkpoint_cycle(
                 plan: PhysicalPlan::Meta(MetaOp::Checkpoint),
                 deadline: std::time::Instant::now() + timeout,
                 priority: Priority::Background,
-                trace_id: 0,
+                trace_id: TraceId::generate(),
                 consistency: ReadConsistency::Eventual,
                 idempotency_key: None,
                 event_source: crate::event::EventSource::User,

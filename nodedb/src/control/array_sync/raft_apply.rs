@@ -14,7 +14,7 @@ use crate::bridge::envelope::{Priority, Request, Response, Status};
 use crate::control::array_sync::OriginApplyEngine;
 use crate::control::distributed_applier::{ProposeResult, ProposeTracker};
 use crate::control::state::SharedState;
-use crate::types::ReadConsistency;
+use crate::types::{ReadConsistency, TraceId};
 
 /// Apply a committed `ArrayOp` entry on the local node.
 ///
@@ -173,7 +173,7 @@ pub(crate) async fn apply_array_op(
         plan,
         deadline: std::time::Instant::now() + Duration::from_secs(30),
         priority: Priority::Normal,
-        trace_id: 0,
+        trace_id: TraceId::generate(),
         consistency: ReadConsistency::Strong,
         idempotency_key: None,
         event_source: crate::event::EventSource::CrdtSync,
@@ -271,7 +271,7 @@ async fn ensure_array_open(
         plan: open_plan,
         deadline: std::time::Instant::now() + Duration::from_secs(30),
         priority: Priority::Normal,
-        trace_id: 0,
+        trace_id: TraceId::generate(),
         consistency: ReadConsistency::Strong,
         idempotency_key: None,
         event_source: crate::event::EventSource::CrdtSync,

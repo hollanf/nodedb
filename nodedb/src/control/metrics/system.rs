@@ -14,7 +14,7 @@ use super::purge::PurgeMetrics;
 #[derive(Debug, Default)]
 pub struct SystemMetrics {
     // ── WAL ──
-    pub wal_fsync_latency_us: AtomicU64,
+    pub wal_fsync_latency_micros: AtomicU64,
     pub wal_fsync_count: AtomicU64,
     pub wal_segment_count: AtomicU64,
     pub wal_segment_bytes: AtomicU64,
@@ -51,15 +51,15 @@ pub struct SystemMetrics {
     pub queries_total: AtomicU64,
     pub query_errors: AtomicU64,
     pub slow_queries_total: AtomicU64,
-    pub query_planning_us: AtomicU64,
-    pub query_execution_us: AtomicU64,
+    pub query_planning_micros: AtomicU64,
+    pub query_execution_micros: AtomicU64,
     pub query_latency: AtomicHistogram,
 
     // ── Per-engine operations ──
     pub vector_searches: AtomicU64,
     pub vector_collections: AtomicU64,
     pub vector_vectors_stored: AtomicU64,
-    pub vector_avg_latency_us: AtomicU64,
+    pub vector_avg_latency_micros: AtomicU64,
 
     pub graph_traversals: AtomicU64,
     pub graph_nodes: AtomicU64,
@@ -79,9 +79,9 @@ pub struct SystemMetrics {
     pub columnar_compaction_queue: AtomicU64,
     pub columnar_compression_ratio: AtomicU64, // stored as ratio × 100
 
-    pub text_searches: AtomicU64,
-    pub text_indexes: AtomicU64,
-    pub text_avg_latency_us: AtomicU64,
+    pub fts_searches: AtomicU64,
+    pub fts_indexes: AtomicU64,
+    pub fts_avg_latency_micros: AtomicU64,
 
     // ── KV engine ──
     pub kv_gets_total: AtomicU64,
@@ -103,7 +103,7 @@ pub struct SystemMetrics {
     // ── Data Plane (aggregate across all cores) ──
     pub io_uring_submissions: AtomicU64,
     pub io_uring_completions: AtomicU64,
-    pub tpc_utilization_pct: AtomicU64,
+    pub tpc_utilization_ratio: AtomicU64,
     pub arena_memory_bytes: AtomicU64,
 
     // ── Contention ──
@@ -149,7 +149,7 @@ impl SystemMetrics {
     // ── WAL ──
 
     pub fn record_wal_fsync(&self, duration_us: u64) {
-        self.wal_fsync_latency_us
+        self.wal_fsync_latency_micros
             .store(duration_us, Ordering::Relaxed);
         self.wal_fsync_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -287,8 +287,9 @@ impl SystemMetrics {
     }
 
     pub fn record_query_timing(&self, planning_us: u64, execution_us: u64) {
-        self.query_planning_us.store(planning_us, Ordering::Relaxed);
-        self.query_execution_us
+        self.query_planning_micros
+            .store(planning_us, Ordering::Relaxed);
+        self.query_execution_micros
             .store(execution_us, Ordering::Relaxed);
     }
 
@@ -296,7 +297,9 @@ impl SystemMetrics {
         match engine {
             "vector" => self.queries_vector.fetch_add(1, Ordering::Relaxed),
             "graph" => self.queries_graph.fetch_add(1, Ordering::Relaxed),
-            "document" => self.queries_document.fetch_add(1, Ordering::Relaxed),
+            "document_schemaless" | "document_strict" => {
+                self.queries_document.fetch_add(1, Ordering::Relaxed)
+            }
             "columnar" => self.queries_columnar.fetch_add(1, Ordering::Relaxed),
             "kv" => self.queries_kv.fetch_add(1, Ordering::Relaxed),
             "fts" => self.queries_fts.fetch_add(1, Ordering::Relaxed),
@@ -308,7 +311,7 @@ impl SystemMetrics {
 
     pub fn record_vector_search(&self, latency_us: u64) {
         self.vector_searches.fetch_add(1, Ordering::Relaxed);
-        self.vector_avg_latency_us
+        self.vector_avg_latency_micros
             .store(latency_us, Ordering::Relaxed);
     }
 
@@ -360,14 +363,14 @@ impl SystemMetrics {
 
     // ── FTS engine ──
 
-    pub fn record_text_search(&self, latency_us: u64) {
-        self.text_searches.fetch_add(1, Ordering::Relaxed);
-        self.text_avg_latency_us
+    pub fn record_fts_search(&self, latency_us: u64) {
+        self.fts_searches.fetch_add(1, Ordering::Relaxed);
+        self.fts_avg_latency_micros
             .store(latency_us, Ordering::Relaxed);
     }
 
-    pub fn update_text_indexes(&self, count: u64) {
-        self.text_indexes.store(count, Ordering::Relaxed);
+    pub fn update_fts_indexes(&self, count: u64) {
+        self.fts_indexes.store(count, Ordering::Relaxed);
     }
 
     // ── KV engine ──
@@ -411,7 +414,7 @@ impl SystemMetrics {
     }
 
     pub fn update_tpc_utilization(&self, pct: u64) {
-        self.tpc_utilization_pct.store(pct, Ordering::Relaxed);
+        self.tpc_utilization_ratio.store(pct, Ordering::Relaxed);
     }
 
     pub fn update_arena_memory(&self, bytes: u64) {

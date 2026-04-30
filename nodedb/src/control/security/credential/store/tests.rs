@@ -8,9 +8,9 @@ use crate::types::TenantId;
 #[test]
 fn in_memory_create_and_verify() {
     let store = CredentialStore::new();
-    store.bootstrap_superuser("admin", "secret").unwrap();
-    assert!(store.verify_password("admin", "secret"));
-    assert!(!store.verify_password("admin", "wrong"));
+    store.bootstrap_superuser("nodedb", "secret").unwrap();
+    assert!(store.verify_password("nodedb", "secret"));
+    assert!(!store.verify_password("nodedb", "wrong"));
 }
 
 #[test]
@@ -23,7 +23,7 @@ fn persistent_create_and_reload() {
         store
             .create_user("alice", "pass123", TenantId::new(1), vec![Role::ReadWrite])
             .unwrap();
-        store.bootstrap_superuser("admin", "secret").unwrap();
+        store.bootstrap_superuser("nodedb", "secret").unwrap();
     }
 
     {
@@ -33,7 +33,7 @@ fn persistent_create_and_reload() {
         assert!(alice.roles.contains(&Role::ReadWrite));
         assert!(store.verify_password("alice", "pass123"));
 
-        let admin = store.get_user("admin").unwrap();
+        let admin = store.get_user("nodedb").unwrap();
         assert!(admin.is_superuser);
     }
 }

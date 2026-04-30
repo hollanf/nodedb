@@ -28,7 +28,7 @@ use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::{MetaOp, wire as plan_wire};
 use crate::control::server::pgwire::ddl::sync_dispatch;
 use crate::control::state::SharedState;
-use crate::types::{TenantDataSnapshot, TenantId};
+use crate::types::{TenantDataSnapshot, TenantId, TraceId};
 
 const NODE_RESTORE_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -599,7 +599,7 @@ async fn dispatch_remote(
         plan_bytes,
         tenant_id,
         deadline_remaining_ms: NODE_RESTORE_TIMEOUT.as_millis() as u64,
-        trace_id: 0,
+        trace_id: TraceId::generate().0,
         descriptor_versions: Vec::new(),
     });
     let resp = transport

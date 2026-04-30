@@ -18,7 +18,7 @@ use tracing::{debug, info};
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::TimeseriesOp;
 use crate::control::state::SharedState;
-use crate::types::{TenantId, VShardId};
+use crate::types::{TenantId, TraceId, VShardId};
 use nodedb_types::Lsn;
 
 /// Max WAL records to read per catch-up cycle. Bounds memory to
@@ -141,7 +141,11 @@ async fn run_catchup_cycle(shared: &SharedState) -> CatchupResult {
 
         // Dispatch to Data Plane — do NOT re-append to WAL (already there).
         match crate::control::server::dispatch_utils::dispatch_to_data_plane(
-            shared, tenant_id, vshard_id, plan, 0,
+            shared,
+            tenant_id,
+            vshard_id,
+            plan,
+            TraceId::ZERO,
         )
         .await
         {

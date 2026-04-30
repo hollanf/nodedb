@@ -11,7 +11,7 @@ use tracing::debug;
 use crate::bridge::envelope::{PhysicalPlan, Priority, Request, Status};
 use crate::bridge::physical_plan::MetaOp;
 use crate::control::state::SharedState;
-use crate::types::{ReadConsistency, TenantId, VShardId};
+use crate::types::{ReadConsistency, TenantId, TraceId, VShardId};
 
 /// Dispatch `MetaOp::UnregisterMaterializedView` to every core on
 /// this node. Fire-and-forget: any core that fails or times out
@@ -39,7 +39,7 @@ pub async fn delete_async(tenant_id: u32, name: String, shared: Arc<SharedState>
                 }),
                 deadline: std::time::Instant::now() + timeout,
                 priority: Priority::Background,
-                trace_id: 0,
+                trace_id: TraceId::generate(),
                 consistency: ReadConsistency::Eventual,
                 idempotency_key: None,
                 event_source: crate::event::EventSource::User,

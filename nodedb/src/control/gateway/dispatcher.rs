@@ -23,7 +23,7 @@ use crate::Error;
 use crate::bridge::physical_plan::wire as plan_wire;
 use crate::control::server::dispatch_utils::dispatch_to_data_plane;
 use crate::control::state::SharedState;
-use crate::types::{TenantId, VShardId};
+use crate::types::{TenantId, TraceId, VShardId};
 
 use super::route::{RouteDecision, TaskRoute};
 use super::version_set::GatewayVersionSet;
@@ -38,7 +38,7 @@ pub async fn dispatch_route(
     route: TaskRoute,
     shared: &Arc<SharedState>,
     tenant_id: TenantId,
-    trace_id: u64,
+    trace_id: TraceId,
     deadline_ms: u64,
     version_set: &GatewayVersionSet,
 ) -> Result<Vec<Vec<u8>>, Error> {
@@ -84,7 +84,7 @@ async fn dispatch_local(
     route: TaskRoute,
     shared: &Arc<SharedState>,
     tenant_id: TenantId,
-    trace_id: u64,
+    trace_id: TraceId,
 ) -> Result<Vec<Vec<u8>>, Error> {
     let vshard_id = VShardId::new(route.vshard_id);
     let resp = dispatch_to_data_plane(shared, tenant_id, vshard_id, route.plan, trace_id).await?;
@@ -99,7 +99,7 @@ struct RemoteDispatchArgs<'a> {
     node_id: u64,
     vshard_id: u64,
     tenant_id: TenantId,
-    trace_id: u64,
+    trace_id: TraceId,
     deadline_ms: u64,
     version_set: &'a GatewayVersionSet,
 }
@@ -140,7 +140,7 @@ async fn dispatch_remote(args: RemoteDispatchArgs<'_>) -> Result<Vec<Vec<u8>>, E
         plan_bytes,
         tenant_id: tenant_id.as_u32(),
         deadline_remaining_ms: deadline_ms,
-        trace_id,
+        trace_id: trace_id.0,
         descriptor_versions,
     });
 

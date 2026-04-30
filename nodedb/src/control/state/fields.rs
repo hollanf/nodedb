@@ -527,6 +527,10 @@ pub struct SharedState {
     /// Performance tuning configuration.
     pub tuning: TuningConfig,
 
+    /// Scheduler configuration (cron timezone offset, etc.).
+    /// Populated by `main.rs` from `config.scheduler`.
+    pub scheduler_config: crate::config::server::SchedulerConfig,
+
     /// The node's on-disk data directory (from `config.data_dir`).
     /// Needed by host-side appliers that write to filesystem — the
     /// L.4 CA-trust applier writes `tls/ca.d/<fp>.crt`, the audit

@@ -1,14 +1,40 @@
-//! Minimal cron expression parser.
+//! Minimal cron expression parser — Vixie POSIX 5-field dialect.
 //!
-//! Supports standard 5-field cron: `minute hour day_of_month month day_of_week`
+//! # Dialect
 //!
-//! Field syntax:
-//! - `*`       — all values
+//! Parses the classic 5-field cron expression used by Vixie cron and POSIX:
+//!
+//! ```text
+//! minute  hour  day-of-month  month  day-of-week
+//! 0-59    0-23  1-31          1-12   0-6
+//! ```
+//!
+//! Day-of-week uses 0 = Sunday, 1 = Monday, …, 6 = Saturday.
+//!
+//! # Field syntax
+//!
+//! - `*`       — all values in the field's range
 //! - `5`       — specific value
-//! - `1-5`     — range (inclusive)
-//! - `*/15`    — step (every 15)
-//! - `1,3,5`   — list
-//! - `1-5/2`   — range with step
+//! - `1-5`     — inclusive range
+//! - `*/15`    — step over the full range (every 15)
+//! - `1-10/2`  — step over a sub-range
+//! - `1,3,5`   — comma-separated list (each element may be a range or step)
+//!
+//! # What is NOT supported
+//!
+//! - **Quartz 6- or 7-field** extensions (seconds field, year field)
+//! - **`@reboot`**, **`@yearly`**, **`@monthly`**, or any `@` aliases
+//! - **`L`** (last day of month/week), **`W`** (nearest weekday), **`#`** (nth weekday)
+//! - **`?`** wildcard (Quartz day-of-month/day-of-week wildcard)
+//! - **`7`** as Sunday in the day-of-week field (use `0`)
+//!
+//! # UTC epoch arithmetic
+//!
+//! All internal epoch decomposition is UTC. There is no implicit local-time
+//! adjustment. To evaluate a cron expression against a local clock, compute
+//! the UTC offset yourself and call [`CronExpr::matches_epoch_with_offset`]
+//! or [`CronExpr::next_fire_after_with_offset`] with the signed offset in
+//! seconds.
 
 use std::collections::BTreeSet;
 
@@ -69,6 +95,48 @@ impl CronExpr {
         for i in 0..max_minutes {
             let candidate = start + i * 60;
             if self.matches_epoch(candidate) {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
+    /// Check if the cron fires at the given Unix epoch seconds, after applying
+    /// a fixed UTC offset.
+    ///
+    /// The offset is added to `epoch_secs` before decomposing into wall-clock
+    /// fields, effectively converting UTC time to the local time expressed by
+    /// the offset.
+    ///
+    /// # Example
+    ///
+    /// A schedule `0 12 * * *` with `utc_offset_seconds = 5 * 3600` (UTC+05:00)
+    /// fires when the local clock reads 12:00, which corresponds to 07:00 UTC.
+    /// `1_704_092_400` is 2024-01-01 07:00:00 UTC.
+    pub fn matches_epoch_with_offset(&self, epoch_secs: u64, utc_offset_seconds: i32) -> bool {
+        // Apply offset: shift the epoch into local time before field decomposition.
+        let local_epoch = if utc_offset_seconds >= 0 {
+            epoch_secs.saturating_add(utc_offset_seconds as u64)
+        } else {
+            epoch_secs.saturating_sub(utc_offset_seconds.unsigned_abs() as u64)
+        };
+        self.matches_epoch(local_epoch)
+    }
+
+    /// Find the next fire time after `after_epoch_secs`, with a UTC offset applied.
+    ///
+    /// Returns epoch seconds in UTC. The offset is applied only to evaluate the
+    /// cron expression; the returned value is always a UTC epoch.
+    pub fn next_fire_after_with_offset(
+        &self,
+        after_epoch_secs: u64,
+        utc_offset_seconds: i32,
+    ) -> Option<u64> {
+        let start = (after_epoch_secs / 60 + 1) * 60;
+        let max_minutes = 366 * 24 * 60;
+        for i in 0..max_minutes {
+            let candidate = start + i * 60;
+            if self.matches_epoch_with_offset(candidate, utc_offset_seconds) {
                 return Some(candidate);
             }
         }
@@ -252,5 +320,54 @@ mod tests {
     fn matches_epoch_works() {
         let e = CronExpr::parse("0 0 1 1 *").unwrap(); // Jan 1 at midnight
         assert!(e.matches_epoch(1_704_067_200)); // 2024-01-01 00:00 UTC
+    }
+
+    #[test]
+    fn matches_epoch_with_offset_zero_equals_matches_epoch() {
+        // matches_epoch_with_offset(t, 0) must equal matches_epoch(t) for all t.
+        let e = CronExpr::parse("*/15 9-17 * * 1-5").unwrap();
+        for epoch in [0u64, 60, 1_704_067_200, 1_704_092_400, 1_704_153_600] {
+            assert_eq!(
+                e.matches_epoch_with_offset(epoch, 0),
+                e.matches_epoch(epoch),
+                "mismatch at epoch {epoch}"
+            );
+        }
+    }
+
+    #[test]
+    fn matches_epoch_with_offset_positive_shift() {
+        // "0 12 * * *" fires at 12:00 local.
+        // With UTC+05:00 (19800 seconds), local 12:00 = UTC 07:00.
+        // 2024-01-01 07:00:00 UTC = 1704067200 (midnight) + 7*3600 = 1704092400
+        let e = CronExpr::parse("0 12 * * *").unwrap();
+        let utc_07_00 = 1_704_067_200u64 + 7 * 3600;
+        assert!(e.matches_epoch_with_offset(utc_07_00, 5 * 3600));
+        // Should NOT match at 12:00 UTC when offset is +05:00 (that would be 17:00 local).
+        let utc_12_00 = 1_704_067_200u64 + 12 * 3600;
+        assert!(!e.matches_epoch_with_offset(utc_12_00, 5 * 3600));
+    }
+
+    #[test]
+    fn matches_epoch_with_offset_negative_shift() {
+        // "0 12 * * *" fires at 12:00 local.
+        // With UTC-05:00 (-18000 seconds), local 12:00 = UTC 17:00.
+        let e = CronExpr::parse("0 12 * * *").unwrap();
+        let utc_17_00 = 1_704_067_200u64 + 17 * 3600;
+        assert!(e.matches_epoch_with_offset(utc_17_00, -5 * 3600));
+        // Should NOT match at 12:00 UTC (that's 07:00 local when offset is -05:00).
+        let utc_12_00 = 1_704_067_200u64 + 12 * 3600;
+        assert!(!e.matches_epoch_with_offset(utc_12_00, -5 * 3600));
+    }
+
+    #[test]
+    fn next_fire_after_with_offset_returns_utc() {
+        // "0 12 * * *" with +05:00 offset: next fire after 2024-01-01 00:00 UTC
+        // is 2024-01-01 07:00 UTC (= 12:00 local).
+        let e = CronExpr::parse("0 12 * * *").unwrap();
+        let after = 1_704_067_200u64; // 2024-01-01 00:00 UTC
+        let next = e.next_fire_after_with_offset(after, 5 * 3600).unwrap();
+        // Expected: 07:00 UTC
+        assert_eq!(next, after + 7 * 3600);
     }
 }

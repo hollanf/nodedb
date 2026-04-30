@@ -111,7 +111,7 @@ impl TraceExporter {
     pub fn emit(
         self: &Arc<Self>,
         span_name: &'static str,
-        trace_id: u64,
+        trace_id: nodedb_types::TraceId,
         start: SystemTime,
         end: SystemTime,
         tenant_id: u32,
@@ -176,7 +176,7 @@ mod tests {
         let now = SystemTime::now();
         // emit on disabled exporter must not panic — the internal
         // spawn path is guarded behind the is_enabled check.
-        exp.emit("noop", 0xDEAD, now, now, 0, 0, true);
+        exp.emit("noop", nodedb_types::TraceId::ZERO, now, now, 0, 0, true);
     }
 
     #[test]

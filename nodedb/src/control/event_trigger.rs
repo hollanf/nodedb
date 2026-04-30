@@ -11,6 +11,7 @@ use tracing::{debug, info, warn};
 use crate::control::change_stream::{ChangeEvent, ChangeOperation};
 use crate::control::planner::context::QueryContext;
 use crate::control::state::SharedState;
+use crate::types::TraceId;
 
 /// Spawn the event trigger processor as a background tokio task
 /// registered with the shutdown loop registry. The processor
@@ -134,7 +135,7 @@ async fn execute_then_action(
                     task.tenant_id,
                     task.vshard_id,
                     task.plan,
-                    0,
+                    TraceId::ZERO,
                 )
                 .await
                 {

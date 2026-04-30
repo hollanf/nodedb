@@ -15,7 +15,7 @@ use nodedb_types::sync::wire::array::{ArrayRejectMsg, ArrayRejectReason};
 use tracing::{error, warn};
 
 use crate::control::wal_replication::ReplicatedEntry;
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 use super::inbound::{InboundOutcome, OriginArrayInbound};
 use super::reject::build_reject;
@@ -138,7 +138,7 @@ impl OriginArrayInbound {
                 self.tenant_id(),
                 vshard,
                 data_plane_op,
-                0,
+                TraceId::ZERO,
                 crate::event::EventSource::CrdtSync,
             )
             .await;

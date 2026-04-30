@@ -17,6 +17,7 @@ use super::proto::{
     SpanKind, SpanStatus, StatusCode as OtelStatusCode,
 };
 use crate::control::metrics::SystemMetrics;
+use nodedb_types::TraceId;
 
 /// Configuration for the OTLP exporter.
 #[derive(Debug, Clone)]
@@ -129,7 +130,7 @@ fn build_metrics_request(metrics: &SystemMetrics, node_id: u64) -> ExportMetrics
         ),
         gauge_metric(
             "nodedb_wal_fsync_latency_us",
-            metrics.wal_fsync_latency_us.load(Ordering::Relaxed) as f64,
+            metrics.wal_fsync_latency_micros.load(Ordering::Relaxed) as f64,
             now_ns,
         ),
         gauge_metric(
@@ -192,7 +193,7 @@ fn build_metrics_request(metrics: &SystemMetrics, node_id: u64) -> ExportMetrics
 /// Parameters for exporting a single trace span.
 pub struct SpanExport<'a> {
     pub endpoint: &'a str,
-    pub trace_id: u64,
+    pub trace_id: TraceId,
     pub span_name: &'a str,
     pub start_ns: u64,
     pub end_ns: u64,
@@ -224,11 +225,10 @@ pub async fn export_span(
         return;
     }
 
-    let trace_bytes = trace_id.to_be_bytes().to_vec();
     let span_id_bytes = rand_span_id();
 
     let span = Span {
-        trace_id: [vec![0u8; 8], trace_bytes].concat(),
+        trace_id: trace_id.0.to_vec(),
         span_id: span_id_bytes.to_vec(),
         name: (*span_name).into(),
         kind: SpanKind::Server as i32,

@@ -37,11 +37,11 @@ impl LocalPlanExecutor {
 
 impl PlanExecutor for LocalPlanExecutor {
     async fn execute_plan(&self, req: ExecuteRequest) -> ExecuteResponse {
-        let trace_id = req.trace_id;
+        let trace_id = nodedb_types::TraceId(req.trace_id);
         let tenant_id = req.tenant_id;
         let exporter = Arc::clone(&self.state.trace_exporter);
         let start = SystemTime::now();
-        let span = info_span!("executor.execute_plan", trace_id, tenant_id);
+        let span = info_span!("executor.execute_plan", trace_id = %trace_id, tenant_id);
         let resp = self.execute_plan_inner(req).instrument(span).await;
         // Emit one OTLP executor span per leaseholder so the gateway's
         // upstream span joins the N leaseholder spans into a single
@@ -145,7 +145,7 @@ impl LocalPlanExecutor {
             plan,
             deadline: Instant::now() + deadline,
             priority: Priority::Normal,
-            trace_id: req.trace_id,
+            trace_id: nodedb_types::TraceId(req.trace_id),
             consistency: ReadConsistency::Strong,
             idempotency_key: None,
             event_source: crate::event::EventSource::User,
