@@ -112,6 +112,7 @@ impl MultiVector {
 
 /// Aggregation mode for multi-vector scoring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum MultiVectorScoreMode {
     /// MaxSim: max similarity across all document vectors (ColBERT scoring).
     MaxSim,
@@ -147,6 +148,7 @@ impl MultiVectorScoreMode {
 
 /// Errors from multi-vector construction.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum MultiVectorError {
     Empty,
     ZeroDimension,

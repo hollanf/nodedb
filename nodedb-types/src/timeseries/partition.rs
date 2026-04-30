@@ -9,6 +9,7 @@ use super::ingest::{LogEntry, TimeRange};
 
 /// Error parsing a partition interval string (e.g., "1h", "3d").
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum IntervalParseError {
     #[error("invalid interval format: '{input}' — expected format like '1h', '3d', '1w'")]
     InvalidFormat { input: String },
@@ -30,6 +31,7 @@ pub enum IntervalParseError {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToMessagePack, FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum PartitionState {
     /// Actively receiving writes.
     Active,
@@ -94,6 +96,7 @@ impl PartitionMeta {
 
 /// Partition interval — how wide each time partition is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PartitionInterval {
     /// Duration in milliseconds (e.g., 3600000 for 1h, 86400000 for 1d).
     Duration(u64),
@@ -214,6 +217,7 @@ pub struct FlushedSeries {
 
 /// Type-specific flushed data.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum FlushedKind {
     Metric {
         gorilla_block: Vec<u8>,
@@ -238,6 +242,7 @@ pub struct SegmentRef {
 
 /// Whether a segment contains metrics or logs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SegmentKind {
     Metric,
     Log,

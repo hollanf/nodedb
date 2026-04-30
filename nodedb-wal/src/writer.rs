@@ -265,7 +265,7 @@ impl WalWriter {
     pub fn append(
         &mut self,
         record_type: u32,
-        tenant_id: u32,
+        tenant_id: u64,
         vshard_id: u32,
         payload: &[u8],
     ) -> Result<u64> {

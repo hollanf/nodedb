@@ -16,7 +16,7 @@ impl CoreLoop {
     #[allow(clippy::too_many_lines)]
     pub(super) fn execute_tx_sub_plan(
         &mut self,
-        tid: u32,
+        tid: u64,
         plan: &PhysicalPlan,
         undo_log: &mut Vec<UndoEntry>,
         crdt_deltas: &mut Vec<(Vec<u8>, u64)>,
@@ -295,7 +295,7 @@ impl CoreLoop {
     fn tx_point_put(
         &mut self,
         dummy_task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         document_id: &str,
         surrogate: nodedb_types::Surrogate,
@@ -457,7 +457,7 @@ impl CoreLoop {
     fn tx_point_delete(
         &mut self,
         dummy_task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         document_id: &str,
         surrogate: nodedb_types::Surrogate,

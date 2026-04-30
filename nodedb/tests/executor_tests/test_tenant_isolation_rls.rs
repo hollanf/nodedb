@@ -5,8 +5,8 @@
 
 use nodedb::control::security::rls::{PolicyType, RlsPolicy, RlsPolicyStore};
 
-const TENANT_A: u32 = 10;
-const TENANT_B: u32 = 20;
+const TENANT_A: u64 = 10;
+const TENANT_B: u64 = 20;
 
 #[test]
 fn rls_policies_isolated_between_tenants() {

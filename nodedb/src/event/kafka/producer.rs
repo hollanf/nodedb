@@ -39,7 +39,7 @@ use crate::event::cdc::consume::{ConsumeParams, consume_local};
 #[cfg(feature = "kafka")]
 pub fn spawn_kafka_task(
     stream_name: String,
-    tenant_id: u32,
+    tenant_id: u64,
     config: KafkaDeliveryConfig,
     shared_state: Arc<SharedState>,
     mut shutdown: watch::Receiver<bool>,
@@ -219,7 +219,7 @@ fn serialize_event(
 #[cfg(not(feature = "kafka"))]
 pub fn spawn_kafka_task(
     stream_name: String,
-    _tenant_id: u32,
+    _tenant_id: u64,
     _config: super::config::KafkaDeliveryConfig,
     _shared_state: std::sync::Arc<crate::control::state::SharedState>,
     _shutdown: tokio::sync::watch::Receiver<bool>,

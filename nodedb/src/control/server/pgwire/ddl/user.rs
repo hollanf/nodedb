@@ -17,7 +17,7 @@ pub fn create_user(
     username: &str,
     password: &str,
     role_name: Option<&str>,
-    tenant_id_override: Option<u32>,
+    tenant_id_override: Option<u64>,
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "create users")?;
 
@@ -415,7 +415,7 @@ pub fn drop_user(
         // a bare `PutOwner` would be silently overwritten the
         // next time anyone re-proposed the parent (see
         // `pgwire/ddl/ownership.rs` for the same pattern).
-        let admin_name = format!("{}_admin", user_tenant.as_u32());
+        let admin_name = format!("{}_admin", user_tenant.as_u64());
         let grants = state.permissions.grants_for(&format!("user:{username}"));
         if let Some(catalog) = state.credentials.catalog() {
             for grant in &grants {
@@ -430,7 +430,7 @@ pub fn drop_user(
                 {
                     continue;
                 }
-                let mut stored = match catalog.get_collection(user_tenant.as_u32(), owner_obj) {
+                let mut stored = match catalog.get_collection(user_tenant.as_u64(), owner_obj) {
                     Ok(Some(c)) => c,
                     _ => continue,
                 };

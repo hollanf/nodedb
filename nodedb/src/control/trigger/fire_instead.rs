@@ -44,7 +44,7 @@ pub async fn fire_instead_of_insert(
     let triggers =
         state
             .trigger_registry
-            .get_matching(tenant_id.as_u32(), collection, DmlEvent::Insert);
+            .get_matching(tenant_id.as_u64(), collection, DmlEvent::Insert);
 
     let instead_triggers: Vec<_> = triggers
         .into_iter()
@@ -87,7 +87,7 @@ pub async fn fire_instead_of_update(
     let triggers =
         state
             .trigger_registry
-            .get_matching(tenant_id.as_u32(), collection, DmlEvent::Update);
+            .get_matching(tenant_id.as_u64(), collection, DmlEvent::Update);
 
     let instead_triggers: Vec<_> = triggers
         .into_iter()
@@ -128,7 +128,7 @@ pub async fn fire_instead_of_delete(
     let triggers =
         state
             .trigger_registry
-            .get_matching(tenant_id.as_u32(), collection, DmlEvent::Delete);
+            .get_matching(tenant_id.as_u64(), collection, DmlEvent::Delete);
 
     let instead_triggers: Vec<_> = triggers
         .into_iter()

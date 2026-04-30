@@ -28,7 +28,7 @@ impl EdgeStore {
         let rev = versioned_edge_key(edge.collection, edge.dst, edge.label, edge.src, system_from)?;
         let payload =
             EdgeValuePayload::new(valid_from_ms, valid_until_ms, properties.to_vec()).encode()?;
-        let t = edge.tid.as_u32();
+        let t = edge.tid.as_u64();
 
         let write_txn = self
             .db
@@ -70,7 +70,7 @@ impl EdgeStore {
         let prefix = edge_version_prefix(edge.collection, edge.src, edge.label, edge.dst);
         let upper =
             versioned_edge_key(edge.collection, edge.src, edge.label, edge.dst, system_from)?;
-        let t = edge.tid.as_u32();
+        let t = edge.tid.as_u64();
 
         let prior = {
             let read_txn = self
@@ -139,7 +139,7 @@ impl EdgeStore {
         );
         let fwd = versioned_edge_key(edge.collection, edge.src, edge.label, edge.dst, system_from)?;
         let rev = versioned_edge_key(edge.collection, edge.dst, edge.label, edge.src, system_from)?;
-        let t = edge.tid.as_u32();
+        let t = edge.tid.as_u64();
 
         let write_txn = self
             .db

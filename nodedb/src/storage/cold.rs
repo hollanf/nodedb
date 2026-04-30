@@ -141,7 +141,7 @@ impl ColdStorage {
     pub async fn encode_and_upload(
         &self,
         collection: &str,
-        tenant_id: u32,
+        tenant_id: u64,
         rows: &[(String, serde_json::Value)],
         min_lsn: u64,
         max_lsn: u64,

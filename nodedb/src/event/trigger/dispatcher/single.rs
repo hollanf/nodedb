@@ -144,7 +144,7 @@ pub async fn dispatch_triggers(
                         "AFTER STATEMENT trigger failed, enqueuing for retry"
                     );
                     retry_queue.enqueue(RetryEntry {
-                        tenant_id: event.tenant_id.as_u32(),
+                        tenant_id: event.tenant_id.as_u64(),
                         collection: event.collection.to_string(),
                         row_id: String::new(),
                         operation: op_str.clone(),
@@ -173,7 +173,7 @@ pub async fn dispatch_triggers(
             "trigger execution failed, enqueuing for retry"
         );
         retry_queue.enqueue(RetryEntry {
-            tenant_id: event.tenant_id.as_u32(),
+            tenant_id: event.tenant_id.as_u64(),
             collection: event.collection.to_string(),
             row_id: event.row_id.as_str().to_string(),
             operation: event.op.to_string(),

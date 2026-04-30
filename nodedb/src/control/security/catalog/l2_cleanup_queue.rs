@@ -21,7 +21,7 @@ use super::types::{L2_CLEANUP_QUEUE, SystemCatalog, catalog_err};
 #[derive(zerompk::ToMessagePack, zerompk::FromMessagePack, Debug, Clone)]
 #[msgpack(map)]
 pub struct StoredL2CleanupEntry {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub name: String,
     /// WAL LSN at which the hard-delete committed. Used for ordering +
     /// operator diagnostics.
@@ -75,7 +75,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("open l2_cleanup_queue", e))?;
         let mut out = Vec::new();
         for item in table
-            .range::<(u32, &str)>(..)
+            .range::<(u64, &str)>(..)
             .map_err(|e| catalog_err("range l2_cleanup", e))?
         {
             let (_, v) = item.map_err(|e| catalog_err("read l2_cleanup", e))?;
@@ -90,7 +90,7 @@ impl SystemCatalog {
     /// text. No-op if the entry has already been removed.
     pub fn record_l2_cleanup_attempt(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
         last_error: &str,
     ) -> crate::Result<()> {
@@ -122,7 +122,7 @@ impl SystemCatalog {
     }
 
     /// Remove a successfully-drained entry. Idempotent.
-    pub fn remove_l2_cleanup(&self, tenant_id: u32, name: &str) -> crate::Result<()> {
+    pub fn remove_l2_cleanup(&self, tenant_id: u64, name: &str) -> crate::Result<()> {
         let txn = self
             .db
             .begin_write()
@@ -151,7 +151,7 @@ mod tests {
         (cat, tmp)
     }
 
-    fn entry(tenant: u32, name: &str, lsn: u64, bytes: u64) -> StoredL2CleanupEntry {
+    fn entry(tenant: u64, name: &str, lsn: u64, bytes: u64) -> StoredL2CleanupEntry {
         StoredL2CleanupEntry {
             tenant_id: tenant,
             name: name.to_string(),

@@ -46,7 +46,7 @@ impl NodeDbPgHandler {
         let Some(catalog) = self.state.credentials.catalog() else {
             return Ok(());
         };
-        let coll = match catalog.get_collection(tenant_id.as_u32(), &coll_name) {
+        let coll = match catalog.get_collection(tenant_id.as_u64(), &coll_name) {
             Ok(Some(c)) => c,
             _ => return Ok(()),
         };

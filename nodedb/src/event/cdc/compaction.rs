@@ -46,7 +46,7 @@ pub fn spawn_compaction_task(
             let stats = router.buffer_stats();
 
             // Group by tenant_id.
-            let mut by_tenant: std::collections::HashMap<u32, Vec<_>> =
+            let mut by_tenant: std::collections::HashMap<u64, Vec<_>> =
                 std::collections::HashMap::new();
             for stat in stats {
                 by_tenant.entry(stat.tenant_id).or_default().push(stat);

@@ -105,7 +105,7 @@ pub fn explain_permission(
     // 5. RLS policies.
     let rls_policies = state
         .rls
-        .read_policies(identity.tenant_id.as_u32(), collection);
+        .read_policies(identity.tenant_id.as_u64(), collection);
     steps.push(ExplainStep {
         check: "rls_policies".into(),
         result: format!("{} policies", rls_policies.len()),

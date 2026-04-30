@@ -242,7 +242,7 @@ async fn consumer_loop(config: ConsumerConfig, metrics: Arc<CoreMetrics>) {
                         );
                         let matching_streams = shared_state
                             .stream_registry
-                            .find_matching(event.tenant_id.as_u32(), &event.collection);
+                            .find_matching(event.tenant_id.as_u64(), &event.collection);
                         for stream_def in &matching_streams {
                             super::streaming_mv::processor::process_write_event_for_mvs(
                                 event,

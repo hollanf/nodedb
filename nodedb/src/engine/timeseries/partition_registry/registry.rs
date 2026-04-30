@@ -96,6 +96,11 @@ impl PartitionRegistry {
                 let start = (timestamp_ms / ms) * ms;
                 (start, start + ms)
             }
+            _ => {
+                let ms = 86_400_000i64;
+                let start = (timestamp_ms / ms) * ms;
+                (start, start + ms)
+            }
         }
     }
 

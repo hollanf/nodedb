@@ -25,7 +25,7 @@ pub struct PollParams {
     pub partition: Option<u32>,
     /// Detected and rejected — callers must not supply `tenant_id` as a
     /// query parameter. Tenant is always sourced from the bearer token.
-    pub tenant_id: Option<u32>,
+    pub tenant_id: Option<u64>,
 }
 
 /// Response body.
@@ -69,7 +69,7 @@ pub async fn poll_stream(
         }
     };
 
-    let tenant_id = identity.tenant_id().as_u32();
+    let tenant_id = identity.tenant_id().as_u64();
     let limit = params.limit.unwrap_or(100).min(10_000);
     let stream_name = stream_name.to_lowercase();
 

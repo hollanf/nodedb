@@ -248,6 +248,15 @@ async fn main() -> anyhow::Result<()> {
     // the persisted set; it is dropped before `SharedState::open` below
     // acquires its own long-lived handle — redb's single-writer lock
     // is released on drop.
+    // Warn that the redb catalog is not page-encrypted (redb v2 has no
+    // page-encryption hook). Use a dm-crypt/LUKS volume for at-rest
+    // catalog encryption if that threat model is relevant.
+    tracing::warn!(
+        catalog = %config.catalog_path().display(),
+        "redb catalog stored unencrypted; use a dm-crypt/LUKS volume \
+         for at-rest catalog encryption"
+    );
+
     let replay_tombstones: nodedb_wal::TombstoneSet = {
         let catalog_path = config.catalog_path();
         let mut set = nodedb_wal::extract_tombstones(&wal_records);

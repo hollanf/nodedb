@@ -84,10 +84,10 @@ impl Gateway {
         let span = info_span!(
             "gateway.execute",
             trace_id = %ctx.trace_id,
-            tenant_id = ctx.tenant_id.as_u32()
+            tenant_id = ctx.tenant_id.as_u64()
         );
         let start = SystemTime::now();
-        let version_set = self.collect_version_set(&plan, ctx.tenant_id.as_u32());
+        let version_set = self.collect_version_set(&plan, ctx.tenant_id.as_u64());
         let result = self
             .execute_with_version_set(ctx, plan, version_set)
             .instrument(span)
@@ -101,7 +101,7 @@ impl Gateway {
             ctx.trace_id,
             start,
             SystemTime::now(),
-            ctx.tenant_id.as_u32(),
+            ctx.tenant_id.as_u64(),
             0,
             result.is_ok(),
         );
@@ -114,7 +114,7 @@ impl Gateway {
         // backup's watermark always dominates the tenant_wm it
         // itself advanced.
         if result.is_ok() {
-            self.shared.advance_tenant_write_hlc(ctx.tenant_id.as_u32());
+            self.shared.advance_tenant_write_hlc(ctx.tenant_id.as_u64());
         }
 
         result
@@ -156,7 +156,7 @@ impl Gateway {
         if let Some(stored_vs) = self.plan_cache.lookup_version_set(&sql_key) {
             // Verify the stored version set is still current by cross-checking
             // each collection's current descriptor version.
-            let current_vs = self.verify_version_set(&stored_vs, ctx.tenant_id.as_u32());
+            let current_vs = self.verify_version_set(&stored_vs, ctx.tenant_id.as_u64());
             if current_vs == stored_vs {
                 // Version set is still current — try the full plan cache.
                 let full_key = PlanCacheKey {
@@ -180,7 +180,7 @@ impl Gateway {
 
         // Compute the actual version set from the plan (contains the real
         // collection names and their current descriptor versions).
-        let actual_vs = self.collect_version_set(&plan, ctx.tenant_id.as_u32());
+        let actual_vs = self.collect_version_set(&plan, ctx.tenant_id.as_u64());
         let actual_key = PlanCacheKey {
             sql_text_hash: sql_hash,
             placeholder_types_hash: ph_hash,
@@ -331,7 +331,7 @@ impl Gateway {
     /// correct descriptor version. Using tenant 0 here would return version 0
     /// for every collection stored under any other tenant, causing spurious
     /// `DescriptorMismatch` rejections at the leader.
-    fn collect_version_set(&self, plan: &PhysicalPlan, tenant_id: u32) -> GatewayVersionSet {
+    fn collect_version_set(&self, plan: &PhysicalPlan, tenant_id: u64) -> GatewayVersionSet {
         let catalog_ref = self.shared.credentials.catalog();
         let catalog = catalog_ref.as_ref();
 
@@ -353,7 +353,7 @@ impl Gateway {
     fn verify_version_set(
         &self,
         stored_vs: &GatewayVersionSet,
-        tenant_id: u32,
+        tenant_id: u64,
     ) -> GatewayVersionSet {
         let catalog_ref = self.shared.credentials.catalog();
         let catalog = catalog_ref.as_ref();

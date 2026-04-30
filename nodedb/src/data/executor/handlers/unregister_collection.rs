@@ -41,7 +41,7 @@ use crate::types::TenantId;
 /// transient fs-level errors (momentary lock, inflight fsync race).
 const L1_RECLAIM_MAX_ATTEMPTS: u32 = 3;
 
-fn retry_reclaim<T, E, F>(op_name: &str, tenant_id: u32, collection: &str, mut op: F) -> Option<T>
+fn retry_reclaim<T, E, F>(op_name: &str, tenant_id: u64, collection: &str, mut op: F) -> Option<T>
 where
     F: FnMut() -> Result<T, E>,
     E: std::fmt::Display,
@@ -83,7 +83,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_unregister_collection(
         &mut self,
         task: &ExecutionTask,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         purge_lsn: u64,
     ) -> Response {

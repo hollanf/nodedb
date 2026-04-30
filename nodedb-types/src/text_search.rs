@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// Boolean query mode for full-text search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum QueryMode {
     /// Any query term can match (union). Most permissive — best recall.
     #[default]

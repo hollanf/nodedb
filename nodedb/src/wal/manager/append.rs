@@ -16,7 +16,7 @@ impl WalManager {
         let lsn = wal
             .append(
                 record_type as u32,
-                tenant_id.as_u32(),
+                tenant_id.as_u64(),
                 vshard_id.as_u32(),
                 payload,
             )

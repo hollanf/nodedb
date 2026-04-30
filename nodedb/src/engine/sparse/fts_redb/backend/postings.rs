@@ -9,7 +9,7 @@ use crate::engine::sparse::fts_redb::tables::POSTINGS;
 
 pub(super) fn read(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     term: &str,
 ) -> crate::Result<Vec<Posting>> {
@@ -33,7 +33,7 @@ pub(super) fn read(
 
 pub(super) fn write(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     term: &str,
     postings: &[Posting],
@@ -62,7 +62,7 @@ pub(super) fn write(
 
 pub(super) fn remove(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     term: &str,
 ) -> crate::Result<()> {
@@ -82,7 +82,7 @@ pub(super) fn remove(
 
 pub(super) fn collection_terms(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
 ) -> crate::Result<Vec<String>> {
     let read_txn = backend

@@ -30,7 +30,7 @@ pub async fn select_from_stream(
     identity: &AuthenticatedIdentity,
     parts: &[&str],
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Parse: SELECT * FROM STREAM <stream> CONSUMER GROUP <group> [PARTITION <p>] [LIMIT <n>]
     // parts: [SELECT, *, FROM, STREAM, <stream>, CONSUMER, GROUP, <group>, ...]

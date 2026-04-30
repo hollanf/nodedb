@@ -27,7 +27,7 @@ impl SystemCatalog {
     }
 
     /// Delete a retention policy. Returns true if it existed.
-    pub fn delete_retention_policy(&self, tenant_id: u32, name: &str) -> crate::Result<bool> {
+    pub fn delete_retention_policy(&self, tenant_id: u64, name: &str) -> crate::Result<bool> {
         let key = retention_policy_key(tenant_id, name);
         let write_txn = self
             .db
@@ -70,7 +70,7 @@ impl SystemCatalog {
     }
 }
 
-fn retention_policy_key(tenant_id: u32, name: &str) -> String {
+fn retention_policy_key(tenant_id: u64, name: &str) -> String {
     format!("{tenant_id}:{name}")
 }
 

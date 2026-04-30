@@ -16,7 +16,7 @@ use super::ReclaimStats;
 /// Returns stats; idempotent (missing files count as 0).
 pub fn reclaim_vector_checkpoints(
     data_dir: &Path,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
 ) -> ReclaimStats {
     let ckpt_dir = data_dir.join("vector-ckpt");

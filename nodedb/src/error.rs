@@ -222,7 +222,7 @@ pub enum Error {
          {dependent_count} dependent object(s) exist; use CASCADE to drop them atomically"
     )]
     DependentObjectsExist {
-        tenant_id: u32,
+        tenant_id: u64,
         root_kind: &'static str,
         root_name: String,
         dependent_count: usize,
@@ -237,7 +237,7 @@ pub enum Error {
          dependents of '{root}' for tenant {tenant_id}"
     )]
     CascadeCycle {
-        tenant_id: u32,
+        tenant_id: u64,
         root: String,
         depth: usize,
     },

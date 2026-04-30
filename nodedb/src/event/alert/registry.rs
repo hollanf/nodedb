@@ -11,7 +11,7 @@ use super::types::AlertDef;
 ///
 /// Keyed by `(tenant_id, alert_name)`. Lives on the Control Plane (`Send + Sync`).
 pub struct AlertRegistry {
-    by_name: RwLock<HashMap<(u32, String), AlertDef>>,
+    by_name: RwLock<HashMap<(u64, String), AlertDef>>,
 }
 
 impl AlertRegistry {
@@ -21,11 +21,11 @@ impl AlertRegistry {
         }
     }
 
-    fn read_map(&self) -> std::sync::RwLockReadGuard<'_, HashMap<(u32, String), AlertDef>> {
+    fn read_map(&self) -> std::sync::RwLockReadGuard<'_, HashMap<(u64, String), AlertDef>> {
         self.by_name.read().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn write_map(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<(u32, String), AlertDef>> {
+    fn write_map(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<(u64, String), AlertDef>> {
         self.by_name.write().unwrap_or_else(|p| p.into_inner())
     }
 
@@ -34,13 +34,13 @@ impl AlertRegistry {
         self.write_map().insert(key, def);
     }
 
-    pub fn unregister(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn unregister(&self, tenant_id: u64, name: &str) -> bool {
         self.write_map()
             .remove(&(tenant_id, name.to_string()))
             .is_some()
     }
 
-    pub fn get(&self, tenant_id: u32, name: &str) -> Option<AlertDef> {
+    pub fn get(&self, tenant_id: u64, name: &str) -> Option<AlertDef> {
         self.read_map().get(&(tenant_id, name.to_string())).cloned()
     }
 
@@ -79,7 +79,7 @@ impl AlertRegistry {
     }
 
     /// List all alerts for a tenant.
-    pub fn list_for_tenant(&self, tenant_id: u32) -> Vec<AlertDef> {
+    pub fn list_for_tenant(&self, tenant_id: u64) -> Vec<AlertDef> {
         self.read_map()
             .values()
             .filter(|a| a.tenant_id == tenant_id)
@@ -122,7 +122,7 @@ mod tests {
     use super::*;
     use crate::event::alert::types::{AlertCondition, CompareOp};
 
-    fn make_alert(tenant_id: u32, name: &str) -> AlertDef {
+    fn make_alert(tenant_id: u64, name: &str) -> AlertDef {
         AlertDef {
             tenant_id,
             name: name.into(),

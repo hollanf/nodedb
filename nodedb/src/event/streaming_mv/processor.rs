@@ -20,7 +20,7 @@ use super::types::AggFunction;
 /// Converts the WriteEvent's raw payload to JSON for field extraction,
 /// then updates each matching MV's aggregate state.
 pub fn process_write_event_for_mvs(event: &WriteEvent, registry: &MvRegistry, stream_name: &str) {
-    let mv_states = registry.find_by_source(event.tenant_id.as_u32(), stream_name);
+    let mv_states = registry.find_by_source(event.tenant_id.as_u64(), stream_name);
     if mv_states.is_empty() {
         return;
     }
@@ -43,7 +43,7 @@ pub fn process_write_event_for_mvs(event: &WriteEvent, registry: &MvRegistry, st
         row_id: event.row_id.as_str().to_string(),
         event_time: 0,
         lsn: event.lsn.as_u64(),
-        tenant_id: event.tenant_id.as_u32(),
+        tenant_id: event.tenant_id.as_u64(),
         new_value,
         old_value: None,
         schema_version: 0,

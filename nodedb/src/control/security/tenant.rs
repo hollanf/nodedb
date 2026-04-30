@@ -271,7 +271,7 @@ impl TenantIsolation {
             None => (0, 0, 0, 0),
         };
         crate::control::metrics::tenant::TenantQuotaMetrics {
-            tenant_id: tenant_id.as_u32(),
+            tenant_id: tenant_id.as_u64(),
             memory_bytes_used: mem_used,
             memory_bytes_limit: quota.max_memory_bytes,
             storage_bytes_used: stor_used,
@@ -299,7 +299,7 @@ impl TenantIsolation {
 mod tests {
     use super::*;
 
-    fn t(id: u32) -> TenantId {
+    fn t(id: u64) -> TenantId {
         TenantId::new(id)
     }
 

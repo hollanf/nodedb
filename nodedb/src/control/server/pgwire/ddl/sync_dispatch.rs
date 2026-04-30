@@ -102,7 +102,7 @@ pub async fn dispatch_async_with_source(
     // Reached only after the `resp.status != Ok` early-return above, so
     // this point is the "success" branch per the advance_tenant_write_hlc
     // contract.
-    state.advance_tenant_write_hlc(tenant_id.as_u32());
+    state.advance_tenant_write_hlc(tenant_id.as_u64());
 
     Ok(resp.payload.to_vec())
 }

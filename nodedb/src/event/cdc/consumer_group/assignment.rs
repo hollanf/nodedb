@@ -12,7 +12,7 @@ use std::sync::RwLock;
 /// Tracks active consumers and their partition assignments per group.
 pub struct ConsumerAssignments {
     /// (tenant_id, stream_name, group_name) → assignment state.
-    groups: RwLock<HashMap<(u32, String, String), GroupAssignment>>,
+    groups: RwLock<HashMap<(u64, String, String), GroupAssignment>>,
 }
 
 /// Per-group assignment state.
@@ -69,7 +69,7 @@ impl ConsumerAssignments {
     }
 
     /// Register a consumer joining a group. Triggers rebalance.
-    pub fn join(&self, tenant_id: u32, stream: &str, group: &str, consumer_id: &str) {
+    pub fn join(&self, tenant_id: u64, stream: &str, group: &str, consumer_id: &str) {
         let key = (tenant_id, stream.to_string(), group.to_string());
         let mut groups = self.groups.write().unwrap_or_else(|p| p.into_inner());
         let state = groups.entry(key).or_insert_with(GroupAssignment::new);
@@ -86,7 +86,7 @@ impl ConsumerAssignments {
     }
 
     /// Deregister a consumer leaving a group. Triggers rebalance.
-    pub fn leave(&self, tenant_id: u32, stream: &str, group: &str, consumer_id: &str) {
+    pub fn leave(&self, tenant_id: u64, stream: &str, group: &str, consumer_id: &str) {
         let key = (tenant_id, stream.to_string(), group.to_string());
         let mut groups = self.groups.write().unwrap_or_else(|p| p.into_inner());
         if let Some(state) = groups.get_mut(&key) {
@@ -104,7 +104,7 @@ impl ConsumerAssignments {
     }
 
     /// Register a partition as known (called when events with new partition IDs are seen).
-    pub fn register_partition(&self, tenant_id: u32, stream: &str, group: &str, partition_id: u32) {
+    pub fn register_partition(&self, tenant_id: u64, stream: &str, group: &str, partition_id: u32) {
         let key = (tenant_id, stream.to_string(), group.to_string());
         let mut groups = self.groups.write().unwrap_or_else(|p| p.into_inner());
         if let Some(state) = groups.get_mut(&key)
@@ -118,7 +118,7 @@ impl ConsumerAssignments {
     /// Returns None if the consumer is not registered (meaning: all partitions).
     pub fn assigned_partitions(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         stream: &str,
         group: &str,
         consumer_id: &str,
@@ -131,7 +131,7 @@ impl ConsumerAssignments {
     }
 
     /// Number of active consumers in a group.
-    pub fn consumer_count(&self, tenant_id: u32, stream: &str, group: &str) -> usize {
+    pub fn consumer_count(&self, tenant_id: u64, stream: &str, group: &str) -> usize {
         let key = (tenant_id, stream.to_string(), group.to_string());
         let groups = self.groups.read().unwrap_or_else(|p| p.into_inner());
         groups.get(&key).map(|s| s.consumers.len()).unwrap_or(0)

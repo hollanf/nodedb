@@ -33,7 +33,7 @@ impl SparseEngine {
     pub fn versioned_index_put_in_txn(
         &self,
         txn: &redb::WriteTransaction,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         field: &str,
         value: &str,
@@ -62,7 +62,7 @@ impl SparseEngine {
     pub fn versioned_index_tombstone_in_txn(
         &self,
         txn: &redb::WriteTransaction,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         field: &str,
         value: &str,
@@ -84,7 +84,7 @@ impl SparseEngine {
     /// Append a versioned secondary index entry in its own transaction.
     pub fn versioned_index_put(
         &self,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         field: &str,
         value: &str,
@@ -104,7 +104,7 @@ impl SparseEngine {
     /// in its own transaction.
     pub fn versioned_index_tombstone(
         &self,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         field: &str,
         value: &str,
@@ -132,7 +132,7 @@ impl SparseEngine {
     /// Returns only doc_ids whose newest entry ≤ cutoff is live.
     pub fn versioned_index_lookup_as_of(
         &self,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         field: &str,
         value: &str,

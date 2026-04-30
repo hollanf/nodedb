@@ -35,7 +35,7 @@ pub struct SseParams {
     pub since_ms: Option<u64>,
     /// If a caller passes `tenant_id`, we detect and reject it to prevent
     /// cross-tenant escalation. The field is present only for rejection.
-    pub tenant_id: Option<u32>,
+    pub tenant_id: Option<u64>,
 }
 
 /// Query parameters for the poll endpoint.
@@ -48,7 +48,7 @@ pub struct PollParams {
     /// Maximum changes to return. Default: 100.
     pub limit: Option<usize>,
     /// Detected and rejected — never honoured.
-    pub tenant_id: Option<u32>,
+    pub tenant_id: Option<u64>,
 }
 
 /// SSE streaming endpoint: `GET /cdc/{collection}`

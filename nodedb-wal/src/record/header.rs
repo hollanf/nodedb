@@ -17,7 +17,11 @@ pub const WAL_MAGIC: u32 = 0x5359_4E57; // "SYNW"
 /// v4 widens `record_type` u16→u32 and `vshard_id` u16→u32, adds 16 reserved
 /// bytes (covered by CRC32C) before the checksum, and bumps `HEADER_SIZE` to
 /// 50 bytes. Pre-release — no v1/v2/v3 readers supported.
-pub const WAL_FORMAT_VERSION: u16 = 4;
+///
+/// v5 widens `tenant_id` u32→u64, shifting `vshard_id`, `payload_len`,
+/// `reserved`, and `crc32c` by 4 bytes each. `HEADER_SIZE` is now 54 bytes.
+/// Pre-release — no v4 readers supported.
+pub const WAL_FORMAT_VERSION: u16 = 5;
 
 /// Maximum WAL record payload size (64 MiB). Distinct from cluster RPC's limit.
 pub const MAX_WAL_PAYLOAD_SIZE: usize = 64 * 1024 * 1024;
@@ -25,9 +29,9 @@ pub const MAX_WAL_PAYLOAD_SIZE: usize = 64 * 1024 * 1024;
 /// Size of the record header in bytes.
 ///
 /// Layout (all little-endian):
-///   magic(4) | format_version(2) | record_type(4) | lsn(8) | tenant_id(4)
+///   magic(4) | format_version(2) | record_type(4) | lsn(8) | tenant_id(8)
 ///   | vshard_id(4) | payload_len(4) | reserved(16) | crc32c(4)
-pub const HEADER_SIZE: usize = 50;
+pub const HEADER_SIZE: usize = 54;
 
 /// Bit 14 in `record_type` signals the payload is AES-256-GCM encrypted.
 /// Separate from bit 15 (required flag). Both bits keep their positions;
@@ -38,14 +42,14 @@ pub const ENCRYPTED_FLAG: u32 = 0x0000_4000;
 /// must not be silently skipped.
 pub const REQUIRED_FLAG: u32 = 0x0000_8000;
 
-/// WAL record header (fixed 50 bytes).
+/// WAL record header (fixed 54 bytes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecordHeader {
     pub magic: u32,
     pub format_version: u16,
     pub record_type: u32,
     pub lsn: u64,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub vshard_id: u32,
     pub payload_len: u32,
     /// Reserved for future use; must be zero on write; ignored on read
@@ -61,17 +65,17 @@ impl RecordHeader {
         buf[4..6].copy_from_slice(&self.format_version.to_le_bytes());
         buf[6..10].copy_from_slice(&self.record_type.to_le_bytes());
         buf[10..18].copy_from_slice(&self.lsn.to_le_bytes());
-        buf[18..22].copy_from_slice(&self.tenant_id.to_le_bytes());
-        buf[22..26].copy_from_slice(&self.vshard_id.to_le_bytes());
-        buf[26..30].copy_from_slice(&self.payload_len.to_le_bytes());
-        buf[30..46].copy_from_slice(&self.reserved);
-        buf[46..50].copy_from_slice(&self.crc32c.to_le_bytes());
+        buf[18..26].copy_from_slice(&self.tenant_id.to_le_bytes());
+        buf[26..30].copy_from_slice(&self.vshard_id.to_le_bytes());
+        buf[30..34].copy_from_slice(&self.payload_len.to_le_bytes());
+        buf[34..50].copy_from_slice(&self.reserved);
+        buf[50..54].copy_from_slice(&self.crc32c.to_le_bytes());
         buf
     }
 
     pub fn from_bytes(buf: &[u8; HEADER_SIZE]) -> Self {
         let mut reserved = [0u8; 16];
-        reserved.copy_from_slice(&buf[30..46]);
+        reserved.copy_from_slice(&buf[34..50]);
         Self {
             magic: u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
             format_version: u16::from_le_bytes([buf[4], buf[5]]),
@@ -79,11 +83,13 @@ impl RecordHeader {
             lsn: u64::from_le_bytes([
                 buf[10], buf[11], buf[12], buf[13], buf[14], buf[15], buf[16], buf[17],
             ]),
-            tenant_id: u32::from_le_bytes([buf[18], buf[19], buf[20], buf[21]]),
-            vshard_id: u32::from_le_bytes([buf[22], buf[23], buf[24], buf[25]]),
-            payload_len: u32::from_le_bytes([buf[26], buf[27], buf[28], buf[29]]),
+            tenant_id: u64::from_le_bytes([
+                buf[18], buf[19], buf[20], buf[21], buf[22], buf[23], buf[24], buf[25],
+            ]),
+            vshard_id: u32::from_le_bytes([buf[26], buf[27], buf[28], buf[29]]),
+            payload_len: u32::from_le_bytes([buf[30], buf[31], buf[32], buf[33]]),
             reserved,
-            crc32c: u32::from_le_bytes([buf[46], buf[47], buf[48], buf[49]]),
+            crc32c: u32::from_le_bytes([buf[50], buf[51], buf[52], buf[53]]),
         }
     }
 
@@ -147,23 +153,23 @@ mod tests {
     }
 
     #[test]
-    fn header_golden_50_bytes_exact_offsets() {
+    fn header_golden_54_bytes_exact_offsets() {
         // magic at 0..4, format_version at 4..6, record_type at 6..10,
-        // lsn at 10..18, tenant_id at 18..22, vshard_id at 22..26,
-        // payload_len at 26..30, reserved at 30..46, crc32c at 46..50.
+        // lsn at 10..18, tenant_id at 18..26, vshard_id at 26..30,
+        // payload_len at 30..34, reserved at 34..50, crc32c at 50..54.
         let header = RecordHeader {
             magic: WAL_MAGIC,
             format_version: WAL_FORMAT_VERSION,
             record_type: 1,
             lsn: 0x0102_0304_0506_0708,
-            tenant_id: 0xDEAD_BEEF,
+            tenant_id: 0xDEAD_BEEF_CAFE_1234,
             vshard_id: 0xCAFE_BABE,
             payload_len: 256,
             reserved: [0u8; 16],
             crc32c: 0x1234_5678,
         };
         let b = header.to_bytes();
-        assert_eq!(b.len(), 50);
+        assert_eq!(b.len(), 54);
         // magic
         assert_eq!(&b[0..4], &WAL_MAGIC.to_le_bytes());
         // format_version
@@ -172,16 +178,36 @@ mod tests {
         assert_eq!(&b[6..10], &1u32.to_le_bytes());
         // lsn
         assert_eq!(&b[10..18], &0x0102_0304_0506_0708u64.to_le_bytes());
-        // tenant_id
-        assert_eq!(&b[18..22], &0xDEAD_BEEFu32.to_le_bytes());
+        // tenant_id (now u64, 8 bytes)
+        assert_eq!(&b[18..26], &0xDEAD_BEEF_CAFE_1234u64.to_le_bytes());
         // vshard_id
-        assert_eq!(&b[22..26], &0xCAFE_BABEu32.to_le_bytes());
+        assert_eq!(&b[26..30], &0xCAFE_BABEu32.to_le_bytes());
         // payload_len
-        assert_eq!(&b[26..30], &256u32.to_le_bytes());
+        assert_eq!(&b[30..34], &256u32.to_le_bytes());
         // reserved — all zero
-        assert_eq!(&b[30..46], &[0u8; 16]);
+        assert_eq!(&b[34..50], &[0u8; 16]);
         // crc32c
-        assert_eq!(&b[46..50], &0x1234_5678u32.to_le_bytes());
+        assert_eq!(&b[50..54], &0x1234_5678u32.to_le_bytes());
+    }
+
+    #[test]
+    fn tenant_id_above_u32_max_roundtrip() {
+        // Verify u64 tenant_id with a value > u32::MAX is preserved exactly.
+        let tid = u32::MAX as u64 + 1;
+        let header = RecordHeader {
+            magic: WAL_MAGIC,
+            format_version: WAL_FORMAT_VERSION,
+            record_type: 1,
+            lsn: 1,
+            tenant_id: tid,
+            vshard_id: 0,
+            payload_len: 0,
+            reserved: [0u8; 16],
+            crc32c: 0,
+        };
+        let bytes = header.to_bytes();
+        let decoded = RecordHeader::from_bytes(&bytes);
+        assert_eq!(decoded.tenant_id, tid);
     }
 
     #[test]
@@ -205,13 +231,13 @@ mod tests {
     }
 
     #[test]
-    fn version_3_rejected() {
-        // Regression: bumping from v3 to v4 — a v3 header must be rejected.
+    fn version_4_rejected() {
+        // Regression: bumping from v4 to v5 — a v4 header must be rejected.
         let mut header = make_header(0, 0);
-        header.format_version = 3;
+        header.format_version = 4;
         assert!(matches!(
             header.validate(0),
-            Err(WalError::UnsupportedVersion { version: 3, .. })
+            Err(WalError::UnsupportedVersion { version: 4, .. })
         ));
     }
 

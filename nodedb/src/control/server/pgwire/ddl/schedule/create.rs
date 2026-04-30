@@ -46,7 +46,7 @@ pub fn create_schedule(
     } = *req;
     require_admin(identity, "create schedules")?;
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Validate cron expression.
     CronExpr::parse(cron_expr)

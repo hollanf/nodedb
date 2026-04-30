@@ -6,7 +6,7 @@
 pub struct StoredUser {
     pub user_id: u64,
     pub username: String,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub password_hash: String,
     pub scram_salt: Vec<u8>,
     pub scram_salted_password: Vec<u8>,
@@ -46,7 +46,7 @@ pub struct StoredApiKey {
     /// User this key belongs to.
     pub username: String,
     pub user_id: u64,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Unix timestamp (seconds) when the key expires. 0 = no expiry.
     pub expires_at: u64,
     /// Whether this key has been revoked.
@@ -62,7 +62,7 @@ pub struct StoredApiKey {
 /// Serializable tenant record for redb storage.
 #[derive(zerompk::ToMessagePack, zerompk::FromMessagePack, Debug, Clone)]
 pub struct StoredTenant {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub name: String,
     pub created_at: u64,
     pub is_active: bool,
@@ -75,7 +75,7 @@ pub struct StoredAuditEntry {
     pub seq: u64,
     pub timestamp_us: u64,
     pub event: String,
-    pub tenant_id: Option<u32>,
+    pub tenant_id: Option<u64>,
     pub source: String,
     pub detail: String,
     /// SHA-256 hash of the previous entry (hex). Empty for first entry.
@@ -87,7 +87,7 @@ pub struct StoredAuditEntry {
 #[derive(zerompk::ToMessagePack, zerompk::FromMessagePack, Debug, Clone)]
 pub struct StoredRole {
     pub name: String,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Parent role name for inheritance. Empty = no parent.
     pub parent: String,
     pub created_at: u64,
@@ -114,7 +114,7 @@ pub struct StoredOwner {
     pub object_type: String,
     /// Object name (e.g. collection name).
     pub object_name: String,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub owner_username: String,
 }
 
@@ -168,7 +168,7 @@ pub struct StoredAuthUser {
     #[msgpack(default)]
     pub email: String,
     /// Tenant this user belongs to.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Identity provider name that provisioned this user.
     pub provider: String,
     /// Unix timestamp (seconds) of first authentication.

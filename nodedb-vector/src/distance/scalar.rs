@@ -17,6 +17,8 @@ pub fn scalar_distance(a: &[f32], b: &[f32], metric: super::DistanceMetric) -> f
         Hamming => hamming_f32(a, b),
         Jaccard => jaccard(a, b),
         Pearson => pearson(a, b),
+        // Unknown future metric — fall back to L2.
+        _ => l2_squared(a, b),
     }
 }
 

@@ -27,7 +27,7 @@ impl SystemCatalog {
     }
 
     /// Get a single trigger by tenant_id + name.
-    pub fn get_trigger(&self, tenant_id: u32, name: &str) -> crate::Result<Option<StoredTrigger>> {
+    pub fn get_trigger(&self, tenant_id: u64, name: &str) -> crate::Result<Option<StoredTrigger>> {
         let key = trigger_key(tenant_id, name);
         let read_txn = self
             .db
@@ -48,7 +48,7 @@ impl SystemCatalog {
     }
 
     /// Delete a trigger by tenant_id + name. Returns true if it existed.
-    pub fn delete_trigger(&self, tenant_id: u32, name: &str) -> crate::Result<bool> {
+    pub fn delete_trigger(&self, tenant_id: u64, name: &str) -> crate::Result<bool> {
         let key = trigger_key(tenant_id, name);
         let write_txn = self
             .db
@@ -69,7 +69,7 @@ impl SystemCatalog {
     }
 
     /// Load all triggers for a tenant.
-    pub fn load_triggers_for_tenant(&self, tenant_id: u32) -> crate::Result<Vec<StoredTrigger>> {
+    pub fn load_triggers_for_tenant(&self, tenant_id: u64) -> crate::Result<Vec<StoredTrigger>> {
         let prefix = format!("{tenant_id}:");
         let read_txn = self
             .db
@@ -116,7 +116,7 @@ impl SystemCatalog {
     }
 }
 
-fn trigger_key(tenant_id: u32, name: &str) -> String {
+fn trigger_key(tenant_id: u64, name: &str) -> String {
     format!("{tenant_id}:{name}")
 }
 
@@ -130,7 +130,7 @@ mod tests {
         SystemCatalog::open(&dir.path().join("system.redb")).unwrap()
     }
 
-    fn sample_trigger(tenant_id: u32, name: &str, collection: &str) -> StoredTrigger {
+    fn sample_trigger(tenant_id: u64, name: &str, collection: &str) -> StoredTrigger {
         StoredTrigger {
             tenant_id,
             name: name.to_string(),

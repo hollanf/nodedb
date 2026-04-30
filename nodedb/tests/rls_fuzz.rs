@@ -19,7 +19,7 @@ fn arb_auth_context() -> impl Strategy<Value = AuthContext> {
         "[a-z]{3,8}",                                                         // id
         "[a-z]{3,8}",                                                         // username
         proptest::option::of("[a-z]+@[a-z]+\\.[a-z]+"),                       // email
-        1u32..100,                                                            // tenant_id
+        1u64..100,                                                            // tenant_id
         proptest::collection::vec("[a-z]{3,8}".prop_map(String::from), 0..5), // roles
         proptest::collection::vec("[a-z]{3,8}".prop_map(String::from), 0..3), // groups
     )

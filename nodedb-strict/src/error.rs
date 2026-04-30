@@ -4,6 +4,7 @@ use nodedb_types::columnar::ColumnType;
 
 /// Errors from Binary Tuple encoding and decoding.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum StrictError {
     /// Wrong number of values for the schema.
     #[error("expected {expected} values, got {got}")]

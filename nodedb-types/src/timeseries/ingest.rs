@@ -20,6 +20,7 @@ pub struct LogEntry {
 
 /// Result of an ingest operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IngestResult {
     /// Write accepted, memtable healthy.
     Ok,

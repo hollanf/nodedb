@@ -21,13 +21,13 @@ use crate::metadata_group::state::DescriptorState;
     zerompk::FromMessagePack,
 )]
 pub struct DescriptorId {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub kind: DescriptorKind,
     pub name: String,
 }
 
 impl DescriptorId {
-    pub fn new(tenant_id: u32, kind: DescriptorKind, name: impl Into<String>) -> Self {
+    pub fn new(tenant_id: u64, kind: DescriptorKind, name: impl Into<String>) -> Self {
         Self {
             tenant_id,
             kind,

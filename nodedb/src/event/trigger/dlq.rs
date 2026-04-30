@@ -26,7 +26,7 @@ pub struct TriggerDlqEntry {
     /// Unique entry ID (monotonic within this node).
     pub entry_id: u64,
     /// Tenant context.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Collection that triggered the event.
     pub source_collection: String,
     /// Row ID from the originating event.
@@ -51,7 +51,7 @@ pub struct TriggerDlqEntry {
 
 /// Parameters for enqueuing a trigger DLQ entry.
 pub struct DlqEnqueueParams {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub source_collection: String,
     pub row_id: String,
     pub operation: String,

@@ -39,11 +39,11 @@ pub struct FunctionUsage {
 /// Thread-safe. Shared across all DataFusion UDF invocations on the Control Plane.
 pub struct WasmQuotaEnforcer {
     /// (tenant_id, function_name) → accumulated usage.
-    usage: Mutex<HashMap<(u32, String), FunctionUsage>>,
+    usage: Mutex<HashMap<(u64, String), FunctionUsage>>,
     /// Default limits when no per-tenant override is set.
     default_limits: QuotaLimits,
     /// Per-tenant limit overrides (set via admin DDL or config).
-    tenant_limits: Mutex<HashMap<u32, QuotaLimits>>,
+    tenant_limits: Mutex<HashMap<u64, QuotaLimits>>,
 }
 
 impl WasmQuotaEnforcer {
@@ -56,7 +56,7 @@ impl WasmQuotaEnforcer {
     }
 
     /// Override the quota limits for a specific tenant.
-    pub fn set_tenant_limits(&self, tenant_id: u32, limits: QuotaLimits) {
+    pub fn set_tenant_limits(&self, tenant_id: u64, limits: QuotaLimits) {
         self.tenant_limits
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -67,7 +67,7 @@ impl WasmQuotaEnforcer {
     ///
     /// Rejects if the tenant has reached their maximum invocation count.
     /// Does not modify any counters.
-    pub fn check(&self, tenant_id: u32, function_name: &str) -> crate::Result<()> {
+    pub fn check(&self, tenant_id: u64, function_name: &str) -> crate::Result<()> {
         let limits = self.limits_for(tenant_id);
         let Some(max_inv) = limits.max_invocations else {
             return Ok(());
@@ -96,7 +96,7 @@ impl WasmQuotaEnforcer {
     /// the client (the invocation already happened but will not be billed again).
     pub fn record(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         function_name: &str,
         fuel_consumed: u64,
     ) -> crate::Result<()> {
@@ -124,7 +124,7 @@ impl WasmQuotaEnforcer {
     }
 
     /// Get usage for a specific (tenant, function) pair.
-    pub fn get_usage(&self, tenant_id: u32, function_name: &str) -> FunctionUsage {
+    pub fn get_usage(&self, tenant_id: u64, function_name: &str) -> FunctionUsage {
         let map = self.usage.lock().unwrap_or_else(|p| p.into_inner());
         map.get(&(tenant_id, function_name.to_string()))
             .cloned()
@@ -132,7 +132,7 @@ impl WasmQuotaEnforcer {
     }
 
     /// Get all usage entries for a tenant.
-    pub fn get_tenant_usage(&self, tenant_id: u32) -> Vec<(String, FunctionUsage)> {
+    pub fn get_tenant_usage(&self, tenant_id: u64) -> Vec<(String, FunctionUsage)> {
         let map = self.usage.lock().unwrap_or_else(|p| p.into_inner());
         map.iter()
             .filter(|((tid, _), _)| *tid == tenant_id)
@@ -145,7 +145,7 @@ impl WasmQuotaEnforcer {
         self.usage.lock().unwrap_or_else(|p| p.into_inner()).clear();
     }
 
-    fn limits_for(&self, tenant_id: u32) -> QuotaLimits {
+    fn limits_for(&self, tenant_id: u64) -> QuotaLimits {
         self.tenant_limits
             .lock()
             .unwrap_or_else(|p| p.into_inner())

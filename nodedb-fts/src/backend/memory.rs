@@ -26,9 +26,9 @@ impl fmt::Display for MemoryError {
     }
 }
 
-type TripleKey = (u32, String, String);
-type DocLenKey = (u32, String, Surrogate);
-type PairKey = (u32, String);
+type TripleKey = (u64, String, String);
+type DocLenKey = (u64, String, Surrogate);
+type PairKey = (u64, String);
 
 /// In-memory FTS backend backed by HashMaps keyed by `(tid, collection, …)`
 /// tuples.
@@ -55,15 +55,15 @@ impl MemoryBackend {
     }
 }
 
-fn triple(tid: u32, collection: &str, sub: &str) -> TripleKey {
+fn triple(tid: u64, collection: &str, sub: &str) -> TripleKey {
     (tid, collection.to_string(), sub.to_string())
 }
 
-fn doc_len_key(tid: u32, collection: &str, doc_id: Surrogate) -> DocLenKey {
+fn doc_len_key(tid: u64, collection: &str, doc_id: Surrogate) -> DocLenKey {
     (tid, collection.to_string(), doc_id)
 }
 
-fn pair(tid: u32, collection: &str) -> PairKey {
+fn pair(tid: u64, collection: &str) -> PairKey {
     (tid, collection.to_string())
 }
 
@@ -72,7 +72,7 @@ impl FtsBackend for MemoryBackend {
 
     fn read_postings(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         term: &str,
     ) -> Result<Vec<Posting>, Self::Error> {
@@ -86,7 +86,7 @@ impl FtsBackend for MemoryBackend {
 
     fn write_postings(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         term: &str,
         postings: &[Posting],
@@ -101,7 +101,7 @@ impl FtsBackend for MemoryBackend {
         Ok(())
     }
 
-    fn remove_postings(&self, tid: u32, collection: &str, term: &str) -> Result<(), Self::Error> {
+    fn remove_postings(&self, tid: u64, collection: &str, term: &str) -> Result<(), Self::Error> {
         self.postings
             .borrow_mut()
             .remove(&triple(tid, collection, term));
@@ -110,7 +110,7 @@ impl FtsBackend for MemoryBackend {
 
     fn read_doc_length(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         doc_id: Surrogate,
     ) -> Result<Option<u32>, Self::Error> {
@@ -123,7 +123,7 @@ impl FtsBackend for MemoryBackend {
 
     fn write_doc_length(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         doc_id: Surrogate,
         length: u32,
@@ -136,7 +136,7 @@ impl FtsBackend for MemoryBackend {
 
     fn remove_doc_length(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         doc_id: Surrogate,
     ) -> Result<(), Self::Error> {
@@ -146,7 +146,7 @@ impl FtsBackend for MemoryBackend {
         Ok(())
     }
 
-    fn collection_terms(&self, tid: u32, collection: &str) -> Result<Vec<String>, Self::Error> {
+    fn collection_terms(&self, tid: u64, collection: &str) -> Result<Vec<String>, Self::Error> {
         Ok(self
             .postings
             .borrow()
@@ -156,7 +156,7 @@ impl FtsBackend for MemoryBackend {
             .collect())
     }
 
-    fn collection_stats(&self, tid: u32, collection: &str) -> Result<(u32, u64), Self::Error> {
+    fn collection_stats(&self, tid: u64, collection: &str) -> Result<(u32, u64), Self::Error> {
         Ok(self
             .stats
             .borrow()
@@ -165,7 +165,7 @@ impl FtsBackend for MemoryBackend {
             .unwrap_or((0, 0)))
     }
 
-    fn increment_stats(&self, tid: u32, collection: &str, doc_len: u32) -> Result<(), Self::Error> {
+    fn increment_stats(&self, tid: u64, collection: &str, doc_len: u32) -> Result<(), Self::Error> {
         let mut stats = self.stats.borrow_mut();
         let entry = stats.entry(pair(tid, collection)).or_insert((0, 0));
         entry.0 += 1;
@@ -173,7 +173,7 @@ impl FtsBackend for MemoryBackend {
         Ok(())
     }
 
-    fn decrement_stats(&self, tid: u32, collection: &str, doc_len: u32) -> Result<(), Self::Error> {
+    fn decrement_stats(&self, tid: u64, collection: &str, doc_len: u32) -> Result<(), Self::Error> {
         let mut stats = self.stats.borrow_mut();
         let entry = stats.entry(pair(tid, collection)).or_insert((0, 0));
         entry.0 = entry.0.saturating_sub(1);
@@ -183,7 +183,7 @@ impl FtsBackend for MemoryBackend {
 
     fn read_meta(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         subkey: &str,
     ) -> Result<Option<Vec<u8>>, Self::Error> {
@@ -196,7 +196,7 @@ impl FtsBackend for MemoryBackend {
 
     fn write_meta(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         subkey: &str,
         value: &[u8],
@@ -209,7 +209,7 @@ impl FtsBackend for MemoryBackend {
 
     fn write_segment(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         segment_id: &str,
         data: &[u8],
@@ -222,7 +222,7 @@ impl FtsBackend for MemoryBackend {
 
     fn read_segment(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         segment_id: &str,
     ) -> Result<Option<Vec<u8>>, Self::Error> {
@@ -233,7 +233,7 @@ impl FtsBackend for MemoryBackend {
             .cloned())
     }
 
-    fn list_segments(&self, tid: u32, collection: &str) -> Result<Vec<String>, Self::Error> {
+    fn list_segments(&self, tid: u64, collection: &str) -> Result<Vec<String>, Self::Error> {
         Ok(self
             .segments
             .borrow()
@@ -245,7 +245,7 @@ impl FtsBackend for MemoryBackend {
 
     fn remove_segment(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         segment_id: &str,
     ) -> Result<(), Self::Error> {
@@ -255,7 +255,7 @@ impl FtsBackend for MemoryBackend {
         Ok(())
     }
 
-    fn purge_collection(&self, tid: u32, collection: &str) -> Result<usize, Self::Error> {
+    fn purge_collection(&self, tid: u64, collection: &str) -> Result<usize, Self::Error> {
         let match_tc = |(t, c, _): &&TripleKey| *t == tid && c == collection;
 
         let mut postings = self.postings.borrow_mut();
@@ -275,7 +275,7 @@ impl FtsBackend for MemoryBackend {
         Ok(before - after)
     }
 
-    fn purge_tenant(&self, tid: u32) -> Result<usize, Self::Error> {
+    fn purge_tenant(&self, tid: u64) -> Result<usize, Self::Error> {
         let mut postings = self.postings.borrow_mut();
         let mut doc_lengths = self.doc_lengths.borrow_mut();
         let before = postings.len() + doc_lengths.len();
@@ -293,7 +293,7 @@ impl FtsBackend for MemoryBackend {
 mod tests {
     use super::*;
 
-    const T: u32 = 1;
+    const T: u64 = 1;
 
     #[test]
     fn roundtrip_postings() {

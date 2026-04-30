@@ -75,7 +75,7 @@ impl SequenceRegistry {
     }
 
     /// Remove a sequence. Returns error if not found.
-    pub fn remove(&self, tenant_id: u32, name: &str) -> Result<(), SequenceError> {
+    pub fn remove(&self, tenant_id: u64, name: &str) -> Result<(), SequenceError> {
         let key = registry_key(tenant_id, name);
         let mut map = self.sequences.write().unwrap_or_else(|p| p.into_inner());
 
@@ -88,7 +88,7 @@ impl SequenceRegistry {
     }
 
     /// Get the next value from a sequence (lock-free on the hot path).
-    pub fn nextval(&self, tenant_id: u32, name: &str) -> Result<i64, SequenceError> {
+    pub fn nextval(&self, tenant_id: u64, name: &str) -> Result<i64, SequenceError> {
         let key = registry_key(tenant_id, name);
         let map = self.sequences.read().unwrap_or_else(|p| p.into_inner());
 
@@ -108,7 +108,7 @@ impl SequenceRegistry {
     /// `Ok(SequenceValue::Formatted(String))` for sequences with FORMAT.
     pub fn nextval_formatted(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
         tenant_code: &str,
         session_vars: &std::collections::HashMap<String, String>,
@@ -138,7 +138,7 @@ impl SequenceRegistry {
     /// Peek at the next value without consuming it.
     pub fn next_preview(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
         tenant_code: &str,
         session_vars: &std::collections::HashMap<String, String>,
@@ -178,7 +178,7 @@ impl SequenceRegistry {
     /// Get N values from a sequence in one atomic batch.
     pub fn nextval_batch(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
         n: usize,
     ) -> Result<Vec<i64>, SequenceError> {
@@ -191,7 +191,7 @@ impl SequenceRegistry {
     }
 
     /// Get the current value (last nextval result on this node).
-    pub fn currval(&self, tenant_id: u32, name: &str) -> Result<i64, SequenceError> {
+    pub fn currval(&self, tenant_id: u64, name: &str) -> Result<i64, SequenceError> {
         let key = registry_key(tenant_id, name);
         let map = self.sequences.read().unwrap_or_else(|p| p.into_inner());
 
@@ -203,7 +203,7 @@ impl SequenceRegistry {
     }
 
     /// Set the counter to a specific value.
-    pub fn setval(&self, tenant_id: u32, name: &str, value: i64) -> Result<i64, SequenceError> {
+    pub fn setval(&self, tenant_id: u64, name: &str, value: i64) -> Result<i64, SequenceError> {
         let key = registry_key(tenant_id, name);
         let map = self.sequences.read().unwrap_or_else(|p| p.into_inner());
 
@@ -217,7 +217,7 @@ impl SequenceRegistry {
     /// Restart a sequence at a new value (ALTER SEQUENCE ... RESTART WITH).
     pub fn restart(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
         restart_value: i64,
     ) -> Result<(), SequenceError> {
@@ -233,7 +233,7 @@ impl SequenceRegistry {
     }
 
     /// List all sequences for a tenant. Returns (name, current_value, is_called).
-    pub fn list(&self, tenant_id: u32) -> Vec<(String, i64, bool)> {
+    pub fn list(&self, tenant_id: u64) -> Vec<(String, i64, bool)> {
         let prefix = format!("{tenant_id}:");
         let map = self.sequences.read().unwrap_or_else(|p| p.into_inner());
 
@@ -280,14 +280,14 @@ impl SequenceRegistry {
     }
 
     /// Check if a sequence exists.
-    pub fn exists(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn exists(&self, tenant_id: u64, name: &str) -> bool {
         let key = registry_key(tenant_id, name);
         let map = self.sequences.read().unwrap_or_else(|p| p.into_inner());
         map.contains_key(&key)
     }
 
     /// Get a sequence definition (for SHOW SEQUENCES detail).
-    pub fn get_def(&self, tenant_id: u32, name: &str) -> Option<StoredSequence> {
+    pub fn get_def(&self, tenant_id: u64, name: &str) -> Option<StoredSequence> {
         let key = registry_key(tenant_id, name);
         let map = self.sequences.read().unwrap_or_else(|p| p.into_inner());
         map.get(&key).map(|h| h.def.clone())
@@ -298,7 +298,7 @@ impl SequenceRegistry {
     /// Used by `TRUNCATE ... RESTART IDENTITY`. Finds all sequences whose names
     /// match the implicit pattern `{collection}_{field}_seq` for the given tenant
     /// and resets each to its `start_value`.
-    pub fn restart_sequences_for_collection(&self, tenant_id: u32, collection: &str) {
+    pub fn restart_sequences_for_collection(&self, tenant_id: u64, collection: &str) {
         let prefix = format!("{tenant_id}:{collection}_");
         let suffix = "_seq";
         let map = self.sequences.read().unwrap_or_else(|p| p.into_inner());
@@ -333,6 +333,6 @@ pub enum SequenceValue {
     Formatted(String),
 }
 
-fn registry_key(tenant_id: u32, name: &str) -> String {
+fn registry_key(tenant_id: u64, name: &str) -> String {
     format!("{tenant_id}:{name}")
 }

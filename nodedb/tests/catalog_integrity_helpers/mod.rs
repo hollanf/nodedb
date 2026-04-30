@@ -27,7 +27,7 @@ use nodedb::event::cdc::stream_def::{ChangeStreamDef, OpFilter, RetentionConfig,
 use nodedb::event::scheduler::types::{MissedPolicy, ScheduleDef, ScheduleScope};
 
 pub const ADMIN: &str = "admin";
-pub const TENANT: u32 = 1;
+pub const TENANT: u64 = 1;
 
 pub fn make_catalog() -> (tempfile::TempDir, SystemCatalog) {
     let dir = tempfile::tempdir().unwrap();
@@ -51,6 +51,8 @@ pub fn put_admin_user(catalog: &SystemCatalog) {
         created_at: 0,
         updated_at: 0,
         password_expires_at: 0,
+        must_change_password: false,
+        password_changed_at: 0,
     };
     catalog.put_user(&user).unwrap();
 }

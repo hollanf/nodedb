@@ -15,7 +15,7 @@ impl SparseEngine {
     /// removes them. Called during document deletion cascade.
     pub fn delete_indexes_for_document(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         document_id: &str,
     ) -> crate::Result<()> {
@@ -63,7 +63,7 @@ impl SparseEngine {
     /// Delete all secondary index entries for a specific field in a collection.
     pub fn delete_index_entries_for_field(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         field: &str,
     ) -> crate::Result<usize> {
@@ -114,7 +114,7 @@ impl SparseEngine {
     /// `execute_unregister_collection` when a collection is hard-dropped.
     pub fn delete_all_for_collection(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
     ) -> crate::Result<(usize, usize)> {
         let prefix = format!("{tenant_id}:{collection}:");
@@ -176,7 +176,7 @@ impl SparseEngine {
     }
 
     /// Delete ALL documents and indexes for a tenant across all collections.
-    pub fn delete_all_for_tenant(&self, tenant_id: u32) -> crate::Result<(usize, usize)> {
+    pub fn delete_all_for_tenant(&self, tenant_id: u64) -> crate::Result<(usize, usize)> {
         let prefix = format!("{tenant_id}:");
         let end = format!("{tenant_id}:\u{ffff}");
 
@@ -238,7 +238,7 @@ impl SparseEngine {
     /// Range scan on secondary index entries.
     pub fn range_scan(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         field: &str,
         lower: Option<&[u8]>,
@@ -292,7 +292,7 @@ impl SparseEngine {
     /// active writer so a nested `begin_write` here deadlocks.
     pub fn index_put(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         field: &str,
         value: &str,
@@ -323,7 +323,7 @@ impl SparseEngine {
     pub fn index_put_in_txn(
         &self,
         txn: &redb::WriteTransaction,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         field: &str,
         value: &str,
@@ -343,7 +343,7 @@ impl SparseEngine {
     /// Index-only scan: return `(doc_id, field_value)` pairs without touching DOCUMENTS.
     pub fn scan_index_values(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         field: &str,
         limit: usize,

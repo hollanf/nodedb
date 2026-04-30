@@ -23,7 +23,7 @@ pub fn put(stored: &StoredMaterializedView, catalog: &SystemCatalog) {
     );
 }
 
-pub fn delete(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
+pub fn delete(tenant_id: u64, name: &str, catalog: &SystemCatalog) {
     if let Err(e) = catalog.delete_materialized_view(tenant_id, name) {
         warn!(
             view = %name,

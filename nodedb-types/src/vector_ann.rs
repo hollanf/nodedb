@@ -35,6 +35,7 @@ pub struct VectorAnnOptions {
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum VectorQuantization {
     #[default]
     None,

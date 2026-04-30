@@ -12,7 +12,7 @@ pub struct CrossShardWriteRequest {
     /// SQL statement to execute on the target shard.
     pub sql: String,
     /// Tenant context for the execution.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Source vShard that generated this event (for HWM dedup).
     pub source_vshard: u32,
     /// Source LSN — used for high-water-mark dedup on the target.
@@ -83,7 +83,7 @@ pub struct NotifyBroadcastMsg {
     /// Monotonic sequence on the source node (for dedup on receiver).
     pub sequence: u64,
     /// Tenant that published the NOTIFY.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Collection affected.
     pub collection: String,
     /// Document ID affected.

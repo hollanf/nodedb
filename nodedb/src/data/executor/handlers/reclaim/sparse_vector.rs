@@ -15,7 +15,7 @@ use super::ReclaimStats;
 /// `(tenant_id, collection)`. Returns stats; idempotent.
 pub fn reclaim_sparse_vector_checkpoints(
     data_dir: &Path,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
 ) -> ReclaimStats {
     let ckpt_dir = data_dir.join("sparse-vector-ckpt");

@@ -124,6 +124,7 @@ impl SparseVector {
 
 /// Errors from sparse vector construction or parsing.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum SparseVectorError {
     /// A weight value is NaN or infinite.
     NonFiniteWeight(f32),

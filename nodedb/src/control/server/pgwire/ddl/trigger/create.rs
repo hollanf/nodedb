@@ -32,7 +32,7 @@ pub fn create_trigger(
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "create triggers")?;
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let catalog = state
         .credentials

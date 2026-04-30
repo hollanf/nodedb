@@ -16,7 +16,7 @@ impl EdgeStore {
     /// Scan every raw forward record belonging to a tenant
     /// (versioned composite key + raw value bytes). Used by snapshot export.
     pub fn scan_edges_for_tenant(&self, tid: TenantId) -> crate::Result<Vec<(String, Vec<u8>)>> {
-        let t = tid.as_u32();
+        let t = tid.as_u64();
         let read_txn = self
             .db
             .begin_read()
@@ -116,7 +116,7 @@ impl EdgeStore {
         composite_key: &str,
         value: &[u8],
     ) -> crate::Result<()> {
-        let t = tid.as_u32();
+        let t = tid.as_u64();
         let (collection, src, label, dst, sys) = parse_versioned_edge_key(composite_key)
             .ok_or_else(|| crate::Error::BadRequest {
                 detail: format!("put_edge_raw: malformed versioned key {composite_key:?}"),
@@ -174,7 +174,7 @@ impl EdgeStore {
     where
         F: FnMut(&str, &str, &str, &str) -> Edge,
     {
-        let t = tid.as_u32();
+        let t = tid.as_u64();
         let read_txn = self
             .db
             .begin_read()

@@ -45,7 +45,7 @@ pub async fn verify_balance(
         return Err(sqlstate_error("XX000", "no catalog available"));
     };
     let coll = catalog
-        .get_collection(tenant_id.as_u32(), &collection)
+        .get_collection(tenant_id.as_u64(), &collection)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
         .ok_or_else(|| sqlstate_error("42P01", &format!("collection '{collection}' not found")))?;
 

@@ -26,7 +26,7 @@ impl SystemCatalog {
     /// Get a materialized view by name.
     pub fn get_materialized_view(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
     ) -> crate::Result<Option<StoredMaterializedView>> {
         let key = format!("{tenant_id}:{name}");
@@ -75,7 +75,7 @@ impl SystemCatalog {
     /// List all materialized views for a tenant.
     pub fn list_materialized_views(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
     ) -> crate::Result<Vec<StoredMaterializedView>> {
         let prefix = format!("{tenant_id}:");
         let read_txn = self
@@ -101,7 +101,7 @@ impl SystemCatalog {
     }
 
     /// Delete a materialized view by name.
-    pub fn delete_materialized_view(&self, tenant_id: u32, name: &str) -> crate::Result<()> {
+    pub fn delete_materialized_view(&self, tenant_id: u64, name: &str) -> crate::Result<()> {
         let key = format!("{tenant_id}:{name}");
         let write_txn = self
             .db

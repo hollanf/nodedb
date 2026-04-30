@@ -15,7 +15,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_restore_tenant_snapshot(
         &mut self,
         task: &ExecutionTask,
-        tenant_id: u32,
+        tenant_id: u64,
         snapshot_bytes: &[u8],
     ) -> Response {
         info!(core = self.core_id, tenant_id, "restoring tenant snapshot");
@@ -147,7 +147,7 @@ impl CoreLoop {
 
     fn restore_sparse(
         &self,
-        _tenant_id: u32,
+        _tenant_id: u64,
         documents: &[(String, Vec<u8>)],
         indexes: &[(String, Vec<u8>)],
     ) -> (u64, u64) {
@@ -172,7 +172,7 @@ impl CoreLoop {
 
     fn restore_vector_collection(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         coll_key: &str,
         vectors: Vec<(u32, Vec<f32>, Option<nodedb_types::Surrogate>)>,
     ) {
@@ -196,7 +196,7 @@ impl CoreLoop {
 
     fn restore_kv_table(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         entries: Vec<(Vec<u8>, Vec<u8>, u64)>,
     ) {
@@ -225,7 +225,7 @@ impl CoreLoop {
         }
     }
 
-    fn restore_crdt_state(&mut self, tenant_id: u32, bytes: &[u8]) -> crate::Result<()> {
+    fn restore_crdt_state(&mut self, tenant_id: u64, bytes: &[u8]) -> crate::Result<()> {
         let tid = crate::types::TenantId::new(tenant_id);
         // If an engine already exists, import into it. Otherwise create a fresh one.
         if let Some(engine) = self.crdt_engines.get(&tid) {

@@ -27,7 +27,7 @@ impl CoreLoop {
 
         let mut checkpointed = 0;
         for ((tid, coll, field), rtree) in &self.spatial_indexes {
-            let key_str = format!("{}:{}:{}", tid.as_u32(), coll, field);
+            let key_str = format!("{}:{}:{}", tid.as_u64(), coll, field);
             let bytes = match rtree.checkpoint_to_bytes() {
                 Ok(b) if !b.is_empty() => b,
                 Ok(_) => continue,
@@ -170,6 +170,6 @@ fn parse_spatial_key(key: &str) -> Option<(crate::types::TenantId, String, Strin
     let tid_str = parts.next()?;
     let coll = parts.next()?.to_string();
     let field = parts.next().unwrap_or("").to_string();
-    let tid_u32: u32 = tid_str.parse().ok()?;
-    Some((crate::types::TenantId::new(tid_u32), coll, field))
+    let tid_u64: u64 = tid_str.parse().ok()?;
+    Some((crate::types::TenantId::new(tid_u64), coll, field))
 }

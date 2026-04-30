@@ -48,6 +48,7 @@ pub(super) const FOOTER_SIZE: usize = 46;
 /// hook for future compression codecs is obvious.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum VectorSegmentCodec {
     /// No compression — raw packed `[f32; D] × N`.
     None = 0,

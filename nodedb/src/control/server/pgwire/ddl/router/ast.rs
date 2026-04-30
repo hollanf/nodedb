@@ -717,7 +717,7 @@ fn collection_exists(state: &SharedState, identity: &AuthenticatedIdentity, name
     let Some(catalog) = state.credentials.catalog() else {
         return false;
     };
-    let tid = identity.tenant_id.as_u32();
+    let tid = identity.tenant_id.as_u64();
     matches!(catalog.get_collection(tid, name), Ok(Some(_)))
 }
 
@@ -725,22 +725,22 @@ fn trigger_exists(state: &SharedState, identity: &AuthenticatedIdentity, name: &
     let Some(catalog) = state.credentials.catalog() else {
         return false;
     };
-    let tid = identity.tenant_id.as_u32();
+    let tid = identity.tenant_id.as_u64();
     matches!(catalog.get_trigger(tid, name), Ok(Some(_)))
 }
 
 fn schedule_exists(state: &SharedState, identity: &AuthenticatedIdentity, name: &str) -> bool {
-    let tid = identity.tenant_id.as_u32();
+    let tid = identity.tenant_id.as_u64();
     state.schedule_registry.get(tid, name).is_some()
 }
 
 fn sequence_exists(state: &SharedState, identity: &AuthenticatedIdentity, name: &str) -> bool {
-    let tid = identity.tenant_id.as_u32();
+    let tid = identity.tenant_id.as_u64();
     state.sequence_registry.exists(tid, name)
 }
 
 fn alert_exists(state: &SharedState, identity: &AuthenticatedIdentity, name: &str) -> bool {
-    let tid = identity.tenant_id.as_u32();
+    let tid = identity.tenant_id.as_u64();
     state.alert_registry.get(tid, name).is_some()
 }
 
@@ -749,12 +749,12 @@ fn retention_policy_exists(
     identity: &AuthenticatedIdentity,
     name: &str,
 ) -> bool {
-    let tid = identity.tenant_id.as_u32();
+    let tid = identity.tenant_id.as_u64();
     state.retention_policy_registry.get(tid, name).is_some()
 }
 
 fn change_stream_exists(state: &SharedState, identity: &AuthenticatedIdentity, name: &str) -> bool {
-    let tid = identity.tenant_id.as_u32();
+    let tid = identity.tenant_id.as_u64();
     state.stream_registry.get(tid, name).is_some()
 }
 
@@ -763,7 +763,7 @@ fn materialized_view_exists(
     identity: &AuthenticatedIdentity,
     name: &str,
 ) -> bool {
-    let tid = identity.tenant_id.as_u32();
+    let tid = identity.tenant_id.as_u64();
     state.mv_registry.get_def(tid, name).is_some()
 }
 
@@ -772,6 +772,6 @@ fn continuous_aggregate_exists(
     identity: &AuthenticatedIdentity,
     name: &str,
 ) -> bool {
-    let tid = identity.tenant_id.as_u32();
+    let tid = identity.tenant_id.as_u64();
     state.mv_registry.get_def(tid, name).is_some()
 }

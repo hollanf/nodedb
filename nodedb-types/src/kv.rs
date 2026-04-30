@@ -84,6 +84,7 @@ impl KvConfig {
     zerompk::FromMessagePack,
 )]
 #[serde(tag = "kind")]
+#[non_exhaustive]
 pub enum KvTtlPolicy {
     /// Fixed duration from insertion time. All keys share the same lifetime.
     ///

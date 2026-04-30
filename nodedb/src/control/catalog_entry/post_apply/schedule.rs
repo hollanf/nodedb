@@ -18,7 +18,7 @@ pub fn put(stored: ScheduleDef, shared: Arc<SharedState>) {
     shared.schedule_registry.register(stored);
 }
 
-pub fn delete(tenant_id: u32, name: String, shared: Arc<SharedState>) {
+pub fn delete(tenant_id: u64, name: String, shared: Arc<SharedState>) {
     shared.schedule_registry.unregister(tenant_id, &name);
     shared
         .permissions

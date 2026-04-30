@@ -16,7 +16,7 @@ impl SparseEngine {
     /// Returns `(docs_deleted, index_entries_deleted)`.
     pub fn purge_superseded_document_versions(
         &self,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         cutoff_system_ms: i64,
     ) -> crate::Result<(usize, usize)> {
@@ -53,7 +53,7 @@ impl SparseEngine {
 
     fn collect_doc_victims(
         &self,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         cutoff_system_ms: i64,
     ) -> crate::Result<Vec<String>> {
@@ -110,7 +110,7 @@ impl SparseEngine {
 
     fn collect_index_victims(
         &self,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         cutoff_system_ms: i64,
     ) -> crate::Result<Vec<String>> {

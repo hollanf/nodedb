@@ -15,7 +15,7 @@ pub fn add_state_constraint(
     identity: &AuthenticatedIdentity,
     sql: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let parts: Vec<&str> = sql.split_whitespace().collect();
     let upper = sql.to_uppercase();
 
@@ -82,7 +82,7 @@ pub fn add_transition_check(
     identity: &AuthenticatedIdentity,
     sql: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let parts: Vec<&str> = sql.split_whitespace().collect();
 
     let coll_name = parts
@@ -141,7 +141,7 @@ pub fn add_check_constraint(
     identity: &AuthenticatedIdentity,
     sql: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let parts: Vec<&str> = sql.split_whitespace().collect();
 
     let coll_name = parts
@@ -227,7 +227,7 @@ pub fn drop_constraint(
     identity: &AuthenticatedIdentity,
     parts: &[&str],
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let constraint_name = parts
         .get(2)

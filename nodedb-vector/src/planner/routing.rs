@@ -10,6 +10,7 @@ use super::query_options::QuantizationKind;
 
 /// The execution path chosen by the filter router.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum FilterRoute {
     /// Brute-force scan over the filtered set.
     ///

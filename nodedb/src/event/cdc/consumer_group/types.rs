@@ -4,7 +4,7 @@
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct ConsumerGroupDef {
     /// Tenant that owns this group.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Group name (unique per stream within a tenant).
     pub name: String,
     /// Stream this group consumes from.

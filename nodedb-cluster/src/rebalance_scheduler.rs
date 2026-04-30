@@ -85,7 +85,7 @@ pub struct RebalanceScheduler {
     /// Last time a rebalance completed.
     last_rebalance: Option<Instant>,
     /// Currently active migrations: `(vshard_id → tenant_id)`.
-    active_migrations: HashMap<u32, u32>,
+    active_migrations: HashMap<u32, u64>,
 }
 
 impl RebalanceScheduler {
@@ -174,7 +174,7 @@ impl RebalanceScheduler {
     }
 
     /// Record that a migration has started.
-    pub fn migration_started(&mut self, vshard_id: u32, tenant_id: u32) {
+    pub fn migration_started(&mut self, vshard_id: u32, tenant_id: u64) {
         self.active_migrations.insert(vshard_id, tenant_id);
     }
 
@@ -187,7 +187,7 @@ impl RebalanceScheduler {
     }
 
     /// Check if a specific tenant can start another migration.
-    pub fn can_migrate_tenant(&self, tenant_id: u32) -> bool {
+    pub fn can_migrate_tenant(&self, tenant_id: u64) -> bool {
         let tenant_count = self
             .active_migrations
             .values()

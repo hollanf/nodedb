@@ -379,6 +379,9 @@ fn coerce_value(val: &Value, col_type: &ColumnType, col_name: &str) -> Result<Va
                 Ok(val.clone())
             }
         }
+        // ColumnType is #[non_exhaustive]; unknown future types pass the value
+        // through unmodified — the schema validator will catch type mismatches.
+        _ => Ok(val.clone()),
     }
 }
 
@@ -491,6 +494,9 @@ fn value_to_json(val: &Value) -> serde_json::Value {
         | Value::Range { .. }
         | Value::Record { .. }
         | Value::NdArrayCell(_) => serde_json::Value::Null,
+        // Value is #[non_exhaustive]; future variants collapse to JSON null
+        // at the pgwire output boundary.
+        _ => serde_json::Value::Null,
     }
 }
 

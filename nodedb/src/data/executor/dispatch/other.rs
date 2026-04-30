@@ -15,7 +15,7 @@ use crate::data::executor::task::ExecutionTask;
 impl CoreLoop {
     #[allow(clippy::too_many_lines)]
     pub(super) fn dispatch_other(&mut self, task: &ExecutionTask, plan: &PhysicalPlan) -> Response {
-        let tid = task.request.tenant_id.as_u32();
+        let tid = task.request.tenant_id.as_u64();
         match plan {
             PhysicalPlan::Query(QueryOp::Aggregate {
                 collection,

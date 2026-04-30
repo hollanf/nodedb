@@ -10,7 +10,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     /// Find the best fuzzy-matching term and return its posting list.
     pub(crate) fn fuzzy_lookup(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         query_term: &str,
     ) -> Result<(Vec<Posting>, bool), B::Error> {
@@ -67,7 +67,7 @@ mod tests {
     use crate::index::FtsIndex;
     use nodedb_types::Surrogate;
 
-    const T: u32 = 1;
+    const T: u64 = 1;
 
     #[test]
     fn fuzzy_lookup_finds_close_term() {

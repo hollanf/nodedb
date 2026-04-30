@@ -26,7 +26,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn acquire_scan_guard(
         &self,
         task: &crate::data::executor::task::ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
     ) -> Result<Option<crate::bridge::quiesce::ScanGuard>, crate::bridge::envelope::Response> {
         let Some(q) = self.quiesce.as_ref() else {
@@ -50,7 +50,7 @@ impl CoreLoop {
 
     /// Test accessor: row count in a columnar memtable.
     #[cfg(test)]
-    pub fn columnar_memtable_row_count(&self, tid: u32, collection: &str) -> u64 {
+    pub fn columnar_memtable_row_count(&self, tid: u64, collection: &str) -> u64 {
         let key = (TenantId::new(tid), collection.to_string());
         self.columnar_memtables
             .get(&key)
@@ -60,7 +60,7 @@ impl CoreLoop {
 
     /// Test accessor: total row count across all partitions in a timeseries registry.
     #[cfg(test)]
-    pub fn ts_registry_row_count(&self, tid: u32, collection: &str) -> u64 {
+    pub fn ts_registry_row_count(&self, tid: u64, collection: &str) -> u64 {
         let key = (TenantId::new(tid), collection.to_string());
         self.ts_registries
             .get(&key)

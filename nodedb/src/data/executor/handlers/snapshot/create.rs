@@ -14,7 +14,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_create_tenant_snapshot(
         &mut self,
         task: &ExecutionTask,
-        tenant_id: u32,
+        tenant_id: u64,
     ) -> Response {
         info!(
             core = self.core_id,

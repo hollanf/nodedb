@@ -55,7 +55,7 @@ pub struct CollectionArenaRegistry {
 
 #[derive(Debug, Default)]
 struct RegistryInner {
-    handles: HashMap<(u32, String), CollectionArenaHandle>,
+    handles: HashMap<(u64, String), CollectionArenaHandle>,
 }
 
 impl CollectionArenaRegistry {
@@ -67,7 +67,7 @@ impl CollectionArenaRegistry {
     /// Return (or create) a dedicated arena for `(tenant_id, collection)`.
     ///
     /// Idempotent: calling twice with the same key returns the same handle.
-    pub fn get_or_create(&self, tenant_id: u32, collection: &str) -> Result<CollectionArenaHandle> {
+    pub fn get_or_create(&self, tenant_id: u64, collection: &str) -> Result<CollectionArenaHandle> {
         let key = (tenant_id, collection.to_string());
         let mut guard = self
             .inner
@@ -83,7 +83,7 @@ impl CollectionArenaRegistry {
 
     /// Look up an existing handle without creating one. Returns `None` when
     /// the collection has no dedicated arena yet.
-    pub fn get(&self, tenant_id: u32, collection: &str) -> Option<CollectionArenaHandle> {
+    pub fn get(&self, tenant_id: u64, collection: &str) -> Option<CollectionArenaHandle> {
         let guard = self.inner.lock().ok()?;
         guard
             .handles
@@ -97,7 +97,7 @@ impl CollectionArenaRegistry {
 /// Failures (e.g., Miri or custom allocator) are silently downgraded to a
 /// no-dedicated-arena handle rather than propagating an error, because arena
 /// isolation is an optimisation, not a correctness requirement.
-fn allocate_handle(tenant_id: u32, collection: &str) -> CollectionArenaHandle {
+fn allocate_handle(tenant_id: u64, collection: &str) -> CollectionArenaHandle {
     let tag = format!("t{tenant_id}/{collection}");
     let arena_index = create_arena()
         .map_err(|e| {

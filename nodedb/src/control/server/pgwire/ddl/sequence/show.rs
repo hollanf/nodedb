@@ -14,7 +14,7 @@ pub fn show_sequences(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let sequences = state.sequence_registry.list(tenant_id);
 
     let schema = Arc::new(vec![
@@ -43,7 +43,7 @@ pub fn describe_sequence(
     identity: &AuthenticatedIdentity,
     name: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let name = name.to_lowercase();
 
     let def = state

@@ -27,7 +27,7 @@ pub fn put(stored: StoredSequence, shared: Arc<SharedState>) {
     }
 }
 
-pub fn delete(tenant_id: u32, name: String, shared: Arc<SharedState>) {
+pub fn delete(tenant_id: u64, name: String, shared: Arc<SharedState>) {
     if let Err(e) = shared.sequence_registry.remove(tenant_id, &name) {
         debug!(
             sequence = %name,

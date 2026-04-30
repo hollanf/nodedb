@@ -16,7 +16,7 @@ use super::segment::reader::SegmentReader;
 /// Returns per-term `TermBlocks` ready for BMW scoring.
 pub fn collect_merged_term_blocks<B: FtsBackend>(
     backend: &B,
-    tid: u32,
+    tid: u64,
     collection: &str,
     memtable: &Memtable,
     query_tokens: &[String],
@@ -74,7 +74,7 @@ pub fn collect_merged_term_blocks<B: FtsBackend>(
 /// Used by fuzzy matching to scan available terms.
 pub fn collect_all_terms<B: FtsBackend>(
     backend: &B,
-    tid: u32,
+    tid: u64,
     collection: &str,
     memtable: &Memtable,
 ) -> Result<Vec<String>, B::Error> {
@@ -104,7 +104,7 @@ pub fn collect_all_terms<B: FtsBackend>(
 /// Compute merged corpus stats from memtable + all segments.
 pub fn merged_collection_stats<B: FtsBackend>(
     backend: &B,
-    tid: u32,
+    tid: u64,
     collection: &str,
 ) -> Result<(u32, f32), B::Error> {
     let (count, total) = backend.collection_stats(tid, collection)?;
@@ -125,7 +125,7 @@ mod tests {
     use crate::lsm::segment::writer;
     use std::collections::HashMap;
 
-    const T: u32 = 1;
+    const T: u64 = 1;
 
     fn cp(doc_id: u32, tf: u32) -> CompactPosting {
         CompactPosting {

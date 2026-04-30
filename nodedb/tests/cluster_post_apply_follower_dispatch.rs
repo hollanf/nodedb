@@ -44,7 +44,7 @@ fn pick_follower_index(cluster: &TestCluster) -> usize {
 
 /// Tombstone tuples `(tenant_id, collection, purge_lsn)` currently
 /// persisted in this node's `_system.wal_tombstones`.
-fn follower_tombstones(node: &common::cluster_harness::TestClusterNode) -> Vec<(u32, String, u64)> {
+fn follower_tombstones(node: &common::cluster_harness::TestClusterNode) -> Vec<(u64, String, u64)> {
     let catalog_opt = node.shared.credentials.catalog();
     let catalog = catalog_opt
         .as_ref()

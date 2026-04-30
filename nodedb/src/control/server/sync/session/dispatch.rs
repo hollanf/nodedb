@@ -62,7 +62,7 @@ impl SyncSession {
             SyncMessageType::ShapeSubscribe => {
                 let msg: super::super::shape::handler::ShapeSubscribeMsg = frame.decode_body()?;
                 let registry = super::super::shape::registry::ShapeRegistry::new();
-                let tenant_id = self.tenant_id.map(|t| t.as_u32()).unwrap_or(0);
+                let tenant_id = self.tenant_id.map(|t| t.as_u64()).unwrap_or(0);
                 let current_lsn = self.server_clock.values().copied().max().unwrap_or(0);
                 // Record the subscription so CollectionPurged broadcast
                 // notifies this session when the shape's source

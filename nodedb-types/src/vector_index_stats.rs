@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
     zerompk::FromMessagePack,
 )]
 #[msgpack(c_enum)]
+#[non_exhaustive]
 pub enum VectorIndexQuantization {
     None = 0,
     Sq8 = 1,
@@ -54,6 +55,7 @@ impl std::fmt::Display for VectorIndexQuantization {
     zerompk::FromMessagePack,
 )]
 #[msgpack(c_enum)]
+#[non_exhaustive]
 pub enum VectorIndexType {
     Hnsw = 0,
     HnswPq = 1,

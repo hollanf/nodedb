@@ -12,7 +12,7 @@
 //! Default: 0 (memtable data only, no extra cache).
 
 /// Cache key: (tenant_id, collection, min_ts).
-type CacheKey = (u32, String, i64);
+type CacheKey = (u64, String, i64);
 
 /// Decompressed column data for a recently-accessed partition.
 #[derive(Debug)]
@@ -64,13 +64,13 @@ impl RecentWindowCache {
     }
 
     /// Look up cached data for a partition. Requires `tenant_id` for isolation.
-    pub fn get(&self, tenant_id: u32, collection: &str, min_ts: i64) -> Option<&CachedPartition> {
+    pub fn get(&self, tenant_id: u64, collection: &str, min_ts: i64) -> Option<&CachedPartition> {
         self.entries
             .get(&(tenant_id, collection.to_string(), min_ts))
     }
 
     /// Insert decompressed partition data into the cache.
-    pub fn insert(&mut self, tenant_id: u32, collection: &str, partition: CachedPartition) {
+    pub fn insert(&mut self, tenant_id: u64, collection: &str, partition: CachedPartition) {
         let key = (tenant_id, collection.to_string(), partition.min_ts);
         let size = partition.memory_bytes;
 
@@ -121,7 +121,7 @@ impl RecentWindowCache {
     /// Evict all cached entries belonging to a specific tenant.
     ///
     /// Used during tenant purge to ensure zero residual cached data.
-    pub fn evict_tenant(&mut self, tenant_id: u32) {
+    pub fn evict_tenant(&mut self, tenant_id: u64) {
         let keys: Vec<CacheKey> = self
             .entries
             .keys()
@@ -154,8 +154,8 @@ impl RecentWindowCache {
 mod tests {
     use super::*;
 
-    const T1: u32 = 1;
-    const T2: u32 = 2;
+    const T1: u64 = 1;
+    const T2: u64 = 2;
 
     fn make_partition(min_ts: i64, max_ts: i64, rows: usize) -> CachedPartition {
         CachedPartition {

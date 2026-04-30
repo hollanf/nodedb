@@ -45,7 +45,7 @@ pub async fn create_retention_policy(
         format!("CREATE RETENTION POLICY {name} ON {collection} ({body_raw})")
     };
     let parsed = parse_create_retention_policy(&reconstructed)?;
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Validate collection exists and is timeseries.
     if let Some(catalog) = state.credentials.catalog() {

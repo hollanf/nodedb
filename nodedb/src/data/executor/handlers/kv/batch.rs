@@ -12,7 +12,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_batch_get(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         keys: &[Vec<u8>],
     ) -> Response {
@@ -44,7 +44,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_batch_put(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         entries: &[(Vec<u8>, Vec<u8>)],
         ttl_ms: u64,

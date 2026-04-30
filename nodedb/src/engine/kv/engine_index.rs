@@ -15,7 +15,7 @@ impl KvEngine {
     /// (> 10k entries), consider `backfill=false` and rebuilding offline.
     pub fn register_index(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         field: &str,
         field_position: usize,
@@ -76,7 +76,7 @@ impl KvEngine {
     /// Remove a secondary index on a field.
     ///
     /// Returns the number of index entries that were dropped.
-    pub fn drop_index(&mut self, tenant_id: u32, collection: &str, field: &str) -> usize {
+    pub fn drop_index(&mut self, tenant_id: u64, collection: &str, field: &str) -> usize {
         let tkey = table_key(tenant_id, collection);
         let idx_set = match self.indexes.get_mut(&tkey) {
             Some(s) => s,
@@ -94,7 +94,7 @@ impl KvEngine {
     /// Returns empty if the field is not indexed.
     pub fn index_lookup_eq(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         field: &str,
         value: &[u8],
@@ -112,13 +112,13 @@ impl KvEngine {
     }
 
     /// Check if a collection has any secondary indexes.
-    pub fn has_indexes(&self, tenant_id: u32, collection: &str) -> bool {
+    pub fn has_indexes(&self, tenant_id: u64, collection: &str) -> bool {
         let tkey = table_key(tenant_id, collection);
         self.indexes.get(&tkey).is_some_and(|s| !s.is_empty())
     }
 
     /// Get the write amplification ratio for a collection.
-    pub fn write_amp_ratio(&self, tenant_id: u32, collection: &str) -> f64 {
+    pub fn write_amp_ratio(&self, tenant_id: u64, collection: &str) -> f64 {
         let tkey = table_key(tenant_id, collection);
         self.indexes
             .get(&tkey)
@@ -127,7 +127,7 @@ impl KvEngine {
     }
 
     /// Get the number of secondary indexes for a collection.
-    pub fn index_count(&self, tenant_id: u32, collection: &str) -> usize {
+    pub fn index_count(&self, tenant_id: u64, collection: &str) -> usize {
         let tkey = table_key(tenant_id, collection);
         self.indexes
             .get(&tkey)

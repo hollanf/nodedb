@@ -62,7 +62,7 @@ impl CoreLoop {
     /// instead — a nested `begin_write` deadlocks redb's single-writer lock.
     pub(in crate::data::executor) fn apply_secondary_indexes(
         &mut self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         doc: &serde_json::Value,
         doc_id: &str,
@@ -107,7 +107,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn apply_secondary_indexes_in_txn(
         &mut self,
         txn: &redb::WriteTransaction,
-        tid: u32,
+        tid: u64,
         collection: &str,
         doc: &serde_json::Value,
         doc_id: &str,
@@ -192,7 +192,7 @@ impl CoreLoop {
                 if let Err(e) = self.edge_store.delete_edges_for_node(*tid, node, ord) {
                     tracing::warn!(
                         core = self.core_id,
-                        tid = tid.as_u32(),
+                        tid = tid.as_u64(),
                         node = %node,
                         error = %e,
                         "sweep: failed to delete edges from store"

@@ -38,7 +38,7 @@ pub struct DlqEntry {
     /// Session that submitted the delta.
     pub session_id: String,
     /// Tenant context.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Username of the submitter.
     pub username: String,
     /// Target collection.
@@ -136,7 +136,7 @@ pub struct ExpiredEntry {
 /// Parameters for enqueuing a rejected delta into the DLQ.
 pub struct DlqEnqueueParams {
     pub session_id: String,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub username: String,
     pub collection: String,
     pub document_id: String,
@@ -183,7 +183,7 @@ impl SyncDlq {
     }
 
     /// Set the expiry policy for a specific collection.
-    pub fn set_expiry_policy(&mut self, tenant_id: u32, collection: &str, policy: DlqExpiryPolicy) {
+    pub fn set_expiry_policy(&mut self, tenant_id: u64, collection: &str, policy: DlqExpiryPolicy) {
         let key = format!("{tenant_id}:{collection}");
         info!(
             %key,
@@ -195,7 +195,7 @@ impl SyncDlq {
     }
 
     /// Get the expiry policy for a collection (falls back to default).
-    pub fn expiry_policy(&self, tenant_id: u32, collection: &str) -> &DlqExpiryPolicy {
+    pub fn expiry_policy(&self, tenant_id: u64, collection: &str) -> &DlqExpiryPolicy {
         let key = format!("{tenant_id}:{collection}");
         self.policies
             .get(&key)
@@ -257,7 +257,7 @@ impl SyncDlq {
     }
 
     /// Get all unresolved entries for a collection.
-    pub fn entries_for_collection(&self, tenant_id: u32, collection: &str) -> Vec<&DlqEntry> {
+    pub fn entries_for_collection(&self, tenant_id: u64, collection: &str) -> Vec<&DlqEntry> {
         let key = format!("{tenant_id}:{collection}");
         self.queues
             .get(&key)

@@ -162,7 +162,7 @@ impl Default for ShardedCsrIndex {
 mod tests {
     use super::*;
 
-    fn tid(n: u32) -> TenantId {
+    fn tid(n: u64) -> TenantId {
         TenantId::new(n)
     }
 

@@ -49,12 +49,12 @@ pub fn create_tenant(
             Err(p) => p.into_inner(),
         };
         if parts.len() >= 5 && parts[3].eq_ignore_ascii_case("ID") {
-            let id: u32 = parts[4]
+            let id: u64 = parts[4]
                 .parse()
                 .map_err(|_| sqlstate_error("42601", "TENANT ID must be a numeric value"))?;
             TenantId::new(id)
         } else {
-            let count = tenants.tenant_count() as u32;
+            let count = tenants.tenant_count() as u64;
             TenantId::new(count + 1)
         }
     };
@@ -64,7 +64,7 @@ pub fn create_tenant(
         .unwrap_or_default()
         .as_secs();
     let stored = StoredTenant {
-        tenant_id: tenant_id.as_u32(),
+        tenant_id: tenant_id.as_u64(),
         name: name.to_string(),
         created_at: now,
         is_active: true,
@@ -96,7 +96,7 @@ pub fn create_tenant(
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(name.as_bytes());
-        hasher.update(tenant_id.as_u32().to_le_bytes());
+        hasher.update(tenant_id.as_u64().to_le_bytes());
         hasher.update(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

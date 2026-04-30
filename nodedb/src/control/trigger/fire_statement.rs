@@ -42,7 +42,7 @@ pub async fn fire_after_statement(
 ) -> crate::Result<()> {
     let triggers = state
         .trigger_registry
-        .get_matching(tenant_id.as_u32(), collection, event);
+        .get_matching(tenant_id.as_u64(), collection, event);
 
     let statement_triggers: Vec<_> = triggers
         .into_iter()

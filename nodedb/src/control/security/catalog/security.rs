@@ -243,7 +243,7 @@ impl SystemCatalog {
     pub fn delete_owner(
         &self,
         object_type: &str,
-        tenant_id: u32,
+        tenant_id: u64,
         object_name: &str,
     ) -> crate::Result<()> {
         let key = owner_key(object_type, tenant_id, object_name);

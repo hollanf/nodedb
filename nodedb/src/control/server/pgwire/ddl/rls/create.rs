@@ -26,7 +26,7 @@ pub struct CreateRlsPolicyRequest<'a> {
     pub predicate_raw: &'a str,
     pub is_restrictive: bool,
     pub on_deny_raw: Option<&'a str>,
-    pub tenant_id_override: Option<u32>,
+    pub tenant_id_override: Option<u64>,
 }
 
 /// `CREATE RLS POLICY <name> ON <collection> FOR <read|write|all>
@@ -55,7 +55,7 @@ pub fn create_rls_policy(
         ));
     }
 
-    let tenant_id = tenant_id_override.unwrap_or(identity.tenant_id.as_u32());
+    let tenant_id = tenant_id_override.unwrap_or(identity.tenant_id.as_u64());
 
     let policy_type_label = policy_type_raw.to_uppercase();
     let policy_type = match policy_type_label.as_str() {

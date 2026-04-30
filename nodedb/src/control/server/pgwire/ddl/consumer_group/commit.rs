@@ -18,7 +18,7 @@ pub fn commit_offset(
     identity: &AuthenticatedIdentity,
     parts: &[&str],
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Single partition: COMMIT OFFSET PARTITION <p> AT <lsn> ON <stream> CONSUMER GROUP <name>
     // parts: [COMMIT, OFFSET, PARTITION, <p>, AT, <lsn>, ON, <stream>, CONSUMER, GROUP, <name>]

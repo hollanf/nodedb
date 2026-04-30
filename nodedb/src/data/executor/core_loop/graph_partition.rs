@@ -16,7 +16,7 @@ impl CoreLoop {
     /// Returns `None` if the tenant has no graph state on this core —
     /// read paths treat that as "empty" rather than an error.
     #[inline]
-    pub(in crate::data::executor) fn csr_partition(&self, tid: u32) -> Option<&CsrIndex> {
+    pub(in crate::data::executor) fn csr_partition(&self, tid: u64) -> Option<&CsrIndex> {
         self.csr.partition(TenantId::new(tid))
     }
 
@@ -25,7 +25,7 @@ impl CoreLoop {
     /// tenant once, then all subsequent operations address unprefixed
     /// node names inside that partition.
     #[inline]
-    pub(in crate::data::executor) fn csr_partition_mut(&mut self, tid: u32) -> &mut CsrIndex {
+    pub(in crate::data::executor) fn csr_partition_mut(&mut self, tid: u64) -> &mut CsrIndex {
         self.csr.get_or_create(TenantId::new(tid))
     }
 
@@ -33,7 +33,7 @@ impl CoreLoop {
     /// PointDelete cascade so subsequent `EdgePut` to the same node is
     /// rejected as dangling.
     #[inline]
-    pub(in crate::data::executor) fn mark_node_deleted(&mut self, tid: u32, node_id: &str) {
+    pub(in crate::data::executor) fn mark_node_deleted(&mut self, tid: u64, node_id: &str) {
         self.deleted_nodes
             .entry(TenantId::new(tid))
             .or_default()
@@ -43,7 +43,7 @@ impl CoreLoop {
     /// Test whether `node_id` has been marked deleted within the
     /// caller's tenant.
     #[inline]
-    pub(in crate::data::executor) fn is_node_deleted(&self, tid: u32, node_id: &str) -> bool {
+    pub(in crate::data::executor) fn is_node_deleted(&self, tid: u64, node_id: &str) -> bool {
         self.deleted_nodes
             .get(&TenantId::new(tid))
             .is_some_and(|s| s.contains(node_id))

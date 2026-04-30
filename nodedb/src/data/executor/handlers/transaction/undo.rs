@@ -54,7 +54,7 @@ pub(in crate::data::executor) enum UndoEntry {
 
 impl CoreLoop {
     /// Roll back completed writes in reverse order.
-    pub(super) fn rollback_undo_log(&mut self, tid: u32, undo_log: Vec<UndoEntry>) {
+    pub(super) fn rollback_undo_log(&mut self, tid: u64, undo_log: Vec<UndoEntry>) {
         for entry in undo_log.into_iter().rev() {
             match entry {
                 UndoEntry::PutDocument {
@@ -182,7 +182,7 @@ impl CoreLoop {
     /// and validates that debits == credits per group_key.
     pub(super) fn check_balanced_constraints(
         &self,
-        tid: u32,
+        tid: u64,
         undo_log: &[UndoEntry],
     ) -> Result<(), ErrorCode> {
         use super::super::super::enforcement::balanced;

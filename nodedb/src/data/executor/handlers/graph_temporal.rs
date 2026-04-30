@@ -19,7 +19,7 @@ use crate::engine::graph::edge_store::Direction;
 /// wire-level `GraphOp::TemporalNeighbors` variant carries the same
 /// fields, and the dispatcher populates this struct once per call.
 pub(in crate::data::executor) struct TemporalNeighborsParams<'a> {
-    pub tid: u32,
+    pub tid: u64,
     pub collection: &'a str,
     pub node_id: &'a str,
     pub edge_label: &'a Option<String>,
@@ -134,7 +134,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_graph_temporal_algo(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         algorithm: &GraphAlgorithm,
         params: &AlgoParams,
         system_as_of_ms: Option<i64>,

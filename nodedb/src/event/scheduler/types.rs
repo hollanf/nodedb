@@ -64,7 +64,7 @@ impl ScheduleScope {
 #[msgpack(map)]
 pub struct ScheduleDef {
     /// Tenant that owns this schedule.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Schedule name (unique per tenant).
     pub name: String,
     /// Cron expression (5-field: minute hour day_of_month month day_of_week).
@@ -96,7 +96,7 @@ pub struct JobRun {
     /// Schedule name.
     pub schedule_name: String,
     /// Tenant ID.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// When the job started (epoch millis).
     pub started_at: u64,
     /// Duration in milliseconds.

@@ -8,6 +8,7 @@
 
 /// Which graph index to use for this query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IndexType {
     /// In-memory HNSW graph.  Default.
     Hnsw,
@@ -17,6 +18,7 @@ pub enum IndexType {
 
 /// Which quantization codec to use during traversal and optionally rerank.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum QuantizationKind {
     /// 8-bit scalar quantization (~0.97 recall with no rerank).
     Sq8,

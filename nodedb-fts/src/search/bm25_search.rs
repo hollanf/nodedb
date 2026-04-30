@@ -14,7 +14,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     /// Search the index using BM25 scoring.
     pub fn search(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         query: &str,
         top_k: usize,
@@ -36,7 +36,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     #[allow(clippy::too_many_arguments)]
     pub fn search_with_mode(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         query: &str,
         top_k: usize,
@@ -207,7 +207,7 @@ impl<B: FtsBackend> FtsIndex<B> {
 
     fn filter_and_mode(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         query_tokens: &[String],
         candidates: &[TextSearchResult],
@@ -237,7 +237,7 @@ impl<B: FtsBackend> FtsIndex<B> {
 
     fn count_term_matches(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         query_tokens: &[String],
         doc_id: Surrogate,
@@ -288,7 +288,7 @@ mod tests {
     use crate::index::FtsIndex;
     use crate::posting::QueryMode;
 
-    const T: u32 = 1;
+    const T: u64 = 1;
     const D1: Surrogate = Surrogate(1);
     const D2: Surrogate = Surrogate(2);
     const D3: Surrogate = Surrogate(3);

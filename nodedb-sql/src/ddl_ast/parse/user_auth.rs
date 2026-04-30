@@ -183,7 +183,7 @@ fn parse_create_user(parts: &[&str], _trimmed: &str) -> NodedbStatement {
         .iter()
         .position(|p| p.eq_ignore_ascii_case("TENANT"))
         .and_then(|ti| parts.get(ti + 1))
-        .and_then(|s| s.parse::<u32>().ok());
+        .and_then(|s| s.parse::<u64>().ok());
 
     NodedbStatement::CreateUser {
         username,

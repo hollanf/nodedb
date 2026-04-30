@@ -133,7 +133,7 @@ impl JobHistoryStore {
     }
 
     /// Get the last N runs for a specific schedule.
-    pub fn last_runs(&self, tenant_id: u32, schedule_name: &str, limit: usize) -> Vec<JobRun> {
+    pub fn last_runs(&self, tenant_id: u64, schedule_name: &str, limit: usize) -> Vec<JobRun> {
         let runs = self.runs.read().unwrap_or_else(|p| p.into_inner());
         runs.iter()
             .rev()
@@ -144,7 +144,7 @@ impl JobHistoryStore {
     }
 
     /// Get the most recent run for a schedule (for SHOW SCHEDULES).
-    pub fn last_run(&self, tenant_id: u32, schedule_name: &str) -> Option<JobRun> {
+    pub fn last_run(&self, tenant_id: u64, schedule_name: &str) -> Option<JobRun> {
         let runs = self.runs.read().unwrap_or_else(|p| p.into_inner());
         runs.iter()
             .rev()

@@ -21,7 +21,7 @@ pub struct OutboundDelta {
     /// WAL LSN on the source node. Used for ordering and dedup.
     pub lsn: u64,
     /// Tenant context.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Origin node's peer ID for CRDT identity attribution.
     pub peer_id: u64,
     /// Monotonic sequence per (collection) for ordering enforcement.
@@ -48,7 +48,7 @@ pub struct LiteSessionHandle {
     /// Lite device's CRDT peer ID.
     pub peer_id: u64,
     /// Tenant this session belongs to.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Collections this Lite device has subscribed to (via shape subscriptions).
     /// Empty = all collections for the tenant.
     pub subscribed_collections: Vec<String>,

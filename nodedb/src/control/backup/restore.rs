@@ -35,7 +35,7 @@ const NODE_RESTORE_TIMEOUT: Duration = Duration::from_secs(120);
 /// Aggregate stats returned to the client at the end of a restore.
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct RestoreStats {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub dry_run: bool,
     pub sections: u16,
     pub source_vshard_count: u16,
@@ -66,7 +66,7 @@ pub struct RestoreStats {
 /// embedded `tenant_id` must match.
 pub async fn restore_tenant(
     state: &Arc<SharedState>,
-    tenant_id: u32,
+    tenant_id: u64,
     envelope_bytes: &[u8],
     dry_run: bool,
 ) -> Result<RestoreStats, Error> {
@@ -223,7 +223,7 @@ pub async fn restore_tenant(
 /// check (the main restore path still runs its own catalog-open).
 fn warn_on_tombstoned_restores(
     state: &Arc<SharedState>,
-    tenant_id: u32,
+    tenant_id: u64,
     merged: &TenantDataSnapshot,
     snapshot_watermark: u64,
 ) {
@@ -361,7 +361,7 @@ fn is_metadata_section(section: &nodedb_types::backup_envelope::Section) -> bool
 /// and the tombstone barrier is in place when replay runs.
 pub(super) fn apply_metadata_sections(
     state: &Arc<SharedState>,
-    tenant_id: u32,
+    tenant_id: u64,
     env: &nodedb_types::backup_envelope::Envelope,
 ) {
     use nodedb_types::backup_envelope::{
@@ -461,7 +461,7 @@ enum RouteOutcome {
 /// owning node — those engines tolerate (and rely on) replicated state.
 fn split_by_current_topology(
     state: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     merged: TenantDataSnapshot,
 ) -> SplitOutput {
     let routing = state.cluster_routing.as_ref().map(|r| r.read().unwrap());
@@ -569,7 +569,7 @@ fn split_by_current_topology(
     }
 }
 
-fn extract_collection(key: &str, tenant_id: u32) -> Option<&str> {
+fn extract_collection(key: &str, tenant_id: u64) -> Option<&str> {
     let prefix_owned = format!("{tenant_id}:");
     let after = key.strip_prefix(prefix_owned.as_str())?;
     let coll = after.split(['\0', ':']).next()?;
@@ -583,7 +583,7 @@ fn is_self(state: &SharedState, node_id: u64) -> bool {
 async fn dispatch_remote(
     state: &Arc<SharedState>,
     node_id: u64,
-    tenant_id: u32,
+    tenant_id: u64,
     plan: PhysicalPlan,
 ) -> Result<(), Error> {
     let transport = state

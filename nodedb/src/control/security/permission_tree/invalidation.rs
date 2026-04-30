@@ -13,7 +13,7 @@ use super::types::PermissionGrant;
 ///
 /// Upserts the grant into the cache. The grant's `resource_id` and `grantee`
 /// determine the cache key; the `level` and `inherited` are the new values.
-pub fn on_grant_upsert(cache: &mut PermissionCache, tenant_id: u32, grant: &PermissionGrant) {
+pub fn on_grant_upsert(cache: &mut PermissionCache, tenant_id: u64, grant: &PermissionGrant) {
     cache.put_grant(tenant_id, grant);
     debug!(
         tenant_id,
@@ -30,7 +30,7 @@ pub fn on_grant_upsert(cache: &mut PermissionCache, tenant_id: u32, grant: &Perm
 /// inherited permissions from ancestors.
 pub fn on_grant_delete(
     cache: &mut PermissionCache,
-    tenant_id: u32,
+    tenant_id: u64,
     resource_id: &str,
     grantee: &str,
 ) {
@@ -47,7 +47,7 @@ pub fn on_grant_delete(
 /// and children map accordingly.
 pub fn on_edge_upsert(
     cache: &mut PermissionCache,
-    tenant_id: u32,
+    tenant_id: u64,
     child_id: &str,
     parent_id: &str,
 ) {
@@ -64,7 +64,7 @@ pub fn on_edge_upsert(
 ///
 /// The resource `child_id` is no longer under any parent (becomes a root or
 /// is being deleted entirely).
-pub fn on_edge_delete(cache: &mut PermissionCache, tenant_id: u32, child_id: &str) {
+pub fn on_edge_delete(cache: &mut PermissionCache, tenant_id: u64, child_id: &str) {
     cache.remove_edge(tenant_id, child_id);
     debug!(tenant_id, child_id, "permission_tree: edge deleted");
 }
@@ -75,7 +75,7 @@ pub fn on_edge_delete(cache: &mut PermissionCache, tenant_id: u32, child_id: &st
 /// Clears existing state for the tenant before loading.
 pub fn full_reload(
     cache: &mut PermissionCache,
-    tenant_id: u32,
+    tenant_id: u64,
     edges: &[(String, String)],
     grants: &[PermissionGrant],
 ) {

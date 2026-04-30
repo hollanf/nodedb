@@ -60,7 +60,7 @@ pub async fn set_permission_tree(
         return Err(sqlstate_error("XX000", "catalog unavailable"));
     };
     let mut coll = catalog
-        .get_collection(tenant_id.as_u32(), &collection)
+        .get_collection(tenant_id.as_u64(), &collection)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
         .ok_or_else(|| {
             sqlstate_error(
@@ -89,7 +89,7 @@ pub async fn set_permission_tree(
         .permission_cache
         .write()
         .await
-        .register_tree_def(tenant_id.as_u32(), &collection, def);
+        .register_tree_def(tenant_id.as_u64(), &collection, def);
 
     // Audit.
     state
@@ -126,7 +126,7 @@ pub async fn drop_permission_tree(
         return Err(sqlstate_error("XX000", "catalog unavailable"));
     };
     let mut coll = catalog
-        .get_collection(tenant_id.as_u32(), &collection)
+        .get_collection(tenant_id.as_u64(), &collection)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
         .ok_or_else(|| {
             sqlstate_error(
@@ -145,7 +145,7 @@ pub async fn drop_permission_tree(
         .permission_cache
         .write()
         .await
-        .unregister_tree_def(tenant_id.as_u32(), &collection);
+        .unregister_tree_def(tenant_id.as_u64(), &collection);
 
     state
         .audit

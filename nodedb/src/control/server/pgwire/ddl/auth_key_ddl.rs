@@ -75,7 +75,7 @@ pub fn create_auth_key(
 
     let token = state.auth_api_keys.create_key(
         auth_user_id,
-        identity.tenant_id.as_u32(),
+        identity.tenant_id.as_u64(),
         scopes,
         rate_limit,
         0, // burst = use default

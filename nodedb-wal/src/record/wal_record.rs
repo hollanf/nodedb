@@ -27,7 +27,7 @@ impl WalRecord {
     pub fn new(
         record_type: u32,
         lsn: u64,
-        tenant_id: u32,
+        tenant_id: u64,
         vshard_id: u32,
         payload: Vec<u8>,
         encryption_key: Option<&crate::crypto::WalEncryptionKey>,

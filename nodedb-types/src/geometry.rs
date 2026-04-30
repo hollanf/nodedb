@@ -41,6 +41,7 @@ impl Coord {
     zerompk::FromMessagePack,
 )]
 #[serde(tag = "type")]
+#[non_exhaustive]
 pub enum Geometry {
     Point {
         coordinates: [f64; 2],

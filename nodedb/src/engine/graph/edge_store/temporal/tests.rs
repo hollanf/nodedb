@@ -115,7 +115,7 @@ fn gdpr_erase_distinct_from_tombstone_but_both_hide() {
     let key = versioned_edge_key(COLL, "a", "L", "b", 200).unwrap();
     let txn = store.db.begin_read().unwrap();
     let table = txn.open_table(EDGES).unwrap();
-    let val = table.get((T.as_u32(), key.as_str())).unwrap().unwrap();
+    let val = table.get((T.as_u64(), key.as_str())).unwrap().unwrap();
     assert_eq!(val.value(), GDPR_ERASURE_SENTINEL);
     assert_ne!(val.value(), TOMBSTONE_SENTINEL);
 }
@@ -162,7 +162,7 @@ fn reverse_index_is_versioned_symmetrically() {
     let rev_key = versioned_edge_key(COLL, "b", "L", "a", 100).unwrap();
     let txn = store.db.begin_read().unwrap();
     let table = txn.open_table(REVERSE_EDGES).unwrap();
-    let val = table.get((T.as_u32(), rev_key.as_str())).unwrap().unwrap();
+    let val = table.get((T.as_u64(), rev_key.as_str())).unwrap().unwrap();
     assert!(val.value().is_empty());
 
     // Payload encoding check.

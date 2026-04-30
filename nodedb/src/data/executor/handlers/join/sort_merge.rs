@@ -39,7 +39,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_sort_merge_join(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         left_collection: &str,
         right_collection: &str,
         on: &[(String, String)],

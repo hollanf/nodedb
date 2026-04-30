@@ -25,7 +25,7 @@ pub fn create_consumer_group(
 
     let group_name = group_name.to_lowercase();
     let stream_name = stream_name.to_lowercase();
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Verify the stream or topic exists.
     // Consumer groups can be created on change streams or durable topics.

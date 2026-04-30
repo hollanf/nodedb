@@ -12,7 +12,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_scan(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         cursor: &[u8],
         count: usize,

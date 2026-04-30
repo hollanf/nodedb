@@ -22,7 +22,7 @@ pub fn handle_set_vector_metadata(
     identity: &AuthenticatedIdentity,
     sql: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Parse: ALTER COLLECTION <name> SET VECTOR METADATA ON <column> (...)
     let parts: Vec<&str> = sql.split_whitespace().collect();
@@ -162,7 +162,7 @@ pub fn handle_show_vector_models(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let catalog = state
         .credentials
@@ -210,7 +210,7 @@ pub fn handle_vector_metadata_query(
     collection: &str,
     column: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let catalog = state
         .credentials

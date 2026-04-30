@@ -28,7 +28,7 @@ pub fn create_sequence(
     gap_free: bool,
     _scope: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let mut def = StoredSequence::new(tenant_id, name.to_string(), identity.username.clone());
 

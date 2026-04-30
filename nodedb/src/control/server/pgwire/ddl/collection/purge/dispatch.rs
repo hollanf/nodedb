@@ -17,7 +17,7 @@ use crate::types::{TenantId, TraceId, VShardId};
 /// can complete the reclaim). The operation is idempotent by design.
 pub async fn dispatch_unregister_collection(
     state: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     name: &str,
     purge_lsn: u64,
 ) {

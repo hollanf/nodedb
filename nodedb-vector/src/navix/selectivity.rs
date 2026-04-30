@@ -24,6 +24,7 @@ pub fn local_selectivity_at(node_neighbors: &[u32], allowed: &RoaringBitmap) -> 
 
 /// Heuristic chosen for expanding a given hop based on local selectivity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum NavixHeuristic {
     /// High selectivity (> 50%) — normal HNSW expansion; score every neighbor
     /// in `allowed` and add to the candidate heap.

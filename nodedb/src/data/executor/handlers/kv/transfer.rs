@@ -14,7 +14,7 @@ use crate::engine::kv::current_ms;
 
 /// Parameters for an atomic fungible transfer.
 pub(in crate::data::executor) struct TransferParams<'a> {
-    pub tid: u32,
+    pub tid: u64,
     pub collection: &'a str,
     pub source_key: &'a [u8],
     pub dest_key: &'a [u8],
@@ -201,7 +201,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_transfer_item(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         source_collection: &str,
         dest_collection: &str,
         item_key: &[u8],

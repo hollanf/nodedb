@@ -19,7 +19,7 @@ use nodedb::event::cdc::stream_def::{
     ChangeStreamDef, CompactionConfig, LateDataPolicy, OpFilter, RetentionConfig, StreamFormat,
 };
 
-fn stream_def(tenant: u32, name: &str, collection: &str) -> ChangeStreamDef {
+fn stream_def(tenant: u64, name: &str, collection: &str) -> ChangeStreamDef {
     ChangeStreamDef {
         tenant_id: tenant,
         name: name.into(),

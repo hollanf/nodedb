@@ -66,7 +66,7 @@ pub fn define_field(
 
     // Store in catalog.
     if let Some(catalog) = state.credentials.catalog() {
-        match catalog.get_collection(tenant_id.as_u32(), &collection) {
+        match catalog.get_collection(tenant_id.as_u64(), &collection) {
             Ok(Some(mut coll)) => {
                 // Remove existing definition for this field if any.
                 coll.field_defs.retain(|f| f.name != field_name);
@@ -162,7 +162,7 @@ pub fn define_event(
     };
 
     if let Some(catalog) = state.credentials.catalog() {
-        match catalog.get_collection(tenant_id.as_u32(), &collection) {
+        match catalog.get_collection(tenant_id.as_u64(), &collection) {
             Ok(Some(mut coll)) => {
                 coll.event_defs.retain(|e| e.name != event_name);
                 coll.event_defs.push(def);

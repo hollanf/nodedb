@@ -96,31 +96,31 @@ async fn run_one(state: &Arc<SharedState>, entry: &Entry) {
     let tenant_id = entry.tenant_id;
     let plan = match entry.engine {
         BitemporalEngineKind::EdgeStore => PhysicalPlan::Meta(MetaOp::TemporalPurgeEdgeStore {
-            tenant_id: tenant_id.as_u32(),
+            tenant_id: tenant_id.as_u64(),
             collection: entry.collection.clone(),
             cutoff_system_ms,
         }),
         BitemporalEngineKind::DocumentStrict => {
             PhysicalPlan::Meta(MetaOp::TemporalPurgeDocumentStrict {
-                tenant_id: tenant_id.as_u32(),
+                tenant_id: tenant_id.as_u64(),
                 collection: entry.collection.clone(),
                 cutoff_system_ms,
             })
         }
         BitemporalEngineKind::Columnar => PhysicalPlan::Meta(MetaOp::TemporalPurgeColumnar {
-            tenant_id: tenant_id.as_u32(),
+            tenant_id: tenant_id.as_u64(),
             collection: entry.collection.clone(),
             cutoff_system_ms,
         }),
         BitemporalEngineKind::Crdt => PhysicalPlan::Meta(MetaOp::TemporalPurgeCrdt {
-            tenant_id: tenant_id.as_u32(),
+            tenant_id: tenant_id.as_u64(),
             collection: entry.collection.clone(),
             cutoff_system_ms,
         }),
         // For Array entries `entry.collection` carries the array_id (see
         // hydration in main.rs — registered under the catalog `name` field).
         BitemporalEngineKind::Array => PhysicalPlan::Meta(MetaOp::TemporalPurgeArray {
-            tenant_id: tenant_id.as_u32(),
+            tenant_id: tenant_id.as_u64(),
             array_id: entry.collection.clone(),
             cutoff_system_ms,
         }),
@@ -147,7 +147,7 @@ async fn run_one(state: &Arc<SharedState>, entry: &Entry) {
                 )
             {
                 warn!(
-                    tenant = tenant_id.as_u32(),
+                    tenant = tenant_id.as_u64(),
                     collection = %entry.collection,
                     error = %e,
                     "temporal-purge wal append failed"
@@ -155,7 +155,7 @@ async fn run_one(state: &Arc<SharedState>, entry: &Entry) {
             }
             if purged > 0 {
                 info!(
-                    tenant = tenant_id.as_u32(),
+                    tenant = tenant_id.as_u64(),
                     collection = %entry.collection,
                     engine = ?entry.engine,
                     purged,
@@ -166,7 +166,7 @@ async fn run_one(state: &Arc<SharedState>, entry: &Entry) {
         }
         Err(e) => {
             warn!(
-                tenant = tenant_id.as_u32(),
+                tenant = tenant_id.as_u64(),
                 collection = %entry.collection,
                 engine = ?entry.engine,
                 error = %e,

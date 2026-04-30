@@ -17,7 +17,7 @@ pub fn put(proc: StoredProcedure, shared: Arc<SharedState>) {
     );
 }
 
-pub fn delete(tenant_id: u32, name: String, shared: Arc<SharedState>) {
+pub fn delete(tenant_id: u64, name: String, shared: Arc<SharedState>) {
     shared.block_cache.clear();
     shared
         .permissions

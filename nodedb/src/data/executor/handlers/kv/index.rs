@@ -12,7 +12,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_register_index(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field: &str,
         field_position: usize,
@@ -41,7 +41,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_drop_index(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field: &str,
     ) -> Response {

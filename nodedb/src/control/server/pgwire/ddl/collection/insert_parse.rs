@@ -69,7 +69,7 @@ pub(super) fn parse_write_statement(
         after_coll_trimmed.starts_with('{') || after_coll_trimmed.starts_with('[');
     let mut coll_type: Option<nodedb_types::CollectionType> = None;
     if let Some(catalog) = state.credentials.catalog()
-        && let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), &coll_name)
+        && let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u64(), &coll_name)
     {
         // Skip non-schemaless collections for standard VALUES INSERT (let SQL path handle).
         // But always handle here for: UPSERT, { } object literal (any collection type).

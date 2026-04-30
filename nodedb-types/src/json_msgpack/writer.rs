@@ -71,6 +71,15 @@ fn write_native_value(buf: &mut Vec<u8>, value: &crate::Value) {
             }
         }
         crate::Value::Range { .. } | crate::Value::Record { .. } => buf.push(0xC0),
+        crate::Value::Vector(v) => {
+            // Encode as a standard msgpack array of float64 values so that
+            // pgwire clients receive a plain JSON number array.
+            write_native_array_header(buf, v.len());
+            for f in v.iter() {
+                buf.push(0xCB);
+                buf.extend_from_slice(&(*f as f64).to_be_bytes());
+            }
+        }
         // NdArrayCell is encoded as a 2-key map `{coords:[...], attrs:[...]}`
         // so the pgwire `msgpack_to_json_string` transcoder produces clean
         // JSON for clients reading slice/project rows.

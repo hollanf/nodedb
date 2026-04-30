@@ -66,6 +66,7 @@ pub struct AggregateExpr {
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum AggFunction {
     Sum,
     Count,
@@ -119,6 +120,7 @@ impl AggFunction {
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum RefreshPolicy {
     /// Refresh on every memtable flush. Lowest latency.
     #[default]

@@ -64,7 +64,7 @@ pub struct JwtClaims {
     pub sub: String,
     /// Tenant ID.
     #[serde(default)]
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Roles as string array.
     #[serde(default)]
     pub roles: Vec<String>,

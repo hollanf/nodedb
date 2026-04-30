@@ -2,6 +2,7 @@
 
 /// Errors from vector index operations.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum VectorError {
     #[error("vector dimension mismatch: expected {expected}, got {got}")]
     DimensionMismatch { expected: usize, got: usize },

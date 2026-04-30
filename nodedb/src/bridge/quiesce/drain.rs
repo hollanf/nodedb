@@ -14,7 +14,7 @@ impl CollectionQuiesce {
     ///   reach zero.
     ///
     /// Idempotent: calling twice is a no-op on the second call.
-    pub fn begin_drain(&self, tenant_id: u32, collection: &str) {
+    pub fn begin_drain(&self, tenant_id: u64, collection: &str) {
         let mut inner = self.inner_mut();
         let entry = inner
             .states
@@ -28,7 +28,7 @@ impl CollectionQuiesce {
     /// the collection metadata is gone so new scans naturally return
     /// `collection_not_found` from that point on, and the drain entry
     /// is garbage-collected via `forget`.
-    pub fn clear_drain(&self, tenant_id: u32, collection: &str) {
+    pub fn clear_drain(&self, tenant_id: u64, collection: &str) {
         let mut inner = self.inner_mut();
         if let Some(state) = inner.states.get_mut(&(tenant_id, collection.to_string())) {
             state.draining = false;
@@ -38,7 +38,7 @@ impl CollectionQuiesce {
     /// Drop the entry entirely once reclaim has completed. After this,
     /// `is_draining` returns false and `open_scans` is 0. Called by
     /// the purge handler right before emitting the reclaim ack.
-    pub fn forget(&self, tenant_id: u32, collection: &str) {
+    pub fn forget(&self, tenant_id: u64, collection: &str) {
         let mut inner = self.inner_mut();
         inner.states.remove(&(tenant_id, collection.to_string()));
     }
@@ -51,7 +51,7 @@ impl CollectionQuiesce {
     /// `begin_drain` must be called before awaiting this future, or
     /// new scans could continue to bump the counter and the future
     /// would never resolve.
-    pub fn wait_until_drained(self: &Arc<Self>, tenant_id: u32, collection: &str) -> WaitDrain {
+    pub fn wait_until_drained(self: &Arc<Self>, tenant_id: u64, collection: &str) -> WaitDrain {
         WaitDrain {
             registry: Arc::clone(self),
             tenant_id,
@@ -73,7 +73,7 @@ impl CollectionQuiesce {
 /// check and await.
 pub struct WaitDrain {
     registry: Arc<CollectionQuiesce>,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: String,
     notified: Option<Pin<Box<tokio::sync::futures::Notified<'static>>>>,
 }

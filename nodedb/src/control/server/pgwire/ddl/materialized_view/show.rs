@@ -34,7 +34,7 @@ pub fn show_materialized_views(
 
     let views = if let Some(catalog) = state.credentials.catalog() {
         catalog
-            .list_materialized_views(tenant_id.as_u32())
+            .list_materialized_views(tenant_id.as_u64())
             .map_err(|e| sqlstate_error("XX000", &format!("catalog read failed: {e}")))?
     } else {
         Vec::new()

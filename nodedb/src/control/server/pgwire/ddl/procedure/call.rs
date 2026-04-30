@@ -32,7 +32,7 @@ pub async fn call_procedure(
         .ok_or_else(|| sqlstate_error("XX000", "system catalog not available"))?;
 
     let proc = catalog
-        .get_procedure(tenant_id.as_u32(), &name)
+        .get_procedure(tenant_id.as_u64(), &name)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
         .ok_or_else(|| sqlstate_error("42883", &format!("procedure '{name}' does not exist")))?;
 

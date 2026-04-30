@@ -48,7 +48,7 @@ pub async fn exchange_key(
 
     let token = state.shared.auth_api_keys.create_key(
         &auth_user_id,
-        identity.tenant_id.as_u32(),
+        identity.tenant_id.as_u64(),
         scopes,
         rate_limit_qps,
         rate_limit_burst,

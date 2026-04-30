@@ -33,11 +33,11 @@ struct TenantPermissions {
 #[derive(Default, Debug)]
 pub struct PermissionCache {
     /// Per-tenant permission state.
-    tenants: HashMap<u32, TenantPermissions>,
+    tenants: HashMap<u64, TenantPermissions>,
 
     /// Per-collection permission tree definitions.
     /// Key: `(tenant_id, collection_name)`.
-    tree_defs: HashMap<(u32, String), PermissionTreeDef>,
+    tree_defs: HashMap<(u64, String), PermissionTreeDef>,
 }
 
 impl PermissionCache {
@@ -46,7 +46,7 @@ impl PermissionCache {
     }
 
     /// Register a permission tree definition for a collection.
-    pub fn register_tree_def(&mut self, tenant_id: u32, collection: &str, def: PermissionTreeDef) {
+    pub fn register_tree_def(&mut self, tenant_id: u64, collection: &str, def: PermissionTreeDef) {
         info!(
             tenant_id,
             collection,
@@ -58,18 +58,18 @@ impl PermissionCache {
     }
 
     /// Remove a permission tree definition for a collection.
-    pub fn unregister_tree_def(&mut self, tenant_id: u32, collection: &str) {
+    pub fn unregister_tree_def(&mut self, tenant_id: u64, collection: &str) {
         self.tree_defs.remove(&(tenant_id, collection.to_owned()));
         info!(tenant_id, collection, "permission_tree: unregistered");
     }
 
     /// Get the permission tree definition for a collection (if any).
-    pub fn get_tree_def(&self, tenant_id: u32, collection: &str) -> Option<&PermissionTreeDef> {
+    pub fn get_tree_def(&self, tenant_id: u64, collection: &str) -> Option<&PermissionTreeDef> {
         self.tree_defs.get(&(tenant_id, collection.to_owned()))
     }
 
     /// Load a parent→child edge into the hierarchy.
-    pub fn put_edge(&mut self, tenant_id: u32, child_id: &str, parent_id: &str) {
+    pub fn put_edge(&mut self, tenant_id: u64, child_id: &str, parent_id: &str) {
         let tenant = self.tenants.entry(tenant_id).or_default();
         tenant
             .parent_map
@@ -82,7 +82,7 @@ impl PermissionCache {
     }
 
     /// Remove a parent→child edge from the hierarchy.
-    pub fn remove_edge(&mut self, tenant_id: u32, child_id: &str) {
+    pub fn remove_edge(&mut self, tenant_id: u64, child_id: &str) {
         let Some(tenant) = self.tenants.get_mut(&tenant_id) else {
             return;
         };
@@ -97,7 +97,7 @@ impl PermissionCache {
     }
 
     /// Load a permission grant into the cache.
-    pub fn put_grant(&mut self, tenant_id: u32, grant: &PermissionGrant) {
+    pub fn put_grant(&mut self, tenant_id: u64, grant: &PermissionGrant) {
         let tenant = self.tenants.entry(tenant_id).or_default();
         tenant.grants.insert(
             (grant.resource_id.clone(), grant.grantee.clone()),
@@ -106,7 +106,7 @@ impl PermissionCache {
     }
 
     /// Remove a permission grant from the cache.
-    pub fn remove_grant(&mut self, tenant_id: u32, resource_id: &str, grantee: &str) {
+    pub fn remove_grant(&mut self, tenant_id: u64, resource_id: &str, grantee: &str) {
         if let Some(tenant) = self.tenants.get_mut(&tenant_id) {
             tenant
                 .grants
@@ -118,7 +118,7 @@ impl PermissionCache {
     /// Returns `None` if no grant exists at this exact resource.
     pub fn get_grant(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         resource_id: &str,
         grantee: &str,
     ) -> Option<(&str, bool)> {
@@ -130,7 +130,7 @@ impl PermissionCache {
     }
 
     /// Get the parent of a resource. Returns `None` if root.
-    pub fn get_parent(&self, tenant_id: u32, resource_id: &str) -> Option<&str> {
+    pub fn get_parent(&self, tenant_id: u64, resource_id: &str) -> Option<&str> {
         self.tenants
             .get(&tenant_id)?
             .parent_map
@@ -139,7 +139,7 @@ impl PermissionCache {
     }
 
     /// Get all children of a resource (direct, not recursive).
-    pub fn get_children(&self, tenant_id: u32, resource_id: &str) -> Vec<&str> {
+    pub fn get_children(&self, tenant_id: u64, resource_id: &str) -> Vec<&str> {
         self.tenants
             .get(&tenant_id)
             .and_then(|t| t.children_map.get(resource_id))
@@ -148,7 +148,7 @@ impl PermissionCache {
     }
 
     /// Get all resource IDs for a tenant (for iteration during accessible_resources).
-    pub fn all_resource_ids(&self, tenant_id: u32) -> Vec<&str> {
+    pub fn all_resource_ids(&self, tenant_id: u64) -> Vec<&str> {
         self.tenants
             .get(&tenant_id)
             .map(|t| {
@@ -174,7 +174,7 @@ impl PermissionCache {
     }
 
     /// Get all grantees that have explicit grants for a given resource.
-    pub fn grantees_for_resource(&self, tenant_id: u32, resource_id: &str) -> Vec<&str> {
+    pub fn grantees_for_resource(&self, tenant_id: u64, resource_id: &str) -> Vec<&str> {
         self.tenants
             .get(&tenant_id)
             .map(|t| {
@@ -188,7 +188,7 @@ impl PermissionCache {
     }
 
     /// Bulk load edges from a list of (child_id, parent_id) pairs.
-    pub fn load_edges(&mut self, tenant_id: u32, edges: &[(String, String)]) {
+    pub fn load_edges(&mut self, tenant_id: u64, edges: &[(String, String)]) {
         for (child, parent) in edges {
             self.put_edge(tenant_id, child, parent);
         }
@@ -200,7 +200,7 @@ impl PermissionCache {
     }
 
     /// Bulk load grants.
-    pub fn load_grants(&mut self, tenant_id: u32, grants: &[PermissionGrant]) {
+    pub fn load_grants(&mut self, tenant_id: u64, grants: &[PermissionGrant]) {
         for grant in grants {
             self.put_grant(tenant_id, grant);
         }
@@ -212,7 +212,7 @@ impl PermissionCache {
     }
 
     /// Number of resources tracked for a tenant.
-    pub fn resource_count(&self, tenant_id: u32) -> usize {
+    pub fn resource_count(&self, tenant_id: u64) -> usize {
         self.tenants
             .get(&tenant_id)
             .map(|t| t.parent_map.len())
@@ -220,7 +220,7 @@ impl PermissionCache {
     }
 
     /// Number of grants tracked for a tenant.
-    pub fn grant_count(&self, tenant_id: u32) -> usize {
+    pub fn grant_count(&self, tenant_id: u64) -> usize {
         self.tenants
             .get(&tenant_id)
             .map(|t| t.grants.len())
@@ -233,7 +233,7 @@ impl PermissionCache {
     }
 
     /// Check if any tree def for this tenant uses `collection` as its permission table.
-    pub fn tree_defs_using_permission_table(&self, tenant_id: u32, collection: &str) -> bool {
+    pub fn tree_defs_using_permission_table(&self, tenant_id: u64, collection: &str) -> bool {
         self.tree_defs
             .iter()
             .any(|((tid, _), def)| *tid == tenant_id && def.permission_table == collection)
@@ -242,7 +242,7 @@ impl PermissionCache {
     /// Check if any tree def for this tenant uses `collection` as its resource graph source.
     /// The graph index name references a graph on a collection — we check by matching
     /// the collection name itself (the resource hierarchy collection).
-    pub fn tree_defs_using_graph(&self, tenant_id: u32, collection: &str) -> bool {
+    pub fn tree_defs_using_graph(&self, tenant_id: u64, collection: &str) -> bool {
         self.tree_defs
             .iter()
             .any(|((tid, coll), _)| *tid == tenant_id && coll == collection)

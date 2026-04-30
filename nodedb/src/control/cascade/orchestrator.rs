@@ -62,7 +62,7 @@ pub struct Dependent {
 /// the same subgraphs.
 pub fn collect_dependents(
     catalog: &SystemCatalog,
-    tenant_id: u32,
+    tenant_id: u64,
     root_collection: &str,
     visited: &mut HashSet<(DependentKind, String)>,
 ) -> crate::Result<Vec<Dependent>> {
@@ -124,7 +124,7 @@ pub fn collect_dependents(
 /// Convenience builder for the
 /// [`crate::Error::DependentObjectsExist`] variant so call sites
 /// don't repeat the kind-string conversion.
-pub fn dependents_error(tenant_id: u32, root_name: &str, deps: &[Dependent]) -> crate::Error {
+pub fn dependents_error(tenant_id: u64, root_name: &str, deps: &[Dependent]) -> crate::Error {
     let pairs: Vec<(String, String)> = deps
         .iter()
         .map(|d| (d.kind.as_str().to_string(), d.name.clone()))

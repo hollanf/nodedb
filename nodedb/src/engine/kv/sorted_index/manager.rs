@@ -72,7 +72,7 @@ impl SortedIndexManager {
     /// from the KV hash table, used to populate the index from existing data.
     pub fn register(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         def: SortedIndexDef,
         existing_entries: impl Iterator<Item = (Vec<u8>, Vec<u8>)>,
     ) -> u32 {
@@ -101,7 +101,7 @@ impl SortedIndexManager {
 
     /// Drop every sorted index belonging to `(tenant_id, collection)`.
     /// Returns the number of indexes removed.
-    pub fn purge_collection(&mut self, tenant_id: u32, collection: &str) -> usize {
+    pub fn purge_collection(&mut self, tenant_id: u64, collection: &str) -> usize {
         let tbl_key = super::super::engine_helpers::table_key(tenant_id, collection);
         let idx_keys = self.collection_indexes.remove(&tbl_key).unwrap_or_default();
         let mut removed = 0;
@@ -114,7 +114,7 @@ impl SortedIndexManager {
     }
 
     /// Drop a sorted index. Returns `true` if it existed.
-    pub fn drop(&mut self, tenant_id: u32, index_name: &str) -> bool {
+    pub fn drop(&mut self, tenant_id: u64, index_name: &str) -> bool {
         let idx_key = index_key(tenant_id, index_name);
 
         let Some(idx) = self.indexes.remove(&idx_key) else {
@@ -185,7 +185,7 @@ impl SortedIndexManager {
     /// For windowed indexes, only entries within the current window are counted.
     pub fn rank(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         index_name: &str,
         primary_key: &[u8],
         now_ms: u64,
@@ -210,7 +210,7 @@ impl SortedIndexManager {
     /// Returns `(rank, primary_key)` pairs.
     pub fn top_k(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         index_name: &str,
         k: u32,
         now_ms: u64,
@@ -241,7 +241,7 @@ impl SortedIndexManager {
     /// Returns `(rank, primary_key)` pairs.
     pub fn range(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         index_name: &str,
         score_min: Option<&[u8]>,
         score_max: Option<&[u8]>,
@@ -272,7 +272,7 @@ impl SortedIndexManager {
     }
 
     /// Get the total count of entries in a sorted index.
-    pub fn count(&self, tenant_id: u32, index_name: &str, now_ms: u64) -> Option<u32> {
+    pub fn count(&self, tenant_id: u64, index_name: &str, now_ms: u64) -> Option<u32> {
         let idx = self.get_index(tenant_id, index_name)?;
 
         if idx.def.window.is_unwindowed() {
@@ -287,18 +287,18 @@ impl SortedIndexManager {
     }
 
     /// Get the sort key for a primary key in a sorted index (ZSCORE equivalent).
-    pub fn score(&self, tenant_id: u32, index_name: &str, primary_key: &[u8]) -> Option<Vec<u8>> {
+    pub fn score(&self, tenant_id: u64, index_name: &str, primary_key: &[u8]) -> Option<Vec<u8>> {
         let idx = self.get_index(tenant_id, index_name)?;
         idx.tree.get_sort_key(primary_key).map(|s| s.to_vec())
     }
 
     /// Get the index definition.
-    pub fn get_def(&self, tenant_id: u32, index_name: &str) -> Option<&SortedIndexDef> {
+    pub fn get_def(&self, tenant_id: u64, index_name: &str) -> Option<&SortedIndexDef> {
         let idx = self.get_index(tenant_id, index_name)?;
         Some(&idx.def)
     }
 
-    fn get_index(&self, tenant_id: u32, index_name: &str) -> Option<&SortedIndex> {
+    fn get_index(&self, tenant_id: u64, index_name: &str) -> Option<&SortedIndex> {
         let idx_key = index_key(tenant_id, index_name);
         self.indexes.get(&idx_key)
     }
@@ -312,7 +312,7 @@ impl Default for SortedIndexManager {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-fn index_key(tenant_id: u32, index_name: &str) -> String {
+fn index_key(tenant_id: u64, index_name: &str) -> String {
     format!("{tenant_id}:{index_name}")
 }
 

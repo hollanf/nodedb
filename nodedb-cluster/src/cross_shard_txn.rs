@@ -21,7 +21,7 @@ pub struct CrossShardTransaction {
     /// Unique transaction ID (monotonic from coordinator).
     pub txn_id: u64,
     /// Tenant scope.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Per-shard write sets: `(vshard_id, serialized_writes)`.
     /// Each entry is the MessagePack-encoded writes for that shard.
     pub shard_writes: Vec<(u32, Vec<u8>)>,
@@ -60,7 +60,7 @@ pub struct GsiForwardEntry {
     /// The indexed field value.
     pub value: String,
     /// Document location in the primary shard.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub collection: String,
     pub document_id: String,
     pub source_vshard: u32,
@@ -148,7 +148,7 @@ impl TransactionCoordinator {
     /// proposed to the coordinator's Raft group.
     pub fn begin(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         shard_writes: Vec<(u32, Vec<u8>)>,
         coordinator_log_index: u64,
     ) -> CrossShardTransaction {

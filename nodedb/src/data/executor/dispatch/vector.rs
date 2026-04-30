@@ -8,7 +8,7 @@ use crate::data::executor::task::ExecutionTask;
 
 impl CoreLoop {
     pub(super) fn dispatch_vector(&mut self, task: &ExecutionTask, op: &VectorOp) -> Response {
-        let tid = task.request.tenant_id.as_u32();
+        let tid = task.request.tenant_id.as_u64();
         match op {
             VectorOp::Insert {
                 collection,

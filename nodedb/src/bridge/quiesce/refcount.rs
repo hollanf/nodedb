@@ -48,7 +48,7 @@ pub struct CollectionQuiesce {
 
 #[derive(Debug, Default)]
 pub(super) struct Inner {
-    pub(super) states: HashMap<(u32, String), CollectionState>,
+    pub(super) states: HashMap<(u64, String), CollectionState>,
 }
 
 impl CollectionQuiesce {
@@ -61,7 +61,7 @@ impl CollectionQuiesce {
     /// otherwise returns a [`ScanGuard`] that decrements on drop.
     pub fn try_start_scan(
         self: &Arc<Self>,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
     ) -> Result<ScanGuard, ScanStartError> {
         let mut inner = self.inner.lock().expect("CollectionQuiesce mutex poisoned");
@@ -82,7 +82,7 @@ impl CollectionQuiesce {
     }
 
     /// Current open-scan count. For tests / metrics.
-    pub fn open_scans(&self, tenant_id: u32, collection: &str) -> usize {
+    pub fn open_scans(&self, tenant_id: u64, collection: &str) -> usize {
         let inner = self.inner.lock().expect("CollectionQuiesce mutex poisoned");
         inner
             .states
@@ -91,7 +91,7 @@ impl CollectionQuiesce {
     }
 
     /// Whether a drain is currently in progress for this collection.
-    pub fn is_draining(&self, tenant_id: u32, collection: &str) -> bool {
+    pub fn is_draining(&self, tenant_id: u64, collection: &str) -> bool {
         let inner = self.inner.lock().expect("CollectionQuiesce mutex poisoned");
         inner
             .states
@@ -99,7 +99,7 @@ impl CollectionQuiesce {
             .is_some_and(|s| s.draining)
     }
 
-    pub(super) fn release_scan(&self, tenant_id: u32, collection: &str) {
+    pub(super) fn release_scan(&self, tenant_id: u64, collection: &str) {
         let mut inner = self.inner.lock().expect("CollectionQuiesce mutex poisoned");
         if let Some(state) = inner.states.get_mut(&(tenant_id, collection.to_string())) {
             debug_assert!(state.open_scans > 0, "release without matching acquire");
@@ -115,7 +115,7 @@ impl CollectionQuiesce {
 #[must_use = "ScanGuard must be held for the lifetime of the scan"]
 pub struct ScanGuard {
     registry: Arc<CollectionQuiesce>,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: String,
     released: bool,
 }

@@ -29,14 +29,14 @@ pub struct SseParams {
     pub partition: Option<u32>,
     /// Detected and rejected — callers must not supply `tenant_id` as a
     /// query parameter. Tenant is always sourced from the bearer token.
-    pub tenant_id: Option<u32>,
+    pub tenant_id: Option<u64>,
 }
 
 /// Drop guard that deregisters a consumer from partition assignment
 /// on ALL exit paths (normal close, error, panic, task cancellation).
 struct ConsumerGuard {
     shared: Arc<SharedState>,
-    tenant_id: u32,
+    tenant_id: u64,
     stream_name: String,
     group: String,
     consumer_id: String,
@@ -70,7 +70,7 @@ pub async fn stream_events(
     }
 
     let group = params.group.unwrap_or_default().to_lowercase();
-    let tenant_id = identity.tenant_id().as_u32();
+    let tenant_id = identity.tenant_id().as_u64();
     let stream_name = stream_name.to_lowercase();
     let partition = params.partition;
 

@@ -25,7 +25,7 @@ impl CoreLoop {
     /// (aggregate, join, sort, filter) never need engine-specific code.
     pub fn scan_collection(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         limit: usize,
     ) -> crate::Result<Vec<(String, Vec<u8>)>> {
@@ -47,7 +47,7 @@ impl CoreLoop {
 
     /// Scan KV engine entries → standard msgpack.
     /// Injects the `key` field directly into the msgpack map — no JSON roundtrip.
-    fn scan_kv(&self, tid: u32, collection: &str, limit: usize) -> Vec<(String, Vec<u8>)> {
+    fn scan_kv(&self, tid: u64, collection: &str, limit: usize) -> Vec<(String, Vec<u8>)> {
         let now_ms = crate::engine::kv::current_ms();
         let (entries, _next_cursor) =
             self.kv_engine
@@ -63,7 +63,7 @@ impl CoreLoop {
     }
 
     /// Scan columnar rows → standard msgpack.
-    fn scan_columnar(&self, tid: u32, collection: &str, limit: usize) -> Vec<(String, Vec<u8>)> {
+    fn scan_columnar(&self, tid: u64, collection: &str, limit: usize) -> Vec<(String, Vec<u8>)> {
         let engine_key = (crate::types::TenantId::new(tid), collection.to_string());
         if let Some(mt) = self.columnar_memtables.get(&engine_key) {
             let schema = mt.schema();
@@ -195,7 +195,7 @@ impl CoreLoop {
     /// Handles both schemaless (msgpack) and strict (Binary Tuple) formats.
     pub(super) fn scan_sparse(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         limit: usize,
     ) -> crate::Result<Vec<(String, Vec<u8>)>> {
@@ -312,5 +312,6 @@ pub(in crate::data::executor) fn decoded_col_to_value(
                 Value::Null
             }
         }
+        _ => Value::Null,
     }
 }

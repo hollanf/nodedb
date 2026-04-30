@@ -26,7 +26,7 @@ pub const MAX_DEPTH: usize = 32;
 /// blocker rather than silently truncating.
 pub fn find_mvs_sourcing(
     catalog: &SystemCatalog,
-    tenant_id: u32,
+    tenant_id: u64,
     root_collection: &str,
 ) -> crate::Result<Vec<String>> {
     let all = catalog.load_all_materialized_views()?;

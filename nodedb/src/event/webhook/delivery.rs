@@ -28,7 +28,7 @@ fn webhook_group_name(stream_name: &str) -> String {
 /// Returns a handle that can be used to abort the task.
 pub fn spawn_delivery_task(
     state: Arc<SharedState>,
-    tenant_id: u32,
+    tenant_id: u64,
     stream_name: String,
     config: WebhookConfig,
     shutdown: watch::Receiver<bool>,
@@ -59,7 +59,7 @@ pub fn spawn_delivery_task(
 /// The main delivery loop.
 async fn delivery_loop(
     state: Arc<SharedState>,
-    tenant_id: u32,
+    tenant_id: u64,
     stream_name: String,
     group_name: String,
     config: WebhookConfig,

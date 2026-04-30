@@ -35,7 +35,7 @@ pub struct PendingWrite {
     /// Record type discriminant.
     pub record_type: u32,
     /// Tenant ID.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Virtual shard ID.
     pub vshard_id: u32,
     /// Payload bytes.

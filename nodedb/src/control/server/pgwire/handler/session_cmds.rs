@@ -153,7 +153,7 @@ impl NodeDbPgHandler {
             ))));
         }
 
-        if key == "nodedb.tenant_id" && value.parse::<u32>().is_err() {
+        if key == "nodedb.tenant_id" && value.parse::<u64>().is_err() {
             return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                 "ERROR".to_owned(),
                 "22023".to_owned(),
@@ -340,7 +340,7 @@ impl NodeDbPgHandler {
                     "Task {}: {:?} tenant={} vshard={}",
                     i + 1,
                     task.plan,
-                    task.tenant_id.as_u32(),
+                    task.tenant_id.as_u64(),
                     task.vshard_id.as_u32(),
                 );
                 for line in plan_desc.lines() {
@@ -360,6 +360,14 @@ impl NodeDbPgHandler {
 #[cfg(test)]
 mod tests {
     use super::{TransactionCmd, classify_transaction_cmd};
+
+    /// tenant_id values above u32::MAX must parse without error via u64.
+    #[test]
+    fn tenant_id_above_u32_max_parses_as_u64() {
+        let big = "4294967296"; // u32::MAX + 1
+        assert!(big.parse::<u64>().is_ok(), "should parse as u64");
+        assert!(big.parse::<u32>().is_err(), "should NOT parse as u32");
+    }
 
     fn run(sql: &str) -> TransactionCmd {
         let upper = sql.to_uppercase();

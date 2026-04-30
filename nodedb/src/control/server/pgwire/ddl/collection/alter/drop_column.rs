@@ -35,7 +35,7 @@ pub async fn alter_collection_drop_column(
     };
 
     let coll = catalog
-        .get_collection(tenant_id.as_u32(), name)
+        .get_collection(tenant_id.as_u64(), name)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
         .filter(|c| c.is_active)
         .ok_or_else(|| sqlstate_error("42P01", &format!("collection '{name}' does not exist")))?;

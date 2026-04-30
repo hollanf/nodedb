@@ -39,7 +39,7 @@ pub struct CoreMetrics {
     pub backpressure_transitions: AtomicU64,
     /// Per-tenant event counts. Bounded to `MAX_TRACKED_TENANTS` to prevent
     /// unbounded growth. Once full, new tenants are silently not tracked.
-    tenant_events: RwLock<HashMap<u32, u64>>,
+    tenant_events: RwLock<HashMap<u64, u64>>,
 }
 
 impl std::fmt::Debug for CoreMetrics {
@@ -83,7 +83,7 @@ impl CoreMetrics {
     /// Also increments the global `events_processed` counter and updates
     /// LSN/sequence tracking. Silently skips tenant tracking if the
     /// per-core tenant map is full (bounded to `MAX_TRACKED_TENANTS`).
-    pub fn record_process_for_tenant(&self, lsn: u64, sequence: u64, tenant_id: u32) {
+    pub fn record_process_for_tenant(&self, lsn: u64, sequence: u64, tenant_id: u64) {
         self.record_process(lsn, sequence);
 
         let mut map = match self.tenant_events.write() {
@@ -99,7 +99,7 @@ impl CoreMetrics {
     }
 
     /// Snapshot of per-tenant event counts on this core.
-    pub fn tenant_event_counts(&self) -> HashMap<u32, u64> {
+    pub fn tenant_event_counts(&self) -> HashMap<u64, u64> {
         match self.tenant_events.read() {
             Ok(m) => m.clone(),
             Err(p) => p.into_inner().clone(),
@@ -143,7 +143,7 @@ pub struct AggregateMetrics {
     pub total_wal_catchups: u64,
     pub total_backpressure_transitions: u64,
     /// Per-tenant event counts aggregated across all cores.
-    pub tenant_events: HashMap<u32, u64>,
+    pub tenant_events: HashMap<u64, u64>,
 }
 
 impl AggregateMetrics {
@@ -215,14 +215,14 @@ mod tests {
     fn tenant_tracking_bounded() {
         let m = CoreMetrics::new();
         // Fill up the tenant map to MAX_TRACKED_TENANTS.
-        for i in 0..MAX_TRACKED_TENANTS as u32 {
-            m.record_process_for_tenant(i as u64, i as u64, i);
+        for i in 0..MAX_TRACKED_TENANTS as u64 {
+            m.record_process_for_tenant(i, i, i);
         }
         let counts = m.tenant_event_counts();
         assert_eq!(counts.len(), MAX_TRACKED_TENANTS);
 
         // One more tenant should be silently skipped.
-        m.record_process_for_tenant(9999, 9999, MAX_TRACKED_TENANTS as u32 + 1);
+        m.record_process_for_tenant(9999, 9999, MAX_TRACKED_TENANTS as u64 + 1);
         let counts = m.tenant_event_counts();
         assert_eq!(counts.len(), MAX_TRACKED_TENANTS);
         // But global counter still incremented.
@@ -252,5 +252,20 @@ mod tests {
         // Per-tenant aggregation across cores.
         assert_eq!(agg.tenant_events.get(&1), Some(&2)); // 1 from c0 + 1 from c1
         assert_eq!(agg.tenant_events.get(&2), Some(&1)); // 1 from c1
+    }
+
+    #[test]
+    fn tenant_id_above_u32_max_tracked() {
+        let big_tid: u64 = u32::MAX as u64 + 1; // 4_294_967_296
+        let m = CoreMetrics::new();
+        m.record_process_for_tenant(1, 1, big_tid);
+        m.record_process_for_tenant(2, 2, big_tid);
+
+        let counts = m.tenant_event_counts();
+        assert_eq!(
+            counts.get(&big_tid),
+            Some(&2),
+            "tenant_id above u32::MAX must be tracked correctly"
+        );
     }
 }

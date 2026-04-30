@@ -14,6 +14,7 @@ pub struct ConfigValidationError {
 
 /// Compression codec for archived (cold) partitions.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ArchiveCompression {
     #[default]
     Zstd,

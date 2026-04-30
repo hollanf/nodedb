@@ -88,7 +88,7 @@ impl DeltaPackager {
         }
 
         // Check if any connected Lite session cares about this collection.
-        if !delivery.has_subscribers(event.tenant_id.as_u32(), &event.collection) {
+        if !delivery.has_subscribers(event.tenant_id.as_u64(), &event.collection) {
             self.deltas_skipped.fetch_add(1, Ordering::Relaxed);
             return false;
         }
@@ -125,12 +125,12 @@ impl DeltaPackager {
             payload,
             op,
             lsn: event.lsn.as_u64(),
-            tenant_id: event.tenant_id.as_u32(),
+            tenant_id: event.tenant_id.as_u64(),
             peer_id: ORIGIN_PEER_ID.load(Ordering::Relaxed),
             sequence,
         };
 
-        delivery.enqueue(event.tenant_id.as_u32(), delta);
+        delivery.enqueue(event.tenant_id.as_u64(), delta);
         self.deltas_packaged.fetch_add(1, Ordering::Relaxed);
 
         trace!(

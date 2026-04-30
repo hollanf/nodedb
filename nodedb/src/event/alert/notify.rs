@@ -63,7 +63,7 @@ pub async fn dispatch_notifications(
 }
 
 /// Publish alert event to a CDC topic.
-fn notify_topic(state: &SharedState, tenant_id: u32, topic_name: &str, event: &AlertEvent) {
+fn notify_topic(state: &SharedState, tenant_id: u64, topic_name: &str, event: &AlertEvent) {
     let payload = match sonic_rs::to_string(event) {
         Ok(p) => p,
         Err(e) => {
@@ -176,7 +176,7 @@ pub async fn notify_webhook_with_client(
 /// INSERT alert event into a history table via StatementExecutor.
 async fn notify_insert(
     state: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     owner: &str,
     table: &str,
     columns: &[String],

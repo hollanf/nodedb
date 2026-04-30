@@ -41,7 +41,7 @@ pub fn alter_function(
 
     let new_owner = parts[5].trim_end_matches(';').to_string();
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let catalog = state
         .credentials
         .catalog()
@@ -76,7 +76,7 @@ fn alter_function_limits(
     name: &str,
     parts: &[&str],
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let catalog = state
         .credentials
         .catalog()

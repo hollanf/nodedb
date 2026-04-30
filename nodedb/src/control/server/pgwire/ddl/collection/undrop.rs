@@ -44,7 +44,7 @@ pub fn undrop_collection(
     //   - row absent: retention already expired or never existed.
     //   - row present + active: nothing to undrop.
     //   - row present + inactive: candidate for restore.
-    let mut stored = match catalog.get_collection(tenant_id.as_u32(), name) {
+    let mut stored = match catalog.get_collection(tenant_id.as_u64(), name) {
         Ok(Some(c)) => c,
         Ok(None) => {
             return Err(sqlstate_error(

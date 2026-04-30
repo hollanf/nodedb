@@ -125,7 +125,7 @@ pub(super) fn collection_type(
 ) -> Option<nodedb_types::CollectionType> {
     let catalog = ctx.state.credentials.catalog().as_ref()?;
     let coll = catalog
-        .get_collection(ctx.identity.tenant_id.as_u32(), collection)
+        .get_collection(ctx.identity.tenant_id.as_u64(), collection)
         .ok()??;
     Some(coll.collection_type.clone())
 }

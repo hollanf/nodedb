@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub struct UsageEvent {
     pub auth_user_id: String,
     pub org_id: String,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub collection: String,
     pub engine: String,
     pub operation: String,
@@ -25,7 +25,7 @@ pub struct UsageEvent {
 struct BucketKey {
     auth_user_id: String,
     org_id: String,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: String,
     engine: String,
     operation: String,

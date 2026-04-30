@@ -13,7 +13,7 @@ use std::sync::Mutex;
 
 #[derive(Debug)]
 pub struct RestorePending {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub dry_run: bool,
     pub bytes: Vec<u8>,
     /// Hard cap on accumulated bytes. The handler aborts the COPY IN
@@ -22,7 +22,7 @@ pub struct RestorePending {
 }
 
 impl RestorePending {
-    pub fn new(tenant_id: u32, dry_run: bool, max_bytes: u64) -> Self {
+    pub fn new(tenant_id: u64, dry_run: bool, max_bytes: u64) -> Self {
         Self {
             tenant_id,
             dry_run,

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DroppedCollection {
     /// Tenant that owns this collection.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Collection name (unique per tenant while soft-deleted).
     pub name: String,
     /// Preserved owner at the time of `DROP` — the user who can
@@ -53,7 +53,7 @@ mod tests {
     #[test]
     fn is_expired_strictly_on_or_past_window() {
         let d = DroppedCollection {
-            tenant_id: 1,
+            tenant_id: 1u64,
             name: "orders".into(),
             owner: "admin".into(),
             engine_type: "document".into(),
@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn serde_roundtrip() {
         let d = DroppedCollection {
-            tenant_id: 7,
+            tenant_id: 7u64,
             name: "test".into(),
             owner: "alice".into(),
             engine_type: "timeseries".into(),

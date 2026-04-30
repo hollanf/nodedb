@@ -25,6 +25,7 @@ pub struct Posting {
 
 /// Boolean query mode for multi-term searches.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum QueryMode {
     /// All query terms must match (intersection). Default.
     #[default]

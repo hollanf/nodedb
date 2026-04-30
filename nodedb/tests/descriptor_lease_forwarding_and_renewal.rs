@@ -24,7 +24,7 @@ use common::cluster_harness::{TestCluster, wait_for};
 use nodedb_cluster::DescriptorKind;
 use nodedb_types::config::tuning::ClusterTransportTuning;
 
-const TENANT: u32 = 1;
+const TENANT: u64 = 1;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
 async fn follower_acquire_forwards_to_leader() {

@@ -16,7 +16,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     /// Returns the decoded approximate u32 length, or `None` if not stored.
     pub fn read_fieldnorm(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         doc_id: Surrogate,
     ) -> Result<Option<u32>, B::Error> {
@@ -32,7 +32,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     /// Write a fieldnorm byte for a surrogate. Grows the array if needed.
     pub fn write_fieldnorm(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         doc_id: Surrogate,
         doc_length: u32,
@@ -61,7 +61,7 @@ mod tests {
     use crate::codec::smallfloat;
     use crate::index::FtsIndex;
 
-    const T: u32 = 1;
+    const T: u64 = 1;
 
     #[test]
     fn fieldnorm_roundtrip() {

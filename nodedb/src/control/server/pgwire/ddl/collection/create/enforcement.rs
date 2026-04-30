@@ -105,7 +105,7 @@ pub fn parse_balanced_clause_from_raw(
 /// Plane fires the trigger on INSERT.
 pub fn find_materialized_sum_bindings(
     catalog: &SystemCatalog,
-    tenant_id: u32,
+    tenant_id: u64,
     collection_name: &str,
 ) -> Vec<crate::bridge::physical_plan::MaterializedSumBinding> {
     let all_collections = catalog

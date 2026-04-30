@@ -26,7 +26,7 @@ impl NodeDbPgHandler {
         if let Ok(ref resp) = result
             && resp.status == crate::bridge::envelope::Status::Ok
         {
-            self.state.advance_tenant_write_hlc(tenant_id.as_u32());
+            self.state.advance_tenant_write_hlc(tenant_id.as_u64());
         }
         result
     }

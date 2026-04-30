@@ -46,7 +46,7 @@ pub struct SequenceLogEntry {
     pub status: ReservationStatus,
     pub timestamp_ms: u64,
     pub user: String,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
 }
 
 /// Append a sequence log entry to the catalog.
@@ -82,7 +82,7 @@ pub fn log_reservation(
 }
 
 /// Create a log entry for a committed reservation.
-pub fn committed(sequence_name: &str, value: i64, user: &str, tenant_id: u32) -> SequenceLogEntry {
+pub fn committed(sequence_name: &str, value: i64, user: &str, tenant_id: u64) -> SequenceLogEntry {
     SequenceLogEntry {
         sequence_name: sequence_name.to_string(),
         value,
@@ -98,7 +98,7 @@ pub fn rolled_back(
     sequence_name: &str,
     value: i64,
     user: &str,
-    tenant_id: u32,
+    tenant_id: u64,
 ) -> SequenceLogEntry {
     SequenceLogEntry {
         sequence_name: sequence_name.to_string(),

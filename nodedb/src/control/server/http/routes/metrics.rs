@@ -119,7 +119,7 @@ pub async fn metrics(
         output.push_str("# TYPE nodedb_tenant_qps_limit gauge\n");
 
         for (tid, usage, quota) in tenants.iter_usage() {
-            let t = tid.as_u32();
+            let t = tid.as_u64();
             output.push_str(&format!(
                 "nodedb_tenant_active_requests{{tenant_id=\"{t}\"}} {}\n",
                 usage.active_requests

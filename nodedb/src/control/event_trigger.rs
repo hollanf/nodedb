@@ -59,7 +59,7 @@ async fn process_event(shared: &SharedState, event: &ChangeEvent) {
         None => return,
     };
 
-    let coll = match catalog.get_collection(event.tenant_id.as_u32(), &event.collection) {
+    let coll = match catalog.get_collection(event.tenant_id.as_u64(), &event.collection) {
         Ok(Some(c)) => c,
         _ => return,
     };

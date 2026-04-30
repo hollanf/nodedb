@@ -148,7 +148,9 @@ impl SharedState {
             jwks_registry: None,
             sync_dlq: Mutex::new(SyncDlq::new(DlqConfig::default())),
             audit_retention_days: 0,
+            audit_max_entries: 0,
             idle_timeout_secs: 0,
+            session_absolute_timeout_secs: 0,
             ws_sessions: std::sync::RwLock::new(std::collections::HashMap::new()),
             topic_registry: crate::control::pubsub::TopicRegistry::new(10_000),
             shape_registry: Arc::new(crate::control::server::sync::shape::ShapeRegistry::new()),
@@ -336,10 +338,11 @@ impl SharedState {
         array_catalog: crate::control::array_catalog::ArrayCatalogHandle,
     ) -> crate::Result<Arc<Self>> {
         let mut credentials = CredentialStore::open(catalog_path)?;
-        credentials.set_lockout_policy(
+        credentials.set_lockout_policy_with_grace(
             auth_config.max_failed_logins,
             auth_config.lockout_duration_secs,
             auth_config.password_expiry_days,
+            auth_config.password_expiry_grace_days,
         );
 
         let api_keys = ApiKeyStore::new();
@@ -627,7 +630,9 @@ impl SharedState {
             jwks_registry: None,
             sync_dlq: Mutex::new(SyncDlq::new(DlqConfig::default())),
             audit_retention_days: auth_config.audit_retention_days,
+            audit_max_entries: auth_config.audit_max_entries,
             idle_timeout_secs: auth_config.idle_timeout_secs,
+            session_absolute_timeout_secs: auth_config.session_absolute_timeout_secs,
             ws_sessions: std::sync::RwLock::new(std::collections::HashMap::new()),
             topic_registry: crate::control::pubsub::TopicRegistry::new(10_000),
             shape_registry: Arc::new(crate::control::server::sync::shape::ShapeRegistry::new()),

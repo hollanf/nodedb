@@ -357,7 +357,7 @@ fn format_f32_array(arr: &[f32]) -> String {
 fn is_connection_error(e: &NodeDbError) -> bool {
     matches!(
         e.details(),
-        ErrorDetails::SyncConnectionFailed | ErrorDetails::Storage
+        ErrorDetails::SyncConnectionFailed | ErrorDetails::Storage { .. }
     )
 }
 

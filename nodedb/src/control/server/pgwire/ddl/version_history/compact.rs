@@ -30,7 +30,7 @@ pub async fn compact_history(
         return Err(sqlstate_error("XX000", "catalog unavailable"));
     };
     let record = catalog
-        .get_checkpoint(tenant_id.as_u32(), &collection, &doc_id, &checkpoint_name)
+        .get_checkpoint(tenant_id.as_u64(), &collection, &doc_id, &checkpoint_name)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
         .ok_or_else(|| {
             sqlstate_error(
@@ -50,7 +50,7 @@ pub async fn compact_history(
 
     // Delete checkpoints created before the cutoff.
     let deleted = catalog
-        .delete_checkpoints_before(tenant_id.as_u32(), &collection, &doc_id, record.created_at)
+        .delete_checkpoints_before(tenant_id.as_u64(), &collection, &doc_id, record.created_at)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
 
     state

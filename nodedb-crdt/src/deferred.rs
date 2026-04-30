@@ -19,7 +19,7 @@ pub struct DeferredEntry {
     pub user_id: u64,
 
     /// The tenant this delta belongs to (0 = system).
-    pub tenant_id: u32,
+    pub tenant_id: u64,
 
     /// The raw delta bytes.
     pub delta: Vec<u8>,
@@ -79,7 +79,7 @@ impl DeferredQueue {
         &mut self,
         peer_id: u64,
         user_id: u64,
-        tenant_id: u32,
+        tenant_id: u64,
         delta: Vec<u8>,
         collection: String,
         constraint_name: String,

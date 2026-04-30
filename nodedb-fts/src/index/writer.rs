@@ -79,7 +79,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     /// `debug_assert!`, which would be a silent-wrap equivalent.
     pub fn index_document(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         doc_id: Surrogate,
         text: &str,
@@ -137,7 +137,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     }
 
     /// Flush the active memtable to an immutable segment.
-    fn flush_memtable(&self, tid: u32, collection: &str) -> Result<(), B::Error> {
+    fn flush_memtable(&self, tid: u64, collection: &str) -> Result<(), B::Error> {
         let drained = self.memtable.drain();
         if drained.is_empty() {
             return Ok(());
@@ -157,7 +157,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     /// Remove a document from the index.
     pub fn remove_document(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         doc_id: Surrogate,
     ) -> Result<(), B::Error> {
@@ -174,14 +174,14 @@ impl<B: FtsBackend> FtsIndex<B> {
     }
 
     /// Purge all entries for a collection. Returns count of removed entries.
-    pub fn purge_collection(&self, tid: u32, collection: &str) -> Result<usize, B::Error> {
+    pub fn purge_collection(&self, tid: u64, collection: &str) -> Result<usize, B::Error> {
         self.memtable
             .drain_collection(&memtable_collection_prefix(tid, collection));
         self.backend.purge_collection(tid, collection)
     }
 
     /// Purge all entries for a tenant across every collection.
-    pub fn purge_tenant(&self, tid: u32) -> Result<usize, B::Error> {
+    pub fn purge_tenant(&self, tid: u64) -> Result<usize, B::Error> {
         self.memtable.drain_collection(&memtable_tenant_prefix(tid));
         self.backend.purge_tenant(tid)
     }
@@ -190,18 +190,18 @@ impl<B: FtsBackend> FtsIndex<B> {
 /// Memtable key format: `"{tid}:{collection}:{term}"`. The memtable is a
 /// single in-memory map shared across tenants, so keys must carry the
 /// full tenant + collection scope.
-pub(crate) fn memtable_key(tid: u32, collection: &str, term: &str) -> String {
+pub(crate) fn memtable_key(tid: u64, collection: &str, term: &str) -> String {
     format!("{tid}:{collection}:{term}")
 }
 
 /// Prefix used by `drain_collection` to remove all memtable entries for
 /// a given `(tid, collection)`.
-pub(crate) fn memtable_collection_prefix(tid: u32, collection: &str) -> String {
+pub(crate) fn memtable_collection_prefix(tid: u64, collection: &str) -> String {
     format!("{tid}:{collection}:")
 }
 
 /// Prefix used to remove every memtable entry for a given tenant.
-pub(crate) fn memtable_tenant_prefix(tid: u32) -> String {
+pub(crate) fn memtable_tenant_prefix(tid: u64) -> String {
     format!("{tid}:")
 }
 
@@ -213,7 +213,7 @@ mod tests {
 
     use super::*;
 
-    const T: u32 = 1;
+    const T: u64 = 1;
 
     fn make_index() -> FtsIndex<MemoryBackend> {
         FtsIndex::new(MemoryBackend::new())

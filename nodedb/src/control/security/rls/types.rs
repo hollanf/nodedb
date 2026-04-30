@@ -14,7 +14,7 @@ pub struct RlsPolicy {
     /// Collection this policy applies to.
     pub collection: String,
     /// Tenant scope.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Policy type: read, write, or both.
     pub policy_type: PolicyType,
     /// Legacy predicate as serialized `ScanFilter` (static, no `$auth`).
@@ -52,6 +52,6 @@ pub enum PolicyType {
 }
 
 /// Build the lookup key for the policy map: `"{tenant_id}:{collection}"`.
-pub(super) fn policy_key(tenant_id: u32, collection: &str) -> String {
+pub(super) fn policy_key(tenant_id: u64, collection: &str) -> String {
     format!("{tenant_id}:{collection}")
 }

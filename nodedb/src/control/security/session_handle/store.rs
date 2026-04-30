@@ -272,7 +272,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::{Arc, Mutex};
 
-    fn ctx(tenant: u32, user: &str) -> AuthContext {
+    fn ctx(tenant: u64, user: &str) -> AuthContext {
         let identity = AuthenticatedIdentity {
             user_id: 1,
             username: user.into(),
@@ -284,7 +284,7 @@ mod tests {
         AuthContext::from_identity(&identity, generate_session_id())
     }
 
-    fn fp(tenant: u32, a: u8, b: u8, c: u8, d: u8) -> ClientFingerprint {
+    fn fp(tenant: u64, a: u8, b: u8, c: u8, d: u8) -> ClientFingerprint {
         ClientFingerprint::new(TenantId::new(tenant), IpAddr::V4(Ipv4Addr::new(a, b, c, d)))
     }
 

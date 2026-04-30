@@ -30,7 +30,7 @@ impl SystemCatalog {
     /// Get a single function by tenant_id + name.
     pub fn get_function(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
     ) -> crate::Result<Option<StoredFunction>> {
         let key = function_key(tenant_id, name);
@@ -55,7 +55,7 @@ impl SystemCatalog {
     /// Delete a function by tenant_id + name.
     ///
     /// Returns `true` if the function existed and was removed.
-    pub fn delete_function(&self, tenant_id: u32, name: &str) -> crate::Result<bool> {
+    pub fn delete_function(&self, tenant_id: u64, name: &str) -> crate::Result<bool> {
         let key = function_key(tenant_id, name);
         let write_txn = self
             .db
@@ -99,7 +99,7 @@ impl SystemCatalog {
     }
 
     /// Load all user-defined functions for a tenant.
-    pub fn load_functions_for_tenant(&self, tenant_id: u32) -> crate::Result<Vec<StoredFunction>> {
+    pub fn load_functions_for_tenant(&self, tenant_id: u64) -> crate::Result<Vec<StoredFunction>> {
         let prefix = format!("{tenant_id}:");
         let read_txn = self
             .db
@@ -125,7 +125,7 @@ impl SystemCatalog {
 }
 
 /// Build the redb key for a function: `"{tenant_id}:{name}"`.
-fn function_key(tenant_id: u32, name: &str) -> String {
+fn function_key(tenant_id: u64, name: &str) -> String {
     format!("{tenant_id}:{name}")
 }
 
@@ -139,7 +139,7 @@ mod tests {
         SystemCatalog::open(&dir.path().join("system.redb")).unwrap()
     }
 
-    fn sample_function(tenant_id: u32, name: &str) -> StoredFunction {
+    fn sample_function(tenant_id: u64, name: &str) -> StoredFunction {
         StoredFunction {
             tenant_id,
             name: name.to_string(),

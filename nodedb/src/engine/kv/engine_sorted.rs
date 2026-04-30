@@ -16,7 +16,7 @@ impl KvEngine {
     /// and populates the order-statistic tree. Returns backfill count.
     pub fn register_sorted_index(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         def: SortedIndexDef,
     ) -> u32 {
@@ -41,7 +41,7 @@ impl KvEngine {
     }
 
     /// Drop a sorted index. Returns `true` if it existed.
-    pub fn drop_sorted_index(&mut self, tenant_id: u32, index_name: &str) -> bool {
+    pub fn drop_sorted_index(&mut self, tenant_id: u64, index_name: &str) -> bool {
         self.sorted_indexes.drop(tenant_id, index_name)
     }
 
@@ -50,7 +50,7 @@ impl KvEngine {
     /// `field_values` are the extracted field name/value pairs from the new value.
     pub fn sorted_index_on_put(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         primary_key: &[u8],
         field_values: &[(String, Vec<u8>)],
@@ -60,13 +60,13 @@ impl KvEngine {
     }
 
     /// Called after a KV DELETE to maintain sorted indexes on this collection.
-    pub fn sorted_index_on_delete(&mut self, tenant_id: u32, collection: &str, primary_key: &[u8]) {
+    pub fn sorted_index_on_delete(&mut self, tenant_id: u64, collection: &str, primary_key: &[u8]) {
         let tkey = table_key(tenant_id, collection);
         self.sorted_indexes.on_delete(tkey, primary_key);
     }
 
     /// Check if any sorted indexes exist for this tenant/collection.
-    pub fn has_sorted_indexes(&self, tenant_id: u32, collection: &str) -> bool {
+    pub fn has_sorted_indexes(&self, tenant_id: u64, collection: &str) -> bool {
         let tkey = table_key(tenant_id, collection);
         self.sorted_indexes.has_indexes(tkey)
     }
@@ -75,7 +75,7 @@ impl KvEngine {
 
     pub fn sorted_index_rank(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         index_name: &str,
         primary_key: &[u8],
         now_ms: u64,
@@ -86,7 +86,7 @@ impl KvEngine {
 
     pub fn sorted_index_top_k(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         index_name: &str,
         k: u32,
         now_ms: u64,
@@ -96,7 +96,7 @@ impl KvEngine {
 
     pub fn sorted_index_range(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         index_name: &str,
         score_min: Option<&[u8]>,
         score_max: Option<&[u8]>,
@@ -106,13 +106,13 @@ impl KvEngine {
             .range(tenant_id, index_name, score_min, score_max, now_ms)
     }
 
-    pub fn sorted_index_count(&self, tenant_id: u32, index_name: &str, now_ms: u64) -> Option<u32> {
+    pub fn sorted_index_count(&self, tenant_id: u64, index_name: &str, now_ms: u64) -> Option<u32> {
         self.sorted_indexes.count(tenant_id, index_name, now_ms)
     }
 
     pub fn sorted_index_score(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         index_name: &str,
         primary_key: &[u8],
     ) -> Option<Vec<u8>> {
@@ -120,7 +120,7 @@ impl KvEngine {
             .score(tenant_id, index_name, primary_key)
     }
 
-    pub fn sorted_index_def(&self, tenant_id: u32, index_name: &str) -> Option<&SortedIndexDef> {
+    pub fn sorted_index_def(&self, tenant_id: u64, index_name: &str) -> Option<&SortedIndexDef> {
         self.sorted_indexes.get_def(tenant_id, index_name)
     }
 }

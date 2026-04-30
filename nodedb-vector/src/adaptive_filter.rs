@@ -29,6 +29,7 @@ impl Default for FilterThresholds {
 
 /// Selected search strategy.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum FilterStrategy {
     /// HNSW traversal with bitmap pre-filter (standard).
     PreFilter,

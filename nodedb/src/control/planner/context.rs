@@ -84,7 +84,7 @@ struct CatalogInputs {
 }
 
 impl CatalogInputs {
-    fn build_adapter(&self, tenant_id: u32) -> super::catalog_adapter::OriginCatalog {
+    fn build_adapter(&self, tenant_id: u64) -> super::catalog_adapter::OriginCatalog {
         if let Some(weak) = &self.shared
             && let Some(shared) = weak.upgrade()
         {
@@ -229,7 +229,7 @@ impl QueryContext {
         // `recorded_versions` field is per-plan state, and
         // two concurrent plans through a shared QueryContext
         // would otherwise interleave their recorded sets.
-        let catalog = inputs.build_adapter(tenant_id.as_u32());
+        let catalog = inputs.build_adapter(tenant_id.as_u64());
         let plans = nodedb_sql::plan_sql(sql, &catalog).map_err(|e| match e {
             nodedb_sql::SqlError::RetryableSchemaChanged { descriptor } => {
                 crate::Error::RetryableSchemaChanged { descriptor }
@@ -346,7 +346,7 @@ impl QueryContext {
         // through a different cache key), but constructing the
         // adapter fresh keeps the adapter's state per-plan and
         // allows future extension.
-        let catalog = inputs.build_adapter(tenant_id.as_u32());
+        let catalog = inputs.build_adapter(tenant_id.as_u64());
         let plans = nodedb_sql::plan_sql_with_params(sql, params, &catalog).map_err(|e| {
             crate::Error::PlanError {
                 detail: format!("{e}"),

@@ -59,7 +59,7 @@ pub fn l2_cleanup_queue(
         .map_err(|e| pgwire::error::PgWireError::ApiError(Box::new(e)))?;
 
     let is_admin = identity.is_superuser || identity.has_role(&Role::TenantAdmin);
-    let caller_tenant = identity.tenant_id.as_u32();
+    let caller_tenant = identity.tenant_id.as_u64();
 
     let mut rows = Vec::new();
     let mut encoder = DataRowEncoder::new(schema.clone());

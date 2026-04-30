@@ -63,7 +63,7 @@ pub fn alter_collection_owner(
     let catalog = catalog_ref
         .as_ref()
         .ok_or_else(|| sqlstate_error("XX000", "catalog unavailable for ALTER COLLECTION OWNER"))?;
-    let mut stored = match catalog.get_collection(identity.tenant_id.as_u32(), collection) {
+    let mut stored = match catalog.get_collection(identity.tenant_id.as_u64(), collection) {
         Ok(Some(c)) => c,
         Ok(None) => {
             return Err(sqlstate_error(

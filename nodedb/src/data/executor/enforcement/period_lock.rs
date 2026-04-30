@@ -20,7 +20,7 @@ use crate::engine::sparse::btree::SparseEngine;
 /// period is closed/locked.
 pub fn check_period_lock(
     sparse: &SparseEngine,
-    tid: u32,
+    tid: u64,
     collection: &str,
     doc_bytes: &[u8],
     config: &PeriodLockConfig,

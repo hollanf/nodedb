@@ -21,7 +21,7 @@ pub fn drop_topic(
     }
 
     let name = parts[2].to_lowercase();
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let catalog = state
         .credentials

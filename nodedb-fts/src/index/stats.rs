@@ -8,7 +8,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     ///
     /// Returns `(total_docs, avg_doc_len)`. If the collection is empty,
     /// returns `(0, 1.0)` to avoid division by zero.
-    pub fn index_stats(&self, tid: u32, collection: &str) -> Result<(u32, f32), B::Error> {
+    pub fn index_stats(&self, tid: u64, collection: &str) -> Result<(u32, f32), B::Error> {
         let (count, total_len) = self.backend.collection_stats(tid, collection)?;
         let avg = if count > 0 {
             total_len as f32 / count as f32
@@ -25,7 +25,7 @@ mod tests {
     use crate::index::FtsIndex;
     use nodedb_types::Surrogate;
 
-    const T: u32 = 1;
+    const T: u64 = 1;
 
     #[test]
     fn empty_collection_stats() {

@@ -16,7 +16,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_vector_query_stats(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field_name: &str,
     ) -> Response {
@@ -90,7 +90,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_vector_seal(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field_name: &str,
     ) -> Response {
@@ -130,7 +130,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_vector_compact_index(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field_name: &str,
     ) -> Response {
@@ -176,7 +176,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_vector_rebuild(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field_name: &str,
         m: usize,

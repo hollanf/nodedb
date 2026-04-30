@@ -36,7 +36,7 @@ pub fn inject_rls(
     auth: &AuthContext,
 ) -> crate::Result<()> {
     for task in tasks.iter_mut() {
-        let tenant_id = task.tenant_id.as_u32();
+        let tenant_id = task.tenant_id.as_u64();
         inject_rls_for_plan(tenant_id, &mut task.plan, rls_store, auth)?;
     }
     Ok(())
@@ -44,7 +44,7 @@ pub fn inject_rls(
 
 /// Inject RLS into a single physical plan (public for native protocol dispatch).
 pub fn inject_rls_for_single_plan(
-    tenant_id: u32,
+    tenant_id: u64,
     plan: &mut PhysicalPlan,
     rls_store: &RlsPolicyStore,
     auth: &AuthContext,
@@ -54,7 +54,7 @@ pub fn inject_rls_for_single_plan(
 
 /// Core dispatch: inject RLS into a single physical plan.
 fn inject_rls_for_plan(
-    tenant_id: u32,
+    tenant_id: u64,
     plan: &mut PhysicalPlan,
     rls_store: &RlsPolicyStore,
     auth: &AuthContext,
@@ -171,7 +171,7 @@ fn inject_rls_for_plan(
 /// Fetch RLS bytes for a (tenant, collection) pair.
 fn get_rls(
     rls_store: &RlsPolicyStore,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
     auth: &AuthContext,
 ) -> crate::Result<Vec<u8>> {
@@ -209,7 +209,7 @@ fn merge_filters(existing: &mut Vec<u8>, rls_bytes: &[u8]) -> crate::Result<()> 
 }
 
 /// Create a deny error for unresolved RLS auth references.
-fn rls_deny_error(tenant_id: u32, collection: &str) -> crate::Error {
+fn rls_deny_error(tenant_id: u64, collection: &str) -> crate::Error {
     crate::Error::RejectedAuthz {
         tenant_id: TenantId::new(tenant_id),
         resource: format!(
@@ -240,7 +240,7 @@ pub fn inject_permission_tree(
         return Ok(());
     }
     for task in tasks.iter_mut() {
-        let tenant_id = task.tenant_id.as_u32();
+        let tenant_id = task.tenant_id.as_u64();
         inject_permission_tree_for_plan(tenant_id, &mut task.plan, cache, auth)?;
     }
     Ok(())
@@ -253,7 +253,7 @@ pub fn inject_permission_tree(
 /// - Upserts/inserts → `def.write_level`
 /// - Deletes → `def.delete_level`
 fn inject_permission_tree_for_plan(
-    tenant_id: u32,
+    tenant_id: u64,
     plan: &mut PhysicalPlan,
     cache: &crate::control::security::permission_tree::PermissionCache,
     auth: &AuthContext,

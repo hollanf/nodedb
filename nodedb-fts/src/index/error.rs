@@ -31,6 +31,7 @@ pub const MAX_INDEXABLE_SURROGATE: u32 = u32::MAX - 1;
 /// `E` is the backend error type (`B::Error`). Backend errors are wrapped in
 /// `FtsIndexError::Backend` so callers get a single error type.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum FtsIndexError<E: std::fmt::Display> {
     /// The supplied `Surrogate` is outside the indexable range `1..=MAX_INDEXABLE_SURROGATE`.
     ///

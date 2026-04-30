@@ -62,7 +62,7 @@ async fn handle_publish(
 
     let payload = parse_payload(payload_part.trim())?;
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let tenant = identity.tenant_id;
 
     use crate::event::topic::publish::PublishError;

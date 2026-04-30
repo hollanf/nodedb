@@ -20,7 +20,7 @@ pub fn put(stored: ChangeStreamDef, shared: Arc<SharedState>) {
     shared.stream_registry.register(stored);
 }
 
-pub fn delete(tenant_id: u32, name: String, shared: Arc<SharedState>) {
+pub fn delete(tenant_id: u64, name: String, shared: Arc<SharedState>) {
     // 1. Drop the stream def from the in-memory registry so no new
     //    events are routed to it.
     shared.stream_registry.unregister(tenant_id, &name);

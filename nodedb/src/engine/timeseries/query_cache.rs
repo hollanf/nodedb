@@ -12,7 +12,7 @@ use std::collections::{HashMap, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 /// Cache key: (tenant_id, partition_id, query_hash).
-type CacheKey = (u32, i64, u64);
+type CacheKey = (u64, i64, u64);
 
 /// LRU query cache for sealed partition scan results.
 pub struct QueryCache {
@@ -38,14 +38,14 @@ impl QueryCache {
     }
 
     /// Look up a cached result. Requires `tenant_id` to prevent cross-tenant leaks.
-    pub fn get(&self, tenant_id: u32, partition_id: i64, query_hash: u64) -> Option<&[u8]> {
+    pub fn get(&self, tenant_id: u64, partition_id: i64, query_hash: u64) -> Option<&[u8]> {
         self.entries
             .get(&(tenant_id, partition_id, query_hash))
             .map(|v| v.as_slice())
     }
 
     /// Insert a result into the cache. Evicts old entries if over budget.
-    pub fn insert(&mut self, tenant_id: u32, partition_id: i64, query_hash: u64, result: Vec<u8>) {
+    pub fn insert(&mut self, tenant_id: u64, partition_id: i64, query_hash: u64, result: Vec<u8>) {
         let key = (tenant_id, partition_id, query_hash);
 
         // Don't cache if the single entry exceeds budget.
@@ -79,7 +79,7 @@ impl QueryCache {
     ///
     /// Sealed partitions are immutable, so this should only be called for
     /// active partitions that are still receiving writes.
-    pub fn invalidate_partition(&mut self, tenant_id: u32, partition_id: i64) {
+    pub fn invalidate_partition(&mut self, tenant_id: u64, partition_id: i64) {
         let keys: Vec<CacheKey> = self
             .entries
             .keys()
@@ -99,7 +99,7 @@ impl QueryCache {
     /// Evict all cached entries belonging to a specific tenant.
     ///
     /// Used during tenant purge to ensure zero residual cached data.
-    pub fn evict_tenant(&mut self, tenant_id: u32) {
+    pub fn evict_tenant(&mut self, tenant_id: u64) {
         let keys: Vec<CacheKey> = self
             .entries
             .keys()
@@ -144,8 +144,8 @@ pub fn query_hash(value_column: &str, start_ms: i64, end_ms: i64, bucket_interva
 mod tests {
     use super::*;
 
-    const T1: u32 = 1;
-    const T2: u32 = 2;
+    const T1: u64 = 1;
+    const T2: u64 = 2;
 
     #[test]
     fn basic_cache_roundtrip() {

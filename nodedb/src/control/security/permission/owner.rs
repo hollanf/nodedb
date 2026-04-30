@@ -19,13 +19,13 @@ impl PermissionStore {
         owner_username: &str,
         catalog: Option<&SystemCatalog>,
     ) -> crate::Result<()> {
-        let key = owner_key(object_type, tenant_id.as_u32(), object_name);
+        let key = owner_key(object_type, tenant_id.as_u64(), object_name);
 
         if let Some(catalog) = catalog {
             catalog.put_owner(&StoredOwner {
                 object_type: object_type.to_string(),
                 object_name: object_name.to_string(),
-                tenant_id: tenant_id.as_u32(),
+                tenant_id: tenant_id.as_u64(),
                 owner_username: owner_username.to_string(),
             })?;
         }
@@ -49,10 +49,10 @@ impl PermissionStore {
         object_name: &str,
         catalog: Option<&SystemCatalog>,
     ) -> crate::Result<()> {
-        let key = owner_key(object_type, tenant_id.as_u32(), object_name);
+        let key = owner_key(object_type, tenant_id.as_u64(), object_name);
 
         if let Some(catalog) = catalog {
-            catalog.delete_owner(object_type, tenant_id.as_u32(), object_name)?;
+            catalog.delete_owner(object_type, tenant_id.as_u64(), object_name)?;
         }
 
         let mut owners = match self.owners.write() {
@@ -73,7 +73,7 @@ impl PermissionStore {
         tenant_id: TenantId,
         object_name: &str,
     ) -> Option<String> {
-        let key = owner_key(object_type, tenant_id.as_u32(), object_name);
+        let key = owner_key(object_type, tenant_id.as_u64(), object_name);
         let owners = match self.owners.read() {
             Ok(o) => o,
             Err(p) => {
@@ -87,7 +87,7 @@ impl PermissionStore {
     /// List all objects of a given type owned in a tenant.
     /// Returns `(object_name, owner_username)` pairs.
     pub fn list_owners(&self, object_type: &str, tenant_id: TenantId) -> Vec<(String, String)> {
-        let prefix = format!("{object_type}:{}:", tenant_id.as_u32());
+        let prefix = format!("{object_type}:{}:", tenant_id.as_u64());
         let owners = match self.owners.read() {
             Ok(o) => o,
             Err(p) => p.into_inner(),

@@ -15,7 +15,7 @@ pub struct SessionParams {
     pub peer_addr: String,
     pub protocol: String,
     pub auth_method: String,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
 }
 
 /// A registered session with its kill signal.
@@ -25,7 +25,7 @@ struct RegisteredSession {
     peer_addr: String,
     protocol: String,
     auth_method: String,
-    tenant_id: u32,
+    tenant_id: u64,
     connected_at: u64,
     last_active: std::sync::atomic::AtomicU64,
     /// Send `true` to this channel to signal the session to terminate.
@@ -162,7 +162,7 @@ pub struct SessionInfo {
     pub last_active: u64,
     pub client_ip: String,
     pub protocol: String,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
 }
 
 impl Default for SessionRegistry {

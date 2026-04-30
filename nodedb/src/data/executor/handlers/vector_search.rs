@@ -82,7 +82,7 @@ fn encode_hits_response(
 /// Parameters for vector search.
 pub(in crate::data::executor) struct VectorSearchParams<'a> {
     pub task: &'a ExecutionTask,
-    pub tid: u32,
+    pub tid: u64,
     pub collection: &'a str,
     pub query_vector: &'a [f32],
     pub top_k: usize,
@@ -113,7 +113,7 @@ pub(in crate::data::executor) struct VectorSearchParams<'a> {
 /// Parameters for multi-vector search (all named fields, RRF fusion).
 pub(in crate::data::executor) struct VectorMultiSearchParams<'a> {
     pub task: &'a ExecutionTask,
-    pub tid: u32,
+    pub tid: u64,
     pub collection: &'a str,
     pub query_vector: &'a [f32],
     pub top_k: usize,
@@ -133,7 +133,7 @@ impl CoreLoop {
     #[inline]
     fn attach_body(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         attach: bool,
         mut hit: super::super::response_codec::VectorSearchHit,
@@ -300,6 +300,7 @@ impl CoreLoop {
                         high: high.clone(),
                         high_inclusive: *high_inclusive,
                     },
+                    _ => nodedb_vector::collection::FilterPredicate::And(vec![]),
                 })
                 .collect();
             let conj = nodedb_vector::collection::FilterPredicate::And(preds);
@@ -383,7 +384,7 @@ impl CoreLoop {
     fn search_ivf(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         index_key: &(crate::types::TenantId, String),
         ivf: &crate::engine::vector::ivf::IvfPqIndex,

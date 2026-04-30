@@ -34,7 +34,7 @@ impl ColdStorage {
     /// List Parquet files for a collection in cold storage.
     pub async fn list_parquet_files(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
     ) -> crate::Result<Vec<String>> {
         let prefix = format!("{}{}/{}/", self.prefix(), tenant_id, collection);

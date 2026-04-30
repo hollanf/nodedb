@@ -72,7 +72,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_range_scan(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field: &str,
         lower: Option<&[u8]>,
@@ -285,7 +285,7 @@ impl CoreLoop {
                 Err(e) => {
                     warn!(
                         core = self.core_id,
-                        tenant = tenant_id.as_u32(),
+                        tenant = tenant_id.as_u64(),
                         error = %e,
                         "CRDT checkpoint export failed"
                     );

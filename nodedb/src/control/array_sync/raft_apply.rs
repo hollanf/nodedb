@@ -89,11 +89,9 @@ pub(crate) async fn apply_array_op(
     // Build Data Plane plan.
     use crate::bridge::physical_plan::ArrayOp as DataArrayOp;
     use nodedb_array::sync::op::ArrayOpKind;
-    use nodedb_types::TenantId as NdTenantId;
 
     let tenant_id = TenantId::new(0); // array ops are tenant-0 at the sync layer
-    let array_id =
-        nodedb_array::types::ArrayId::new(NdTenantId::new(tenant_id.as_u32()), &op.header.array);
+    let array_id = nodedb_array::types::ArrayId::new(tenant_id, &op.header.array);
 
     // Ensure the Data Plane has opened this array before we try to Put/Delete.
     // The Data Plane `ArrayEngine` requires an explicit `OpenArray` dispatch

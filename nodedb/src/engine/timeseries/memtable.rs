@@ -369,6 +369,7 @@ impl TimeseriesMemtable {
             .map(|f| match &f.kind {
                 FlushedKind::Metric { gorilla_block, .. } => gorilla_block.len() + 32,
                 FlushedKind::Log { total_bytes, .. } => *total_bytes + 32,
+                _ => 32,
             })
             .sum();
         self.memory_bytes = base_overhead + series_bytes + meta_bytes + evicted_bytes;

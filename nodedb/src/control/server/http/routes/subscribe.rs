@@ -28,7 +28,7 @@ pub struct SubscriptionRequest {
     pub filter: Option<serde_json::Value>,
     /// Optional tenant scope override (superuser only).
     #[serde(default)]
-    pub tenant_id: Option<u32>,
+    pub tenant_id: Option<u64>,
 }
 
 /// Server-to-client change notification.

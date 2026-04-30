@@ -4,6 +4,7 @@ use thiserror::Error;
 
 /// All failure modes for reading or writing an FTS segment file.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum SegmentError {
     /// Magic bytes at offset 0..4 do not match `b"FTSS"`.
     #[error("bad segment magic: expected b\"FTSS\"")]

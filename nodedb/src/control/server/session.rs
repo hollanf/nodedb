@@ -223,7 +223,7 @@ impl Session {
             let resp = format!(
                 r#"{{"status":"ok","username":"{}","tenant_id":{}{}}}"#,
                 identity.username,
-                identity.tenant_id.as_u32(),
+                identity.tenant_id.as_u64(),
                 warning_field
             );
             self.identity = Some(identity);

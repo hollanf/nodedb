@@ -17,7 +17,7 @@ use crate::control::security::time::now_secs;
 pub struct OrgRecord {
     pub org_id: String,
     pub name: String,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub status: String,
     pub created_at: u64,
     pub metadata: HashMap<String, String>,
@@ -133,7 +133,7 @@ impl OrgStore {
     }
 
     /// Create a new organization.
-    pub fn create_org(&self, org_id: &str, name: &str, tenant_id: u32) -> crate::Result<()> {
+    pub fn create_org(&self, org_id: &str, name: &str, tenant_id: u64) -> crate::Result<()> {
         let now = now_secs();
         let record = OrgRecord {
             org_id: org_id.into(),
@@ -230,7 +230,7 @@ impl OrgStore {
     }
 
     /// List all organizations, optionally filtered by tenant.
-    pub fn list(&self, tenant_filter: Option<u32>) -> Vec<OrgRecord> {
+    pub fn list(&self, tenant_filter: Option<u64>) -> Vec<OrgRecord> {
         let orgs = self.orgs.read().unwrap_or_else(|p| p.into_inner());
         orgs.values()
             .filter(|o| tenant_filter.is_none_or(|t| o.tenant_id == t))
@@ -296,7 +296,7 @@ impl OrgStore {
     }
 
     /// JIT org creation: create org if it doesn't exist.
-    pub fn ensure_org(&self, org_id: &str, tenant_id: u32) -> crate::Result<()> {
+    pub fn ensure_org(&self, org_id: &str, tenant_id: u64) -> crate::Result<()> {
         if self.get(org_id).is_some() {
             return Ok(());
         }

@@ -27,7 +27,7 @@ use crate::event::cdc::stream_def::RetentionConfig;
 /// returns `PublishError::RemoteHome` so the caller can forward via QUIC.
 pub fn publish_to_topic(
     state: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     topic_name: &str,
     payload: &str,
 ) -> Result<u64, PublishError> {
@@ -91,7 +91,7 @@ pub fn publish_to_topic(
 /// Get or create a StreamBuffer for a topic.
 fn get_or_create_topic_buffer(
     state: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     topic_name: &str,
     retention: &RetentionConfig,
 ) -> Arc<StreamBuffer> {
@@ -135,7 +135,7 @@ fn topic_home_node(state: &SharedState, topic_name: &str) -> Option<u64> {
 /// compatibility but is ignored — the gateway handles node selection.
 pub async fn publish_remote(
     state: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     topic_name: &str,
     payload: &str,
     _leader_node: u64,

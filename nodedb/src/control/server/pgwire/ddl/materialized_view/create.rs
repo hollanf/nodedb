@@ -28,7 +28,7 @@ pub async fn create_materialized_view(
 
     // Validate source collection exists.
     if let Some(catalog) = state.credentials.catalog() {
-        match catalog.get_collection(tenant_id.as_u32(), &source) {
+        match catalog.get_collection(tenant_id.as_u64(), &source) {
             Ok(Some(_)) => {}
             _ => {
                 return Err(sqlstate_error(
@@ -38,7 +38,7 @@ pub async fn create_materialized_view(
             }
         }
 
-        if let Ok(Some(_)) = catalog.get_materialized_view(tenant_id.as_u32(), &name) {
+        if let Ok(Some(_)) = catalog.get_materialized_view(tenant_id.as_u64(), &name) {
             return Err(sqlstate_error(
                 "42P07",
                 &format!("materialized view '{name}' already exists"),
@@ -52,7 +52,7 @@ pub async fn create_materialized_view(
         .as_secs();
 
     let view = StoredMaterializedView {
-        tenant_id: tenant_id.as_u32(),
+        tenant_id: tenant_id.as_u64(),
         name: name.clone(),
         source: source.clone(),
         query_sql,
@@ -85,14 +85,14 @@ pub async fn create_materialized_view(
     // when a collection of the same name already exists (idempotent).
     let target_exists = match state.credentials.catalog() {
         Some(catalog) => matches!(
-            catalog.get_collection(tenant_id.as_u32(), &name),
+            catalog.get_collection(tenant_id.as_u64(), &name),
             Ok(Some(c)) if c.is_active
         ),
         None => false,
     };
     if !target_exists {
         let target = StoredCollection {
-            tenant_id: tenant_id.as_u32(),
+            tenant_id: tenant_id.as_u64(),
             name: name.clone(),
             owner: identity.username.clone(),
             created_at: now,
@@ -144,7 +144,7 @@ pub async fn create_materialized_view(
     tracing::info!(
         view = name,
         source,
-        tenant = tenant_id.as_u32(),
+        tenant = tenant_id.as_u64(),
         "materialized view created"
     );
 

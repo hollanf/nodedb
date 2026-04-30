@@ -9,7 +9,7 @@ use crate::engine::timeseries::continuous_agg::AggregateExpr;
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct RetentionPolicyDef {
     /// Owning tenant.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Policy name (unique per tenant).
     pub name: String,
     /// Target collection (must be timeseries).

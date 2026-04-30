@@ -22,7 +22,7 @@ pub struct AuthApiKey {
     /// Auth user ID this key is bound to.
     pub auth_user_id: String,
     /// Tenant ID.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Scopes this key is restricted to (subset of user's scopes). Empty = inherit all.
     pub scopes: Vec<String>,
     /// Per-key rate limit (QPS). 0 = use user/tier default.
@@ -93,7 +93,7 @@ impl AuthApiKeyStore {
     pub fn create_key(
         &self,
         auth_user_id: &str,
-        tenant_id: u32,
+        tenant_id: u64,
         scopes: Vec<String>,
         rate_limit_qps: u64,
         rate_limit_burst: u64,
@@ -117,7 +117,7 @@ impl AuthApiKeyStore {
     fn create_key_inner(
         &self,
         auth_user_id: &str,
-        tenant_id: u32,
+        tenant_id: u64,
         scopes: Vec<String>,
         rate_limit_qps: u64,
         rate_limit_burst: u64,

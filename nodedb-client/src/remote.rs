@@ -107,7 +107,7 @@ impl NodeDbRemote {
 
 use super::remote_parse::{
     format_vector_array, json_to_value, pg_value_to_value, quote_identifier, value_as_string,
-    value_as_u32, value_as_u64,
+    value_as_u64,
 };
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -393,7 +393,7 @@ impl NodeDb for NodeDbRemote {
                 )));
             }
             out.push(DroppedCollection {
-                tenant_id: value_as_u32(&row[0])?,
+                tenant_id: value_as_u64(&row[0])?,
                 name: value_as_string(&row[1])?,
                 owner: value_as_string(&row[2])?,
                 engine_type: value_as_string(&row[3])?,

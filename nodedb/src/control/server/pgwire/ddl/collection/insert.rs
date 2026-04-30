@@ -59,14 +59,14 @@ pub async fn insert_document(
     // INSERT didn't provide an explicit value.
     let mut fields = fields;
     if let Some(catalog) = state.credentials.catalog()
-        && let Ok(Some(coll_def)) = catalog.get_collection(tenant_id.as_u32(), &parsed.coll_name)
+        && let Ok(Some(coll_def)) = catalog.get_collection(tenant_id.as_u64(), &parsed.coll_name)
     {
         for field_def in &coll_def.field_defs {
             if let Some(ref seq_name) = field_def.sequence_name
                 && !fields.contains_key(&field_def.name)
             {
                 match state.sequence_registry.nextval_formatted(
-                    tenant_id.as_u32(),
+                    tenant_id.as_u64(),
                     seq_name,
                     "",
                     &std::collections::HashMap::new(),
@@ -95,7 +95,7 @@ pub async fn insert_document(
 
     // Enforce type guards and CHECK constraints (after BEFORE trigger + sequence injection).
     if let Some(catalog) = state.credentials.catalog()
-        && let Ok(Some(coll_def)) = catalog.get_collection(tenant_id.as_u32(), &parsed.coll_name)
+        && let Ok(Some(coll_def)) = catalog.get_collection(tenant_id.as_u64(), &parsed.coll_name)
     {
         // Inject DEFAULT/VALUE + validate type guards (combined).
         if !coll_def.type_guards.is_empty()
@@ -140,7 +140,7 @@ pub async fn insert_document(
         .as_ref()
         .is_none_or(|ct| ct.is_schemaless())
         && let Some(catalog) = state.credentials.catalog()
-        && let Ok(Some(mut coll)) = catalog.get_collection(tenant_id.as_u32(), &parsed.coll_name)
+        && let Ok(Some(mut coll)) = catalog.get_collection(tenant_id.as_u64(), &parsed.coll_name)
     {
         let mut changed = false;
         for (name, val) in &fields {
@@ -182,7 +182,7 @@ pub async fn insert_document(
                 field_name.as_str()
             };
             if let Ok(Some(entry)) =
-                catalog.get_vector_model(tenant_id.as_u32(), &parsed.coll_name, col)
+                catalog.get_vector_model(tenant_id.as_u64(), &parsed.coll_name, col)
                 && entry.metadata.strict_dimensions
                 && entry.metadata.dimensions != dim
             {

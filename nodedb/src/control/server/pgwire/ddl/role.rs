@@ -109,7 +109,7 @@ pub fn alter_role(
         .as_secs();
     let stored = crate::control::security::catalog::StoredRole {
         name: name.to_string(),
-        tenant_id: old_role.tenant_id.as_u32(),
+        tenant_id: old_role.tenant_id.as_u64(),
         parent: parent.to_string(),
         created_at: now,
     };
@@ -267,7 +267,7 @@ pub fn alter_role_typed(
                 .as_secs();
             let stored = crate::control::security::catalog::StoredRole {
                 name: role_name.to_string(),
-                tenant_id: old_role.tenant_id.as_u32(),
+                tenant_id: old_role.tenant_id.as_u64(),
                 parent: parent.to_string(),
                 created_at: now,
             };

@@ -9,7 +9,7 @@ use crate::engine::sparse::fts_redb::tables::STATS;
 
 pub(super) fn read(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
 ) -> crate::Result<(u32, u64)> {
     let read_txn = backend
@@ -32,7 +32,7 @@ pub(super) fn read(
 
 pub(super) fn increment(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     doc_len: u32,
 ) -> crate::Result<()> {
@@ -41,14 +41,14 @@ pub(super) fn increment(
 
 pub(super) fn decrement(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     doc_len: u32,
 ) -> crate::Result<()> {
     bump(backend, tid, collection, -(doc_len as i64))
 }
 
-fn bump(backend: &RedbFtsBackend, tid: u32, collection: &str, delta: i64) -> crate::Result<()> {
+fn bump(backend: &RedbFtsBackend, tid: u64, collection: &str, delta: i64) -> crate::Result<()> {
     let write_txn = backend
         .db
         .begin_write()

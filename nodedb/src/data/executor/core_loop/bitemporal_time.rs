@@ -22,7 +22,7 @@ impl CoreLoop {
     /// resolver, enabling `FOR SYSTEM_TIME AS OF` / `FOR VALID_TIME`
     /// queries.
     #[inline]
-    pub(in crate::data::executor) fn is_bitemporal(&self, tid: u32, collection: &str) -> bool {
+    pub(in crate::data::executor) fn is_bitemporal(&self, tid: u64, collection: &str) -> bool {
         let key = (TenantId::new(tid), collection.to_string());
         self.doc_configs.get(&key).is_some_and(|c| c.bitemporal)
     }

@@ -116,7 +116,7 @@ impl SyncSession {
             if let Some(q) = dlq {
                 q.enqueue(DlqEnqueueParams {
                     session_id: self.session_id.clone(),
-                    tenant_id: identity.tenant_id.as_u32(),
+                    tenant_id: identity.tenant_id.as_u64(),
                     username: identity.username.clone(),
                     collection: msg.collection.clone(),
                     document_id: msg.document_id.clone(),
@@ -150,7 +150,7 @@ impl SyncSession {
                 };
                 q.enqueue(DlqEnqueueParams {
                     session_id: self.session_id.clone(),
-                    tenant_id: identity.tenant_id.as_u32(),
+                    tenant_id: identity.tenant_id.as_u64(),
                     username: identity.username.clone(),
                     collection: msg.collection.clone(),
                     document_id: msg.document_id.clone(),
@@ -175,7 +175,7 @@ impl SyncSession {
         // Record subscription so the Origin `CollectionPurged`
         // broadcast notifies this session on hard-delete of the
         // collection the client just wrote to.
-        let tenant_u32 = identity.tenant_id.as_u32();
+        let tenant_u32 = identity.tenant_id.as_u64();
         self.track_collection(tenant_u32, &msg.collection);
 
         debug!(

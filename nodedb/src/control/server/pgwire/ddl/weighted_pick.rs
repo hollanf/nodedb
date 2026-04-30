@@ -132,7 +132,7 @@ pub async fn weighted_pick(
             "selected_keys": selected_keys,
             "selected_weights": selected_weights,
             "timestamp": unix_epoch_secs(),
-            "tenant_id": tenant_id.as_u32(),
+            "tenant_id": tenant_id.as_u64(),
             "count": selected_indices.len(),
             "with_replacement": with_replacement,
         });
@@ -140,7 +140,7 @@ pub async fn weighted_pick(
         // Write audit entry to _system.random_audit collection.
         let audit_key = format!(
             "{}:{}",
-            tenant_id.as_u32(),
+            tenant_id.as_u64(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())

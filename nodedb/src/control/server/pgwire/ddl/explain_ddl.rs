@@ -175,7 +175,7 @@ pub fn assert_visible(
 
     // Check if RLS policies would filter this user.
     let rls_bytes = state.rls.combined_read_predicate_with_auth(
-        target_identity.tenant_id.as_u32(),
+        target_identity.tenant_id.as_u64(),
         collection,
         &auth_ctx,
     );

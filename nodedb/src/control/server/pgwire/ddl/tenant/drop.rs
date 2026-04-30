@@ -29,7 +29,7 @@ pub fn drop_tenant(
         return Err(sqlstate_error("42601", "syntax: DROP TENANT <id>"));
     }
 
-    let tid: u32 = parts[2]
+    let tid: u64 = parts[2]
         .parse()
         .map_err(|_| sqlstate_error("42601", "TENANT ID must be a numeric value"))?;
     let tenant_id = TenantId::new(tid);

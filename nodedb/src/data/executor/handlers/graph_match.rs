@@ -11,7 +11,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_graph_match(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         query_bytes: &[u8],
         frontier_bitmap: Option<&nodedb_types::SurrogateBitmap>,
     ) -> Response {

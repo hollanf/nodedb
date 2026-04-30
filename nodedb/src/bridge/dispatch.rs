@@ -67,11 +67,11 @@ pub struct Dispatcher {
     /// Per-tenant in-flight request count across all cores.
     /// Used to enforce fair sharing: no single tenant can consume
     /// more than `max_per_tenant_inflight` slots.
-    tenant_inflight: HashMap<u32, u32>,
+    tenant_inflight: HashMap<u64, u32>,
 
     /// Maps request_id → tenant_id for in-flight requests.
     /// Used by `poll_responses` to decrement the correct tenant counter.
-    request_tenant: HashMap<u64, u32>,
+    request_tenant: HashMap<u64, u64>,
 
     /// Maximum in-flight requests per tenant (0 = unlimited).
     /// Recalculated as `max(2, total_queue_capacity / active_tenants)`.
@@ -127,7 +127,7 @@ impl Dispatcher {
     /// Uses the vShard router to determine which core handles this request,
     /// then pushes it into that core's SPSC request queue.
     pub fn dispatch(&mut self, request: envelope::Request) -> crate::Result<()> {
-        let tenant_id = request.tenant_id.as_u32();
+        let tenant_id = request.tenant_id.as_u64();
         let req_id = request.request_id.as_u64();
 
         // Per-tenant fairness: reject if this tenant has too many in-flight requests.
@@ -185,7 +185,7 @@ impl Dispatcher {
     /// Record a response received for a tenant (decrements in-flight count).
     ///
     /// Called by the response poller when a Data Plane response is received.
-    pub fn tenant_response_received(&mut self, tenant_id: u32) {
+    pub fn tenant_response_received(&mut self, tenant_id: u64) {
         if let Some(count) = self.tenant_inflight.get_mut(&tenant_id) {
             *count = count.saturating_sub(1);
         }
@@ -217,7 +217,7 @@ impl Dispatcher {
             });
         }
 
-        let tenant_id = request.tenant_id.as_u32();
+        let tenant_id = request.tenant_id.as_u64();
         let req_id = request.request_id.as_u64();
         let channel = &mut self.cores[core_id];
 
@@ -397,7 +397,7 @@ mod tests {
     fn dispatch_to_core_tracks_request_lifecycle() {
         let (mut dispatcher, mut data_sides) = Dispatcher::new(2, 64);
         let request = make_request(0);
-        let tenant_id = request.tenant_id.as_u32();
+        let tenant_id = request.tenant_id.as_u64();
         let request_id = request.request_id.as_u64();
 
         dispatcher.dispatch_to_core(1, request).unwrap();

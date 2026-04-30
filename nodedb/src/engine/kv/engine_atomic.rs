@@ -37,7 +37,7 @@ impl KvEngine {
     ///   If key exists and `ttl_ms > 0`, resets TTL. If `ttl_ms == 0`, preserves.
     pub fn incr(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         key: &[u8],
         delta: i64,
@@ -106,7 +106,7 @@ impl KvEngine {
     ///   but NaN/Infinity results are rejected as `Overflow`.
     pub fn incr_float(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         key: &[u8],
         delta: f64,
@@ -149,7 +149,7 @@ impl KvEngine {
     /// If key doesn't exist and `expected` is empty, creates the key (create-if-not-exists).
     pub fn cas(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         key: &[u8],
         expected: &[u8],
@@ -238,7 +238,7 @@ impl KvEngine {
     /// Preserves existing TTL.
     pub fn getset(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         key: &[u8],
         new_value: &[u8],
@@ -291,7 +291,7 @@ impl KvEngine {
 
     /// Ensure a hash table exists for (tenant, collection), creating if needed.
     /// Returns a mutable reference to the table.
-    fn ensure_table(&mut self, tkey: u64, tenant_id: u32, collection: &str) -> &mut KvHashTable {
+    fn ensure_table(&mut self, tkey: u64, tenant_id: u64, collection: &str) -> &mut KvHashTable {
         if !self.tables.contains_key(&tkey) {
             self.hash_to_tenant.entry(tkey).or_insert(tenant_id);
             self.hash_to_collection
@@ -316,7 +316,7 @@ impl KvEngine {
     #[allow(clippy::too_many_arguments)]
     fn atomic_put(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         tkey: u64,
         key: &[u8],

@@ -11,7 +11,7 @@ use crate::control::security::catalog::SystemCatalog;
 /// Returns policy names only.
 pub fn find_rls_policies_on(
     catalog: &SystemCatalog,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
 ) -> crate::Result<Vec<String>> {
     let all = catalog.load_all_rls_policies()?;

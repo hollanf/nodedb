@@ -23,7 +23,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_facet_counts(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         filter_bytes: &[u8],
         fields: &[String],
@@ -107,7 +107,7 @@ impl CoreLoop {
     /// document-scan counting (O(matching_docs)).
     fn count_facet_field(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field: &str,
         matching_set: &HashSet<String>,
@@ -158,7 +158,7 @@ impl CoreLoop {
 
 /// Build a cache key for facet counts.
 fn facet_cache_key(
-    tid: u32,
+    tid: u64,
     collection: &str,
     fields: &[String],
     filter_bytes: &[u8],

@@ -143,7 +143,7 @@ pub fn payload_value(payload: &[u8]) -> serde_json::Value {
 
 // ── Tenant-aware helpers ────────────────────────────────────────────
 
-pub fn make_request_for_tenant(tenant_id: u32, plan: PhysicalPlan) -> Request {
+pub fn make_request_for_tenant(tenant_id: u64, plan: PhysicalPlan) -> Request {
     Request {
         tenant_id: TenantId::new(tenant_id),
         ..make_request(plan)
@@ -155,7 +155,7 @@ pub fn send_ok_as_tenant(
     core: &mut CoreLoop,
     req_tx: &mut Producer<BridgeRequest>,
     resp_rx: &mut Consumer<BridgeResponse>,
-    tenant_id: u32,
+    tenant_id: u64,
     plan: PhysicalPlan,
 ) -> Vec<u8> {
     req_tx
@@ -179,7 +179,7 @@ pub fn send_raw_as_tenant(
     core: &mut CoreLoop,
     req_tx: &mut Producer<BridgeRequest>,
     resp_rx: &mut Consumer<BridgeResponse>,
-    tenant_id: u32,
+    tenant_id: u64,
     plan: PhysicalPlan,
 ) -> nodedb::bridge::envelope::Response {
     req_tx

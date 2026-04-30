@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use common::cluster_harness::{TestCluster, wait_for};
 
-const TENANT: u32 = 1;
+const TENANT: u64 = 1;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 6)]
 async fn create_collection_stamps_version_one_on_every_node() {

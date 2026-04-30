@@ -65,7 +65,7 @@ pub type CompactionResult = (Vec<u8>, Vec<String>);
 /// (which should be removed from storage after the new segment is written).
 pub fn compact_level<B: FtsBackend>(
     backend: &B,
-    tid: u32,
+    tid: u64,
     collection: &str,
     segments: &[SegmentMeta],
     level: u32,

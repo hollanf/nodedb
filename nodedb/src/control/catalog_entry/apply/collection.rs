@@ -23,7 +23,7 @@ pub fn put(stored: &StoredCollection, catalog: &SystemCatalog) {
     );
 }
 
-pub fn purge(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
+pub fn purge(tenant_id: u64, name: &str, catalog: &SystemCatalog) {
     // Hard delete of the primary StoredCollection row. Symmetric
     // with `apply/function.rs::delete` and the other hard-delete
     // peers: remove the primary, then remove the owner row.
@@ -67,7 +67,7 @@ pub fn purge(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
     }
 }
 
-pub fn deactivate(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
+pub fn deactivate(tenant_id: u64, name: &str, catalog: &SystemCatalog) {
     match catalog.get_collection(tenant_id, name) {
         Ok(Some(mut stored)) => {
             stored.is_active = false;

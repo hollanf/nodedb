@@ -22,7 +22,7 @@ use super::ReclaimStats;
 /// Idempotent: a missing directory counts as zero.
 pub fn reclaim_timeseries_partitions(
     data_dir: &Path,
-    _tenant_id: u32,
+    _tenant_id: u64,
     collection: &str,
 ) -> ReclaimStats {
     let partition_dir = data_dir.join("ts").join(collection);

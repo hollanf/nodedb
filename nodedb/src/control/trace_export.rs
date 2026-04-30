@@ -114,7 +114,7 @@ impl TraceExporter {
         trace_id: nodedb_types::TraceId,
         start: SystemTime,
         end: SystemTime,
-        tenant_id: u32,
+        tenant_id: u64,
         vshard_id: u32,
         status_ok: bool,
     ) {

@@ -48,7 +48,7 @@ pub async fn put_async(stored: StoredCollection, shared: Arc<SharedState>) {
 /// is already gone at this point (removed by `apply/collection.rs::purge`).
 /// The Data Plane `UnregisterCollection` dispatch is the async half
 /// and lives in `async_dispatch/collection.rs::purge_async`.
-pub fn purge_sync(tenant_id: u32, name: String, shared: Arc<SharedState>) {
+pub fn purge_sync(tenant_id: u64, name: String, shared: Arc<SharedState>) {
     let owner_removed =
         shared
             .permissions
@@ -70,7 +70,7 @@ pub fn purge_sync(tenant_id: u32, name: String, shared: Arc<SharedState>) {
     );
 }
 
-pub fn deactivate(tenant_id: u32, name: String, _shared: Arc<SharedState>) {
+pub fn deactivate(tenant_id: u64, name: String, _shared: Arc<SharedState>) {
     // Ownership is intentionally preserved on soft-delete. The
     // primary `StoredCollection` record is kept for audit / undrop
     // (see `CatalogEntry::DeactivateCollection`); removing the

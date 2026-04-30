@@ -31,7 +31,7 @@ pub struct KvEngine {
     pub(crate) indexes: HashMap<u64, KvIndexSet>,
     /// Reverse mapping: hash → tenant_id. Enables tenant purge without
     /// reversing the FxHash. Maintained in sync with `tables`.
-    pub(crate) hash_to_tenant: HashMap<u64, u32>,
+    pub(crate) hash_to_tenant: HashMap<u64, u64>,
     /// Reverse mapping: hash → collection name. Enables snapshot export
     /// to include human-readable collection names (FxHash is not reversible).
     pub(crate) hash_to_collection: HashMap<u64, String>,
@@ -105,7 +105,7 @@ impl KvEngine {
     ///
     /// Returns `1` if the table existed and was removed, `0` otherwise.
     /// Idempotent — safe to re-run after partial completion.
-    pub fn purge_collection(&mut self, tenant_id: u32, collection: &str) -> usize {
+    pub fn purge_collection(&mut self, tenant_id: u64, collection: &str) -> usize {
         let tkey = super::engine_helpers::table_key(tenant_id, collection);
         let mut removed = 0;
         if self.tables.remove(&tkey).is_some() {
@@ -139,7 +139,7 @@ impl KvEngine {
     ///
     /// Uses the `hash_to_tenant` reverse map to identify which tables belong
     /// to the tenant. Returns the number of tables removed.
-    pub fn purge_tenant(&mut self, tenant_id: u32) -> usize {
+    pub fn purge_tenant(&mut self, tenant_id: u64) -> usize {
         let keys_to_remove: Vec<u64> = self
             .hash_to_tenant
             .iter()
@@ -166,7 +166,7 @@ impl KvEngine {
     /// unbound or the collection is empty.
     pub fn key_for_surrogate(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         surrogate: Surrogate,
     ) -> Option<Vec<u8>> {
@@ -180,7 +180,7 @@ impl KvEngine {
     /// GET: O(1) hash table lookup. Returns None if not found or expired.
     pub fn get(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         key: &[u8],
         now_ms: u64,
@@ -196,7 +196,7 @@ impl KvEngine {
     /// - `Some(remaining_ms)` — key exists and expires in `remaining_ms` milliseconds
     pub fn get_ttl_ms(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         key: &[u8],
         now_ms: u64,
@@ -228,7 +228,7 @@ impl KvEngine {
     #[allow(clippy::too_many_arguments)]
     pub fn put(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         key: &[u8],
         value: &[u8],
@@ -329,7 +329,7 @@ impl KvEngine {
     /// DELETE: remove key(s). Returns count of keys actually deleted.
     pub fn delete(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         keys: &[Vec<u8>],
         now_ms: u64,
@@ -389,7 +389,7 @@ impl KvEngine {
     /// Returns true if the key was found and TTL was set.
     pub fn expire(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         key: &[u8],
         ttl_ms: u64,
@@ -420,7 +420,7 @@ impl KvEngine {
     }
 
     /// PERSIST: remove TTL from a key. Returns true if the key was found.
-    pub fn persist(&mut self, tenant_id: u32, collection: &str, key: &[u8]) -> bool {
+    pub fn persist(&mut self, tenant_id: u64, collection: &str, key: &[u8]) -> bool {
         let tkey = table_key(tenant_id, collection);
         let table = match self.tables.get_mut(&tkey) {
             Some(t) => t,
@@ -440,7 +440,7 @@ impl KvEngine {
     /// BATCH GET: fetch multiple keys. Returns values in order (None for missing).
     pub fn batch_get(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         keys: &[Vec<u8>],
         now_ms: u64,
@@ -453,7 +453,7 @@ impl KvEngine {
     /// BATCH PUT: insert/update multiple pairs. Returns count of new keys.
     pub fn batch_put(
         &mut self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         entries: &[(Vec<u8>, Vec<u8>)],
         ttl_ms: u64,
@@ -491,7 +491,7 @@ impl KvEngine {
     #[allow(clippy::too_many_arguments)]
     pub fn scan(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         cursor: &[u8],
         count: usize,

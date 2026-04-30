@@ -176,7 +176,7 @@ impl StatsStore {
     /// Load statistics for a column.
     pub fn get(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         field: &str,
     ) -> crate::Result<Option<ColumnStats>> {
@@ -212,7 +212,7 @@ impl StatsStore {
     /// Persist updated statistics for a column.
     pub fn put(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         field: &str,
         stats: &ColumnStats,
@@ -254,7 +254,7 @@ impl StatsStore {
     /// observes the new value, and persists.
     pub fn observe_document(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         doc: &serde_json::Value,
     ) -> crate::Result<()> {
@@ -275,7 +275,7 @@ impl StatsStore {
     pub fn observe_document_in_txn(
         &self,
         txn: &WriteTransaction,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         doc: &serde_json::Value,
     ) -> crate::Result<()> {

@@ -38,7 +38,7 @@ pub fn drop_procedure(
         return Err(sqlstate_error("42601", "procedure name required"));
     }
     let name = parts[idx].to_lowercase().trim_end_matches(';').to_string();
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let catalog = state
         .credentials

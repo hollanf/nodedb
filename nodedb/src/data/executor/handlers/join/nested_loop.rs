@@ -18,7 +18,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_nested_loop_join(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         left_collection: &str,
         right_collection: &str,
         condition: &[u8],

@@ -33,7 +33,7 @@ pub fn put(stored: StoredTenant, shared: Arc<SharedState>) {
     );
 }
 
-pub fn delete(tenant_id: u32, shared: Arc<SharedState>) {
+pub fn delete(tenant_id: u64, shared: Arc<SharedState>) {
     let tid = TenantId::new(tenant_id);
     let mut tenants = match shared.tenants.lock() {
         Ok(g) => g,

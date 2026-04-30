@@ -12,7 +12,7 @@ use crate::control::security::catalog::SystemCatalog;
 /// Returns trigger names only.
 pub fn find_triggers_on(
     catalog: &SystemCatalog,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
 ) -> crate::Result<Vec<String>> {
     let all = catalog.load_triggers_for_tenant(tenant_id)?;
@@ -37,7 +37,7 @@ mod tests {
         (cat, tmp)
     }
 
-    fn trig(tenant: u32, name: &str, collection: &str) -> StoredTrigger {
+    fn trig(tenant: u64, name: &str, collection: &str) -> StoredTrigger {
         use crate::control::security::catalog::trigger_types::{
             TriggerBatchMode, TriggerEvents, TriggerExecutionMode, TriggerGranularity,
             TriggerSecurity, TriggerTiming,

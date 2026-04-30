@@ -22,7 +22,7 @@ impl SystemCatalog {
         write_txn.commit().map_err(|e| catalog_err("commit", e))
     }
 
-    pub fn delete_ep_topic(&self, tenant_id: u32, name: &str) -> crate::Result<bool> {
+    pub fn delete_ep_topic(&self, tenant_id: u64, name: &str) -> crate::Result<bool> {
         let key = topic_key(tenant_id, name);
         let write_txn = self
             .db
@@ -63,6 +63,6 @@ impl SystemCatalog {
     }
 }
 
-fn topic_key(tenant_id: u32, name: &str) -> String {
+fn topic_key(tenant_id: u64, name: &str) -> String {
     format!("{tenant_id}:{name}")
 }

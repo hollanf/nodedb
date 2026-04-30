@@ -22,7 +22,7 @@ pub fn alter_alert(
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "alter alerts")?;
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let mut def = state
         .alert_registry

@@ -79,7 +79,7 @@ pub fn drop_collection(
         state.credentials.catalog()
     {
         let mut visited = std::collections::HashSet::new();
-        crate::control::cascade::collect_dependents(catalog, tenant_id.as_u32(), name, &mut visited)
+        crate::control::cascade::collect_dependents(catalog, tenant_id.as_u64(), name, &mut visited)
             .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
     } else {
         Vec::new()
@@ -164,7 +164,7 @@ pub fn drop_collection(
     // already a no-op should not spawn extra raft rounds or audit
     // noise.
     if let Some(catalog) = state.credentials.catalog() {
-        match catalog.get_collection(tenant_id.as_u32(), name) {
+        match catalog.get_collection(tenant_id.as_u64(), name) {
             Ok(Some(coll)) if coll.is_active => {}
             Ok(Some(_)) if flags.purge => {}
             Ok(Some(_)) => {
@@ -207,12 +207,12 @@ pub fn drop_collection(
     // storage-reclaim dispatch on every node symmetrically.
     let entry = if flags.purge {
         crate::control::catalog_entry::CatalogEntry::PurgeCollection {
-            tenant_id: tenant_id.as_u32(),
+            tenant_id: tenant_id.as_u64(),
             name: name.to_string(),
         }
     } else {
         crate::control::catalog_entry::CatalogEntry::DeactivateCollection {
-            tenant_id: tenant_id.as_u32(),
+            tenant_id: tenant_id.as_u64(),
             name: name.to_string(),
         }
     };
@@ -226,9 +226,9 @@ pub fn drop_collection(
         // clustered deployment.
         if flags.purge {
             catalog
-                .delete_collection(tenant_id.as_u32(), name)
+                .delete_collection(tenant_id.as_u64(), name)
                 .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
-        } else if let Ok(Some(mut coll)) = catalog.get_collection(tenant_id.as_u32(), name) {
+        } else if let Ok(Some(mut coll)) = catalog.get_collection(tenant_id.as_u64(), name) {
             coll.is_active = false;
             catalog
                 .put_collection(&coll)
@@ -238,14 +238,14 @@ pub fn drop_collection(
 
     // Cascade: drop implicit sequences (SERIAL/BIGSERIAL fields create {coll}_{field}_seq).
     if let Some(catalog) = state.credentials.catalog()
-        && let Ok(seqs) = catalog.load_sequences_for_tenant(tenant_id.as_u32())
+        && let Ok(seqs) = catalog.load_sequences_for_tenant(tenant_id.as_u64())
     {
         let prefix = format!("{name}_");
         let suffix = "_seq";
         for seq in &seqs {
             if seq.name.starts_with(&prefix) && seq.name.ends_with(suffix) {
                 catalog
-                    .delete_sequence(tenant_id.as_u32(), &seq.name)
+                    .delete_sequence(tenant_id.as_u64(), &seq.name)
                     .map_err(|e| {
                         sqlstate_error(
                             "XX000",
@@ -256,7 +256,7 @@ pub fn drop_collection(
                 // is the source of truth and the sequence won't be reloaded.
                 let _ = state
                     .sequence_registry
-                    .remove(tenant_id.as_u32(), &seq.name);
+                    .remove(tenant_id.as_u64(), &seq.name);
             }
         }
     }

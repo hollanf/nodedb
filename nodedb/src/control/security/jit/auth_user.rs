@@ -24,7 +24,7 @@ pub struct AuthUserRecord {
     /// Email address.
     pub email: String,
     /// Tenant this user belongs to.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Identity provider name.
     pub provider: String,
     /// First authentication timestamp.

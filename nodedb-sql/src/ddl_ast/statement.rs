@@ -332,7 +332,7 @@ pub enum NodedbStatement {
         /// Optional ON DENY clause text (everything after ON DENY).
         on_deny_raw: Option<String>,
         /// Optional TENANT <id> override.
-        tenant_id_override: Option<u32>,
+        tenant_id_override: Option<u64>,
     },
     DropRlsPolicy {
         name: String,
@@ -434,7 +434,7 @@ pub enum NodedbStatement {
         /// Role name string (e.g. "read_write", "admin"); handler converts to Role enum.
         role: Option<String>,
         /// Optional tenant ID override (superuser only).
-        tenant_id: Option<u32>,
+        tenant_id: Option<u64>,
     },
     DropUser {
         username: String,

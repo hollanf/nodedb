@@ -79,7 +79,7 @@ fn maybe_wrap_kv_point_get(
 /// path today; other kinds do not land in the plan cache).
 fn current_descriptor_version(
     state: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     id: &nodedb_cluster::DescriptorId,
 ) -> Option<u64> {
     if id.tenant_id != tenant_id {
@@ -197,7 +197,7 @@ impl NodeDbPgHandler {
         // not invalidate unrelated cached plans.
         let cached_tasks = {
             let state = Arc::clone(&self.state);
-            let tenant = tenant_id.as_u32();
+            let tenant = tenant_id.as_u64();
             self.sessions.get_cached_plan(addr, &clean_sql, move |id| {
                 current_descriptor_version(&state, tenant, id)
             })
@@ -509,7 +509,7 @@ impl NodeDbPgHandler {
             if let Some(collection) = &truncate_restart_collection {
                 self.state
                     .sequence_registry
-                    .restart_sequences_for_collection(tenant_id.as_u32(), collection);
+                    .restart_sequences_for_collection(tenant_id.as_u64(), collection);
             }
 
             // --- SYNC AFTER triggers ---
@@ -534,7 +534,7 @@ impl NodeDbPgHandler {
 
                 self.state
                     .dml_counter
-                    .record_dml(tenant_id.as_u32(), &info.collection);
+                    .record_dml(tenant_id.as_u64(), &info.collection);
             }
 
             // Track reads for snapshot isolation conflict detection.

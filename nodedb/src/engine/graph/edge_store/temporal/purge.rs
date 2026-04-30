@@ -33,7 +33,7 @@ impl EdgeStore {
         cutoff_system_ms: i64,
     ) -> crate::Result<usize> {
         let cutoff_ordinal = ms_to_ordinal_upper(cutoff_system_ms);
-        let t = tid.as_u32();
+        let t = tid.as_u64();
 
         // Pass 1: scan read-only, group by base, collect delete candidates.
         let victims = self.collect_purge_victims(t, collection, cutoff_ordinal)?;
@@ -71,7 +71,7 @@ impl EdgeStore {
 
     fn collect_purge_victims(
         &self,
-        t: u32,
+        t: u64,
         collection: &str,
         cutoff_ordinal: i64,
     ) -> crate::Result<Vec<Victim>> {
@@ -201,8 +201,8 @@ mod tests {
     fn count_edges(store: &EdgeStore, tid: TenantId, collection: &str) -> usize {
         let read_txn = store.db.begin_read().unwrap();
         let edges = read_txn.open_table(EDGES).unwrap();
-        let low = (tid.as_u32(), "");
-        let high = (tid.as_u32() + 1, "");
+        let low = (tid.as_u64(), "");
+        let high = (tid.as_u64() + 1, "");
         edges
             .range(low..high)
             .unwrap()

@@ -14,7 +14,7 @@ use crate::control::security::catalog::trigger_types::StoredTrigger;
 /// Thread-safe (RwLock) — reads are concurrent, writes are exclusive.
 pub struct TriggerRegistry {
     /// (tenant_id, collection_name) → sorted list of triggers.
-    by_collection: RwLock<HashMap<(u32, String), Vec<StoredTrigger>>>,
+    by_collection: RwLock<HashMap<(u64, String), Vec<StoredTrigger>>>,
 }
 
 impl Default for TriggerRegistry {
@@ -61,7 +61,7 @@ impl TriggerRegistry {
     pub fn load_from_catalog(
         &self,
         catalog: &crate::control::security::catalog::types::SystemCatalog,
-        tenant_id: u32,
+        tenant_id: u64,
     ) {
         let triggers = match catalog.load_triggers_for_tenant(tenant_id) {
             Ok(t) => t,
@@ -103,7 +103,7 @@ impl TriggerRegistry {
     }
 
     /// Unregister a trigger (called by DROP TRIGGER DDL).
-    pub fn unregister(&self, tenant_id: u32, name: &str) {
+    pub fn unregister(&self, tenant_id: u64, name: &str) {
         let mut map = match self.by_collection.write() {
             Ok(m) => m,
             Err(p) => p.into_inner(),
@@ -114,7 +114,7 @@ impl TriggerRegistry {
     }
 
     /// Enable or disable a trigger.
-    pub fn set_enabled(&self, tenant_id: u32, name: &str, enabled: bool) {
+    pub fn set_enabled(&self, tenant_id: u64, name: &str, enabled: bool) {
         let mut map = match self.by_collection.write() {
             Ok(m) => m,
             Err(p) => p.into_inner(),
@@ -133,7 +133,7 @@ impl TriggerRegistry {
     /// Returns triggers sorted by (priority, name) — deterministic execution order.
     pub fn get_matching(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         event: DmlEvent,
     ) -> Vec<StoredTrigger> {
@@ -198,7 +198,7 @@ impl TriggerRegistry {
     }
 
     /// List all triggers for a tenant (for SHOW TRIGGERS).
-    pub fn list_for_tenant(&self, tenant_id: u32) -> Vec<StoredTrigger> {
+    pub fn list_for_tenant(&self, tenant_id: u64) -> Vec<StoredTrigger> {
         let map = match self.by_collection.read() {
             Ok(m) => m,
             Err(p) => p.into_inner(),

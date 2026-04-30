@@ -21,7 +21,7 @@ use crate::control::security::catalog::SystemCatalog;
 /// Returns sequence names only.
 pub fn find_implicit_sequences(
     catalog: &SystemCatalog,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
 ) -> crate::Result<Vec<String>> {
     let prefix = format!("{collection}_");
@@ -52,7 +52,7 @@ mod tests {
         (cat, tmp)
     }
 
-    fn seq(tenant: u32, name: &str) -> StoredSequence {
+    fn seq(tenant: u64, name: &str) -> StoredSequence {
         StoredSequence::new(tenant, name.to_string(), "o".into())
     }
 

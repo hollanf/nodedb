@@ -25,7 +25,7 @@ pub fn show_retention_policy(
     identity: &AuthenticatedIdentity,
     parts: &[&str],
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     // Determine if filtering by collection.
     let collection_filter = if parts.len() >= 5 && parts[3].eq_ignore_ascii_case("ON") {
         Some(parts[4].to_lowercase())

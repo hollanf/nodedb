@@ -44,7 +44,7 @@ mod tests {
     fn tenant_id_display() {
         let t = TenantId::new(42);
         assert_eq!(t.to_string(), "tenant:42");
-        assert_eq!(t.as_u32(), 42);
+        assert_eq!(t.as_u64(), 42);
     }
 
     #[test]

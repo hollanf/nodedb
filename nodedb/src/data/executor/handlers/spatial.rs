@@ -28,7 +28,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_spatial_scan(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field: &str,
         predicate: &SpatialPredicate,
@@ -217,7 +217,7 @@ impl CoreLoop {
     fn spatial_full_scan(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field: &str,
         predicate: &SpatialPredicate,
@@ -424,7 +424,7 @@ mod tests {
     /// Returns the hex doc_id.
     fn insert_spatial_doc(
         core: &mut crate::data::executor::core_loop::CoreLoop,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field: &str,
         surrogate: Surrogate,
@@ -512,7 +512,7 @@ mod tests {
     #[test]
     fn empty_prefilter_returns_nothing() {
         let (mut core, _resp_rx, _dir) = make_core();
-        let tid = 1u32;
+        let tid = 1u64;
         let collection = "geo";
         let field = "loc";
 

@@ -26,7 +26,7 @@ pub fn create_streaming_mv(
     require_admin(identity, "create streaming materialized views")?;
 
     let parsed = parse_streaming_mv(sql)?;
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Verify source stream exists.
     if state

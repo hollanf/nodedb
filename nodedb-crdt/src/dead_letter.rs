@@ -70,7 +70,7 @@ pub struct DeadLetter {
 
     /// The tenant this delta belongs to (0 = system).
     #[serde(default)]
-    pub tenant_id: u32,
+    pub tenant_id: u64,
 
     /// The raw delta bytes that were rejected.
     pub delta: Vec<u8>,
@@ -120,7 +120,7 @@ impl DeadLetterQueue {
         &mut self,
         peer_id: u64,
         user_id: u64,
-        tenant_id: u32,
+        tenant_id: u64,
         delta: Vec<u8>,
         constraint: &Constraint,
         reason: String,
@@ -186,7 +186,7 @@ impl DeadLetterQueue {
     /// number of entries removed. Called during collection hard-delete
     /// so stale rejected deltas don't resurface if a collection of the
     /// same name is recreated inside the retention window's shadow.
-    pub fn purge_collection(&mut self, tenant_id: u32, collection: &str) -> usize {
+    pub fn purge_collection(&mut self, tenant_id: u64, collection: &str) -> usize {
         let before = self.entries.len();
         self.entries
             .retain(|e| !(e.tenant_id == tenant_id && e.collection == collection));

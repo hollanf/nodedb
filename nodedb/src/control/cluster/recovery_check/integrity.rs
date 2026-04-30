@@ -139,13 +139,13 @@ pub fn verify_redb_integrity(catalog: &SystemCatalog) -> Vec<Divergence> {
 
     // Build lookup sets once — every referential check is a
     // HashSet membership probe.
-    let collection_keys: HashSet<(u32, String)> = collections
+    let collection_keys: HashSet<(u64, String)> = collections
         .iter()
         .map(|c| (c.tenant_id, c.name.clone()))
         .collect();
     let user_names: HashSet<String> = users.iter().map(|u| u.username.clone()).collect();
     let role_names: HashSet<String> = roles.iter().map(|r| r.name.clone()).collect();
-    let owner_keys: HashSet<(String, u32, String)> = owners
+    let owner_keys: HashSet<(String, u64, String)> = owners
         .iter()
         .map(|o| (o.object_type.clone(), o.tenant_id, o.object_name.clone()))
         .collect();
@@ -155,7 +155,7 @@ pub fn verify_redb_integrity(catalog: &SystemCatalog) -> Vec<Divergence> {
     // row added here plus its `apply/<type>.rs::put` call to
     // `owner::put_parent_owner`. Omitting either half trips an
     // OrphanRow on the next restart.
-    let parent_replicated: [(&'static str, Vec<(u32, String)>); 8] = [
+    let parent_replicated: [(&'static str, Vec<(u64, String)>); 8] = [
         (
             object_type::COLLECTION,
             // Active AND soft-deleted collections both require an

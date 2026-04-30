@@ -7,7 +7,7 @@ use super::types::TopicDef;
 
 /// In-memory topic registry.
 pub struct EpTopicRegistry {
-    by_name: RwLock<HashMap<(u32, String), TopicDef>>,
+    by_name: RwLock<HashMap<(u64, String), TopicDef>>,
 }
 
 impl EpTopicRegistry {
@@ -23,19 +23,19 @@ impl EpTopicRegistry {
         map.insert(key, def);
     }
 
-    pub fn unregister(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn unregister(&self, tenant_id: u64, name: &str) -> bool {
         let key = (tenant_id, name.to_string());
         let mut map = self.by_name.write().unwrap_or_else(|p| p.into_inner());
         map.remove(&key).is_some()
     }
 
-    pub fn get(&self, tenant_id: u32, name: &str) -> Option<TopicDef> {
+    pub fn get(&self, tenant_id: u64, name: &str) -> Option<TopicDef> {
         let key = (tenant_id, name.to_string());
         let map = self.by_name.read().unwrap_or_else(|p| p.into_inner());
         map.get(&key).cloned()
     }
 
-    pub fn list_for_tenant(&self, tenant_id: u32) -> Vec<TopicDef> {
+    pub fn list_for_tenant(&self, tenant_id: u64) -> Vec<TopicDef> {
         let map = self.by_name.read().unwrap_or_else(|p| p.into_inner());
         map.values()
             .filter(|t| t.tenant_id == tenant_id)

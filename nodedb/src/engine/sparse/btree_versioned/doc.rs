@@ -75,7 +75,7 @@ impl SparseEngine {
     /// Append a tombstone version.
     pub fn versioned_tombstone(
         &self,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         doc_id: &str,
         sys_from_ms: i64,
@@ -101,7 +101,7 @@ impl SparseEngine {
     pub fn versioned_tombstone_in_txn(
         &self,
         txn: &redb::WriteTransaction,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         doc_id: &str,
         sys_from_ms: i64,
@@ -124,7 +124,7 @@ impl SparseEngine {
     pub fn versioned_exists_current_in_txn(
         &self,
         txn: &redb::WriteTransaction,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         doc_id: &str,
     ) -> crate::Result<bool> {
@@ -153,7 +153,7 @@ impl SparseEngine {
     /// personal data.
     pub fn versioned_gdpr_erase(
         &self,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         doc_id: &str,
     ) -> crate::Result<usize> {
@@ -189,7 +189,7 @@ impl SparseEngine {
     /// a tombstone / GDPR-erased (both hide the row from normal reads).
     pub fn versioned_get_as_of(
         &self,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         doc_id: &str,
         sys_cutoff_ms: Option<i64>,
@@ -240,7 +240,7 @@ impl SparseEngine {
     /// Current-state read = `versioned_get_as_of(None, None)`.
     pub fn versioned_get_current(
         &self,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         doc_id: &str,
     ) -> crate::Result<Option<Vec<u8>>> {
@@ -252,7 +252,7 @@ impl SparseEngine {
     /// collection-wide; callers add filter/limit on top.
     pub fn versioned_scan_as_of(
         &self,
-        tenant: u32,
+        tenant: u64,
         coll: &str,
         sys_cutoff_ms: Option<i64>,
         valid_at_ms: Option<i64>,

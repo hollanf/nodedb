@@ -19,7 +19,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_multi_vector_insert(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field_name: &str,
         document_surrogate: Surrogate,
@@ -132,7 +132,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_multi_vector_delete(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field_name: &str,
         document_surrogate: Surrogate,
@@ -168,7 +168,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_multi_vector_score_search(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field_name: &str,
         query_vector: &[f32],

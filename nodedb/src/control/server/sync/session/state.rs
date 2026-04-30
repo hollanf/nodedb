@@ -49,7 +49,7 @@ pub struct SyncSession {
     /// ever sent a delta or shape subscription for — used by the
     /// Origin `CollectionPurged` broadcast to decide which sessions
     /// need to be notified when a collection is hard-deleted.
-    pub tracked_collections: std::collections::HashSet<(u32, String)>,
+    pub tracked_collections: std::collections::HashSet<(u64, String)>,
     /// Last WAL LSN the client advertised in its vector clock at
     /// handshake. Used by offline-client replay to identify
     /// `CollectionPurged` events that committed while the client
@@ -100,7 +100,7 @@ impl SyncSession {
     /// `(tenant, collection)` pair. Called from the delta-push and
     /// shape-subscribe paths. Membership here is the subscription
     /// state the Origin `CollectionPurged` broadcast filters on.
-    pub fn track_collection(&mut self, tenant_id: u32, collection: &str) {
+    pub fn track_collection(&mut self, tenant_id: u64, collection: &str) {
         self.tracked_collections
             .insert((tenant_id, collection.to_string()));
     }

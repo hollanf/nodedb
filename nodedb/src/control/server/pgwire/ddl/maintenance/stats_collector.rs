@@ -15,7 +15,7 @@ use sonic_rs;
 /// aggregate statistics. For numeric columns, delegates to SIMD
 /// kernels for min/max/sum computation.
 pub fn collect_stats_from_json_rows(
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
     columns: &[String],
     rows: &[String],

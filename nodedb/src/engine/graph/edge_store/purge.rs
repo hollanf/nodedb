@@ -15,7 +15,7 @@ impl EdgeStore {
     /// Purge all edges belonging to a tenant. O(tenant-size) range
     /// delete — no cross-tenant scan.
     pub fn purge_tenant(&self, tid: TenantId) -> crate::Result<usize> {
-        let t = tid.as_u32();
+        let t = tid.as_u64();
         let write_txn = self
             .db
             .begin_write()
@@ -61,7 +61,7 @@ impl EdgeStore {
     /// Purge all edges belonging to a specific collection within a tenant.
     /// Returns the number of forward edges removed.
     pub fn purge_collection(&self, tid: TenantId, collection: &str) -> crate::Result<usize> {
-        let t = tid.as_u32();
+        let t = tid.as_u64();
         let prefix = format!("{collection}\x00");
         let prefix_end = format!("{collection}\x01");
 

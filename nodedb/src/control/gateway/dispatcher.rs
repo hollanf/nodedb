@@ -138,7 +138,7 @@ async fn dispatch_remote(args: RemoteDispatchArgs<'_>) -> Result<Vec<Vec<u8>>, E
 
     let req = RaftRpc::ExecuteRequest(ExecuteRequest {
         plan_bytes,
-        tenant_id: tenant_id.as_u32(),
+        tenant_id: tenant_id.as_u64(),
         deadline_remaining_ms: deadline_ms,
         trace_id: trace_id.0,
         descriptor_versions,
@@ -147,7 +147,7 @@ async fn dispatch_remote(args: RemoteDispatchArgs<'_>) -> Result<Vec<Vec<u8>>, E
     debug!(
         node_id,
         vshard_id,
-        tenant_id = tenant_id.as_u32(),
+        tenant_id = tenant_id.as_u64(),
         "gateway: dispatching ExecuteRequest to remote node"
     );
 

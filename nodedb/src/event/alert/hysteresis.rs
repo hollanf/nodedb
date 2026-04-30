@@ -62,7 +62,7 @@ pub enum HysteresisTransition {
 /// within fire_after windows).
 pub struct HysteresisManager {
     /// Key: (tenant_id, alert_name, group_key) → state.
-    states: RwLock<HashMap<(u32, String, String), AlertGroupState>>,
+    states: RwLock<HashMap<(u64, String, String), AlertGroupState>>,
 }
 
 impl HysteresisManager {
@@ -76,7 +76,7 @@ impl HysteresisManager {
     #[allow(clippy::too_many_arguments)]
     pub fn evaluate(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         alert_name: &str,
         group_key: &str,
         condition_met: bool,
@@ -116,7 +116,7 @@ impl HysteresisManager {
     /// Get the current state for a specific group.
     pub fn get_state(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         alert_name: &str,
         group_key: &str,
     ) -> Option<AlertGroupState> {
@@ -129,7 +129,7 @@ impl HysteresisManager {
     }
 
     /// List all group states for an alert (for SHOW ALERT STATUS).
-    pub fn list_states(&self, tenant_id: u32, alert_name: &str) -> Vec<(String, AlertGroupState)> {
+    pub fn list_states(&self, tenant_id: u64, alert_name: &str) -> Vec<(String, AlertGroupState)> {
         let prefix = (tenant_id, alert_name.to_string());
         self.states
             .read()
@@ -141,7 +141,7 @@ impl HysteresisManager {
     }
 
     /// Remove all state for an alert (on DROP ALERT).
-    pub fn remove_alert(&self, tenant_id: u32, alert_name: &str) {
+    pub fn remove_alert(&self, tenant_id: u64, alert_name: &str) {
         let mut states = self.states.write().unwrap_or_else(|p| p.into_inner());
         states.retain(|(t, a, _), _| !(*t == tenant_id && a == alert_name));
     }

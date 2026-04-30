@@ -11,7 +11,7 @@ use crate::engine::kv::current_ms;
 
 /// Parameters for `INSERT ... ON CONFLICT (key) DO UPDATE SET ...` on KV.
 pub(in crate::data::executor) struct KvInsertOnConflictUpdateParams<'a> {
-    pub tid: u32,
+    pub tid: u64,
     pub collection: &'a str,
     pub key: &'a [u8],
     pub value: &'a [u8],
@@ -24,7 +24,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_get(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
         rls_filters: &[u8],
@@ -54,7 +54,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_put(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
         value: &[u8],
@@ -107,7 +107,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_insert(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
         value: &[u8],
@@ -166,7 +166,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_insert_if_absent(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
         value: &[u8],
@@ -328,7 +328,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_delete(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         keys: &[Vec<u8>],
     ) -> Response {
@@ -368,7 +368,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_truncate(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
     ) -> Response {
         debug!(core = self.core_id, %collection, "kv truncate");

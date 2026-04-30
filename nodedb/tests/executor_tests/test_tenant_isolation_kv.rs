@@ -7,8 +7,8 @@ use nodedb::bridge::physical_plan::KvOp;
 
 use crate::helpers::*;
 
-const TENANT_A: u32 = 10;
-const TENANT_B: u32 = 20;
+const TENANT_A: u64 = 10;
+const TENANT_B: u64 = 20;
 
 #[test]
 fn kv_get_isolated() {

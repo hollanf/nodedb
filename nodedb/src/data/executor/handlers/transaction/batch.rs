@@ -27,7 +27,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_transaction_batch(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         plans: &[PhysicalPlan],
     ) -> Response {
         debug!(

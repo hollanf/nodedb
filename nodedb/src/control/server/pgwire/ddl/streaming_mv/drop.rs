@@ -18,7 +18,7 @@ pub fn drop_streaming_mv(
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "drop streaming materialized views")?;
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let name = name.to_lowercase();
 
     // Check if this is a streaming MV (not a regular MV).

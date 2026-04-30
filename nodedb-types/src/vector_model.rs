@@ -34,7 +34,7 @@ pub struct VectorModelMetadata {
 )]
 pub struct VectorModelEntry {
     /// Tenant that owns this collection.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Collection name.
     pub collection: String,
     /// Vector column name.

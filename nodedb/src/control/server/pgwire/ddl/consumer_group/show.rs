@@ -26,7 +26,7 @@ pub fn show_consumer_groups(
     }
 
     let stream_name = parts[4].to_lowercase();
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let schema = Arc::new(vec![
         text_field("group_name"),
@@ -78,7 +78,7 @@ pub fn show_partitions(
     }
 
     let stream_name = parts[3].to_lowercase();
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Get the stream's buffer from the CdcRouter.
     let buffer = state.cdc_router.get_buffer(tenant_id, &stream_name);

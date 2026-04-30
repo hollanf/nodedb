@@ -20,7 +20,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_query_collection_size(
         &self,
         task: &ExecutionTask,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
     ) -> Response {
         let tid = TenantId::new(tenant_id);

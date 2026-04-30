@@ -14,7 +14,7 @@ use wasmtime::{Engine, Instance, Module, Store};
 /// Keyed by function name. Each function has a bounded pool of pre-created
 /// instances. When the pool is empty, a new instance is created on-demand.
 /// Pool key: (tenant_id, function_name) for tenant isolation.
-type PoolKey = (u32, String);
+type PoolKey = (u64, String);
 
 pub struct WasmInstancePool {
     engine: Engine,
@@ -42,7 +42,7 @@ impl WasmInstancePool {
     /// Acquire an instance for the given tenant+function. Takes from pool or creates new.
     pub fn acquire(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         func_name: &str,
         module: &Module,
         fuel: u64,
@@ -62,7 +62,7 @@ impl WasmInstancePool {
     }
 
     /// Return an instance to the pool after use.
-    pub fn release(&self, tenant_id: u32, func_name: &str, instance: PooledInstance) {
+    pub fn release(&self, tenant_id: u64, func_name: &str, instance: PooledInstance) {
         let key = (tenant_id, func_name.to_string());
         let mut pools = self.pools.lock().unwrap_or_else(|p| p.into_inner());
         let pool = pools.entry(key).or_default();
@@ -74,7 +74,7 @@ impl WasmInstancePool {
     /// Pre-warm the pool for a tenant+function.
     pub fn warm(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         func_name: &str,
         module: &Module,
         fuel: u64,
@@ -93,7 +93,7 @@ impl WasmInstancePool {
     }
 
     /// Remove all pooled instances for a tenant+function (on DROP FUNCTION).
-    pub fn evict(&self, tenant_id: u32, func_name: &str) {
+    pub fn evict(&self, tenant_id: u64, func_name: &str) {
         let key = (tenant_id, func_name.to_string());
         let mut pools = self.pools.lock().unwrap_or_else(|p| p.into_inner());
         pools.remove(&key);

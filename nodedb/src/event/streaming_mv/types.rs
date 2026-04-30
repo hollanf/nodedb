@@ -4,7 +4,7 @@
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct StreamingMvDef {
     /// Tenant that owns this MV.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// MV name (unique per tenant).
     pub name: String,
     /// Source change stream name.

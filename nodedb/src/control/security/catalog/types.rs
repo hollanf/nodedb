@@ -55,7 +55,7 @@ pub(super) const COLLECTIONS: TableDefinition<&str, &[u8]> =
 /// a full segment scan to rebuild the set. Entries are GC'd by
 /// `delete_wal_tombstones_before_lsn` when all segments referencing
 /// them have been truncated past retention.
-pub(super) const WAL_TOMBSTONES: TableDefinition<(u32, &str), u64> =
+pub(super) const WAL_TOMBSTONES: TableDefinition<(u64, &str), u64> =
     TableDefinition::new("_system.wal_tombstones");
 
 /// Table: `(tenant_id, collection_name)` -> MessagePack-serialized
@@ -67,7 +67,7 @@ pub(super) const WAL_TOMBSTONES: TableDefinition<(u32, &str), u64> =
 /// `_system.l2_cleanup_queue` virtual view so operators can see the
 /// object-store delete backlog even after the `StoredCollection` row
 /// has been purged.
-pub(super) const L2_CLEANUP_QUEUE: TableDefinition<(u32, &str), &[u8]> =
+pub(super) const L2_CLEANUP_QUEUE: TableDefinition<(u64, &str), &[u8]> =
     TableDefinition::new("_system.l2_cleanup_queue");
 
 /// Table: "{tenant_id}:{name}" -> MessagePack-serialized materialized view metadata.
@@ -196,7 +196,7 @@ pub fn catalog_err<E: std::fmt::Display>(ctx: &str, e: E) -> crate::Error {
 }
 
 /// Key format: "{object_type}:{tenant_id}:{object_name}"
-pub fn owner_key(object_type: &str, tenant_id: u32, object_name: &str) -> String {
+pub fn owner_key(object_type: &str, tenant_id: u64, object_name: &str) -> String {
     format!("{object_type}:{tenant_id}:{object_name}")
 }
 
@@ -205,7 +205,7 @@ pub fn owner_key(object_type: &str, tenant_id: u32, object_name: &str) -> String
 /// A named checkpoint: captures a version vector at a point in time.
 #[derive(zerompk::ToMessagePack, zerompk::FromMessagePack, Debug, Clone)]
 pub struct CheckpointRecord {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub collection: String,
     pub doc_id: String,
     pub checkpoint_name: String,
@@ -222,7 +222,7 @@ impl CheckpointRecord {
         )
     }
 
-    pub fn doc_prefix(tenant_id: u32, collection: &str, doc_id: &str) -> String {
+    pub fn doc_prefix(tenant_id: u64, collection: &str, doc_id: &str) -> String {
         format!("{tenant_id}:{collection}:{doc_id}:")
     }
 }
@@ -281,7 +281,7 @@ pub struct StoredIndex {
 #[derive(zerompk::ToMessagePack, zerompk::FromMessagePack, Debug, Clone)]
 #[msgpack(map)]
 pub struct StoredCollection {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub name: String,
     pub owner: String,
     pub created_at: u64,
@@ -399,7 +399,7 @@ impl StoredCollection {
     /// defaults (`0` / `Hlc::ZERO`) and assigned by the metadata
     /// applier at commit time. Callers must NOT set them manually;
     /// the cluster-wide applied sequence determines the stamp.
-    pub fn new(tenant_id: u32, name: &str, owner: &str) -> Self {
+    pub fn new(tenant_id: u64, name: &str, owner: &str) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -453,7 +453,7 @@ impl StoredCollection {
 #[derive(zerompk::ToMessagePack, zerompk::FromMessagePack, Debug, Clone)]
 #[msgpack(map)]
 pub struct StoredMaterializedView {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub name: String,
     pub source: String,
     pub query_sql: String,

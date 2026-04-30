@@ -42,7 +42,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_vector_direct_upsert(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field: &str,
         surrogate: Surrogate,

@@ -5,13 +5,13 @@
 /// Uses FxHash on `(tenant_id, collection)` to produce a `u64` — zero allocation,
 /// O(1). Replaces the old `format!("{tenant_id}:{collection}")` which allocated
 /// a String on every call (23% of PUT time was malloc/free).
-pub(super) fn table_key(tenant_id: u32, collection: &str) -> u64 {
+pub(super) fn table_key(tenant_id: u64, collection: &str) -> u64 {
     super::hash_helpers::fxhash_multi(&[&tenant_id.to_le_bytes(), b":", collection.as_bytes()])
 }
 
 /// Construct a composite key for the expiry wheel: "{tenant_id}:{collection}\0{key_bytes}".
 /// The null byte separator is safe because collection names can't contain null.
-pub(super) fn expiry_key(tenant_id: u32, collection: &str, key: &[u8]) -> Vec<u8> {
+pub(super) fn expiry_key(tenant_id: u64, collection: &str, key: &[u8]) -> Vec<u8> {
     let prefix = format!("{tenant_id}:{collection}\0");
     let mut composite = prefix.into_bytes();
     composite.extend_from_slice(key);
@@ -19,11 +19,11 @@ pub(super) fn expiry_key(tenant_id: u32, collection: &str, key: &[u8]) -> Vec<u8
 }
 
 /// Parse a composite expiry key back into (tenant_id, collection, key_bytes).
-pub(super) fn parse_expiry_key(composite: &[u8]) -> Option<(u32, String, Vec<u8>)> {
+pub(super) fn parse_expiry_key(composite: &[u8]) -> Option<(u64, String, Vec<u8>)> {
     let null_pos = composite.iter().position(|&b| b == 0)?;
     let prefix = std::str::from_utf8(&composite[..null_pos]).ok()?;
     let colon_pos = prefix.find(':')?;
-    let tenant_id: u32 = prefix[..colon_pos].parse().ok()?;
+    let tenant_id: u64 = prefix[..colon_pos].parse().ok()?;
     let collection = prefix[colon_pos + 1..].to_string();
     let key = composite[null_pos + 1..].to_vec();
     Some((tenant_id, collection, key))

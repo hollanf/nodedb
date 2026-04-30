@@ -11,7 +11,7 @@ use super::core::RedbFtsBackend;
 use super::shared::{MAX_COLLECTION, MAX_SUBKEY, redb_err};
 use crate::engine::sparse::fts_redb::tables::{DOC_LENGTHS, INDEX_META, POSTINGS, SEGMENTS, STATS};
 
-pub(super) fn collection(backend: &RedbFtsBackend, tid: u32, coll: &str) -> crate::Result<usize> {
+pub(super) fn collection(backend: &RedbFtsBackend, tid: u64, coll: &str) -> crate::Result<usize> {
     let write_txn = backend
         .db
         .begin_write()
@@ -34,7 +34,7 @@ pub(super) fn collection(backend: &RedbFtsBackend, tid: u32, coll: &str) -> crat
     }
 
     {
-        // DOC_LENGTHS is keyed by (u32, &str, u32) — use numeric range bounds.
+        // DOC_LENGTHS is keyed by (u64, &str, u32) — use numeric range bounds.
         let mut table = write_txn
             .open_table(DOC_LENGTHS)
             .map_err(|e| redb_err("open doc_lengths", e))?;
@@ -91,7 +91,7 @@ pub(super) fn collection(backend: &RedbFtsBackend, tid: u32, coll: &str) -> crat
     Ok(removed)
 }
 
-pub(super) fn tenant(backend: &RedbFtsBackend, tid: u32) -> crate::Result<usize> {
+pub(super) fn tenant(backend: &RedbFtsBackend, tid: u64) -> crate::Result<usize> {
     let write_txn = backend
         .db
         .begin_write()
@@ -124,11 +124,11 @@ pub(super) fn tenant(backend: &RedbFtsBackend, tid: u32) -> crate::Result<usize>
     Ok(removed)
 }
 
-/// Delete every `(tid, *, *)` row from a `TableDefinition<(u32, &str, &str), &[u8]>`.
+/// Delete every `(tid, *, *)` row from a `TableDefinition<(u64, &str, &str), &[u8]>`.
 fn drop_str_triple_range(
     txn: &redb::WriteTransaction,
-    def: redb::TableDefinition<(u32, &str, &str), &[u8]>,
-    tid: u32,
+    def: redb::TableDefinition<(u64, &str, &str), &[u8]>,
+    tid: u64,
 ) -> crate::Result<usize> {
     let mut table = txn
         .open_table(def)
@@ -150,8 +150,8 @@ fn drop_str_triple_range(
     Ok(n)
 }
 
-/// Delete every `(tid, *, *)` row from DOC_LENGTHS (keyed by `(u32, &str, u32)`).
-fn drop_doc_lengths_tenant(txn: &redb::WriteTransaction, tid: u32) -> crate::Result<usize> {
+/// Delete every `(tid, *, *)` row from DOC_LENGTHS (keyed by `(u64, &str, u32)`).
+fn drop_doc_lengths_tenant(txn: &redb::WriteTransaction, tid: u64) -> crate::Result<usize> {
     let mut table = txn
         .open_table(DOC_LENGTHS)
         .map_err(|e| redb_err("open doc_lengths", e))?;

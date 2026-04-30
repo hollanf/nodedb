@@ -64,8 +64,8 @@ fn create_org(
         .iter()
         .position(|p| p.to_uppercase() == "TENANT")
         .and_then(|i| parts.get(i + 1))
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(identity.tenant_id.as_u32());
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or_else(|| identity.tenant_id.as_u64());
 
     state
         .orgs
@@ -172,7 +172,7 @@ pub fn show_orgs(
         .iter()
         .position(|p| p.to_uppercase() == "TENANT")
         .and_then(|i| parts.get(i + 1))
-        .and_then(|s| s.parse::<u32>().ok());
+        .and_then(|s| s.parse::<u64>().ok());
 
     let orgs = state.orgs.list(tenant_filter);
 

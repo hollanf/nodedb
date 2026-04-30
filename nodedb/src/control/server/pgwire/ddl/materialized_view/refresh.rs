@@ -41,7 +41,7 @@ pub async fn refresh_materialized_view(
     let tenant_id = identity.tenant_id;
 
     let view = if let Some(catalog) = state.credentials.catalog() {
-        match catalog.get_materialized_view(tenant_id.as_u32(), &name) {
+        match catalog.get_materialized_view(tenant_id.as_u64(), &name) {
             Ok(Some(v)) => v,
             Ok(None) => {
                 return Err(sqlstate_error(

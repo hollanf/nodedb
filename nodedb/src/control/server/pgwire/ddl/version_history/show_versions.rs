@@ -26,7 +26,7 @@ pub fn show_versions(
 
     let records = catalog
         .list_checkpoints(
-            tenant_id.as_u32(),
+            tenant_id.as_u64(),
             &collection,
             &doc_id,
             if limit > 0 { limit } else { 1000 },

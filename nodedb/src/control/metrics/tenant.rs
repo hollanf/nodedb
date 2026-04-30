@@ -3,7 +3,7 @@
 /// Per-tenant resource quota usage.
 #[derive(Debug)]
 pub struct TenantQuotaMetrics {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub memory_bytes_used: u64,
     pub memory_bytes_limit: u64,
     pub storage_bytes_used: u64,

@@ -16,7 +16,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     /// Set the analyzer for a collection. Persists to backend metadata.
     pub fn set_collection_analyzer(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         analyzer_name: &str,
     ) -> Result<(), B::Error> {
@@ -27,7 +27,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     /// Set the language for a collection. Persists to backend metadata.
     pub fn set_collection_language(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         lang_code: &str,
     ) -> Result<(), B::Error> {
@@ -38,7 +38,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     /// Get the configured analyzer name for a collection.
     pub fn get_collection_analyzer(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
     ) -> Result<Option<String>, B::Error> {
         match self.backend.read_meta(tid, collection, "analyzer")? {
@@ -50,7 +50,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     /// Get the configured language for a collection.
     pub fn get_collection_language(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
     ) -> Result<Option<String>, B::Error> {
         match self.backend.read_meta(tid, collection, "language")? {
@@ -64,7 +64,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     /// Falls back to the standard English analyzer if no analyzer is configured.
     pub fn analyze_for_collection(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         text: &str,
     ) -> Result<Vec<String>, B::Error> {
@@ -78,7 +78,7 @@ impl<B: FtsBackend> FtsIndex<B> {
     /// Tokenize text WITHOUT stemming for fuzzy matching.
     pub fn tokenize_raw_for_collection(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         text: &str,
     ) -> Result<Vec<String>, B::Error> {
@@ -112,7 +112,7 @@ mod tests {
     use crate::backend::memory::MemoryBackend;
     use crate::index::FtsIndex;
 
-    const T: u32 = 1;
+    const T: u64 = 1;
 
     #[test]
     fn default_analyzer() {

@@ -11,7 +11,7 @@ impl CoreLoop {
     /// Returns `None` for schemaless collections (already msgpack).
     pub(in crate::data::executor) fn resolve_event_payload(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         stored_bytes: &[u8],
     ) -> Option<Vec<u8>> {
@@ -39,7 +39,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn emit_put_event(
         &mut self,
         task: &super::super::task::ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         row_id: &str,
         new_stored: &[u8],

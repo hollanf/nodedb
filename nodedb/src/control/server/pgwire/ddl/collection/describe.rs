@@ -30,7 +30,7 @@ pub fn describe_collection(
         None => return Err(sqlstate_error("XX000", "catalog not available")),
     };
 
-    let coll = match catalog.get_collection(tenant_id.as_u32(), name) {
+    let coll = match catalog.get_collection(tenant_id.as_u64(), name) {
         Ok(Some(c)) if c.is_active => c,
         _ => {
             return Err(sqlstate_error(
@@ -159,6 +159,7 @@ pub fn describe_collection(
                 nodedb_types::KvTtlPolicy::FieldBased { field, offset_ms } => {
                     format!("{field} + INTERVAL '{offset_ms}ms'")
                 }
+                _ => "UNKNOWN TTL POLICY".to_string(),
             };
             encoder
                 .encode_field(&"__kv_ttl")
@@ -204,7 +205,7 @@ pub fn show_collections(
                 .collect::<Vec<_>>()
         } else {
             catalog
-                .load_collections_for_tenant(tenant_id.as_u32())
+                .load_collections_for_tenant(tenant_id.as_u64())
                 .unwrap_or_default()
         }
     } else {

@@ -72,6 +72,7 @@ pub fn matches_metadata_filter(doc: &serde_json::Value, filter: &MetadataFilter)
         MetadataFilter::And(filters) => filters.iter().all(|f| matches_metadata_filter(doc, f)),
         MetadataFilter::Or(filters) => filters.iter().any(|f| matches_metadata_filter(doc, f)),
         MetadataFilter::Not(inner) => !matches_metadata_filter(doc, inner),
+        _ => false,
     }
 }
 

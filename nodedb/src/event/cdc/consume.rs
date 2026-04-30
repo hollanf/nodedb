@@ -18,7 +18,7 @@ use crate::event::cdc::event::CdcEvent;
 
 /// Parameters for consuming events from a stream.
 pub struct ConsumeParams<'a> {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub stream_name: &'a str,
     pub group_name: &'a str,
     /// Optional: consume from a specific partition only.

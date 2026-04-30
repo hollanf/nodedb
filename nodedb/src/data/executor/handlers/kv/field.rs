@@ -12,7 +12,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_field_get(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
         fields: &[String],
@@ -59,7 +59,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_field_set(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
         updates: &[(String, Vec<u8>)],

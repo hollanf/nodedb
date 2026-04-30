@@ -26,7 +26,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_recursive_scan(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         base_filters: &[u8],
         recursive_filters: &[u8],

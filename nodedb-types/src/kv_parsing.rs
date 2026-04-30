@@ -5,6 +5,7 @@
 
 /// Errors produced by interval parsing.
 #[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
 pub enum IntervalParseError {
     /// The interval expression was empty after stripping the INTERVAL keyword.
     #[error("empty interval expression")]

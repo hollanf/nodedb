@@ -30,7 +30,7 @@ pub enum CatalogEntry {
     /// Mark a collection as `is_active = false`. Record is
     /// preserved for audit + undrop. The soft-delete step in the
     /// two-step DROP → retention-expiry → PURGE flow.
-    DeactivateCollection { tenant_id: u32, name: String },
+    DeactivateCollection { tenant_id: u64, name: String },
     /// Hard-delete a collection: remove the `StoredCollection`
     /// row + owner row + cascade-dependent catalog entries, and
     /// dispatch `MetaOp::UnregisterCollection` to every node's Data
@@ -48,7 +48,7 @@ pub enum CatalogEntry {
     /// Preserves the two-step safety net: soft-deleted collections
     /// are UNDROP-able until retention expires; after purge the
     /// record is gone and data is unrecoverable (except from backup).
-    PurgeCollection { tenant_id: u32, name: String },
+    PurgeCollection { tenant_id: u64, name: String },
 
     // ── Sequence ───────────────────────────────────────────────────
     /// Upsert a sequence record. Used by CREATE SEQUENCE and ALTER
@@ -58,7 +58,7 @@ pub enum CatalogEntry {
     /// Delete a sequence record entirely. Used by DROP SEQUENCE and
     /// by the cascade path in DROP COLLECTION that removes implicit
     /// `{coll}_{field}_seq` sequences for SERIAL columns.
-    DeleteSequence { tenant_id: u32, name: String },
+    DeleteSequence { tenant_id: u64, name: String },
     /// Upsert the runtime state of a sequence (current value,
     /// is_called, epoch, period_key). Used by ALTER SEQUENCE
     /// RESTART to propagate the new counter across nodes.
@@ -70,7 +70,7 @@ pub enum CatalogEntry {
     /// updated record.
     PutTrigger(Box<StoredTrigger>),
     /// Delete a trigger record.
-    DeleteTrigger { tenant_id: u32, name: String },
+    DeleteTrigger { tenant_id: u64, name: String },
 
     // ── Function ───────────────────────────────────────────────────
     /// Upsert a function record. Used by CREATE [OR REPLACE]
@@ -80,7 +80,7 @@ pub enum CatalogEntry {
     /// own future batch.
     PutFunction(Box<StoredFunction>),
     /// Delete a function record.
-    DeleteFunction { tenant_id: u32, name: String },
+    DeleteFunction { tenant_id: u64, name: String },
 
     // ── Procedure ──────────────────────────────────────────────────
     /// Upsert a stored procedure. Same body-cache invalidation
@@ -88,7 +88,7 @@ pub enum CatalogEntry {
     /// the next CALL re-parses the new body.
     PutProcedure(Box<StoredProcedure>),
     /// Delete a stored procedure.
-    DeleteProcedure { tenant_id: u32, name: String },
+    DeleteProcedure { tenant_id: u64, name: String },
 
     // ── Schedule ───────────────────────────────────────────────────
     /// Upsert a scheduled-job definition. Post-apply syncs the
@@ -96,7 +96,7 @@ pub enum CatalogEntry {
     /// node picks up the new / updated schedule immediately.
     PutSchedule(Box<ScheduleDef>),
     /// Delete a scheduled-job definition.
-    DeleteSchedule { tenant_id: u32, name: String },
+    DeleteSchedule { tenant_id: u64, name: String },
 
     // ── Change stream ──────────────────────────────────────────────
     /// Upsert a CDC change-stream definition. Post-apply syncs the
@@ -105,7 +105,7 @@ pub enum CatalogEntry {
     PutChangeStream(Box<ChangeStreamDef>),
     /// Delete a CDC change-stream definition + tear down its
     /// buffer via `cdc_router.remove_buffer`.
-    DeleteChangeStream { tenant_id: u32, name: String },
+    DeleteChangeStream { tenant_id: u64, name: String },
 
     // ── User ───────────────────────────────────────────────────────
     /// Upsert a user record. The leader builds the full `StoredUser`
@@ -147,7 +147,7 @@ pub enum CatalogEntry {
     /// Delete a materialized view definition. The target
     /// collection is NOT deleted — operators drop it separately
     /// with `DROP COLLECTION` if desired.
-    DeleteMaterializedView { tenant_id: u32, name: String },
+    DeleteMaterializedView { tenant_id: u64, name: String },
 
     // ── Tenant ─────────────────────────────────────────────────────
     /// Upsert a tenant identity record. Quotas are NOT part of
@@ -159,7 +159,7 @@ pub enum CatalogEntry {
     /// Hard-delete a tenant identity record. Tenant data is not
     /// purged — that is a separate `PURGE TENANT CONFIRM` Data
     /// Plane meta op.
-    DeleteTenant { tenant_id: u32 },
+    DeleteTenant { tenant_id: u64 },
 
     // ── RLS policy ─────────────────────────────────────────────────
     /// Upsert an RLS policy. The leader serializes the runtime
@@ -169,7 +169,7 @@ pub enum CatalogEntry {
     PutRlsPolicy(Box<StoredRlsPolicy>),
     /// Delete a single RLS policy by `(tenant_id, collection, name)`.
     DeleteRlsPolicy {
-        tenant_id: u32,
+        tenant_id: u64,
         collection: String,
         name: String,
     },
@@ -200,7 +200,7 @@ pub enum CatalogEntry {
     /// Delete an ownership record by `(object_type, tenant_id, object_name)`.
     DeleteOwner {
         object_type: String,
-        tenant_id: u32,
+        tenant_id: u64,
         object_name: String,
     },
 }

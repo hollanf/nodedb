@@ -40,7 +40,7 @@ impl KafkaManager {
     /// Start a Kafka producer for a change stream.
     ///
     /// No-op if a producer is already running for this stream.
-    pub fn start(&self, tenant_id: u32, stream_name: &str, config: KafkaDeliveryConfig) {
+    pub fn start(&self, tenant_id: u64, stream_name: &str, config: KafkaDeliveryConfig) {
         if !config.enabled {
             return;
         }
@@ -74,7 +74,7 @@ impl KafkaManager {
     }
 
     /// Stop and remove a Kafka producer for a dropped change stream.
-    pub fn stop(&self, tenant_id: u32, stream_name: &str) {
+    pub fn stop(&self, tenant_id: u64, stream_name: &str) {
         let key = format!("{tenant_id}:{stream_name}");
         let mut tasks = self.tasks.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(handle) = tasks.remove(&key) {

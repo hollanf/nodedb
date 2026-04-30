@@ -39,6 +39,7 @@ impl LsnMsAnchor {
 
 /// Error produced by the LSN↔ms map.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum LsnMapError {
     /// Attempted to insert an anchor that is not strictly monotonic in LSN or wall time.
     #[error(

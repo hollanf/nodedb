@@ -17,7 +17,7 @@ pub fn alter_sequence(
     action: &str,
     with_value: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     if !state.sequence_registry.exists(tenant_id, name) {
         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -41,7 +41,7 @@ pub fn alter_sequence(
 /// `ALTER SEQUENCE <name> RESTART [WITH <value>]`
 fn alter_restart(
     state: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     name: &str,
     with_value: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
@@ -108,7 +108,7 @@ fn alter_restart(
 /// `ALTER SEQUENCE <name> FORMAT '<template>'`
 fn alter_format(
     state: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     name: &str,
     with_value: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {

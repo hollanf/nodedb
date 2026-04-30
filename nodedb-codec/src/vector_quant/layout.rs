@@ -21,6 +21,7 @@ use crate::error::CodecError;
 /// Values are **stable on disk** — never reorder, only append.
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum QuantMode {
     Binary = 0,
     RaBitQ = 1,

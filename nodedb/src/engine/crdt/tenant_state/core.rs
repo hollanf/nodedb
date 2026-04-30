@@ -194,10 +194,10 @@ impl TenantCrdtEngine {
         let dlq_dropped = self
             .validator
             .dlq_mut()
-            .purge_collection(self.tenant_id.as_u32(), collection);
+            .purge_collection(self.tenant_id.as_u64(), collection);
         if dlq_dropped > 0 {
             tracing::debug!(
-                tenant = self.tenant_id.as_u32(),
+                tenant = self.tenant_id.as_u64(),
                 collection,
                 dlq_dropped,
                 "crdt: dropped DLQ entries scoped to purged collection"

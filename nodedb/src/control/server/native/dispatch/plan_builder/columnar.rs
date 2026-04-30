@@ -168,5 +168,8 @@ fn value_to_pk_bytes(v: &nodedb_types::Value) -> Vec<u8> {
         | V::Range { .. }
         | V::Record { .. }
         | V::NdArrayCell(_) => Vec::new(),
+        // Value is #[non_exhaustive]; future variants with no PK representation
+        // yield empty bytes (treated as null key by callers).
+        _ => Vec::new(),
     }
 }

@@ -73,7 +73,7 @@ pub async fn dropped_collections(
     let retention_ns = retention.as_nanos() as u64;
 
     let is_admin = identity.is_superuser || identity.has_role(&Role::TenantAdmin);
-    let caller_tenant = identity.tenant_id.as_u32();
+    let caller_tenant = identity.tenant_id.as_u64();
 
     let mut rows = Vec::new();
     let mut encoder = DataRowEncoder::new(schema.clone());
@@ -119,7 +119,7 @@ pub async fn dropped_collections(
 /// the caller falls back to 0 so the view always renders.
 async fn query_collection_size(
     state: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
 ) -> Option<u64> {
     use crate::bridge::envelope::{PhysicalPlan, Priority, Request, Status};

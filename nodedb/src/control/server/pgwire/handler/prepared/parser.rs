@@ -36,7 +36,7 @@ impl NodeDbQueryParser {
         &self,
         sql: &str,
         client_types: &[Option<Type>],
-        tenant_id: u32,
+        tenant_id: u64,
     ) -> (Vec<Option<Type>>, Vec<FieldInfo>) {
         let catalog = crate::control::planner::catalog_adapter::OriginCatalog::new(
             Arc::clone(&self.state.credentials),
@@ -158,7 +158,7 @@ impl QueryParser for NodeDbQueryParser {
                         )
                     })
             })
-            .map(|id| id.tenant_id.as_u32())
+            .map(|id| id.tenant_id.as_u64())
             .unwrap_or(1);
         let (param_types, result_fields) = self.try_infer_types(sql, types, tenant_id);
 

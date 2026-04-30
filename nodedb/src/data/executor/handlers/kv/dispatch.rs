@@ -10,7 +10,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         op: &KvOp,
     ) -> Response {
         match op {

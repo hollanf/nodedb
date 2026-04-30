@@ -15,7 +15,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_insert_select(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         target_collection: &str,
         source_collection: &str,
         source_filter_bytes: &[u8],

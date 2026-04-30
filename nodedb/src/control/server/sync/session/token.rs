@@ -37,8 +37,8 @@ impl SyncSession {
                 {
                     warn!(
                         session = %self.session_id,
-                        current_tenant = current_tenant.as_u32(),
-                        new_tenant = new_identity.tenant_id.as_u32(),
+                        current_tenant = current_tenant.as_u64(),
+                        new_tenant = new_identity.tenant_id.as_u64(),
                         "token refresh rejected: tenant mismatch"
                     );
                     let ack = TokenRefreshAckMsg {

@@ -252,7 +252,7 @@ pub fn to_replicated_entry(
     };
 
     Some(ReplicatedEntry::new(
-        tenant_id.as_u32(),
+        tenant_id.as_u64(),
         vshard_id.as_u32(),
         write,
     ))

@@ -38,7 +38,7 @@ pub async fn status(
     let user_details = state.shared.credentials.list_user_details();
     let mut tenant_ids = std::collections::HashSet::new();
     for user in &user_details {
-        tenant_ids.insert(user.tenant_id.as_u32());
+        tenant_ids.insert(user.tenant_id.as_u64());
     }
     let tenant_count = tenant_ids.len();
 

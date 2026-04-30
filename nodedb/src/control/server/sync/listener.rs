@@ -495,7 +495,7 @@ async fn handle_sync_session(
             && !crdt_registered
             && let Some(shared) = shared.as_ref()
         {
-            let tenant_id = session.tenant_id.map(|t| t.as_u32()).unwrap_or(0);
+            let tenant_id = session.tenant_id.map(|t| t.as_u64()).unwrap_or(0);
             let peer_id = session.device_metadata.peer_id;
             let config = crate::event::crdt_sync::types::DeliveryConfig::default();
             let (drx, crx) = shared.crdt_sync_delivery.register(

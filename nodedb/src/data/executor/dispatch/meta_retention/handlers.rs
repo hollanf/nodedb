@@ -85,7 +85,7 @@ impl CoreLoop {
         let mut deleted = 0usize;
         let ts_base = self.data_dir.join("ts").join(collection);
 
-        let bitemporal = self.is_bitemporal(task.request.tenant_id.as_u32(), collection);
+        let bitemporal = self.is_bitemporal(task.request.tenant_id.as_u64(), collection);
 
         let ts_key = (task.request.tenant_id, collection.to_string());
         if let Some(registry) = self.ts_registries.get_mut(&ts_key) {
@@ -225,7 +225,7 @@ impl CoreLoop {
     pub(in crate::data::executor::dispatch) fn meta_temporal_purge_edge_store(
         &mut self,
         task: &ExecutionTask,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         cutoff_system_ms: i64,
     ) -> Response {
@@ -260,7 +260,7 @@ impl CoreLoop {
     pub(in crate::data::executor::dispatch) fn meta_temporal_purge_document_strict(
         &mut self,
         task: &ExecutionTask,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         cutoff_system_ms: i64,
     ) -> Response {
@@ -303,7 +303,7 @@ impl CoreLoop {
     pub(in crate::data::executor::dispatch) fn meta_temporal_purge_crdt(
         &mut self,
         task: &ExecutionTask,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         cutoff_system_ms: i64,
     ) -> Response {
@@ -343,7 +343,7 @@ impl CoreLoop {
     pub(in crate::data::executor::dispatch) fn meta_temporal_purge_array(
         &mut self,
         task: &ExecutionTask,
-        tenant_id: u32,
+        tenant_id: u64,
         array_id: &str,
         cutoff_system_ms: i64,
     ) -> Response {
@@ -385,7 +385,7 @@ impl CoreLoop {
     pub(in crate::data::executor::dispatch) fn meta_temporal_purge_columnar(
         &mut self,
         task: &ExecutionTask,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         cutoff_system_ms: i64,
     ) -> Response {

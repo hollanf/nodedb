@@ -32,7 +32,7 @@ const NODE_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(120);
 ///
 /// Single-node and cluster paths converge here — a single-node server
 /// produces a one-section envelope with origin = self.
-pub async fn backup_tenant(state: &Arc<SharedState>, tenant_id: u32) -> Result<Bytes, Error> {
+pub async fn backup_tenant(state: &Arc<SharedState>, tenant_id: u64) -> Result<Bytes, Error> {
     let nodes = unique_origin_nodes(state);
     let snapshot_plan = PhysicalPlan::Meta(MetaOp::CreateTenantSnapshot { tenant_id });
 
@@ -167,7 +167,7 @@ fn is_self(state: &SharedState, node_id: u64) -> bool {
 
 async fn snapshot_self(
     state: &Arc<SharedState>,
-    tenant_id: u32,
+    tenant_id: u64,
     plan: &PhysicalPlan,
 ) -> Result<Vec<u8>, Error> {
     sync_dispatch::dispatch_async(
@@ -183,7 +183,7 @@ async fn snapshot_self(
 async fn snapshot_remote(
     state: &Arc<SharedState>,
     node_id: u64,
-    tenant_id: u32,
+    tenant_id: u64,
     plan: &PhysicalPlan,
 ) -> Result<Vec<u8>, Error> {
     let transport = state

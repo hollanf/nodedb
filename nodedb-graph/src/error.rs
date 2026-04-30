@@ -26,6 +26,7 @@ pub const MAX_NODES_PER_CSR: usize = (u32::MAX - 1) as usize;
 
 /// Errors returned by graph-engine operations.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum GraphError {
     /// The CSR's edge-label id space is exhausted. Happens only when
     /// more than `MAX_EDGE_LABELS` distinct labels have been interned

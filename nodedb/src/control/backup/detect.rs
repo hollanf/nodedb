@@ -6,9 +6,9 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CopyIntent {
     /// `COPY (BACKUP TENANT <id>) TO STDOUT`
-    BackupTenant { tenant_id: u32 },
+    BackupTenant { tenant_id: u64 },
     /// `COPY tenant_restore(<id>) FROM STDIN [DRY RUN]`
-    RestoreTenant { tenant_id: u32, dry_run: bool },
+    RestoreTenant { tenant_id: u64, dry_run: bool },
 }
 
 /// Returns Some(intent) if the SQL is one of the recognised wire-COPY shapes.
@@ -41,7 +41,7 @@ fn match_backup(sql: &str, upper: &str) -> Option<CopyIntent> {
     // Find the matching ')'.
     let close_idx = after_tenant.find(')')?;
     let id_token = after_tenant[..close_idx].trim();
-    let tenant_id: u32 = id_token.parse().ok()?;
+    let tenant_id: u64 = id_token.parse().ok()?;
 
     let after_close = after_tenant[close_idx + 1..].trim_start();
     let after_to = after_close.strip_prefix("TO")?.trim_start();
@@ -65,7 +65,7 @@ fn match_restore(sql: &str, upper: &str) -> Option<CopyIntent> {
 
     let close_idx = after_paren.find(')')?;
     let id_token = after_paren[..close_idx].trim();
-    let tenant_id: u32 = id_token.parse().ok()?;
+    let tenant_id: u64 = id_token.parse().ok()?;
 
     let after_close = after_paren[close_idx + 1..].trim_start();
     let after_from = after_close.strip_prefix("FROM")?.trim_start();

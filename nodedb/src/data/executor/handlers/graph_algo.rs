@@ -20,7 +20,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_graph_algo(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         algorithm: &GraphAlgorithm,
         params: &AlgoParams,
     ) -> Response {

@@ -26,7 +26,7 @@ pub async fn select_at_version(
     // Resolve checkpoint name to version vector.
     let vv_json = resolve_checkpoint_vv(
         state,
-        tenant_id.as_u32(),
+        tenant_id.as_u64(),
         &collection,
         &doc_id,
         &checkpoint_name,
@@ -62,7 +62,7 @@ pub async fn select_at_version(
 /// If the name looks like a raw JSON object (`{...}`), use it directly.
 pub(super) fn resolve_checkpoint_vv(
     state: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
     doc_id: &str,
     checkpoint_or_vv: &str,

@@ -18,7 +18,7 @@ use crate::control::security::catalog::SystemCatalog;
 /// by construction — callers that need them must use CASCADE FORCE.
 pub fn find_schedules_referencing(
     catalog: &SystemCatalog,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
 ) -> crate::Result<Vec<String>> {
     let all = catalog.load_all_schedules()?;

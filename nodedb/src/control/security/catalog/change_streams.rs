@@ -29,7 +29,7 @@ impl SystemCatalog {
     /// Get a change stream by tenant_id + name.
     pub fn get_change_stream(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
     ) -> crate::Result<Option<ChangeStreamDef>> {
         let key = stream_key(tenant_id, name);
@@ -52,7 +52,7 @@ impl SystemCatalog {
     }
 
     /// Delete a change stream. Returns true if it existed.
-    pub fn delete_change_stream(&self, tenant_id: u32, name: &str) -> crate::Result<bool> {
+    pub fn delete_change_stream(&self, tenant_id: u64, name: &str) -> crate::Result<bool> {
         let key = stream_key(tenant_id, name);
         let write_txn = self
             .db
@@ -95,7 +95,7 @@ impl SystemCatalog {
     }
 }
 
-fn stream_key(tenant_id: u32, name: &str) -> String {
+fn stream_key(tenant_id: u64, name: &str) -> String {
     format!("{tenant_id}:{name}")
 }
 

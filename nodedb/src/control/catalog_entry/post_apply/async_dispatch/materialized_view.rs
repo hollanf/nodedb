@@ -17,7 +17,7 @@ use crate::types::{ReadConsistency, TenantId, TraceId, VShardId};
 /// this node. Fire-and-forget: any core that fails or times out
 /// logs at debug — reclaim is idempotent and the next MV drop on
 /// the same `(tenant, name)` picks up where this one left off.
-pub async fn delete_async(tenant_id: u32, name: String, shared: Arc<SharedState>) {
+pub async fn delete_async(tenant_id: u64, name: String, shared: Arc<SharedState>) {
     let num_cores = {
         let d = shared.dispatcher.lock().unwrap_or_else(|p| p.into_inner());
         d.num_cores()

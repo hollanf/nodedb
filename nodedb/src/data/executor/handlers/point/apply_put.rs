@@ -26,7 +26,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn apply_point_put(
         &mut self,
         txn: &WriteTransaction,
-        tid: u32,
+        tid: u64,
         collection: &str,
         document_id: &str,
         surrogate: Surrogate,
@@ -397,7 +397,7 @@ impl CoreLoop {
 /// reject when another row owns the value.
 fn check_unique_constraints(
     sparse: &crate::engine::sparse::btree::SparseEngine,
-    tid: u32,
+    tid: u64,
     collection: &str,
     doc: &serde_json::Value,
     document_id: &str,

@@ -22,7 +22,7 @@ impl SystemCatalog {
     /// shadowing LSN).
     pub fn record_wal_tombstone(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         purge_lsn: u64,
     ) -> crate::Result<()> {
@@ -59,7 +59,7 @@ impl SystemCatalog {
             .map_err(|e| catalog_err("open wal_tombstones", e))?;
         let mut set = nodedb_wal::TombstoneSet::new();
         for entry in table
-            .range::<(u32, &str)>(..)
+            .range::<(u64, &str)>(..)
             .map_err(|e| catalog_err("range wal_tombstones", e))?
         {
             let (key, value) = entry.map_err(|e| catalog_err("read wal_tombstone", e))?;
@@ -87,9 +87,9 @@ impl SystemCatalog {
                 .map_err(|e| catalog_err("open wal_tombstones", e))?;
             // Two-pass: collect keys to delete, then delete. redb's
             // iterators don't permit concurrent mutation on the same table.
-            let mut to_delete: Vec<(u32, String)> = Vec::new();
+            let mut to_delete: Vec<(u64, String)> = Vec::new();
             for entry in table
-                .range::<(u32, &str)>(..)
+                .range::<(u64, &str)>(..)
                 .map_err(|e| catalog_err("gc range", e))?
             {
                 let (key, value) = entry.map_err(|e| catalog_err("gc read", e))?;

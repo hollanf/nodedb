@@ -19,7 +19,7 @@ pub fn put(stored: StoredTrigger, shared: Arc<SharedState>) {
     shared.trigger_registry.register(stored);
 }
 
-pub fn delete(tenant_id: u32, name: String, shared: Arc<SharedState>) {
+pub fn delete(tenant_id: u64, name: String, shared: Arc<SharedState>) {
     shared.trigger_registry.unregister(tenant_id, &name);
     shared
         .permissions

@@ -22,7 +22,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_unregister_materialized_view(
         &mut self,
         task: &ExecutionTask,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
     ) -> Response {
         info!(

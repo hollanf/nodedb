@@ -33,7 +33,7 @@ pub const DEFAULT_MAX_GSIS_PER_COLLECTION: usize = 4;
     Debug,
 )]
 pub struct GsiEntry {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub collection: String,
     pub document_id: String,
     /// vShard where the primary document lives.
@@ -57,7 +57,7 @@ pub struct GsiMeta {
     /// queries. If `payload_fields` covers all projected columns, the
     /// query can be served directly from the GSI without a primary hop.
     pub payload_fields: Vec<String>,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
 }
 
 /// GSI store backed by redb.
@@ -93,7 +93,7 @@ impl GsiStore {
     /// Enforces the max 4 GSIs per collection limit.
     pub fn create_index(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         index_name: &str,
         field: &str,
@@ -158,7 +158,7 @@ impl GsiStore {
     /// extracts the indexed field value and inserts/updates the GSI entry.
     pub fn index_document(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         document_id: &str,
         shard_id: u16,
@@ -265,7 +265,7 @@ impl GsiStore {
     }
 
     /// List all GSIs declared for a collection.
-    pub fn list_indexes(&self, tenant_id: u32, collection: &str) -> crate::Result<Vec<GsiMeta>> {
+    pub fn list_indexes(&self, tenant_id: u64, collection: &str) -> crate::Result<Vec<GsiMeta>> {
         let prefix = format!("{tenant_id}:{collection}:");
         let end = format!("{tenant_id}:{collection}:\u{ffff}");
 

@@ -71,5 +71,7 @@ pub(super) fn quantization_matches(
         // Not yet representable on the index side; treat as a mismatch
         // so callers get the warning and proceed with the actual codec.
         Req::Ternary | Req::Opq => false,
+        // Unknown future variants: treat as mismatch so callers use actual codec.
+        _ => false,
     }
 }

@@ -82,7 +82,7 @@ pub async fn drain_once(shared: &SharedState) {
     // Refresh the depth gauge every pass as a full snapshot so
     // tenants that just drained to zero stop showing as backed up.
     if let Some(metrics) = shared.system_metrics.as_ref() {
-        let mut depths: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
+        let mut depths: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
         for e in &queue {
             *depths.entry(e.tenant_id).or_insert(0) += 1;
         }

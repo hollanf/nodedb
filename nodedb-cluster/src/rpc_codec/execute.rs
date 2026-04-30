@@ -25,7 +25,7 @@ pub struct ExecuteRequest {
     /// zerompk-encoded PhysicalPlan (via nodedb::bridge::physical_plan::wire::encode).
     pub plan_bytes: Vec<u8>,
     /// Tenant ID authenticated on the originating node; trusted on the receiver.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Milliseconds remaining until the caller's deadline.
     /// 0 means the deadline has already expired — receiver returns DeadlineExceeded.
     pub deadline_remaining_ms: u64,

@@ -11,7 +11,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_document_batch_insert(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         documents: &[(String, Vec<u8>)],
         surrogates: &[nodedb_types::Surrogate],
@@ -114,7 +114,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_register_document_collection(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         indexes: &[crate::bridge::physical_plan::RegisteredIndex],
         crdt_enabled: bool,
@@ -161,7 +161,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_document_index_lookup(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         path: &str,
         value: &str,
@@ -213,7 +213,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_document_indexed_fetch(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         path: &str,
         value: &str,
@@ -285,7 +285,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_backfill_index(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         path: &str,
         is_array: bool,
@@ -432,7 +432,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_drop_document_index(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field: &str,
     ) -> Response {

@@ -18,7 +18,7 @@ pub(crate) struct JoinParams<'a> {
 /// Hash join: scans both sides from storage (or executes inline sub-plans).
 pub(crate) struct HashJoinParams<'a> {
     pub join: JoinParams<'a>,
-    pub tid: u32,
+    pub tid: u64,
     pub left_collection: &'a str,
     pub right_collection: &'a str,
     pub left_alias: Option<&'a str>,
@@ -45,7 +45,7 @@ pub(crate) struct InlineHashJoinParams<'a> {
 /// Broadcast join: small side is pre-serialized, large side scanned locally.
 pub(crate) struct BroadcastJoinParams<'a> {
     pub join: JoinParams<'a>,
-    pub tid: u32,
+    pub tid: u64,
     pub large_collection: &'a str,
     pub small_collection: &'a str,
     pub large_alias: Option<&'a str>,

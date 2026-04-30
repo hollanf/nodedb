@@ -156,6 +156,7 @@ impl PartialAggregate {
                 // TopK returns structured data; finalize as count of tracked items.
                 self.topk.as_ref().map_or(0.0, |ss| ss.top_k().len() as f64)
             }
+            _ => f64::NAN,
         }
     }
 }

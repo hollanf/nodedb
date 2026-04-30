@@ -97,7 +97,7 @@ impl FunctionLanguage {
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 #[msgpack(map)]
 pub struct StoredFunction {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub name: String,
     pub parameters: Vec<FunctionParam>,
     /// SQL return type name (e.g. "TEXT", "FLOAT", "BOOLEAN").

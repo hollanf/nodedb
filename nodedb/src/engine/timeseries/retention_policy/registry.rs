@@ -12,7 +12,7 @@ use super::types::RetentionPolicyDef;
 ///
 /// Keyed by `(tenant_id, policy_name)`. Lives on the Control Plane (`Send + Sync`).
 pub struct RetentionPolicyRegistry {
-    policies: RwLock<HashMap<(u32, String), RetentionPolicyDef>>,
+    policies: RwLock<HashMap<(u64, String), RetentionPolicyDef>>,
 }
 
 impl RetentionPolicyRegistry {
@@ -43,7 +43,7 @@ impl RetentionPolicyRegistry {
     }
 
     /// Remove a policy.
-    pub fn unregister(&self, tenant_id: u32, name: &str) {
+    pub fn unregister(&self, tenant_id: u64, name: &str) {
         self.policies
             .write()
             .expect("registry lock poisoned")
@@ -51,7 +51,7 @@ impl RetentionPolicyRegistry {
     }
 
     /// Get a policy by name.
-    pub fn get(&self, tenant_id: u32, name: &str) -> Option<RetentionPolicyDef> {
+    pub fn get(&self, tenant_id: u64, name: &str) -> Option<RetentionPolicyDef> {
         self.policies
             .read()
             .expect("registry lock poisoned")
@@ -62,7 +62,7 @@ impl RetentionPolicyRegistry {
     /// Get the policy for a specific collection.
     pub fn get_for_collection(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
     ) -> Option<RetentionPolicyDef> {
         self.policies
@@ -111,7 +111,7 @@ impl RetentionPolicyRegistry {
     }
 
     /// List all policies for a tenant.
-    pub fn list_for_tenant(&self, tenant_id: u32) -> Vec<RetentionPolicyDef> {
+    pub fn list_for_tenant(&self, tenant_id: u64) -> Vec<RetentionPolicyDef> {
         self.policies
             .read()
             .expect("registry lock poisoned")
@@ -133,7 +133,7 @@ mod tests {
     use super::*;
     use crate::engine::timeseries::retention_policy::types::TierDef;
 
-    fn make_policy(tenant_id: u32, name: &str, collection: &str) -> RetentionPolicyDef {
+    fn make_policy(tenant_id: u64, name: &str, collection: &str) -> RetentionPolicyDef {
         RetentionPolicyDef {
             tenant_id,
             name: name.into(),

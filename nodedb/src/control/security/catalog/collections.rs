@@ -26,7 +26,7 @@ impl SystemCatalog {
     /// Load all collections for a tenant.
     pub fn load_collections_for_tenant(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
     ) -> crate::Result<Vec<StoredCollection>> {
         let prefix = format!("{tenant_id}:");
         let read_txn = self
@@ -137,7 +137,7 @@ impl SystemCatalog {
     /// owner row is deleted separately via `delete_parent_owner` so
     /// the caller can cascade peer catalog entries in the same
     /// transaction at the applier level.
-    pub fn delete_collection(&self, tenant_id: u32, name: &str) -> crate::Result<bool> {
+    pub fn delete_collection(&self, tenant_id: u64, name: &str) -> crate::Result<bool> {
         let key = format!("{tenant_id}:{name}");
         let write_txn = self
             .db
@@ -160,7 +160,7 @@ impl SystemCatalog {
     /// Get a single collection by tenant_id + name.
     pub fn get_collection(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
     ) -> crate::Result<Option<StoredCollection>> {
         let key = format!("{tenant_id}:{name}");

@@ -10,6 +10,7 @@ use crate::codec_index::HnswCodecIndex;
 /// One built codec-index per collection (other than Sq8). Variants match
 /// the publicly-selectable quantization choices that route through
 /// `HnswCodecIndex`.
+#[non_exhaustive]
 pub enum CollectionCodec {
     RaBitQ(HnswCodecIndex<RaBitQCodec>),
     Bbq(HnswCodecIndex<BbqCodec>),

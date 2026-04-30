@@ -5,7 +5,7 @@
 /// Stored in redb under `_system.sequences` with key `"{tenant_id}:{name}"`.
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct StoredSequence {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub name: String,
     /// Owner username (creator).
     pub owner: String,
@@ -46,7 +46,7 @@ pub struct StoredSequence {
 
 impl StoredSequence {
     /// Create a new sequence definition with default values for unspecified options.
-    pub fn new(tenant_id: u32, name: String, owner: String) -> Self {
+    pub fn new(tenant_id: u64, name: String, owner: String) -> Self {
         Self {
             tenant_id,
             name,
@@ -101,7 +101,7 @@ impl StoredSequence {
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 #[msgpack(map)]
 pub struct SequenceState {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub name: String,
     /// Current value (last returned by nextval on this node).
     pub current_value: i64,
@@ -116,7 +116,7 @@ pub struct SequenceState {
 }
 
 impl SequenceState {
-    pub fn new(tenant_id: u32, name: String, start_value: i64, epoch: u64) -> Self {
+    pub fn new(tenant_id: u64, name: String, start_value: i64, epoch: u64) -> Self {
         Self {
             tenant_id,
             name,

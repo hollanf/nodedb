@@ -23,7 +23,7 @@ pub fn handle_permission_event(
     cache: &Arc<tokio::sync::RwLock<PermissionCache>>,
 ) {
     let collection = event.collection.as_ref();
-    let tenant_id = event.tenant_id.as_u32();
+    let tenant_id = event.tenant_id.as_u64();
 
     // Non-blocking lock — skip if contended; next event will catch up.
     let mut guard = match cache.try_write() {

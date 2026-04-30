@@ -25,7 +25,7 @@ const MAX_BACKOFF: Duration = Duration::from_secs(10);
 #[derive(Debug, Clone)]
 pub struct RetryEntry {
     /// Tenant context.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Collection that triggered the event.
     pub collection: String,
     /// Row ID from the originating event.

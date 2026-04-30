@@ -62,7 +62,7 @@ impl CoreLoop {
 
         // Scan-quiesce gate.
         let _scan_guard =
-            match self.acquire_scan_guard(task, task.request.tenant_id.as_u32(), collection) {
+            match self.acquire_scan_guard(task, task.request.tenant_id.as_u64(), collection) {
                 Ok(g) => g,
                 Err(resp) => return resp,
             };

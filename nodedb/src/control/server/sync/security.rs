@@ -153,7 +153,7 @@ pub fn enforce_rls_on_delta(
     identity: &AuthenticatedIdentity,
     rls_store: &RlsPolicyStore,
 ) -> Result<(), SyncRejectionReason> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Get write policies for this collection.
     let write_policies = rls_store.write_policies(tenant_id, &delta.collection);
@@ -204,7 +204,7 @@ pub fn log_silent_rejection(
         "sync silent reject: session={}, user={}, tenant={}, collection={}, doc={}, mutation_id={}, reason={}, delta_hash={}, delta_len={}",
         session_id,
         identity.username,
-        identity.tenant_id.as_u32(),
+        identity.tenant_id.as_u64(),
         delta.collection,
         delta.document_id,
         delta.mutation_id,
@@ -283,7 +283,7 @@ mod tests {
     use crate::control::security::rls::{PolicyType, RlsPolicy};
     use crate::types::TenantId;
 
-    fn test_identity(tenant: u32, username: &str) -> AuthenticatedIdentity {
+    fn test_identity(tenant: u64, username: &str) -> AuthenticatedIdentity {
         AuthenticatedIdentity {
             user_id: 1,
             username: username.into(),

@@ -18,7 +18,7 @@ use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::scan_normalize::decoded_col_to_value;
 
 pub(super) struct RowVersion {
-    pub seg_id: u32,
+    pub seg_id: u64,
     pub row_idx: u32,
     pub pk_bytes: Vec<u8>,
     pub sys_ts: i64,
@@ -63,7 +63,7 @@ impl CoreLoop {
         // Flushed segments: segment_id starts at 1 (memtable is id 0).
         if let Some(segments) = self.columnar_flushed_segments.get(&key) {
             for (seg_idx, seg_bytes) in segments.iter().enumerate() {
-                let seg_id = seg_idx as u32 + 1;
+                let seg_id = seg_idx as u64 + 1;
                 let reader = nodedb_columnar::SegmentReader::open(seg_bytes).map_err(|e| {
                     crate::Error::Storage {
                         engine: "columnar".into(),
@@ -140,7 +140,7 @@ impl CoreLoop {
         }
 
         // Victims: superseded AND below cutoff AND not already tombstoned.
-        let mut victims_per_seg: HashMap<u32, Vec<u32>> = HashMap::new();
+        let mut victims_per_seg: HashMap<u64, Vec<u32>> = HashMap::new();
         for v in versions {
             let lat = latest.get(&v.pk_bytes).copied().unwrap_or(v.sys_ts);
             if v.sys_ts < cutoff_system_ms && v.sys_ts < lat {

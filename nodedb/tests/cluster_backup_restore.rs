@@ -14,9 +14,9 @@ use futures::StreamExt;
 use nodedb_types::backup_envelope::{DEFAULT_MAX_TOTAL_BYTES, parse as parse_envelope};
 use std::time::Duration;
 
-const TENANT: u32 = 1;
+const TENANT: u64 = 1;
 
-async fn drain_backup(node_idx: usize, cluster: &TestCluster, tenant: u32) -> Vec<u8> {
+async fn drain_backup(node_idx: usize, cluster: &TestCluster, tenant: u64) -> Vec<u8> {
     let stream = cluster.nodes[node_idx]
         .client
         .copy_out(&format!("COPY (BACKUP TENANT {tenant}) TO STDOUT"))
@@ -33,7 +33,7 @@ async fn drain_backup(node_idx: usize, cluster: &TestCluster, tenant: u32) -> Ve
 async fn push_restore(
     node_idx: usize,
     cluster: &TestCluster,
-    tenant: u32,
+    tenant: u64,
     bytes: Vec<u8>,
 ) -> Result<(), String> {
     let sink = cluster.nodes[node_idx]

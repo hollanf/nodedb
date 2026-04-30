@@ -11,7 +11,7 @@ pub struct Request {
     pub request_id: u64,
 
     /// Tenant scope for isolation and quota enforcement.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
 
     /// Virtual shard this request targets.
     pub vshard_id: u32,

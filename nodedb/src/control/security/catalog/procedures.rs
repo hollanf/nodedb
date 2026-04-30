@@ -27,7 +27,7 @@ impl SystemCatalog {
     /// Get a single procedure by tenant_id + name.
     pub fn get_procedure(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
     ) -> crate::Result<Option<StoredProcedure>> {
         let key = procedure_key(tenant_id, name);
@@ -50,7 +50,7 @@ impl SystemCatalog {
     }
 
     /// Delete a procedure. Returns true if it existed.
-    pub fn delete_procedure(&self, tenant_id: u32, name: &str) -> crate::Result<bool> {
+    pub fn delete_procedure(&self, tenant_id: u64, name: &str) -> crate::Result<bool> {
         let key = procedure_key(tenant_id, name);
         let write_txn = self
             .db
@@ -96,7 +96,7 @@ impl SystemCatalog {
     /// Load all procedures for a tenant.
     pub fn load_procedures_for_tenant(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
     ) -> crate::Result<Vec<StoredProcedure>> {
         let prefix = format!("{tenant_id}:");
         let read_txn = self
@@ -122,7 +122,7 @@ impl SystemCatalog {
     }
 }
 
-fn procedure_key(tenant_id: u32, name: &str) -> String {
+fn procedure_key(tenant_id: u64, name: &str) -> String {
     format!("{tenant_id}:{name}")
 }
 
@@ -136,7 +136,7 @@ mod tests {
         SystemCatalog::open(&dir.path().join("system.redb")).unwrap()
     }
 
-    fn sample(tenant_id: u32, name: &str) -> StoredProcedure {
+    fn sample(tenant_id: u64, name: &str) -> StoredProcedure {
         StoredProcedure {
             tenant_id,
             name: name.into(),

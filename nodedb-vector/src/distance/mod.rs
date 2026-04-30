@@ -32,6 +32,8 @@ pub fn distance(a: &[f32], b: &[f32], metric: DistanceMetric) -> f32 {
             DistanceMetric::Hamming => hamming_f32(a, b),
             DistanceMetric::Jaccard => jaccard(a, b),
             DistanceMetric::Pearson => pearson(a, b),
+            // Unknown future metric — fall back to L2.
+            _ => (rt.l2_squared)(a, b),
         }
     }
     #[cfg(not(feature = "simd"))]

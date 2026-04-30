@@ -32,7 +32,7 @@ impl SharedState {
     /// (and, for `Result<Response>` callers, `Result::Ok` as well). A
     /// poisoned lock is silently ignored — the high-water is best-effort
     /// and the RESTORE staleness gate treats missing entries as zero.
-    pub fn advance_tenant_write_hlc(&self, tenant_id: u32) {
+    pub fn advance_tenant_write_hlc(&self, tenant_id: u64) {
         let wall = self.hlc_clock.now().wall_ns;
         if let Ok(mut map) = self.tenant_write_hlc.lock() {
             let entry = map.entry(tenant_id).or_insert(0);
@@ -106,6 +106,11 @@ impl SharedState {
     /// Get the idle session timeout in seconds (0 = no timeout).
     pub fn idle_timeout_secs(&self) -> u64 {
         self.idle_timeout_secs
+    }
+
+    /// Get the absolute session lifetime in seconds (0 = disabled).
+    pub fn session_absolute_timeout_secs(&self) -> u64 {
+        self.session_absolute_timeout_secs
     }
 
     /// Access to timeseries partition registries.
@@ -322,7 +327,7 @@ impl SharedState {
                     seq: e.seq,
                     timestamp_us: e.timestamp_us,
                     event: format!("{:?}", e.event),
-                    tenant_id: e.tenant_id.map(|t| t.as_u32()),
+                    tenant_id: e.tenant_id.map(|t| t.as_u64()),
                     source: e.source.clone(),
                     detail: e.detail.clone(),
                     prev_hash: e.prev_hash.clone(),
@@ -339,6 +344,7 @@ impl SharedState {
             } else {
                 tracing::debug!(count = stored.len(), "flushed audit entries to catalog");
 
+                // Age-based pruning: remove entries older than retention window.
                 if self.audit_retention_days > 0 {
                     let retention_us = self.audit_retention_days as u64 * 86400 * 1_000_000;
                     let now_us = std::time::SystemTime::now()
@@ -348,12 +354,54 @@ impl SharedState {
                     let cutoff = now_us.saturating_sub(retention_us);
                     match catalog.prune_audit_before(cutoff) {
                         Ok(0) => {}
-                        Ok(n) => tracing::info!(
-                            pruned = n,
-                            days = self.audit_retention_days,
-                            "pruned old audit entries"
-                        ),
+                        Ok(n) => {
+                            tracing::info!(
+                                pruned = n,
+                                days = self.audit_retention_days,
+                                "pruned old audit entries"
+                            );
+                        }
                         Err(e) => warn!(error = %e, "failed to prune old audit entries"),
+                    }
+                }
+
+                // Count-based pruning: trim to audit_max_entries ceiling.
+                // AuditCheckpoint is emitted (with prev_hash = hash of last
+                // deleted entry) so the surviving chain head links into it.
+                if self.audit_max_entries > 0 {
+                    match catalog.prune_audit_to_count(self.audit_max_entries) {
+                        Ok((0, _, _)) => {}
+                        Ok((pruned_count, last_deleted_hash, oldest_kept_seq)) => {
+                            tracing::info!(
+                                pruned = pruned_count,
+                                oldest_kept_seq,
+                                "pruned audit entries by count cap"
+                            );
+                            // Emit checkpoint so the surviving chain stays
+                            // verifiable. prev_hash = hash of the last deleted
+                            // entry, linking the gap back to the deleted segment.
+                            if let Ok(mut log) = self.audit.lock() {
+                                let seq = log.allocate_seq();
+                                let detail = format!(
+                                    "pruned_count={pruned_count} oldest_kept_seq={oldest_kept_seq}"
+                                );
+                                let entry = crate::control::security::audit::AuditEntry {
+                                    seq,
+                                    timestamp_us: crate::control::security::audit::entry::now_us(),
+                                    event:
+                                        crate::control::security::audit::AuditEvent::AuditCheckpoint,
+                                    tenant_id: None,
+                                    auth_user_id: String::new(),
+                                    auth_user_name: String::new(),
+                                    session_id: String::new(),
+                                    source: "retention".to_string(),
+                                    detail,
+                                    prev_hash: last_deleted_hash,
+                                };
+                                log.push_checkpoint(entry);
+                            }
+                        }
+                        Err(e) => warn!(error = %e, "failed to prune audit entries by count"),
                     }
                 }
             }

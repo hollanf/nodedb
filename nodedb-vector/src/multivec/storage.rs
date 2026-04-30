@@ -17,6 +17,7 @@ pub struct MultiVectorDoc {
 
 /// Controls how many vectors a document may contain and what they represent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MultiVecMode {
     /// Per-token: one vector per token (naive ColBERT, expensive).
     PerToken,
@@ -33,6 +34,7 @@ pub struct MultiVectorStore {
 
 /// Errors produced by `MultiVectorStore`.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum MultivecError {
     #[error("dim mismatch: expected {expected}, got {actual}")]
     DimMismatch { expected: usize, actual: usize },

@@ -9,9 +9,9 @@ use super::types::StreamingMvDef;
 /// In-memory streaming MV registry.
 pub struct MvRegistry {
     /// (tenant_id, mv_name) → definition.
-    defs: RwLock<HashMap<(u32, String), StreamingMvDef>>,
+    defs: RwLock<HashMap<(u64, String), StreamingMvDef>>,
     /// (tenant_id, mv_name) → live aggregate state.
-    states: RwLock<HashMap<(u32, String), std::sync::Arc<MvState>>>,
+    states: RwLock<HashMap<(u64, String), std::sync::Arc<MvState>>>,
 }
 
 impl MvRegistry {
@@ -39,7 +39,7 @@ impl MvRegistry {
     }
 
     /// Unregister a streaming MV. Returns true if it existed.
-    pub fn unregister(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn unregister(&self, tenant_id: u64, name: &str) -> bool {
         let key = (tenant_id, name.to_string());
         let mut defs = self.defs.write().unwrap_or_else(|p| p.into_inner());
         let existed = defs.remove(&key).is_some();
@@ -51,14 +51,14 @@ impl MvRegistry {
     }
 
     /// Get the definition of a streaming MV.
-    pub fn get_def(&self, tenant_id: u32, name: &str) -> Option<StreamingMvDef> {
+    pub fn get_def(&self, tenant_id: u64, name: &str) -> Option<StreamingMvDef> {
         let key = (tenant_id, name.to_string());
         let defs = self.defs.read().unwrap_or_else(|p| p.into_inner());
         defs.get(&key).cloned()
     }
 
     /// Get the live state of a streaming MV.
-    pub fn get_state(&self, tenant_id: u32, name: &str) -> Option<std::sync::Arc<MvState>> {
+    pub fn get_state(&self, tenant_id: u64, name: &str) -> Option<std::sync::Arc<MvState>> {
         let key = (tenant_id, name.to_string());
         let states = self.states.read().unwrap_or_else(|p| p.into_inner());
         states.get(&key).cloned()
@@ -67,7 +67,7 @@ impl MvRegistry {
     /// Find all MVs that source from a given stream.
     pub fn find_by_source(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         stream_name: &str,
     ) -> Vec<std::sync::Arc<MvState>> {
         let defs = self.defs.read().unwrap_or_else(|p| p.into_inner());
@@ -110,7 +110,7 @@ impl MvRegistry {
     }
 
     /// List all MV definitions for a tenant.
-    pub fn list_for_tenant(&self, tenant_id: u32) -> Vec<StreamingMvDef> {
+    pub fn list_for_tenant(&self, tenant_id: u64) -> Vec<StreamingMvDef> {
         let defs = self.defs.read().unwrap_or_else(|p| p.into_inner());
         defs.values()
             .filter(|d| d.tenant_id == tenant_id)

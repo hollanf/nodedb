@@ -130,7 +130,7 @@ impl SyncSession {
                 info!(
                     session = %self.session_id,
                     user = %identity.username,
-                    tenant = identity.tenant_id.as_u32(),
+                    tenant = identity.tenant_id.as_u64(),
                     shapes = self.subscribed_shapes.len(),
                     "sync handshake OK"
                 );

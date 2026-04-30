@@ -25,7 +25,7 @@ std::thread_local! {
 }
 
 /// Build a tenant-scoped composite key `"{tenant}:{a}:{b}"` using thread-local buffer.
-fn with_tenant_key<R>(tenant_id: u32, a: &str, b: &str, f: impl FnOnce(&str) -> R) -> R {
+fn with_tenant_key<R>(tenant_id: u64, a: &str, b: &str, f: impl FnOnce(&str) -> R) -> R {
     KEY_BUF.with(|buf| {
         let mut buf = buf.borrow_mut();
         buf.clear();
@@ -41,7 +41,7 @@ fn with_tenant_key<R>(tenant_id: u32, a: &str, b: &str, f: impl FnOnce(&str) -> 
 
 /// Build a tenant-scoped index key `"{tenant}:{a}:{b}:{c}:{d}"`.
 pub(super) fn with_tenant_key4<R>(
-    tenant_id: u32,
+    tenant_id: u64,
     a: &str,
     b: &str,
     c: &str,
@@ -106,7 +106,7 @@ impl SparseEngine {
     /// reflects the actual mutation — there is no separate probe.
     pub fn put(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         document_id: &str,
         value: &[u8],
@@ -137,7 +137,7 @@ impl SparseEngine {
     pub fn put_in_txn(
         &self,
         txn: &WriteTransaction,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         document_id: &str,
         value: &[u8],
@@ -165,7 +165,7 @@ impl SparseEngine {
     pub fn exists_in_txn(
         &self,
         txn: &WriteTransaction,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         document_id: &str,
     ) -> crate::Result<bool> {
@@ -184,7 +184,7 @@ impl SparseEngine {
     /// Batch insert or update multiple documents in a single redb transaction.
     pub fn batch_put(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         documents: &[(&str, &[u8])],
     ) -> crate::Result<()> {
@@ -226,7 +226,7 @@ impl SparseEngine {
     /// Point lookup: retrieve a document by collection + document_id (tenant-scoped).
     pub fn get(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         document_id: &str,
     ) -> crate::Result<Option<Vec<u8>>> {
@@ -250,7 +250,7 @@ impl SparseEngine {
     /// transaction. Best-effort: redb key overhead + secondary-index
     /// bytes are not counted. Used by the
     /// `_system.dropped_collections.size_bytes_estimate` column.
-    pub fn approx_bytes_for_collection(&self, tenant_id: u32, collection: &str) -> u64 {
+    pub fn approx_bytes_for_collection(&self, tenant_id: u64, collection: &str) -> u64 {
         let prefix = format!("{tenant_id}:{collection}:");
         let end = format!("{tenant_id}:{collection}:\u{ffff}");
         let read_txn = match self.db.begin_read() {
@@ -281,7 +281,7 @@ impl SparseEngine {
     /// avoids a second read pass in the handler.
     pub fn delete(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         document_id: &str,
     ) -> crate::Result<Option<Vec<u8>>> {

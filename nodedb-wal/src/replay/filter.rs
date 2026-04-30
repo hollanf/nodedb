@@ -23,7 +23,7 @@ use crate::tombstone::CollectionTombstonePayload;
 /// (re-create → re-drop in the same log), the highest `purge_lsn` wins.
 #[derive(Debug, Default, Clone)]
 pub struct TombstoneSet {
-    entries: HashMap<(u32, String), u64>,
+    entries: HashMap<(u64, String), u64>,
 }
 
 impl TombstoneSet {
@@ -33,7 +33,7 @@ impl TombstoneSet {
 
     /// Record a tombstone. If the pair already has a higher `purge_lsn`,
     /// the existing value is kept (idempotent, order-independent).
-    pub fn insert(&mut self, tenant_id: u32, collection: String, purge_lsn: u64) {
+    pub fn insert(&mut self, tenant_id: u64, collection: String, purge_lsn: u64) {
         self.entries
             .entry((tenant_id, collection))
             .and_modify(|existing| {
@@ -47,7 +47,7 @@ impl TombstoneSet {
     /// Return `true` iff a write at `lsn` for `(tenant_id, collection)`
     /// is shadowed by a later tombstone and therefore must be skipped
     /// during replay.
-    pub fn is_tombstoned(&self, tenant_id: u32, collection: &str, lsn: u64) -> bool {
+    pub fn is_tombstoned(&self, tenant_id: u64, collection: &str, lsn: u64) -> bool {
         self.entries
             .get(&(tenant_id, collection.to_string()))
             .is_some_and(|&purge_lsn| lsn < purge_lsn)
@@ -55,7 +55,7 @@ impl TombstoneSet {
 
     /// Return the `purge_lsn` for a pair, if any. Primarily used by redb
     /// persistence to serialize the current set after a replay pass.
-    pub fn purge_lsn(&self, tenant_id: u32, collection: &str) -> Option<u64> {
+    pub fn purge_lsn(&self, tenant_id: u64, collection: &str) -> Option<u64> {
         self.entries
             .get(&(tenant_id, collection.to_string()))
             .copied()
@@ -70,7 +70,7 @@ impl TombstoneSet {
     }
 
     /// Iterate over every `(tenant_id, collection, purge_lsn)` in the set.
-    pub fn iter(&self) -> impl Iterator<Item = (u32, &str, u64)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (u64, &str, u64)> + '_ {
         self.entries
             .iter()
             .map(|((tid, name), lsn)| (*tid, name.as_str(), *lsn))
@@ -127,7 +127,7 @@ mod tests {
     use super::*;
     use crate::record::WalRecord;
 
-    fn tombstone_record(tenant: u32, name: &str, purge_lsn: u64, record_lsn: u64) -> WalRecord {
+    fn tombstone_record(tenant: u64, name: &str, purge_lsn: u64, record_lsn: u64) -> WalRecord {
         let payload = CollectionTombstonePayload::new(name, purge_lsn)
             .to_bytes()
             .unwrap();

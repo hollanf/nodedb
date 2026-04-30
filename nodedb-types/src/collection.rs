@@ -178,6 +178,7 @@ impl std::fmt::Display for CollectionType {
 /// Error returned by [`CollectionType`]'s [`std::str::FromStr`] impl when
 /// an unrecognised or deprecated engine name is supplied.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum CollectionTypeParseError {
     /// The input string is not a recognised canonical engine name.
     #[error(

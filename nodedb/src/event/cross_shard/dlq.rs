@@ -22,7 +22,7 @@ pub struct CrossShardDlqEntry {
     /// Monotonic entry identifier.
     pub entry_id: u64,
     /// Tenant that owns the source data.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Collection that triggered this cross-shard write.
     pub source_collection: String,
     /// SQL statement that failed to execute on the target.
@@ -49,7 +49,7 @@ pub struct CrossShardDlqEntry {
 
 /// Parameters for enqueuing a new DLQ entry.
 pub struct DlqEnqueueParams {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub source_collection: String,
     pub sql: String,
     pub source_vshard: u32,

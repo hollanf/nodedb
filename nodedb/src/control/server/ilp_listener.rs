@@ -484,7 +484,7 @@ async fn flush_ilp_batch_inner(
                 if !fields.is_empty()
                     && let Some(catalog) = state.credentials.catalog().as_ref()
                     && let Ok(Some(mut coll)) =
-                        catalog.get_collection(tenant_id.as_u32(), &collection)
+                        catalog.get_collection(tenant_id.as_u64(), &collection)
                     && coll.fields != fields
                 {
                     coll.fields = fields;

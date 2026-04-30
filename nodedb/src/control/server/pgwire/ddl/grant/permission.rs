@@ -82,7 +82,7 @@ pub fn grant_permission(
         let t = function_target(identity.tenant_id, &func_name);
         (t, format!("function '{func_name}'"))
     } else {
-        let t = format!("collection:{}:{target_name}", identity.tenant_id.as_u32());
+        let t = format!("collection:{}:{target_name}", identity.tenant_id.as_u64());
         (t, format!("collection '{target_name}'"))
     };
 
@@ -132,7 +132,7 @@ pub fn revoke_permission(
         let t = function_target(identity.tenant_id, &func_name);
         (t, format!("function '{func_name}'"))
     } else {
-        let t = format!("collection:{}:{target_name}", identity.tenant_id.as_u32());
+        let t = format!("collection:{}:{target_name}", identity.tenant_id.as_u64());
         (t, format!("collection '{target_name}'"))
     };
 

@@ -127,7 +127,7 @@ impl CoreLoop {
             );
         }
 
-        let bitemporal = self.is_bitemporal(tid.as_u32(), collection);
+        let bitemporal = self.is_bitemporal(tid.as_u64(), collection);
         // Ensure memtable exists (auto-create on first write).
         let is_new_memtable = !self.columnar_memtables.contains_key(&key);
         if is_new_memtable {

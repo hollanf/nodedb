@@ -8,8 +8,8 @@ use nodedb::bridge::physical_plan::DocumentOp;
 
 use crate::helpers::*;
 
-const TENANT_A: u32 = 10;
-const TENANT_B: u32 = 20;
+const TENANT_A: u64 = 10;
+const TENANT_B: u64 = 20;
 
 #[test]
 fn sparse_point_get_isolated() {

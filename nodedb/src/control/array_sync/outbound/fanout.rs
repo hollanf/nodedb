@@ -75,7 +75,7 @@ pub struct ArrayFanout {
     /// the snapshot-assembly buffer lifetime). Until Phase I wires per-tenant
     /// fanout instances, `tenant_id = 0` means only tenant-0 array shape
     /// subscriptions receive fan-out. Single-tenant deployments are unaffected.
-    tenant_id: u32,
+    tenant_id: u64,
 }
 
 impl ArrayFanout {
@@ -87,7 +87,7 @@ impl ArrayFanout {
         snapshot_hlcs: Arc<RwLock<HashMap<String, Hlc>>>,
         mergers: Arc<MergerRegistry>,
         shard_id: u16,
-        tenant_id: u32,
+        tenant_id: u64,
     ) -> Self {
         Self {
             shapes,

@@ -11,7 +11,7 @@ impl SparseEngine {
     /// collection, up to `limit`. Use for full table scans and post-scan filtering.
     pub fn scan_documents(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         limit: usize,
     ) -> crate::Result<Vec<(String, Vec<u8>)>> {
@@ -53,7 +53,7 @@ impl SparseEngine {
     /// Returns the total number of documents processed.
     pub fn scan_documents_chunked<F>(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         total_limit: usize,
         chunk_size: usize,
@@ -111,7 +111,7 @@ impl SparseEngine {
     /// queries — no document table access needed at all.
     pub fn scan_index_groups(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         field: &str,
     ) -> crate::Result<Vec<(String, usize)>> {
@@ -157,7 +157,7 @@ impl SparseEngine {
     /// then count per-facet-field using this method.
     pub fn scan_index_groups_filtered(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         field: &str,
         doc_ids: &std::collections::HashSet<String>,
@@ -213,7 +213,7 @@ impl SparseEngine {
     /// document should be included in results.
     pub fn scan_documents_filtered(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         limit: usize,
         predicate: &dyn Fn(&[u8]) -> bool,
@@ -332,14 +332,14 @@ impl SparseEngine {
     ///
     /// Returns `(full_key, value_bytes)` pairs. The key includes the tenant
     /// prefix: `"{tenant_id}:{collection}:{doc_id}"`.
-    pub fn scan_all_for_tenant(&self, tenant_id: u32) -> crate::Result<Vec<(String, Vec<u8>)>> {
+    pub fn scan_all_for_tenant(&self, tenant_id: u64) -> crate::Result<Vec<(String, Vec<u8>)>> {
         self.scan_table_for_tenant(DOCUMENTS, tenant_id, "tenant scan")
     }
 
     /// Scan ALL index entries for a tenant.
     ///
     /// Returns `(full_key, value_bytes)` pairs from the INDEXES table.
-    pub fn scan_indexes_for_tenant(&self, tenant_id: u32) -> crate::Result<Vec<(String, Vec<u8>)>> {
+    pub fn scan_indexes_for_tenant(&self, tenant_id: u64) -> crate::Result<Vec<(String, Vec<u8>)>> {
         self.scan_table_for_tenant(INDEXES, tenant_id, "index scan")
     }
 
@@ -347,7 +347,7 @@ impl SparseEngine {
     fn scan_table_for_tenant(
         &self,
         table_def: redb::TableDefinition<&str, &[u8]>,
-        tenant_id: u32,
+        tenant_id: u64,
         label: &str,
     ) -> crate::Result<Vec<(String, Vec<u8>)>> {
         let prefix = format!("{tenant_id}:");

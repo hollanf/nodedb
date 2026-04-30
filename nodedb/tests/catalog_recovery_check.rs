@@ -33,7 +33,7 @@ fn make_shared(data_dir: &std::path::Path) -> (Arc<SharedState>, Arc<CredentialS
     (shared, credentials)
 }
 
-fn make_schedule_def(tenant_id: u32, name: &str) -> nodedb::event::scheduler::types::ScheduleDef {
+fn make_schedule_def(tenant_id: u64, name: &str) -> nodedb::event::scheduler::types::ScheduleDef {
     use nodedb::event::scheduler::types::{MissedPolicy, ScheduleDef, ScheduleScope};
     ScheduleDef {
         tenant_id,
@@ -51,7 +51,7 @@ fn make_schedule_def(tenant_id: u32, name: &str) -> nodedb::event::scheduler::ty
 }
 
 fn make_alert_def(
-    tenant_id: u32,
+    tenant_id: u64,
     name: &str,
     collection: &str,
 ) -> nodedb::event::alert::types::AlertDef {
@@ -79,7 +79,7 @@ fn make_alert_def(
     }
 }
 
-fn make_stream_def(tenant_id: u32, name: &str) -> nodedb::event::cdc::stream_def::ChangeStreamDef {
+fn make_stream_def(tenant_id: u64, name: &str) -> nodedb::event::cdc::stream_def::ChangeStreamDef {
     use nodedb::event::cdc::stream_def::{
         ChangeStreamDef, OpFilter, RetentionConfig, StreamFormat,
     };
@@ -100,7 +100,7 @@ fn make_stream_def(tenant_id: u32, name: &str) -> nodedb::event::cdc::stream_def
 }
 
 fn make_consumer_group(
-    tenant_id: u32,
+    tenant_id: u64,
     stream: &str,
     group: &str,
 ) -> nodedb::event::cdc::consumer_group::types::ConsumerGroupDef {
@@ -115,7 +115,7 @@ fn make_consumer_group(
 }
 
 fn make_retention_policy(
-    tenant_id: u32,
+    tenant_id: u64,
     name: &str,
     collection: &str,
 ) -> nodedb::engine::timeseries::retention_policy::types::RetentionPolicyDef {
@@ -140,7 +140,7 @@ fn make_retention_policy(
 }
 
 fn make_mv_def(
-    tenant_id: u32,
+    tenant_id: u64,
     name: &str,
     source_stream: &str,
 ) -> nodedb::event::streaming_mv::types::StreamingMvDef {
@@ -369,6 +369,8 @@ fn credential_ghost_refuses_startup() {
             created_at: 0,
             updated_at: 0,
             password_expires_at: 0,
+            must_change_password: false,
+            password_changed_at: 0,
         };
         cat.put_user(&stored_user).unwrap();
         // writer and catalog dropped here — redb file is unlocked.

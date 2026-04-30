@@ -17,7 +17,7 @@ pub fn drop_trigger(
     require_admin(identity, "drop triggers")?;
 
     let (name, if_exists) = parse_drop_trigger(parts)?;
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let catalog = state
         .credentials
@@ -92,7 +92,7 @@ pub fn alter_trigger(
         }
     };
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let catalog = state
         .credentials
         .catalog()
@@ -136,7 +136,7 @@ fn alter_trigger_owner(
         .trim_end_matches(';')
         .to_string();
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let catalog = state
         .credentials
         .catalog()

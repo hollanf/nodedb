@@ -30,7 +30,7 @@ pub fn show_constraints(
         return Err(err("XX000", "no catalog available"));
     };
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let coll = catalog
         .get_collection(tenant_id, &coll_name)
         .map_err(|e| err("XX000", &e.to_string()))?

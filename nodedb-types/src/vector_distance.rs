@@ -15,6 +15,7 @@
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum DistanceMetric {
     /// Euclidean (L2) squared distance.
     L2 = 0,

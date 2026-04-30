@@ -250,7 +250,7 @@ pub(super) fn explain_tiers(
         ));
     }
     let collection = parts[3].to_lowercase();
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let policy = state
         .retention_policy_registry

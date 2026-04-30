@@ -24,7 +24,7 @@ pub fn put(stored: &StoredFunction, catalog: &SystemCatalog) {
     );
 }
 
-pub fn delete(tenant_id: u32, name: &str, catalog: &SystemCatalog) {
+pub fn delete(tenant_id: u64, name: &str, catalog: &SystemCatalog) {
     if let Err(e) = catalog.delete_function(tenant_id, name) {
         warn!(
             function = %name,

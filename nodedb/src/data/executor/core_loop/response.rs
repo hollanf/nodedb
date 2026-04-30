@@ -78,7 +78,7 @@ impl CoreLoop {
     /// This replaces the old `format!("{tid}:{collection}")` string key with a
     /// structured tuple so tenant scoping is structural rather than lexical.
     pub(in crate::data::executor) fn vector_index_key(
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         field_name: &str,
     ) -> (TenantId, String) {
@@ -97,7 +97,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn vector_checkpoint_filename(
         key: &(TenantId, String),
     ) -> String {
-        format!("{}:{}", key.0.as_u32(), key.1)
+        format!("{}:{}", key.0.as_u64(), key.1)
     }
 
     pub(in crate::data::executor) fn get_crdt_engine(

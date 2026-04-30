@@ -50,7 +50,7 @@ pub fn compute_chain_hash(previous_hash: &str, row_id: &str, row_contents: &[u8]
 /// Returns `None` if hash chain is not enabled for this collection config.
 pub fn apply_chain_on_insert(
     chain_hashes: &mut std::collections::HashMap<(nodedb_types::TenantId, String), String>,
-    tid: u32,
+    tid: u64,
     collection: &str,
     document_id: &str,
     value: &[u8],

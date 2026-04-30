@@ -314,7 +314,7 @@ pub async fn fetch_old_row(
 ///
 /// Quick check to avoid fetch_old_row and other overhead when no triggers are defined.
 pub fn has_triggers(state: &SharedState, tenant_id: TenantId, collection: &str) -> bool {
-    let tid = tenant_id.as_u32();
+    let tid = tenant_id.as_u64();
     !state
         .trigger_registry
         .get_matching(tid, collection, DmlEvent::Insert)

@@ -153,7 +153,7 @@ pub fn show_usage_for_tenant(
     }
 
     // SHOW USAGE FOR TENANT <id>
-    let tid: u32 = parts
+    let tid: u64 = parts
         .iter()
         .position(|p| p.eq_ignore_ascii_case("TENANT"))
         .and_then(|i| parts.get(i + 1))
@@ -208,7 +208,7 @@ pub fn export_usage(
     }
 
     // Parse tenant_id.
-    let tid: u32 = parts
+    let tid: u64 = parts
         .iter()
         .position(|p| p.eq_ignore_ascii_case("TENANT"))
         .and_then(|i| parts.get(i + 1))

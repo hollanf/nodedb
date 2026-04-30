@@ -8,6 +8,12 @@ use serde::{Deserialize, Serialize};
 use crate::value::Value;
 
 /// Typed column definition for strict document and columnar collections.
+///
+/// `#[non_exhaustive]` — this enum grows with each type system expansion
+/// (e.g. T3-07 adds `Decimal { precision, scale }`, T4-10 splits
+/// `Timestamp`/`TimestampTz`). External exhaustive `match` arms must handle
+/// future variants via a typed error arm rather than `_ => unreachable!()`.
+#[non_exhaustive]
 #[derive(
     Debug,
     Clone,
@@ -307,6 +313,7 @@ impl FromStr for ColumnType {
 
 /// Error from parsing a column type string.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum ColumnTypeParseError {
     #[error("unknown column type: '{0}'")]
     Unknown(String),
@@ -347,6 +354,10 @@ pub enum ColumnModifier {
 }
 
 /// A single column definition in a strict document or columnar schema.
+///
+/// `#[non_exhaustive]` — new fields may be added (e.g. column-level
+/// compression hints, foreign-key metadata).
+#[non_exhaustive]
 #[derive(
     Debug,
     Clone,

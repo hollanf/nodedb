@@ -248,7 +248,7 @@ pub async fn dispatch_to_data_plane_with_source(
     // conservative — envelope.watermark is captured AFTER fan-out so
     // it always dominates the tenant_wm of a fresh backup.
     if response.status == crate::bridge::envelope::Status::Ok {
-        shared.advance_tenant_write_hlc(tenant_id.as_u32());
+        shared.advance_tenant_write_hlc(tenant_id.as_u64());
     }
 
     observe(shared);
@@ -371,7 +371,7 @@ fn extract_write_metadata(
 /// Users opt in via `CREATE TIMESERIES name WITH (cdc = 'true')`.
 fn is_timeseries_cdc_enabled(shared: &SharedState, tenant_id: TenantId, collection: &str) -> bool {
     if let Some(catalog) = shared.credentials.catalog()
-        && let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), collection)
+        && let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u64(), collection)
         && coll.collection_type.is_timeseries()
     {
         if let Some(config) = coll.get_timeseries_config()

@@ -48,7 +48,7 @@ pub fn create_alert(
     } = *req;
     require_admin(identity, "create alerts")?;
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Validate collection exists.
     if let Some(catalog) = state.credentials.catalog()

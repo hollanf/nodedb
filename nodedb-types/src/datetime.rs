@@ -15,6 +15,10 @@ use serde::{Deserialize, Serialize};
 /// ~292,000 years BCE to ~292,000 years CE.
 ///
 /// String format: ISO 8601 `"2024-03-15T10:30:00.000000Z"`.
+///
+/// `#[non_exhaustive]` — a timezone offset field may be added when
+/// named-timezone support is introduced.
+#[non_exhaustive]
 #[derive(
     Debug,
     Clone,
@@ -232,6 +236,10 @@ pub struct DateTimeComponents {
 /// Microseconds-precision duration (signed).
 ///
 /// String format: human-readable `"1h30m15s"` or `"500ms"`.
+///
+/// `#[non_exhaustive]` — a `months` field for calendar-interval semantics
+/// may be added alongside the microsecond component.
+#[non_exhaustive]
 #[derive(
     Debug,
     Clone,

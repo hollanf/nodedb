@@ -13,7 +13,7 @@ impl CoreLoop {
     /// Get or create a sparse inverted index for a collection/field.
     fn get_or_create_sparse_index(
         &mut self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field_name: &str,
     ) -> &mut SparseInvertedIndex {
@@ -23,7 +23,7 @@ impl CoreLoop {
 
     /// Build the tuple key for sparse vector indexes.
     fn sparse_index_key(
-        tid: u32,
+        tid: u64,
         collection: &str,
         field_name: &str,
     ) -> (crate::types::TenantId, String, String) {
@@ -43,7 +43,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_sparse_insert(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field_name: &str,
         doc_id: &str,
@@ -81,7 +81,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_sparse_search(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field_name: &str,
         query_entries: &[(u32, f32)],
@@ -157,7 +157,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_sparse_delete(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field_name: &str,
         doc_id: &str,

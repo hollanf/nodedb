@@ -14,7 +14,7 @@ impl CoreLoop {
     /// Creates the engine on first call. Used by the spatial insert path.
     pub(in crate::data::executor) fn ingest_doc_to_columnar(
         &mut self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         obj: &serde_json::Map<String, serde_json::Value>,
     ) {

@@ -218,6 +218,8 @@ fn value_type_name(val: &nodedb_types::Value) -> &'static str {
         nodedb_types::Value::Range { .. } => "RANGE",
         nodedb_types::Value::Record { .. } => "RECORD",
         nodedb_types::Value::NdArrayCell(_) => "NDARRAY_CELL",
+        // Value is #[non_exhaustive]; future variants report as "UNKNOWN".
+        _ => "UNKNOWN",
     }
 }
 

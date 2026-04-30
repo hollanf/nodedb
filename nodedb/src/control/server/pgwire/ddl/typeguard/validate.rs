@@ -35,7 +35,7 @@ pub async fn validate_typeguard(
         .ok_or_else(|| super::parse::err("08000", "catalog not available"))?;
 
     let coll = catalog
-        .get_collection(tenant_id.as_u32(), &coll_name)
+        .get_collection(tenant_id.as_u64(), &coll_name)
         .map_err(|e| super::parse::err("XX000", &format!("catalog error: {e}")))?
         .ok_or_else(|| {
             super::parse::err("42P01", &format!("collection '{coll_name}' not found"))

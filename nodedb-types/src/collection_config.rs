@@ -31,6 +31,7 @@ use crate::vector_distance::DistanceMetric;
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum PrimaryEngine {
     /// Schemaless document (MessagePack). The historic default.
     #[default]
@@ -128,6 +129,7 @@ impl Default for VectorPrimaryConfig {
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum PayloadIndexKind {
     #[default]
     Equality,
@@ -148,6 +150,7 @@ pub enum PayloadIndexKind {
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum PayloadAtom {
     /// `field = value` — single equality bitmap lookup.
     Eq(String, crate::Value),

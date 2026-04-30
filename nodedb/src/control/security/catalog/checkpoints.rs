@@ -26,7 +26,7 @@ impl SystemCatalog {
     /// Delete a checkpoint. Returns true if it existed.
     pub fn delete_checkpoint(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         doc_id: &str,
         checkpoint_name: &str,
@@ -53,7 +53,7 @@ impl SystemCatalog {
     /// Get a single checkpoint by name.
     pub fn get_checkpoint(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         doc_id: &str,
         checkpoint_name: &str,
@@ -82,7 +82,7 @@ impl SystemCatalog {
     /// List all checkpoints for a document, ordered by created_at descending.
     pub fn list_checkpoints(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         doc_id: &str,
         limit: usize,
@@ -124,7 +124,7 @@ impl SystemCatalog {
     /// oplog entries that have been discarded.
     pub fn delete_checkpoints_before(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         doc_id: &str,
         before_timestamp: u64,

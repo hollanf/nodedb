@@ -16,7 +16,7 @@ pub fn put(stored: &StoredRlsPolicy, catalog: &SystemCatalog) {
     }
 }
 
-pub fn delete(tenant_id: u32, collection: &str, name: &str, catalog: &SystemCatalog) {
+pub fn delete(tenant_id: u64, collection: &str, name: &str, catalog: &SystemCatalog) {
     if let Err(e) = catalog.delete_rls_policy(tenant_id, collection, name) {
         warn!(
             policy = %name,

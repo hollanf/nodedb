@@ -17,7 +17,7 @@ use super::delivery::spawn_delivery_task;
 /// Manages webhook delivery tasks for all webhook-enabled streams.
 pub struct WebhookManager {
     /// Running delivery tasks, keyed by (tenant_id, stream_name).
-    tasks: Mutex<HashMap<(u32, String), tokio::task::JoinHandle<()>>>,
+    tasks: Mutex<HashMap<(u64, String), tokio::task::JoinHandle<()>>>,
     /// Shared shutdown receiver (cloned for each task).
     shutdown_rx: watch::Receiver<bool>,
     /// Shared state reference, set once after SharedState construction.
@@ -41,7 +41,7 @@ impl WebhookManager {
     /// Start a delivery task for a specific stream.
     pub fn start_task(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         stream_name: &str,
         config: super::types::WebhookConfig,
     ) {
@@ -77,7 +77,7 @@ impl WebhookManager {
     }
 
     /// Stop a delivery task for a specific stream (on DROP CHANGE STREAM).
-    pub fn stop_task(&self, tenant_id: u32, stream_name: &str) {
+    pub fn stop_task(&self, tenant_id: u64, stream_name: &str) {
         let key = (tenant_id, stream_name.to_string());
         let mut tasks = self.tasks.lock().unwrap_or_else(|p| p.into_inner());
 

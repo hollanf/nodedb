@@ -35,7 +35,7 @@ use nodedb_types::Hlc;
 #[derive(zerompk::ToMessagePack)]
 #[msgpack(map)]
 struct StoredCollectionPrev {
-    tenant_id: u32,
+    tenant_id: u64,
     name: String,
     owner: String,
     created_at: u64,
@@ -78,7 +78,7 @@ fn stored_collection_missing_trailing_field_decodes_defaulted() {
 #[derive(zerompk::ToMessagePack)]
 #[msgpack(map)]
 struct StoredCollectionOneFieldAgo {
-    tenant_id: u32,
+    tenant_id: u64,
     name: String,
     owner: String,
     created_at: u64,
@@ -112,7 +112,7 @@ struct StoredCollectionReordered {
     owner: String,
     name: String,
     created_at: u64,
-    tenant_id: u32,
+    tenant_id: u64,
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn stored_collection_reordered_fields_decode() {
 #[derive(zerompk::ToMessagePack)]
 #[msgpack(map)]
 struct StoredCollectionWithUnknownFutureField {
-    tenant_id: u32,
+    tenant_id: u64,
     name: String,
     owner: String,
     created_at: u64,
@@ -164,7 +164,7 @@ fn stored_collection_unknown_future_field_is_ignored() {
 
 #[derive(zerompk::ToMessagePack)]
 struct CheckpointRecordPrev {
-    tenant_id: u32,
+    tenant_id: u64,
     collection: String,
     doc_id: String,
     checkpoint_name: String,
@@ -194,7 +194,7 @@ fn checkpoint_record_prev_shape_decodes() {
 #[derive(zerompk::ToMessagePack)]
 #[msgpack(map)]
 struct StoredTriggerPrev {
-    tenant_id: u32,
+    tenant_id: u64,
     name: String,
     collection: String,
     timing: TriggerTiming,
@@ -234,7 +234,7 @@ fn stored_trigger_missing_optional_fields_decodes() {
 #[derive(zerompk::ToMessagePack)]
 #[msgpack(map)]
 struct ChangeStreamDefPrev {
-    tenant_id: u32,
+    tenant_id: u64,
     name: String,
     collection: String,
     op_filter: OpFilter,
@@ -264,7 +264,7 @@ fn change_stream_def_missing_optional_fields_decodes() {
 #[derive(zerompk::ToMessagePack)]
 #[msgpack(map)]
 struct ScheduleDefPrev {
-    tenant_id: u32,
+    tenant_id: u64,
     name: String,
     cron_expr: String,
     body_sql: String,
@@ -298,7 +298,7 @@ fn schedule_def_missing_target_collection_decodes() {
 
 #[derive(zerompk::ToMessagePack)]
 struct RetentionPolicyDefPrev {
-    tenant_id: u32,
+    tenant_id: u64,
     name: String,
     collection: String,
     tiers: Vec<TierDef>,
@@ -333,7 +333,7 @@ fn retention_policy_def_prev_shape_decodes() {
 #[derive(zerompk::ToMessagePack)]
 #[msgpack(map)]
 struct StoredProcedurePrev {
-    tenant_id: u32,
+    tenant_id: u64,
     name: String,
     parameters: Vec<ProcedureParam>,
     body_sql: String,

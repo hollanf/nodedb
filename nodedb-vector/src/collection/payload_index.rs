@@ -37,6 +37,7 @@ use nodedb_types::Value;
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum PayloadKey {
     Null,
     Bool(bool),
@@ -82,6 +83,9 @@ impl PayloadKey {
             | Value::Range { .. }
             | Value::Record { .. }
             | Value::NdArrayCell(_) => None,
+            // Value is #[non_exhaustive]; future variants with no known
+            // payload key representation are not indexable.
+            _ => None,
         }
     }
 }
@@ -98,6 +102,7 @@ pub use nodedb_types::PayloadIndexKind;
 /// point lookup); `Range` indexes use a B-tree (O(log n) point + range
 /// scan over keys).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum PayloadIndexBitmaps {
     Equality(HashMap<PayloadKey, RoaringBitmap>),
     Range(std::collections::BTreeMap<PayloadKey, RoaringBitmap>),
@@ -108,9 +113,8 @@ impl PayloadIndexBitmaps {
         match kind {
             PayloadIndexKind::Range => Self::Range(std::collections::BTreeMap::new()),
             // Boolean is rare-cardinality; equality storage is fine.
-            PayloadIndexKind::Equality | PayloadIndexKind::Boolean => {
-                Self::Equality(HashMap::new())
-            }
+            // Unknown future variants also default to equality storage.
+            _ => Self::Equality(HashMap::new()),
         }
     }
 
@@ -360,6 +364,7 @@ impl PayloadIndexSet {
 /// A structured filter predicate that can be evaluated against the bitmap
 /// indexes. Mirrors the SQL WHERE predicates the planner builds.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum FilterPredicate {
     /// `field = value` equality.
     Eq { field: String, value: Value },

@@ -37,7 +37,7 @@ pub struct BroadcastJoinRequest {
     /// Result limit per node.
     pub limit: usize,
     /// Tenant scope.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
 }
 
 /// A shuffle join partition assignment.

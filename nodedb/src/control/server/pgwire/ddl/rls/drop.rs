@@ -36,8 +36,8 @@ pub fn drop_rls_policy(
         .iter()
         .position(|p| p.to_uppercase() == "TENANT")
         .and_then(|i| parts.get(i + 1))
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(identity.tenant_id.as_u32());
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or_else(|| identity.tenant_id.as_u64());
 
     if !state.rls.policy_exists(tenant_id, collection, name) {
         return Err(sqlstate_error(

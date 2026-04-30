@@ -90,7 +90,7 @@ async fn scheduler_loop(
 
     // Track currently running jobs (for ALLOW_OVERLAP = false enforcement).
     // Shared with spawned job tasks so they remove themselves on completion.
-    let running: Arc<std::sync::Mutex<HashSet<(u32, String)>>> =
+    let running: Arc<std::sync::Mutex<HashSet<(u64, String)>>> =
         Arc::new(std::sync::Mutex::new(HashSet::new()));
 
     // Bounded job dispatcher — caps concurrency (from SchedulerTuning)
@@ -110,7 +110,7 @@ async fn scheduler_loop(
     // `pending_minute_ticks` returns at most the current minute. That
     // bounded catch-up is what prevents a cold start from replaying
     // ticks from epoch.
-    let mut last_fired_minute: HashMap<(u32, String), u64> = HashMap::new();
+    let mut last_fired_minute: HashMap<(u64, String), u64> = HashMap::new();
 
     loop {
         tokio::select! {

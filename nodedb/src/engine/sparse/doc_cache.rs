@@ -12,7 +12,7 @@ use std::collections::{HashMap, VecDeque};
 /// Composite cache key: `(tenant_id, collection, document_id)`.
 #[derive(Eq, PartialEq, Hash, Clone)]
 struct CacheKey {
-    tenant_id: u32,
+    tenant_id: u64,
     collection: String,
     document_id: String,
 }
@@ -36,7 +36,7 @@ pub struct DocCache {
 
     /// Per-tenant entry count for fair eviction.
     /// When evicting, prefer entries from the tenant with the most cached entries.
-    tenant_counts: HashMap<u32, usize>,
+    tenant_counts: HashMap<u64, usize>,
 
     // -- Stats --
     hits: u64,
@@ -57,7 +57,7 @@ impl DocCache {
     }
 
     /// Look up a document in the cache. Returns `Some(&[u8])` on hit.
-    pub fn get(&mut self, tenant_id: u32, collection: &str, document_id: &str) -> Option<&[u8]> {
+    pub fn get(&mut self, tenant_id: u64, collection: &str, document_id: &str) -> Option<&[u8]> {
         let key = Self::make_key(tenant_id, collection, document_id);
         if let Some(val) = self.entries.get(&key) {
             self.hits += 1;
@@ -72,7 +72,7 @@ impl DocCache {
     ///
     /// Called after a successful PointPut — the document is guaranteed
     /// fresh because the write just committed.
-    pub fn put(&mut self, tenant_id: u32, collection: &str, document_id: &str, value: &[u8]) {
+    pub fn put(&mut self, tenant_id: u64, collection: &str, document_id: &str, value: &[u8]) {
         let key = Self::make_key(tenant_id, collection, document_id);
 
         // Update in-place if already present (no order change needed for FIFO).
@@ -110,7 +110,7 @@ impl DocCache {
     /// Called on PointDelete and PointUpdate to prevent stale reads.
     /// Does NOT remove from the `order` deque — the stale key will be
     /// harmlessly skipped during eviction (entry already absent from map).
-    pub fn invalidate(&mut self, tenant_id: u32, collection: &str, document_id: &str) {
+    pub fn invalidate(&mut self, tenant_id: u64, collection: &str, document_id: &str) {
         let key = Self::make_key(tenant_id, collection, document_id);
         if self.entries.remove(&key).is_some()
             && let Some(count) = self.tenant_counts.get_mut(&tenant_id)
@@ -145,7 +145,7 @@ impl DocCache {
     }
 
     /// Evict all cache entries belonging to a single `(tenant_id, collection)`.
-    pub fn evict_collection(&mut self, tenant_id: u32, collection: &str) {
+    pub fn evict_collection(&mut self, tenant_id: u64, collection: &str) {
         self.entries
             .retain(|k, _| !(k.tenant_id == tenant_id && k.collection == collection));
         let mut removed = 0usize;
@@ -167,13 +167,13 @@ impl DocCache {
     /// Evict all cache entries belonging to a specific tenant.
     ///
     /// Used during tenant purge to ensure zero residual cached data.
-    pub fn evict_tenant(&mut self, tenant_id: u32) {
+    pub fn evict_tenant(&mut self, tenant_id: u64) {
         self.entries.retain(|k, _| k.tenant_id != tenant_id);
         self.order.retain(|k| k.tenant_id != tenant_id);
         self.tenant_counts.remove(&tenant_id);
     }
 
-    fn make_key(tenant_id: u32, collection: &str, document_id: &str) -> CacheKey {
+    fn make_key(tenant_id: u64, collection: &str, document_id: &str) -> CacheKey {
         CacheKey {
             tenant_id,
             collection: collection.to_string(),

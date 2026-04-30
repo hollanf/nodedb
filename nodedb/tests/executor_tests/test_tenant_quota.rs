@@ -6,7 +6,7 @@
 use nodedb::control::security::tenant::{QuotaCheck, TenantIsolation, TenantQuota};
 use nodedb::types::TenantId;
 
-fn t(id: u32) -> TenantId {
+fn t(id: u64) -> TenantId {
     TenantId::new(id)
 }
 

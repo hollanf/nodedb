@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
     rkyv::Deserialize,
 )]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum Namespace {
     /// Database metadata: schema version, config, Shape subscriptions.
     Meta = 0,

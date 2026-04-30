@@ -98,7 +98,7 @@ pub async fn tree_sum(
         vec![coll.clone()]
     } else if let Some(catalog) = state.credentials.catalog() {
         catalog
-            .load_collections_for_tenant(tenant_id.as_u32())
+            .load_collections_for_tenant(tenant_id.as_u64())
             .unwrap_or_default()
             .iter()
             .map(|c| c.name.clone())

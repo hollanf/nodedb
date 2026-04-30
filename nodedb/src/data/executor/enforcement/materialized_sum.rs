@@ -25,7 +25,7 @@ use crate::engine::sparse::btree::SparseEngine;
 /// Returns a list of (collection, doc_id, old_value) for rollback tracking.
 pub fn apply_materialized_sums(
     sparse: &SparseEngine,
-    tid: u32,
+    tid: u64,
     bindings: &[MaterializedSumBinding],
     source_doc: &serde_json::Value,
 ) -> Result<Vec<TargetWrite>, ErrorCode> {
@@ -55,7 +55,7 @@ pub struct TargetWrite {
 /// Apply a single materialized sum binding.
 fn apply_single_binding(
     sparse: &SparseEngine,
-    tid: u32,
+    tid: u64,
     binding: &MaterializedSumBinding,
     source_doc: &serde_json::Value,
 ) -> Result<Option<TargetWrite>, ErrorCode> {

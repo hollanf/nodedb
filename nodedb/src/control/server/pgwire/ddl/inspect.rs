@@ -46,7 +46,7 @@ pub fn show_users(
         }
 
         encoder.encode_field(&user.username)?;
-        encoder.encode_field(&(user.tenant_id.as_u32() as i64))?;
+        encoder.encode_field(&(user.tenant_id.as_u64() as i64))?;
         let roles_str: String = user
             .roles
             .iter()
@@ -106,7 +106,7 @@ pub fn show_tenants(
         }
 
         let usage = tenants.usage(tid);
-        encoder.encode_field(&(tid.as_u32() as i64))?;
+        encoder.encode_field(&(tid.as_u64() as i64))?;
         encoder.encode_field(&(usage.map_or(0, |u| u.active_requests as i64)))?;
         encoder.encode_field(&(usage.map_or(0, |u| u.total_requests as i64)))?;
         encoder.encode_field(&(usage.map_or(0, |u| u.rejected_requests as i64)))?;
@@ -142,7 +142,7 @@ pub fn show_session(identity: &AuthenticatedIdentity) -> PgWireResult<Vec<Respon
     let mut encoder = DataRowEncoder::new(schema.clone());
     encoder.encode_field(&identity.username)?;
     encoder.encode_field(&(identity.user_id as i64))?;
-    encoder.encode_field(&(identity.tenant_id.as_u32() as i64))?;
+    encoder.encode_field(&(identity.tenant_id.as_u64() as i64))?;
     encoder.encode_field(&roles_str)?;
     encoder.encode_field(&auth_method)?;
     encoder.encode_field(&if identity.is_superuser { "t" } else { "f" })?;
@@ -239,7 +239,7 @@ pub fn show_permissions(
     let mut encoder = DataRowEncoder::new(schema.clone());
 
     if let Some(collection) = on_collection {
-        let target = format!("collection:{}:{collection}", identity.tenant_id.as_u32());
+        let target = format!("collection:{}:{collection}", identity.tenant_id.as_u64());
 
         // Show owner row (only when collection is specified).
         if for_grantee.is_none()
@@ -396,7 +396,7 @@ fn show_audit_log_memory(state: &SharedState, limit: usize) -> PgWireResult<Vec<
         encoder.encode_field(&(entry.seq as i64))?;
         encoder.encode_field(&(entry.timestamp_us as i64))?;
         encoder.encode_field(&format!("{:?}", entry.event))?;
-        encoder.encode_field(&(entry.tenant_id.map_or(0i64, |t| t.as_u32() as i64)))?;
+        encoder.encode_field(&(entry.tenant_id.map_or(0i64, |t| t.as_u64() as i64)))?;
         encoder.encode_field(&entry.source)?;
         encoder.encode_field(&entry.detail)?;
         rows.push(Ok(encoder.take_row()));

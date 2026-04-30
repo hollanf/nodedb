@@ -16,7 +16,7 @@ use super::types::PartitionOffset;
 const OFFSETS: TableDefinition<&str, &[u8]> = TableDefinition::new("consumer_offsets");
 
 /// Cache key: (tenant_id, stream_name, group_name).
-type GroupKey = (u32, String, String);
+type GroupKey = (u64, String, String);
 
 /// Manages offset state for all consumer groups across all streams.
 ///
@@ -60,7 +60,7 @@ impl OffsetStore {
         }
 
         // Load all offsets into cache.
-        let mut cache: HashMap<(u32, String, String), HashMap<u32, u64>> = HashMap::new();
+        let mut cache: HashMap<(u64, String, String), HashMap<u32, u64>> = HashMap::new();
         {
             let txn = db.begin_read().map_err(|e| crate::Error::Storage {
                 engine: "event_plane".into(),
@@ -121,7 +121,7 @@ impl OffsetStore {
     /// a single process lifetime.
     pub fn commit_offset(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         stream: &str,
         group: &str,
         partition_id: u32,
@@ -182,7 +182,7 @@ impl OffsetStore {
 
     /// Get the committed offset for a specific partition.
     /// Returns 0 if no offset has been committed.
-    pub fn get_offset(&self, tenant_id: u32, stream: &str, group: &str, partition_id: u32) -> u64 {
+    pub fn get_offset(&self, tenant_id: u64, stream: &str, group: &str, partition_id: u32) -> u64 {
         let cache = self.cache.read().unwrap_or_else(|p| p.into_inner());
         cache
             .get(&(tenant_id, stream.to_string(), group.to_string()))
@@ -194,7 +194,7 @@ impl OffsetStore {
     /// Get all committed offsets for a group.
     pub fn get_all_offsets(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         stream: &str,
         group: &str,
     ) -> Vec<PartitionOffset> {
@@ -213,7 +213,7 @@ impl OffsetStore {
     }
 
     /// Delete all offsets for a group (on DROP CONSUMER GROUP).
-    pub fn delete_group(&self, tenant_id: u32, stream: &str, group: &str) -> crate::Result<()> {
+    pub fn delete_group(&self, tenant_id: u64, stream: &str, group: &str) -> crate::Result<()> {
         // Remove from cache first to get partition IDs.
         let partitions: Vec<u32> = {
             let mut cache = self.cache.write().unwrap_or_else(|p| p.into_inner());
@@ -250,11 +250,11 @@ impl OffsetStore {
     }
 }
 
-fn offset_key(tenant_id: u32, stream: &str, group: &str, partition_id: u32) -> String {
+fn offset_key(tenant_id: u64, stream: &str, group: &str, partition_id: u32) -> String {
     format!("{tenant_id}:{stream}:{group}:{partition_id}")
 }
 
-fn parse_offset_key(key: &str) -> Option<(u32, String, String, u32)> {
+fn parse_offset_key(key: &str) -> Option<(u64, String, String, u32)> {
     let parts: Vec<&str> = key.splitn(4, ':').collect();
     if parts.len() == 4 {
         let tenant = parts[0].parse().ok()?;

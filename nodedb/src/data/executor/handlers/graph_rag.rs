@@ -26,7 +26,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_graph_rag_fusion(
         &self,
         task: &ExecutionTask,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         query_vector: &[f32],
         vector_top_k: usize,
@@ -186,7 +186,7 @@ impl CoreLoop {
     /// BFS traversal that also tracks hop distances from start nodes.
     fn bfs_with_distances(
         &self,
-        tid: u32,
+        tid: u64,
         start_nodes: &[&str],
         label_filter: Option<&str>,
         direction: Direction,

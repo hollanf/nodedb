@@ -94,7 +94,7 @@ impl ShapeSnapshotData {
 /// before this function is called.
 pub fn handle_subscribe<F>(
     session_id: &str,
-    tenant_id: u32,
+    tenant_id: u64,
     msg: &ShapeSubscribeMsg,
     registry: &ShapeRegistry,
     current_lsn: u64,
@@ -140,7 +140,7 @@ pub fn handle_unsubscribe(session_id: &str, msg: &ShapeUnsubscribeMsg, registry:
 /// Called by the WAL tail loop when a committed mutation is observed.
 /// Returns `(session_id, SyncFrame)` pairs for each matching subscription.
 pub fn evaluate_and_generate_deltas(
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
     doc_id: &str,
     operation: &str,

@@ -176,7 +176,7 @@ impl ArrayEngine {
 }
 
 pub(super) fn array_dir(root: &std::path::Path, id: &ArrayId) -> PathBuf {
-    root.join(format!("t{}-{}", id.tenant_id.as_u32(), id.name))
+    root.join(format!("t{}-{}", id.tenant_id.as_u64(), id.name))
 }
 
 #[cfg(test)]

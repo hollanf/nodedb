@@ -28,7 +28,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_edge_put(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         src_id: &str,
         label: &str,
@@ -104,7 +104,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_edge_put_batch(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         edges: &[crate::bridge::physical_plan::BatchEdge],
     ) -> Response {
         debug!(core = self.core_id, count = edges.len(), "edge put batch");
@@ -175,7 +175,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_edge_delete_batch(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         edges: &[crate::bridge::physical_plan::BatchEdge],
     ) -> Response {
         debug!(
@@ -209,7 +209,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_edge_delete(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         src_id: &str,
         label: &str,
@@ -241,7 +241,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_graph_hop(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         start_nodes: &[String],
         edge_label: &Option<String>,
         direction: crate::engine::graph::edge_store::Direction,
@@ -290,7 +290,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_graph_neighbors(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         node_id: &str,
         edge_label: &Option<String>,
         direction: crate::engine::graph::edge_store::Direction,
@@ -329,7 +329,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_graph_neighbors_multi(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         node_ids: &[String],
         edge_label: &Option<String>,
         direction: crate::engine::graph::edge_store::Direction,
@@ -405,7 +405,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_graph_path(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         src: &str,
         dst: &str,
         edge_label: &Option<String>,
@@ -451,7 +451,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_graph_subgraph(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         start_nodes: &[String],
         edge_label: &Option<String>,
         depth: usize,

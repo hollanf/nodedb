@@ -24,7 +24,7 @@ pub fn add_period_lock(
     identity: &AuthenticatedIdentity,
     sql: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let parts: Vec<&str> = sql.split_whitespace().collect();
     let upper = sql.to_uppercase();
 
@@ -113,7 +113,7 @@ pub fn drop_period_lock(
     identity: &AuthenticatedIdentity,
     parts: &[&str],
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let name = parts
         .get(2)
         .ok_or_else(|| sqlstate_error("42601", "missing collection name"))?

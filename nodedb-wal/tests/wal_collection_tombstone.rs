@@ -19,7 +19,7 @@ use nodedb_wal::{CollectionTombstonePayload, TombstoneSet, WalRecord, extract_to
 fn append_record(
     writer: &mut WalWriter,
     record_type: RecordType,
-    tenant_id: u32,
+    tenant_id: u64,
     payload: &[u8],
 ) -> u64 {
     writer

@@ -250,7 +250,7 @@ fn load_collections(
             .collect()
     } else {
         catalog
-            .load_collections_for_tenant(identity.tenant_id.as_u32())
+            .load_collections_for_tenant(identity.tenant_id.as_u64())
             .unwrap_or_default()
     }
 }

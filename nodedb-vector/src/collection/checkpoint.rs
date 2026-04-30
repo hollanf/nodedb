@@ -285,6 +285,7 @@ fn quantization_to_tag(q: VectorQuantization) -> u8 {
         VectorQuantization::Binary => 5,
         VectorQuantization::Ternary => 6,
         VectorQuantization::Opq => 7,
+        _ => 0,
     }
 }
 

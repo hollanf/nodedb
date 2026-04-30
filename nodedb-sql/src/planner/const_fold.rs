@@ -187,6 +187,9 @@ fn ndb_to_sql_value(v: Value) -> SqlValue {
         | Value::Range { .. }
         | Value::Record { .. }
         | Value::NdArrayCell(_) => SqlValue::Null,
+        // Value is #[non_exhaustive]; future variants collapse to Null in the
+        // constant-folding path — runtime expression evaluation handles them.
+        _ => SqlValue::Null,
     }
 }
 

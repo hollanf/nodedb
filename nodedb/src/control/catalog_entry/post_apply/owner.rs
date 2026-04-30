@@ -18,7 +18,7 @@ use crate::control::state::SharedState;
 /// `ALTER OBJECT OWNER`) use `CatalogEntry::PutOwner` directly.
 pub(super) fn install_from_parent(
     object_type: &'static str,
-    tenant_id: u32,
+    tenant_id: u64,
     object_name: &str,
     owner_username: &str,
     shared: &SharedState,
@@ -42,7 +42,7 @@ pub fn put(stored: StoredOwner, shared: Arc<SharedState>) {
     );
 }
 
-pub fn delete(object_type: String, tenant_id: u32, object_name: String, shared: Arc<SharedState>) {
+pub fn delete(object_type: String, tenant_id: u64, object_name: String, shared: Arc<SharedState>) {
     let removed =
         shared
             .permissions

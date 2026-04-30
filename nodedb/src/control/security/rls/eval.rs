@@ -21,7 +21,7 @@ impl RlsPolicyStore {
     /// Check if a document passes all legacy write policies.
     pub fn check_write(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         document: &serde_json::Value,
         username: &str,
@@ -84,7 +84,7 @@ impl RlsPolicyStore {
     /// (fail-closed semantics).
     pub fn combined_read_predicate_with_auth(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         auth: &AuthContext,
     ) -> Option<Vec<u8>> {
@@ -141,7 +141,7 @@ impl RlsPolicyStore {
     /// auth references.
     pub fn check_write_with_auth(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         document: &serde_json::Value,
         auth: &AuthContext,
@@ -172,7 +172,7 @@ fn check_compiled_write(
     compiled: &RlsPredicate,
     document: &serde_json::Value,
     auth: &AuthContext,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
 ) -> crate::Result<()> {
     let filters = match substitute_to_scan_filters(compiled, auth) {
@@ -217,7 +217,7 @@ fn check_legacy_write(
     policy: &RlsPolicy,
     document: &serde_json::Value,
     auth: &AuthContext,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
 ) -> crate::Result<()> {
     let filters: Vec<crate::bridge::scan_filter::ScanFilter> =

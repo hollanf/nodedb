@@ -43,26 +43,26 @@ pub struct PurgeMetrics {
     /// `nodedb_deactivated_collections_pending_purge{tenant}` — gauge of
     /// soft-deleted collections still inside the retention window.
     /// Refreshed by the sweeper each pass.
-    pub pending_by_tenant: RwLock<HashMap<u32, u64>>,
+    pub pending_by_tenant: RwLock<HashMap<u64, u64>>,
 
     /// `nodedb_collection_purge_duration_seconds{tenant,engine}` —
     /// histogram of how long a single collection's hard-delete takes,
     /// end-to-end (reclaim + catalog cleanup + WAL tombstone emit).
     /// Key: `(tenant_id, engine_slug)`.
-    pub purge_duration_us: RwLock<HashMap<(u32, String), AtomicHistogram>>,
+    pub purge_duration_us: RwLock<HashMap<(u64, String), AtomicHistogram>>,
 
     /// `nodedb_collection_purge_bytes_reclaimed_total{tenant,engine,tier}` —
     /// counter of bytes reclaimed during hard-delete, broken out by
     /// storage tier so operators can tell L1 (NVMe) reclaim apart
     /// from L2 (S3) reclaim.
     /// Key: `(tenant_id, engine_slug, tier)`.
-    pub bytes_reclaimed: RwLock<HashMap<(u32, String, &'static str), AtomicU64>>,
+    pub bytes_reclaimed: RwLock<HashMap<(u64, String, &'static str), AtomicU64>>,
 
     /// `nodedb_l2_cleanup_queue_depth{tenant}` — gauge of pending S3
     /// delete operations per tenant. Refreshed by the L2 cleanup
     /// worker. High and persistent values mean S3 delete is falling
     /// behind and storage cost is growing silently.
-    pub l2_cleanup_queue_depth: RwLock<HashMap<u32, u64>>,
+    pub l2_cleanup_queue_depth: RwLock<HashMap<u64, u64>>,
 }
 
 impl PurgeMetrics {
@@ -73,7 +73,7 @@ impl PurgeMetrics {
     /// Replace the per-tenant pending-purge snapshot. The sweeper
     /// should pass the complete map each pass so tenants whose
     /// dropped-collection count went to zero drop out of the gauge.
-    pub fn set_pending_by_tenant(&self, snapshot: HashMap<u32, u64>) {
+    pub fn set_pending_by_tenant(&self, snapshot: HashMap<u64, u64>) {
         let mut m = self
             .pending_by_tenant
             .write()
@@ -82,7 +82,7 @@ impl PurgeMetrics {
     }
 
     /// Record one end-to-end hard-delete duration (microseconds).
-    pub fn record_purge_duration(&self, tenant: u32, engine: &str, duration_us: u64) {
+    pub fn record_purge_duration(&self, tenant: u64, engine: &str, duration_us: u64) {
         let key = (tenant, engine.to_string());
         let mut m = self
             .purge_duration_us
@@ -93,7 +93,7 @@ impl PurgeMetrics {
 
     /// Add bytes reclaimed for a tenant+engine+tier.
     /// `tier` must be `"l1"` or `"l2"`.
-    pub fn add_bytes_reclaimed(&self, tenant: u32, engine: &str, tier: &'static str, bytes: u64) {
+    pub fn add_bytes_reclaimed(&self, tenant: u64, engine: &str, tier: &'static str, bytes: u64) {
         let key = (tenant, engine.to_string(), tier);
         let mut m = self
             .bytes_reclaimed
@@ -105,7 +105,7 @@ impl PurgeMetrics {
     }
 
     /// Replace the L2 cleanup queue depth snapshot.
-    pub fn set_l2_cleanup_queue_depth(&self, snapshot: HashMap<u32, u64>) {
+    pub fn set_l2_cleanup_queue_depth(&self, snapshot: HashMap<u64, u64>) {
         let mut m = self
             .l2_cleanup_queue_depth
             .write()
@@ -217,7 +217,7 @@ impl PurgeMetrics {
 /// their numeric id as the label; the overflow bucket, if present, is last).
 /// Tenants beyond the cap are ranked by descending value; the bottom ones
 /// are summed into a single `__overflow__` row.
-fn cap_simple_tenant_map(map: &HashMap<u32, u64>) -> Vec<(String, u64)> {
+fn cap_simple_tenant_map(map: &HashMap<u64, u64>) -> Vec<(String, u64)> {
     if map.len() <= MAX_PROM_TENANTS {
         let mut rows: Vec<(String, u64)> = map.iter().map(|(t, v)| (t.to_string(), *v)).collect();
         rows.sort_by(|a, b| a.0.cmp(&b.0));
@@ -225,7 +225,7 @@ fn cap_simple_tenant_map(map: &HashMap<u32, u64>) -> Vec<(String, u64)> {
     }
 
     // Sort by descending value so the most-significant tenants are kept.
-    let mut sorted: Vec<(u32, u64)> = map.iter().map(|(t, v)| (*t, *v)).collect();
+    let mut sorted: Vec<(u64, u64)> = map.iter().map(|(t, v)| (*t, *v)).collect();
     sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
     let mut rows: Vec<(String, u64)> = sorted[..MAX_PROM_TENANTS]
@@ -247,18 +247,18 @@ fn cap_simple_tenant_map(map: &HashMap<u32, u64>) -> Vec<(String, u64)> {
 /// Returns `(tenant_label, engine, merged_histogram)` triples, sorted by
 /// `(tenant_label, engine)`.
 fn cap_duration_tenant_map(
-    map: &HashMap<(u32, String), AtomicHistogram>,
+    map: &HashMap<(u64, String), AtomicHistogram>,
 ) -> Vec<(String, String, AtomicHistogram)> {
     // Collect distinct tenant ids and their aggregate counts for ranking.
-    let mut tenant_counts: HashMap<u32, u64> = HashMap::new();
+    let mut tenant_counts: HashMap<u64, u64> = HashMap::new();
     for ((tenant, _), hist) in map.iter() {
         *tenant_counts.entry(*tenant).or_default() += hist.count();
     }
 
-    let kept_tenants: std::collections::HashSet<u32> = if tenant_counts.len() <= MAX_PROM_TENANTS {
+    let kept_tenants: std::collections::HashSet<u64> = if tenant_counts.len() <= MAX_PROM_TENANTS {
         tenant_counts.keys().copied().collect()
     } else {
-        let mut ranked: Vec<(u32, u64)> = tenant_counts.into_iter().collect();
+        let mut ranked: Vec<(u64, u64)> = tenant_counts.into_iter().collect();
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         ranked[..MAX_PROM_TENANTS].iter().map(|(t, _)| *t).collect()
     };
@@ -293,18 +293,18 @@ fn cap_duration_tenant_map(
 /// `(engine, tier)` combination. Returns `(label, engine, tier, value)`
 /// quads sorted by `(label, engine, tier)`.
 fn cap_bytes_tenant_map(
-    map: &HashMap<(u32, String, &'static str), AtomicU64>,
+    map: &HashMap<(u64, String, &'static str), AtomicU64>,
 ) -> Vec<(String, String, &'static str, u64)> {
     // Rank tenants by their total bytes across all (engine, tier) combos.
-    let mut tenant_totals: HashMap<u32, u64> = HashMap::new();
+    let mut tenant_totals: HashMap<u64, u64> = HashMap::new();
     for ((tenant, _, _), counter) in map.iter() {
         *tenant_totals.entry(*tenant).or_default() += counter.load(Ordering::Relaxed);
     }
 
-    let kept_tenants: std::collections::HashSet<u32> = if tenant_totals.len() <= MAX_PROM_TENANTS {
+    let kept_tenants: std::collections::HashSet<u64> = if tenant_totals.len() <= MAX_PROM_TENANTS {
         tenant_totals.keys().copied().collect()
     } else {
-        let mut ranked: Vec<(u32, u64)> = tenant_totals.into_iter().collect();
+        let mut ranked: Vec<(u64, u64)> = tenant_totals.into_iter().collect();
         ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         ranked[..MAX_PROM_TENANTS].iter().map(|(t, _)| *t).collect()
     };
@@ -337,8 +337,8 @@ mod tests {
     fn pending_renders_per_tenant() {
         let m = PurgeMetrics::new();
         let mut snap = HashMap::new();
-        snap.insert(1_u32, 3);
-        snap.insert(7_u32, 0);
+        snap.insert(1_u64, 3);
+        snap.insert(7_u64, 0);
         m.set_pending_by_tenant(snap);
         let mut out = String::new();
         m.write_prometheus(&mut out);
@@ -349,9 +349,9 @@ mod tests {
     #[test]
     fn bytes_reclaimed_accumulates_per_tier() {
         let m = PurgeMetrics::new();
-        m.add_bytes_reclaimed(2, "columnar", "l1", 1_000);
-        m.add_bytes_reclaimed(2, "columnar", "l1", 500);
-        m.add_bytes_reclaimed(2, "columnar", "l2", 9_000);
+        m.add_bytes_reclaimed(2_u64, "columnar", "l1", 1_000);
+        m.add_bytes_reclaimed(2_u64, "columnar", "l1", 500);
+        m.add_bytes_reclaimed(2_u64, "columnar", "l2", 9_000);
         let mut out = String::new();
         m.write_prometheus(&mut out);
         assert!(out.contains(
@@ -366,7 +366,7 @@ mod tests {
     fn l2_queue_gauge_renders() {
         let m = PurgeMetrics::new();
         let mut snap = HashMap::new();
-        snap.insert(4_u32, 17);
+        snap.insert(4_u64, 17);
         m.set_l2_cleanup_queue_depth(snap);
         let mut out = String::new();
         m.write_prometheus(&mut out);
@@ -384,8 +384,8 @@ mod tests {
     #[test]
     fn duration_histogram_emits() {
         let m = PurgeMetrics::new();
-        m.record_purge_duration(1, "document_schemaless", 12_000);
-        m.record_purge_duration(1, "document_schemaless", 34_000);
+        m.record_purge_duration(1_u64, "document_schemaless", 12_000);
+        m.record_purge_duration(1_u64, "document_schemaless", 34_000);
         let mut out = String::new();
         m.write_prometheus(&mut out);
         assert!(out.contains(r#"tenant="1""#));
@@ -398,9 +398,7 @@ mod tests {
     fn pending_under_cap_emits_all_rows() {
         let m = PurgeMetrics::new();
         // Insert exactly MAX_PROM_TENANTS tenants — all should appear.
-        let snap: HashMap<u32, u64> = (0..MAX_PROM_TENANTS as u32)
-            .map(|i| (i, i as u64))
-            .collect();
+        let snap: HashMap<u64, u64> = (0..MAX_PROM_TENANTS as u64).map(|i| (i, i)).collect();
         m.set_pending_by_tenant(snap);
         let mut out = String::new();
         m.write_prometheus(&mut out);
@@ -422,8 +420,8 @@ mod tests {
         let m = PurgeMetrics::new();
         // 300 tenants: tenant 0..299 each with value equal to their id + 1
         // so that value sums are predictable.
-        let total = 300_u32;
-        let snap: HashMap<u32, u64> = (0..total).map(|i| (i, i as u64 + 1)).collect();
+        let total = 300_u64;
+        let snap: HashMap<u64, u64> = (0..total).map(|i| (i, i + 1)).collect();
         m.set_pending_by_tenant(snap);
         let mut out = String::new();
         m.write_prometheus(&mut out);
@@ -468,8 +466,8 @@ mod tests {
         // via the PurgeMetrics path above; here we check the arithmetic).
         // We can't change MAX_PROM_TENANTS, but we can pick 300 tenants
         // with known values and check the overflow value matches exactly.
-        let total: u32 = 300;
-        let map: HashMap<u32, u64> = (0..total).map(|i| (i, i as u64 + 1)).collect();
+        let total: u64 = 300;
+        let map: HashMap<u64, u64> = (0..total).map(|i| (i, i + 1)).collect();
         let rows = cap_simple_tenant_map(&map);
 
         // Exactly 256 individual + 1 overflow.

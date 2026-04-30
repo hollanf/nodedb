@@ -20,7 +20,7 @@ pub struct DmlCounter {
     /// `(tenant_id, collection)` → mutation count since last ANALYZE.
     /// Uses Mutex + HashMap (not RwLock) because `record_dml` always
     /// needs write access to insert new entries via the entry API.
-    counts: Mutex<HashMap<(u32, String), u64>>,
+    counts: Mutex<HashMap<(u64, String), u64>>,
 }
 
 impl DmlCounter {
@@ -34,7 +34,7 @@ impl DmlCounter {
     ///
     /// Called after each successful INSERT/UPDATE/DELETE dispatch.
     /// Uses the entry API to atomically insert-or-increment (no TOCTOU).
-    pub fn record_dml(&self, tenant_id: u32, collection: &str) {
+    pub fn record_dml(&self, tenant_id: u64, collection: &str) {
         let mut map = self.counts.lock().unwrap_or_else(|p| p.into_inner());
         *map.entry((tenant_id, collection.to_string())).or_insert(0) += 1;
     }
@@ -43,7 +43,7 @@ impl DmlCounter {
     ///
     /// Returns `true` if the DML count since last ANALYZE exceeds
     /// `max(last_row_count * 0.10, 1000)`.
-    pub fn should_analyze(&self, tenant_id: u32, collection: &str, last_row_count: u64) -> bool {
+    pub fn should_analyze(&self, tenant_id: u64, collection: &str, last_row_count: u64) -> bool {
         let threshold = (last_row_count / 10).max(1000);
         let map = self.counts.lock().unwrap_or_else(|p| p.into_inner());
         map.get(&(tenant_id, collection.to_string()))
@@ -53,7 +53,7 @@ impl DmlCounter {
     }
 
     /// Reset the DML count for a collection (called after ANALYZE completes).
-    pub fn reset(&self, tenant_id: u32, collection: &str) {
+    pub fn reset(&self, tenant_id: u64, collection: &str) {
         let mut map = self.counts.lock().unwrap_or_else(|p| p.into_inner());
         map.remove(&(tenant_id, collection.to_string()));
     }

@@ -72,7 +72,7 @@ impl SystemCatalog {
     }
 
     /// Hard-delete a tenant identity record. Returns `true` if a row existed.
-    pub fn delete_tenant(&self, tenant_id: u32) -> crate::Result<bool> {
+    pub fn delete_tenant(&self, tenant_id: u64) -> crate::Result<bool> {
         let key = tenant_id.to_string();
         let write_txn = self
             .db

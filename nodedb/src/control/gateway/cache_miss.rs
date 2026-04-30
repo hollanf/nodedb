@@ -25,7 +25,7 @@ use crate::control::state::SharedState;
 /// `tenant_id` — used when acquiring the descriptor lease.
 pub async fn plan_with_cache_miss_retry<F, P>(
     shared: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     plan_fn: F,
 ) -> Result<P, Error>
 where
@@ -54,7 +54,7 @@ where
 /// catalog is always fresh.
 async fn refresh_descriptor_lease(
     shared: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     descriptor: &str,
 ) -> Result<(), Error> {
     if shared.metadata_raft.get().is_none() {

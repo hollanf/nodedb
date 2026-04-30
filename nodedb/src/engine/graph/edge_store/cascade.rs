@@ -30,7 +30,7 @@ impl EdgeStore {
     /// in this tenant whose latest version touches `node` as src or dst and
     /// is not a sentinel.
     fn live_bases_touching_node(&self, tid: TenantId, node: &str) -> crate::Result<Vec<BaseKey>> {
-        let t = tid.as_u32();
+        let t = tid.as_u64();
         let read_txn = self
             .db
             .begin_read()

@@ -166,7 +166,7 @@ impl NodeDbPgHandler {
                         &handle.sequence_key,
                         handle.value,
                         &identity.username,
-                        identity.tenant_id.as_u32(),
+                        identity.tenant_id.as_u64(),
                     ),
                 );
             }
@@ -242,7 +242,7 @@ impl NodeDbPgHandler {
                         key,
                         handle.value,
                         &identity.username,
-                        identity.tenant_id.as_u32(),
+                        identity.tenant_id.as_u64(),
                     ),
                 );
             }
@@ -271,7 +271,7 @@ impl NodeDbPgHandler {
         }
 
         let parts: Vec<&str> = sql_trimmed.split_whitespace().collect();
-        let tenant_id = identity.tenant_id.as_u32();
+        let tenant_id = identity.tenant_id.as_u64();
 
         // Single-partition: COMMIT OFFSET PARTITION <p> AT <lsn> ON <stream> CONSUMER GROUP <name>
         if parts.len() >= 11

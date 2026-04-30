@@ -164,7 +164,7 @@ impl CompactionConfig {
 #[msgpack(map)]
 pub struct ChangeStreamDef {
     /// Tenant that owns this stream.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Stream name (unique per tenant).
     pub name: String,
     /// Collection to watch. `"*"` means all collections in the tenant.

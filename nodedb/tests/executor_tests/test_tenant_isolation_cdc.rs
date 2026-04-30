@@ -6,8 +6,8 @@
 use nodedb::control::change_stream::{ChangeEvent, ChangeOperation, ChangeStream};
 use nodedb::types::{Lsn, TenantId};
 
-const TENANT_A: u32 = 10;
-const TENANT_B: u32 = 20;
+const TENANT_A: u64 = 10;
+const TENANT_B: u64 = 20;
 
 #[test]
 fn cdc_stream_isolated_between_tenants() {

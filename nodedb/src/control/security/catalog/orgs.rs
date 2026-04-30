@@ -8,7 +8,7 @@ use super::types::{ORG_MEMBERS, ORGS, SystemCatalog, catalog_err};
 pub struct StoredOrg {
     pub org_id: String,
     pub name: String,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Organization status: active, suspended, banned.
     #[msgpack(default = "default_active")]
     pub status: String,

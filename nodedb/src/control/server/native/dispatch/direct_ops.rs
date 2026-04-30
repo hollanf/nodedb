@@ -39,7 +39,7 @@ pub(crate) async fn handle_direct_op(
 
     // Inject RLS filters from auth context (same as pgwire planner).
     if let Err(e) = crate::control::planner::rls_injection::inject_rls_for_single_plan(
-        tenant_id.as_u32(),
+        tenant_id.as_u64(),
         &mut plan,
         &ctx.state.rls,
         ctx.auth_context,

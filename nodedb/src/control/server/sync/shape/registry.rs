@@ -14,7 +14,7 @@ struct ClientShapes {
     /// Active shape subscriptions: shape_id → definition.
     shapes: HashMap<ShapeId, ShapeDefinition>,
     /// Tenant ID.
-    tenant_id: u32,
+    tenant_id: u64,
     /// When shapes were last modified.
     last_modified: Instant,
 }
@@ -43,7 +43,7 @@ impl ShapeRegistry {
     }
 
     /// Register a shape subscription for a session.
-    pub fn subscribe(&self, session_id: &str, tenant_id: u32, shape: ShapeDefinition) {
+    pub fn subscribe(&self, session_id: &str, tenant_id: u64, shape: ShapeDefinition) {
         let mut sessions =
             crate::control::lock_utils::write_or_recover(self.sessions.write(), "shape_sessions");
         let client = sessions
@@ -108,7 +108,7 @@ impl ShapeRegistry {
     /// to the matching sessions.
     pub fn evaluate_mutation(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         doc_id: &str,
     ) -> Vec<(String, ShapeId)> {
@@ -131,7 +131,7 @@ impl ShapeRegistry {
     }
 
     /// Get the session ID for a session's shape state.
-    pub fn session_info(&self, session_id: &str) -> Option<(u32, usize)> {
+    pub fn session_info(&self, session_id: &str) -> Option<(u64, usize)> {
         let sessions =
             crate::control::lock_utils::read_or_recover(self.sessions.read(), "shape_sessions");
         sessions
@@ -163,7 +163,7 @@ impl ShapeRegistry {
     /// that the existing document/vector matching path is not disturbed.
     pub fn evaluate_array_mutation(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         array_name: &str,
         coord: &[u64],
     ) -> Vec<(String, ShapeId)> {
@@ -195,7 +195,7 @@ impl ShapeRegistry {
     }
 
     /// Export all shapes for persistence (serializable snapshot).
-    pub fn export_all(&self) -> Vec<(String, u32, ShapeDefinition)> {
+    pub fn export_all(&self) -> Vec<(String, u64, ShapeDefinition)> {
         let sessions =
             crate::control::lock_utils::read_or_recover(self.sessions.read(), "shape_sessions");
         let mut result = Vec::new();
@@ -208,7 +208,7 @@ impl ShapeRegistry {
     }
 
     /// Import shapes from a persisted snapshot (called on startup).
-    pub fn import(&self, shapes: Vec<(String, u32, ShapeDefinition)>) {
+    pub fn import(&self, shapes: Vec<(String, u64, ShapeDefinition)>) {
         let mut sessions =
             crate::control::lock_utils::write_or_recover(self.sessions.write(), "shape_sessions");
         for (session_id, tenant_id, shape) in shapes {

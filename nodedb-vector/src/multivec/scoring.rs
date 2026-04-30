@@ -25,13 +25,8 @@ use crate::distance::scalar::scalar_distance;
 fn dist_to_sim(d: f32, metric: DistanceMetric) -> f32 {
     match metric {
         DistanceMetric::Cosine => 1.0 - d,
-        DistanceMetric::L2
-        | DistanceMetric::InnerProduct
-        | DistanceMetric::Manhattan
-        | DistanceMetric::Chebyshev
-        | DistanceMetric::Hamming
-        | DistanceMetric::Jaccard
-        | DistanceMetric::Pearson => -d,
+        // All other metrics (and unknown future metrics) use negated distance.
+        _ => -d,
     }
 }
 

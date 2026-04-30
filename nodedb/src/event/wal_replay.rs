@@ -90,7 +90,7 @@ fn convert_records_to_events(
 
         if let Some(event) = record_to_event(record, &mut sequence) {
             if tombstones.is_tombstoned(
-                event.tenant_id.as_u32(),
+                event.tenant_id.as_u64(),
                 &event.collection,
                 event.lsn.as_u64(),
             ) {
@@ -369,7 +369,7 @@ mod tests {
     fn make_record(
         rt: RecordType,
         payload: &[u8],
-        tenant_id: u32,
+        tenant_id: u64,
         vshard_id: u32,
         lsn: u64,
     ) -> WalRecord {

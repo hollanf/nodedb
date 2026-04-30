@@ -30,7 +30,7 @@ use nodedb_types::value::Value;
 /// sync client's receive loop.
 #[derive(Debug, Clone)]
 pub struct CollectionPurgedEvent {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub name: String,
     /// WAL LSN at which the purge was applied. Handlers can compare
     /// this against locally-observed LSNs for resume/replay logic.
@@ -400,7 +400,7 @@ fn parse_dropped_collection_rows(result: &QueryResult) -> NodeDbResult<Vec<Dropp
             )));
         }
         out.push(DroppedCollection {
-            tenant_id: value_as_u32(&row[0])?,
+            tenant_id: value_as_u64(&row[0])?,
             name: value_as_string(&row[1])?,
             owner: value_as_string(&row[2])?,
             engine_type: value_as_string(&row[3])?,
@@ -409,18 +409,6 @@ fn parse_dropped_collection_rows(result: &QueryResult) -> NodeDbResult<Vec<Dropp
         });
     }
     Ok(out)
-}
-
-fn value_as_u32(v: &Value) -> NodeDbResult<u32> {
-    match v {
-        Value::Integer(i) => Ok(*i as u32),
-        Value::String(s) => s
-            .parse::<u32>()
-            .map_err(|e| NodeDbError::storage(format!("parse u32 from '{s}': {e}"))),
-        _ => Err(NodeDbError::storage(format!(
-            "expected integer for u32 column, got {v:?}"
-        ))),
-    }
 }
 
 fn value_as_u64(v: &Value) -> NodeDbResult<u64> {

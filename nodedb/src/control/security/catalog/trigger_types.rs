@@ -157,7 +157,7 @@ impl TriggerBatchMode {
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 #[msgpack(map)]
 pub struct StoredTrigger {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub name: String,
     /// Collection this trigger is attached to.
     pub collection: String,

@@ -24,7 +24,7 @@ pub(super) async fn handle_shape_subscribe_async(
     use crate::types::TenantId;
 
     let msg: super::shape::handler::ShapeSubscribeMsg = frame.decode_body()?;
-    let tenant_id = session.tenant_id.map(|t| t.as_u32()).unwrap_or(0);
+    let tenant_id = session.tenant_id.map(|t| t.as_u64()).unwrap_or(0);
 
     // Quota enforcement — reject before dispatch.
     let tid = TenantId::new(tenant_id);
@@ -129,6 +129,17 @@ pub(super) async fn handle_shape_subscribe_async(
             );
 
             // 3. Return empty snapshot data — catch-up via Phase H.
+            super::shape::handler::ShapeSnapshotData::empty()
+        }
+        // ShapeType is #[non_exhaustive]: new variants added in future protocol
+        // versions reach this arm before the handler is updated. Return empty
+        // snapshot — the subscriber will receive a well-formed but unpopulated
+        // response and can retry once the server is updated.
+        _ => {
+            warn!(
+                session = %session.session_id,
+                "shape subscribe: unknown shape_type variant, sending empty snapshot"
+            );
             super::shape::handler::ShapeSnapshotData::empty()
         }
     };

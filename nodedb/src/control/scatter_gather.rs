@@ -321,7 +321,7 @@ pub async fn coordinate_cross_shard_hop(
         let gateway_clone = gateway.clone();
         let credentials_clone = std::sync::Arc::clone(&shared.credentials);
         let retention_clone = std::sync::Arc::clone(&shared.retention_policy_registry);
-        let tenant_id_u32 = tenant_id.as_u32();
+        let tenant_id_u64 = tenant_id.as_u64();
         let label_sql = label_clause.clone();
         let direction_sql = direction_word.to_string();
 
@@ -335,7 +335,7 @@ pub async fn coordinate_cross_shard_hop(
                 );
 
                 let gw_ctx = crate::control::gateway::core::QueryContext {
-                    tenant_id: crate::types::TenantId::new(tenant_id_u32),
+                    tenant_id: crate::types::TenantId::new(tenant_id_u64),
                     trace_id: TraceId::generate(),
                 };
 
@@ -351,7 +351,7 @@ pub async fn coordinate_cross_shard_hop(
                     tokio::runtime::Handle::current().block_on(
                         plan_ctx.plan_sql(
                             &sql_for_plan,
-                            crate::types::TenantId::new(tenant_id_u32),
+                            crate::types::TenantId::new(tenant_id_u64),
                         ),
                     )
                 });

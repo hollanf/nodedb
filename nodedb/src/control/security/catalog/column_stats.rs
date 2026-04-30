@@ -8,7 +8,7 @@ use super::types::{COLUMN_STATS, SystemCatalog, catalog_err};
 /// Used by DataFusion's cost-based optimizer for cardinality estimation.
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct StoredColumnStats {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub collection: String,
     pub column: String,
     /// Total number of rows in the collection at ANALYZE time.
@@ -51,7 +51,7 @@ impl SystemCatalog {
     /// Load all column statistics for a collection.
     pub fn load_column_stats(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
     ) -> crate::Result<Vec<StoredColumnStats>> {
         let prefix = format!("{tenant_id}:{collection}:");
@@ -78,7 +78,7 @@ impl SystemCatalog {
     }
 }
 
-fn stats_key(tenant_id: u32, collection: &str, column: &str) -> String {
+fn stats_key(tenant_id: u64, collection: &str, column: &str) -> String {
     format!("{tenant_id}:{collection}:{column}")
 }
 

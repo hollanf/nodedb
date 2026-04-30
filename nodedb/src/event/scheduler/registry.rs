@@ -10,7 +10,7 @@ use super::types::ScheduleDef;
 /// In-memory schedule registry.
 pub struct ScheduleRegistry {
     /// (tenant_id, schedule_name) → ScheduleDef.
-    by_name: RwLock<HashMap<(u32, String), ScheduleDef>>,
+    by_name: RwLock<HashMap<(u64, String), ScheduleDef>>,
 }
 
 impl ScheduleRegistry {
@@ -26,13 +26,13 @@ impl ScheduleRegistry {
         map.insert(key, def);
     }
 
-    pub fn unregister(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn unregister(&self, tenant_id: u64, name: &str) -> bool {
         let key = (tenant_id, name.to_string());
         let mut map = self.by_name.write().unwrap_or_else(|p| p.into_inner());
         map.remove(&key).is_some()
     }
 
-    pub fn get(&self, tenant_id: u32, name: &str) -> Option<ScheduleDef> {
+    pub fn get(&self, tenant_id: u64, name: &str) -> Option<ScheduleDef> {
         let key = (tenant_id, name.to_string());
         let map = self.by_name.read().unwrap_or_else(|p| p.into_inner());
         map.get(&key).cloned()
@@ -74,7 +74,7 @@ impl ScheduleRegistry {
     }
 
     /// List all schedules for a tenant.
-    pub fn list_for_tenant(&self, tenant_id: u32) -> Vec<ScheduleDef> {
+    pub fn list_for_tenant(&self, tenant_id: u64) -> Vec<ScheduleDef> {
         let map = self.by_name.read().unwrap_or_else(|p| p.into_inner());
         map.values()
             .filter(|s| s.tenant_id == tenant_id)

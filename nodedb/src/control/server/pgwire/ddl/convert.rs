@@ -33,7 +33,7 @@ pub async fn convert_collection(
     };
 
     let mut coll = catalog
-        .get_collection(tenant_id.as_u32(), &collection)
+        .get_collection(tenant_id.as_u64(), &collection)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
         .ok_or_else(|| {
             sqlstate_error(
@@ -139,7 +139,7 @@ pub async fn convert_collection(
     tracing::info!(
         %collection,
         target_type,
-        tenant = tenant_id.as_u32(),
+        tenant = tenant_id.as_u64(),
         "collection converted"
     );
 

@@ -16,7 +16,7 @@ pub fn show_change_streams(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let schema = Arc::new(vec![
         text_field("name"),

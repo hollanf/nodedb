@@ -21,7 +21,7 @@ pub async fn handle_analyze(
     identity: &AuthenticatedIdentity,
     sql: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let parts: Vec<&str> = sql.split_whitespace().collect();
 
     let collection = parts

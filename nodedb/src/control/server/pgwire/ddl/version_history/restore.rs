@@ -26,7 +26,7 @@ pub async fn restore_version(
 
     let vv_json = super::at_version::resolve_checkpoint_vv(
         state,
-        tenant_id.as_u32(),
+        tenant_id.as_u64(),
         &collection,
         &doc_id,
         &checkpoint_name,

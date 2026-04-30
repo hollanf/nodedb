@@ -246,7 +246,7 @@ impl AuthContext {
                 .email
                 .as_ref()
                 .map(|e| serde_json::Value::String(e.clone())),
-            "tenant_id" => Some(serde_json::json!(self.tenant_id.as_u32())),
+            "tenant_id" => Some(serde_json::json!(self.tenant_id.as_u64())),
             "org_id" => self
                 .org_id
                 .as_ref()

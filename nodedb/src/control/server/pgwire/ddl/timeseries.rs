@@ -34,7 +34,7 @@ pub fn create_timeseries(
     let tenant_id = identity.tenant_id;
 
     if let Some(catalog) = state.credentials.catalog()
-        && let Ok(Some(_)) = catalog.get_collection(tenant_id.as_u32(), &name)
+        && let Ok(Some(_)) = catalog.get_collection(tenant_id.as_u64(), &name)
     {
         return Err(sqlstate_error(
             "42P07",
@@ -59,7 +59,7 @@ pub fn create_timeseries(
     });
 
     let coll = StoredCollection {
-        tenant_id: tenant_id.as_u32(),
+        tenant_id: tenant_id.as_u64(),
         name: name.clone(),
         owner: identity.username.clone(),
         created_at: now,
@@ -104,7 +104,7 @@ pub fn create_timeseries(
         let config = nodedb_types::timeseries::TieredPartitionConfig::origin_defaults();
         let registry =
             crate::engine::timeseries::partition_registry::PartitionRegistry::new(config);
-        let key = format!("{}:{}", tenant_id.as_u32(), name);
+        let key = format!("{}:{}", tenant_id.as_u64(), name);
         let mut regs =
             crate::control::lock_utils::lock_or_recover(registries.lock(), "ts_registries");
         regs.insert(key, registry);
@@ -112,7 +112,7 @@ pub fn create_timeseries(
 
     tracing::info!(
         collection = name,
-        tenant = tenant_id.as_u32(),
+        tenant = tenant_id.as_u64(),
         "timeseries collection created"
     );
 
@@ -139,7 +139,7 @@ pub fn show_partitions(
 
     // Verify collection exists and is timeseries.
     if let Some(catalog) = state.credentials.catalog() {
-        match catalog.get_collection(tenant_id.as_u32(), &name) {
+        match catalog.get_collection(tenant_id.as_u64(), &name) {
             Ok(Some(coll)) if coll.collection_type.is_timeseries() => {}
             Ok(Some(_)) => {
                 return Err(sqlstate_error(
@@ -170,7 +170,7 @@ pub fn show_partitions(
 
     if let Some(registries) = state.timeseries_registries() {
         let regs = crate::control::lock_utils::lock_or_recover(registries.lock(), "ts_registries");
-        let key = format!("{}:{}", tenant_id.as_u32(), name);
+        let key = format!("{}:{}", tenant_id.as_u64(), name);
         if let Some(registry) = regs.get(&key) {
             for (_, entry) in registry.iter() {
                 if !entry.meta.is_queryable() {
@@ -223,7 +223,7 @@ pub fn alter_timeseries(
 
     if let Some(catalog) = state.credentials.catalog() {
         let mut coll = catalog
-            .get_collection(tenant_id.as_u32(), &name)
+            .get_collection(tenant_id.as_u64(), &name)
             .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
             .ok_or_else(|| {
                 sqlstate_error("42P01", &format!("collection '{name}' does not exist"))
@@ -243,7 +243,7 @@ pub fn alter_timeseries(
 
         // Update partition registry interval if partition_by changed.
         if let Some(registries) = state.timeseries_registries() {
-            let key = format!("{}:{}", tenant_id.as_u32(), name);
+            let key = format!("{}:{}", tenant_id.as_u64(), name);
             let mut regs =
                 crate::control::lock_utils::lock_or_recover(registries.lock(), "ts_registries");
             if let Some(registry) = regs.get_mut(&key)
@@ -293,7 +293,7 @@ pub fn rewrite_partitions(
 
     // Verify collection exists and is timeseries.
     if let Some(catalog) = state.credentials.catalog() {
-        match catalog.get_collection(tenant_id.as_u32(), &name) {
+        match catalog.get_collection(tenant_id.as_u64(), &name) {
             Ok(Some(coll)) if coll.collection_type.is_timeseries() => {}
             Ok(Some(_)) => {
                 return Err(sqlstate_error(
@@ -313,7 +313,7 @@ pub fn rewrite_partitions(
     // Collect partition directories to rewrite.
     let partitions_to_rewrite: Vec<String> = if let Some(registries) = state.timeseries_registries()
     {
-        let key = format!("{}:{}", tenant_id.as_u32(), name);
+        let key = format!("{}:{}", tenant_id.as_u64(), name);
         let regs = crate::control::lock_utils::lock_or_recover(registries.lock(), "ts_registries");
         if let Some(registry) = regs.get(&key) {
             registry

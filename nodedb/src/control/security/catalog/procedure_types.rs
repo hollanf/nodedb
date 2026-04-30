@@ -56,7 +56,7 @@ pub enum ProcedureRoutability {
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 #[msgpack(map)]
 pub struct StoredProcedure {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub name: String,
     pub parameters: Vec<ProcedureParam>,
     /// Procedural SQL body (BEGIN ... END).

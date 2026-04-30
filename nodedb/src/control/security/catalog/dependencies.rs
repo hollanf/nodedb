@@ -28,7 +28,7 @@ impl SystemCatalog {
     pub fn put_dependencies(
         &self,
         source_type: &str,
-        tenant_id: u32,
+        tenant_id: u64,
         source_name: &str,
         deps: &[Dependency],
     ) -> crate::Result<()> {
@@ -56,7 +56,7 @@ impl SystemCatalog {
     pub fn delete_dependencies(
         &self,
         source_type: &str,
-        tenant_id: u32,
+        tenant_id: u64,
         source_name: &str,
     ) -> crate::Result<()> {
         let key = dep_key(source_type, tenant_id, source_name);
@@ -81,7 +81,7 @@ impl SystemCatalog {
     /// that reference `(target_type, target_name)`.
     pub fn find_dependents(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         target_type: &str,
         target_name: &str,
     ) -> crate::Result<Vec<(String, String)>> {
@@ -107,7 +107,7 @@ impl SystemCatalog {
             if parts.len() < 3 {
                 continue;
             }
-            let entry_tid: u32 = match parts[1].parse() {
+            let entry_tid: u64 = match parts[1].parse() {
                 Ok(t) => t,
                 Err(_) => continue,
             };
@@ -131,7 +131,7 @@ impl SystemCatalog {
     }
 }
 
-fn dep_key(source_type: &str, tenant_id: u32, source_name: &str) -> String {
+fn dep_key(source_type: &str, tenant_id: u64, source_name: &str) -> String {
     format!("{source_type}:{tenant_id}:{source_name}")
 }
 

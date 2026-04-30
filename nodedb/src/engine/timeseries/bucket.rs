@@ -105,6 +105,7 @@ impl BucketManager {
             let kind_label = match &series.kind {
                 FlushedKind::Metric { .. } => "metric",
                 FlushedKind::Log { .. } => "log",
+                _ => "unknown",
             };
             let filename = format!(
                 "ts-{:016x}-{}-{seg_id:08}.seg",
@@ -118,11 +119,13 @@ impl BucketManager {
                     sample_count,
                 } => self.write_metric_segment(&path, gorilla_block, *sample_count)?,
                 FlushedKind::Log { entries, .. } => self.write_log_segment(&path, entries, dict)?,
+                _ => 0,
             };
 
             let seg_kind = match &series.kind {
                 FlushedKind::Metric { .. } => SegmentKind::Metric,
                 FlushedKind::Log { .. } => SegmentKind::Log,
+                _ => SegmentKind::Metric,
             };
 
             let now_ms = std::time::SystemTime::now()

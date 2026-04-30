@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct AlertDef {
     /// Owning tenant.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Alert name (unique per tenant).
     pub name: String,
     /// Source collection (must be timeseries).

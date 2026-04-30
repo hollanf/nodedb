@@ -37,7 +37,7 @@ impl UserRecord {
         StoredUser {
             user_id: self.user_id,
             username: self.username.clone(),
-            tenant_id: self.tenant_id.as_u32(),
+            tenant_id: self.tenant_id.as_u64(),
             password_hash: self.password_hash.clone(),
             scram_salt: self.scram_salt.clone(),
             scram_salted_password: self.scram_salted_password.clone(),

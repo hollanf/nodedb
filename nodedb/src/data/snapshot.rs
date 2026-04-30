@@ -24,7 +24,7 @@
 pub struct HnswSnapshot {
     /// Tenant owner.
     #[serde(default)]
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Collection name (without tenant prefix).
     pub collection: String,
     /// Checkpoint bytes from `VectorCollection::checkpoint_to_bytes()`.
@@ -41,7 +41,7 @@ pub struct HnswSnapshot {
     zerompk::FromMessagePack,
 )]
 pub struct CrdtSnapshot {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub peer_id: u64,
     /// Loro binary snapshot (from LoroDoc::export_snapshot).
     pub snapshot_bytes: Vec<u8>,
@@ -73,7 +73,7 @@ pub struct KvPair {
     zerompk::FromMessagePack,
 )]
 pub struct TenantKvPair {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub key: String,
     pub value: Vec<u8>,
 }

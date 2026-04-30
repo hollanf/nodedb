@@ -147,7 +147,7 @@ impl RoleStore {
             .as_secs();
         Ok(StoredRole {
             name: name.to_string(),
-            tenant_id: tenant_id.as_u32(),
+            tenant_id: tenant_id.as_u64(),
             parent: parent.unwrap_or("").to_string(),
             created_at: now,
         })
@@ -203,7 +203,7 @@ impl RoleStore {
         if let Some(catalog) = catalog {
             catalog.put_role(&StoredRole {
                 name: name.to_string(),
-                tenant_id: tenant_id.as_u32(),
+                tenant_id: tenant_id.as_u64(),
                 parent: parent.unwrap_or("").to_string(),
                 created_at: now,
             })?;

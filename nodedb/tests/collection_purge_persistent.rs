@@ -12,7 +12,7 @@ use nodedb::engine::sparse::inverted::InvertedIndex;
 use nodedb::types::TenantId;
 use nodedb_types::Surrogate;
 
-const TENANT: u32 = 7;
+const TENANT: u64 = 7;
 
 fn open_sparse() -> (tempfile::TempDir, SparseEngine) {
     let tmp = tempfile::tempdir().unwrap();

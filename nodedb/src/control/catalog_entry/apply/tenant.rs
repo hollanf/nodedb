@@ -15,7 +15,7 @@ pub fn put(stored: &StoredTenant, catalog: &SystemCatalog) {
     }
 }
 
-pub fn delete(tenant_id: u32, catalog: &SystemCatalog) {
+pub fn delete(tenant_id: u64, catalog: &SystemCatalog) {
     if let Err(e) = catalog.delete_tenant(tenant_id) {
         warn!(
             tenant = tenant_id,

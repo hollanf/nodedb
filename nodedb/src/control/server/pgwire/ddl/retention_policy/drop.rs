@@ -28,7 +28,7 @@ pub async fn drop_retention_policy(
         ));
     }
     let name = parts[3].to_lowercase();
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Verify policy exists and capture definition for cleanup.
     let policy_def = state

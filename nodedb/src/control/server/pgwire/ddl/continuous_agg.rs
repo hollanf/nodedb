@@ -94,7 +94,7 @@ pub async fn create_continuous_aggregate(
     // Validate source collection exists and is timeseries.
     let tenant_id = identity.tenant_id;
     if let Some(catalog) = state.credentials.catalog() {
-        match catalog.get_collection(tenant_id.as_u32(), &def.source) {
+        match catalog.get_collection(tenant_id.as_u64(), &def.source) {
             Ok(Some(coll)) if coll.collection_type.is_timeseries() => {}
             Ok(Some(_)) => {
                 return Err(sqlstate_error(
@@ -127,7 +127,7 @@ pub async fn create_continuous_aggregate(
         name = def.name,
         source = def.source,
         interval = def.bucket_interval,
-        tenant = tenant_id.as_u32(),
+        tenant = tenant_id.as_u64(),
         "continuous aggregate created"
     );
 

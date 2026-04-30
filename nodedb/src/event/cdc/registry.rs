@@ -20,10 +20,10 @@ const WILDCARD: &str = "*";
 
 struct Inner {
     /// Canonical store, keyed by `(tenant_id, stream_name)`.
-    by_name: HashMap<(u32, String), Arc<ChangeStreamDef>>,
+    by_name: HashMap<(u64, String), Arc<ChangeStreamDef>>,
     /// Routing index: `(tenant_id, collection)` → matching streams.
     /// Wildcard streams are stored under `(tenant_id, "*")`.
-    by_collection: HashMap<(u32, String), Vec<Arc<ChangeStreamDef>>>,
+    by_collection: HashMap<(u64, String), Vec<Arc<ChangeStreamDef>>>,
 }
 
 impl Inner {
@@ -57,7 +57,7 @@ impl Inner {
         self.by_name.insert(key_name, def_arc);
     }
 
-    fn remove(&mut self, tenant_id: u32, name: &str) -> bool {
+    fn remove(&mut self, tenant_id: u64, name: &str) -> bool {
         let key_name = (tenant_id, name.to_string());
         let Some(prev) = self.by_name.remove(&key_name) else {
             return false;
@@ -98,12 +98,12 @@ impl StreamRegistry {
     }
 
     /// Unregister a change stream by name. Returns true if it existed.
-    pub fn unregister(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn unregister(&self, tenant_id: u64, name: &str) -> bool {
         self.write().remove(tenant_id, name)
     }
 
     /// Get a stream definition by name.
-    pub fn get(&self, tenant_id: u32, name: &str) -> Option<ChangeStreamDef> {
+    pub fn get(&self, tenant_id: u64, name: &str) -> Option<ChangeStreamDef> {
         let key = (tenant_id, name.to_string());
         self.read().by_name.get(&key).map(|a| (**a).clone())
     }
@@ -111,7 +111,7 @@ impl StreamRegistry {
     /// Find all streams matching `(tenant_id, collection)`. Returns shared
     /// `Arc<ChangeStreamDef>` handles so the router hot path is
     /// O(matching_streams refcount bumps), not a deep clone per match.
-    pub fn find_matching(&self, tenant_id: u32, collection: &str) -> Vec<Arc<ChangeStreamDef>> {
+    pub fn find_matching(&self, tenant_id: u64, collection: &str) -> Vec<Arc<ChangeStreamDef>> {
         let inner = self.read();
         let mut out: Vec<Arc<ChangeStreamDef>> = Vec::new();
         if let Some(bucket) = inner
@@ -152,7 +152,7 @@ impl StreamRegistry {
     }
 
     /// List all streams for a tenant.
-    pub fn list_for_tenant(&self, tenant_id: u32) -> Vec<ChangeStreamDef> {
+    pub fn list_for_tenant(&self, tenant_id: u64) -> Vec<ChangeStreamDef> {
         self.read()
             .by_name
             .iter()

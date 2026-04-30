@@ -130,19 +130,19 @@ impl TestClusterNode {
     /// `sequence_registry`. After the applier spawns its
     /// post-apply side effect for a `PutSequence`, the registry
     /// should see the new record on every node.
-    pub fn sequence_count(&self, tenant_id: u32) -> usize {
+    pub fn sequence_count(&self, tenant_id: u64) -> usize {
         self.shared.sequence_registry.list(tenant_id).len()
     }
 
     /// Check whether a sequence with the given name exists in this
     /// node's in-memory registry.
-    pub fn has_sequence(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn has_sequence(&self, tenant_id: u64, name: &str) -> bool {
         self.shared.sequence_registry.exists(tenant_id, name)
     }
 
     /// Read the current counter of a sequence from this node's
     /// in-memory registry, if present.
-    pub fn sequence_current_value(&self, tenant_id: u32, name: &str) -> Option<i64> {
+    pub fn sequence_current_value(&self, tenant_id: u64, name: &str) -> Option<i64> {
         self.shared
             .sequence_registry
             .list(tenant_id)
@@ -153,7 +153,7 @@ impl TestClusterNode {
 
     /// Check whether a trigger with the given name exists in this
     /// node's in-memory trigger registry.
-    pub fn has_trigger(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn has_trigger(&self, tenant_id: u64, name: &str) -> bool {
         self.shared
             .trigger_registry
             .list_for_tenant(tenant_id)
@@ -163,7 +163,7 @@ impl TestClusterNode {
 
     /// Read a function record from this node's local `SystemCatalog`
     /// redb (which the applier writes through on every node).
-    pub fn has_function(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn has_function(&self, tenant_id: u64, name: &str) -> bool {
         self.shared
             .credentials
             .catalog()
@@ -173,7 +173,7 @@ impl TestClusterNode {
     }
 
     /// Read a procedure record from this node's local `SystemCatalog`.
-    pub fn has_procedure(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn has_procedure(&self, tenant_id: u64, name: &str) -> bool {
         self.shared
             .credentials
             .catalog()
@@ -184,13 +184,13 @@ impl TestClusterNode {
 
     /// Check whether a scheduled job with the given name exists in
     /// this node's in-memory `schedule_registry`.
-    pub fn has_schedule(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn has_schedule(&self, tenant_id: u64, name: &str) -> bool {
         self.shared.schedule_registry.get(tenant_id, name).is_some()
     }
 
     /// Check whether a change stream with the given name exists in
     /// this node's in-memory `stream_registry`.
-    pub fn has_change_stream(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn has_change_stream(&self, tenant_id: u64, name: &str) -> bool {
         self.shared.stream_registry.get(tenant_id, name).is_some()
     }
 
@@ -216,7 +216,7 @@ impl TestClusterNode {
     }
 
     /// Read the recorded owner of an object on this node.
-    pub fn owner_of(&self, object_type: &str, tenant_id: u32, object_name: &str) -> Option<String> {
+    pub fn owner_of(&self, object_type: &str, tenant_id: u64, object_name: &str) -> Option<String> {
         self.shared.permissions.get_owner(
             object_type,
             nodedb_types::TenantId::new(tenant_id),
@@ -226,7 +226,7 @@ impl TestClusterNode {
 
     /// Check whether a tenant identity exists in this node's local
     /// `SystemCatalog` redb (written by the `PutTenant` applier).
-    pub fn has_tenant(&self, tenant_id: u32) -> bool {
+    pub fn has_tenant(&self, tenant_id: u64) -> bool {
         let Some(catalog) = self.shared.credentials.catalog() else {
             return false;
         };
@@ -238,7 +238,7 @@ impl TestClusterNode {
 
     /// Check whether an RLS policy exists in this node's local
     /// `SystemCatalog` redb (written by the `PutRlsPolicy` applier).
-    pub fn has_rls_policy(&self, tenant_id: u32, collection: &str, name: &str) -> bool {
+    pub fn has_rls_policy(&self, tenant_id: u64, collection: &str, name: &str) -> bool {
         self.shared
             .credentials
             .catalog()
@@ -249,7 +249,7 @@ impl TestClusterNode {
 
     /// Check whether a materialized view exists in this node's local
     /// `SystemCatalog` redb (written by the applier on every node).
-    pub fn has_materialized_view(&self, tenant_id: u32, name: &str) -> bool {
+    pub fn has_materialized_view(&self, tenant_id: u64, name: &str) -> bool {
         self.shared
             .credentials
             .catalog()
@@ -306,7 +306,7 @@ impl TestClusterNode {
     pub fn has_lease(
         &self,
         kind: nodedb_cluster::DescriptorKind,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
         holder_node_id: u64,
         min_version: u64,
@@ -329,7 +329,7 @@ impl TestClusterNode {
     pub fn leases_for_descriptor(
         &self,
         kind: nodedb_cluster::DescriptorKind,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
     ) -> Vec<nodedb_cluster::DescriptorLease> {
         let id = nodedb_cluster::DescriptorId::new(tenant_id, kind, name);
@@ -367,7 +367,7 @@ impl TestClusterNode {
     pub async fn acquire_lease(
         &self,
         kind: nodedb_cluster::DescriptorKind,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
         version: u64,
         duration: std::time::Duration,
@@ -394,7 +394,7 @@ impl TestClusterNode {
     /// agree on after the apply has propagated.
     pub fn collection_descriptor(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
     ) -> Option<(u64, nodedb_types::Hlc)> {
         self.shared
@@ -408,7 +408,7 @@ impl TestClusterNode {
     /// Same as [`collection_descriptor`] for stored functions.
     pub fn function_descriptor(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
     ) -> Option<(u64, nodedb_types::Hlc)> {
         self.shared
@@ -422,7 +422,7 @@ impl TestClusterNode {
     /// Same as [`collection_descriptor`] for stored procedures.
     pub fn procedure_descriptor(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
     ) -> Option<(u64, nodedb_types::Hlc)> {
         self.shared

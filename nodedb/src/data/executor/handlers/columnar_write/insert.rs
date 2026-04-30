@@ -67,7 +67,7 @@ impl CoreLoop {
         }
 
         let engine_key = (task.request.tenant_id, collection.to_string());
-        let tid = task.request.tenant_id.as_u32();
+        let tid = task.request.tenant_id.as_u64();
         let bitemporal = self.is_bitemporal(tid, collection);
         // Ensure MutationEngine exists (auto-create on first write).
         if !self.columnar_engines.contains_key(&engine_key) {
@@ -276,7 +276,14 @@ impl CoreLoop {
                     }
                 }
             }
-            engine.on_memtable_flushed(new_segment_id);
+            if let Err(e) = engine.on_memtable_flushed(new_segment_id) {
+                return self.response_error(
+                    task,
+                    ErrorCode::Internal {
+                        detail: format!("columnar flush: segment ID counter exhausted: {e}"),
+                    },
+                );
+            }
         }
 
         // Populate R-tree for geometry columns so spatial predicates work.

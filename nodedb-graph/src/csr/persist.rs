@@ -15,6 +15,7 @@ pub const CSR_FORMAT_VERSION: u8 = 1;
 
 /// Errors during CSR checkpoint operations.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum CsrCheckpointError {
     #[error("unsupported CSR checkpoint version {found}; expected {expected}")]
     UnsupportedVersion { found: u8, expected: u8 },

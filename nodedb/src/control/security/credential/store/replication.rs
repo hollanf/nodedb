@@ -64,7 +64,7 @@ impl CredentialStore {
         Ok(StoredUser {
             user_id,
             username: username.to_string(),
-            tenant_id: tenant_id.as_u32(),
+            tenant_id: tenant_id.as_u64(),
             password_hash,
             scram_salt: salt,
             scram_salted_password,

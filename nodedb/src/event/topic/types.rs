@@ -6,7 +6,7 @@ use crate::event::cdc::stream_def::RetentionConfig;
 #[derive(Debug, Clone, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct TopicDef {
     /// Tenant that owns this topic.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Topic name (unique per tenant).
     pub name: String,
     /// Retention configuration.

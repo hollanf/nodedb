@@ -36,7 +36,7 @@ impl EdgeStore {
             edge.dst,
             system_as_of,
         )?;
-        let t = edge.tid.as_u32();
+        let t = edge.tid.as_u64();
 
         let read_txn = self
             .db

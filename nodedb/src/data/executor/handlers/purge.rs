@@ -22,7 +22,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_purge_tenant(
         &mut self,
         task: &ExecutionTask,
-        tenant_id: u32,
+        tenant_id: u64,
     ) -> Response {
         info!(core = self.core_id, tenant_id, "starting tenant purge");
         let _prefix = format!("{tenant_id}:");

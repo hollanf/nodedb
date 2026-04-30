@@ -28,7 +28,7 @@ pub fn drop_consumer_group(
 
     let group_name = parts[3].to_lowercase();
     let stream_name = parts[5].to_lowercase();
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let catalog = state
         .credentials

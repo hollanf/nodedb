@@ -42,7 +42,7 @@ pub fn create_service_account(
                 if !identity.is_superuser {
                     return Err(sqlstate_error("42501", "only superuser can assign tenants"));
                 }
-                let tid: u32 = parts[i + 1]
+                let tid: u64 = parts[i + 1]
                     .parse()
                     .map_err(|_| sqlstate_error("42601", "TENANT must be a numeric ID"))?;
                 tenant_id = crate::types::TenantId::new(tid);

@@ -24,7 +24,7 @@ pub fn put(stored: StoredMaterializedView, shared: Arc<SharedState>) {
     );
 }
 
-pub fn delete(tenant_id: u32, name: String, shared: Arc<SharedState>) {
+pub fn delete(tenant_id: u64, name: String, shared: Arc<SharedState>) {
     debug!(
         view = %name,
         tenant = tenant_id,

@@ -389,5 +389,6 @@ fn count_points(geom: &nodedb_types::geometry::Geometry) -> usize {
             .map(|ring| ring.len())
             .sum(),
         Geometry::GeometryCollection { geometries } => geometries.iter().map(count_points).sum(),
+        _ => 0,
     }
 }

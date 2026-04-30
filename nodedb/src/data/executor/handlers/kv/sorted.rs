@@ -16,7 +16,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_register_sorted_index(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         index_name: &str,
         sort_columns: &[(String, String)],
@@ -92,7 +92,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_drop_sorted_index(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         index_name: &str,
     ) -> Response {
         debug!(core = self.core_id, %index_name, "kv drop sorted index");
@@ -111,7 +111,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_sorted_index_rank(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         index_name: &str,
         primary_key: &[u8],
     ) -> Response {
@@ -136,7 +136,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_sorted_index_top_k(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         index_name: &str,
         k: u32,
     ) -> Response {
@@ -169,7 +169,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_sorted_index_range(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         index_name: &str,
         score_min: Option<&[u8]>,
         score_max: Option<&[u8]>,
@@ -203,7 +203,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_sorted_index_count(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         index_name: &str,
     ) -> Response {
         debug!(core = self.core_id, %index_name, "kv sorted index count");
@@ -221,7 +221,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_sorted_index_score(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         index_name: &str,
         primary_key: &[u8],
     ) -> Response {

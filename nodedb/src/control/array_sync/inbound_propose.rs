@@ -215,12 +215,8 @@ impl OriginArrayInbound {
     ) -> Result<crate::bridge::envelope::PhysicalPlan, Option<ArrayRejectMsg>> {
         use crate::bridge::physical_plan::ArrayOp as DataArrayOp;
         use nodedb_array::sync::op::ArrayOpKind;
-        use nodedb_types::TenantId as NdTenantId;
 
-        let array_id = nodedb_array::types::ArrayId::new(
-            NdTenantId::new(self.tenant_id().as_u32()),
-            &op.header.array,
-        );
+        let array_id = nodedb_array::types::ArrayId::new(self.tenant_id(), &op.header.array);
 
         let data_op = match op.kind {
             ArrayOpKind::Put => {

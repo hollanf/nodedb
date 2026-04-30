@@ -65,6 +65,12 @@ pub fn value_to_coord_value(v: &Value, expected: DimType) -> Result<CoordValue, 
             value_kind(v),
             expected
         ))),
+        // Value is #[non_exhaustive]; future variants are unsupported as coords.
+        (_, _) => Err(NodeDbError::codec(format!(
+            "coord value {} not convertible to {:?}",
+            value_kind(v),
+            expected
+        ))),
     }
 }
 
@@ -115,6 +121,12 @@ pub fn value_to_cell_value(v: &Value, expected: AttrType) -> Result<CellValue, N
             | Value::NdArrayCell(_),
             _,
         ) => Err(NodeDbError::codec(format!(
+            "attr value {} not convertible to {:?}",
+            value_kind(v),
+            expected
+        ))),
+        // Value is #[non_exhaustive]; future variants are unsupported as attrs.
+        (_, _) => Err(NodeDbError::codec(format!(
             "attr value {} not convertible to {:?}",
             value_kind(v),
             expected
@@ -177,5 +189,7 @@ fn value_kind(v: &Value) -> &'static str {
         Value::Range { .. } => "range",
         Value::Record { .. } => "record",
         Value::NdArrayCell(_) => "ndarray_cell",
+        // Value is #[non_exhaustive]; future variants report as "unknown".
+        _ => "unknown",
     }
 }

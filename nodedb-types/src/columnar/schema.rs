@@ -111,6 +111,7 @@ pub const BITEMPORAL_RESERVED_COLUMNS: [&str; 3] = [
 
 /// Schema validation errors.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum SchemaError {
     #[error("schema must have at least one column")]
     Empty,

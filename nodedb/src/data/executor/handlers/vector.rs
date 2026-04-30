@@ -16,7 +16,7 @@ use crate::types::TenantId;
 /// Parameters for configuring vector index settings.
 pub(in crate::data::executor) struct SetVectorParamsInput<'a> {
     pub task: &'a ExecutionTask,
-    pub tid: u32,
+    pub tid: u64,
     pub collection: &'a str,
     pub m: usize,
     pub ef_construction: usize,
@@ -30,7 +30,7 @@ pub(in crate::data::executor) struct SetVectorParamsInput<'a> {
 /// Parameters for a vector insert operation.
 pub(in crate::data::executor) struct VectorInsertParams<'a> {
     pub task: &'a ExecutionTask,
-    pub tid: u32,
+    pub tid: u64,
     pub collection: &'a str,
     pub vector: &'a [f32],
     pub dim: usize,
@@ -42,7 +42,7 @@ impl CoreLoop {
     /// Get or create a vector collection, validating dimension compatibility.
     pub(in crate::data::executor) fn get_or_create_vector_index(
         &mut self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         dim: usize,
         field_name: &str,
@@ -179,7 +179,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_vector_batch_insert(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         vectors: &[Vec<f32>],
         dim: usize,
@@ -232,7 +232,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_vector_delete(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         vector_id: u32,
     ) -> Response {
@@ -345,6 +345,7 @@ impl CoreLoop {
                         DistanceMetric::Hamming => "hamming",
                         DistanceMetric::Jaccard => "jaccard",
                         DistanceMetric::Pearson => "pearson",
+                        _ => "cosine",
                     }
                     .to_string()
                 })

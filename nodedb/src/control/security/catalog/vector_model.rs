@@ -31,7 +31,7 @@ impl SystemCatalog {
     /// Load vector model metadata for a specific collection/column.
     pub fn get_vector_model(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         column: &str,
     ) -> crate::Result<Option<VectorModelEntry>> {
@@ -56,7 +56,7 @@ impl SystemCatalog {
     }
 
     /// List all vector model metadata entries for a tenant.
-    pub fn list_vector_models(&self, tenant_id: u32) -> crate::Result<Vec<VectorModelEntry>> {
+    pub fn list_vector_models(&self, tenant_id: u64) -> crate::Result<Vec<VectorModelEntry>> {
         let prefix = format!("{tenant_id}:");
         let read_txn = self
             .db
@@ -107,7 +107,7 @@ impl SystemCatalog {
     /// Delete vector model metadata for a specific collection/column.
     pub fn delete_vector_model(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         column: &str,
     ) -> crate::Result<bool> {
@@ -130,6 +130,6 @@ impl SystemCatalog {
     }
 }
 
-fn vector_model_key(tenant_id: u32, collection: &str, column: &str) -> String {
+fn vector_model_key(tenant_id: u64, collection: &str, column: &str) -> String {
     format!("{tenant_id}:{collection}:{column}")
 }

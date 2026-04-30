@@ -34,7 +34,7 @@ pub async fn put_async(stored: StoredCollection, shared: Arc<SharedState>) {
 ///    replay still sees the tombstone).
 /// 3. Dispatch `MetaOp::UnregisterCollection` into the Data Plane to
 ///    reclaim engine-local storage.
-pub async fn purge_async(tenant_id: u32, name: String, purge_lsn: u64, shared: Arc<SharedState>) {
+pub async fn purge_async(tenant_id: u64, name: String, purge_lsn: u64, shared: Arc<SharedState>) {
     // 1. Persist to redb (every node has its own catalog).
     if let Some(catalog) = shared.credentials.catalog()
         && let Err(e) = catalog.record_wal_tombstone(tenant_id, &name, purge_lsn)

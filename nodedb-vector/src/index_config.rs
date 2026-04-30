@@ -4,6 +4,7 @@ use crate::hnsw::HnswParams;
 
 /// Index type selection for vector collections.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub enum IndexType {
     /// Pure HNSW with FP32 vectors. Best recall (~99%), highest memory.
     #[default]

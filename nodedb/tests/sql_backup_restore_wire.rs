@@ -16,9 +16,9 @@ use futures::StreamExt;
 use futures::stream;
 use nodedb_types::backup_envelope::{EnvelopeMeta, EnvelopeWriter, HEADER_LEN, MAGIC, TRAILER_LEN};
 
-const TENANT: u32 = 1;
+const TENANT: u64 = 1;
 
-async fn drain_backup(server: &TestServer, tenant: u32) -> Result<Vec<u8>, String> {
+async fn drain_backup(server: &TestServer, tenant: u64) -> Result<Vec<u8>, String> {
     let stream = server
         .client
         .copy_out(&format!("COPY (BACKUP TENANT {tenant}) TO STDOUT"))
@@ -35,7 +35,7 @@ async fn drain_backup(server: &TestServer, tenant: u32) -> Result<Vec<u8>, Strin
 
 async fn push_restore(
     server: &TestServer,
-    tenant: u32,
+    tenant: u64,
     bytes: Vec<u8>,
     dry_run: bool,
 ) -> Result<(), String> {

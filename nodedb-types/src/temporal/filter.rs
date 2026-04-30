@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum ValidTimePredicate {
     /// Match rows whose valid interval contains `t`.
     Contains(i64),

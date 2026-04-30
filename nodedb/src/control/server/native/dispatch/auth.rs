@@ -25,6 +25,11 @@ pub(crate) fn handle_auth(
         ProtoAuth::ApiKey { token } => {
             serde_json::json!({ "method": "api_key", "token": token })
         }
+        _ => {
+            return Err(crate::Error::BadRequest {
+                detail: "unsupported authentication method".into(),
+            });
+        }
     };
 
     super::super::super::session_auth::authenticate(state, auth_mode, &body, peer_addr)

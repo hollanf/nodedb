@@ -29,7 +29,7 @@ impl SystemCatalog {
     /// Get a sequence definition by tenant and name.
     pub fn get_sequence(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
     ) -> crate::Result<Option<StoredSequence>> {
         let key = sequence_key(tenant_id, name);
@@ -54,7 +54,7 @@ impl SystemCatalog {
     }
 
     /// Delete a sequence definition. Returns true if it existed.
-    pub fn delete_sequence(&self, tenant_id: u32, name: &str) -> crate::Result<bool> {
+    pub fn delete_sequence(&self, tenant_id: u64, name: &str) -> crate::Result<bool> {
         let key = sequence_key(tenant_id, name);
         let write_txn = self
             .db
@@ -80,7 +80,7 @@ impl SystemCatalog {
     }
 
     /// Load all sequences for a tenant.
-    pub fn load_sequences_for_tenant(&self, tenant_id: u32) -> crate::Result<Vec<StoredSequence>> {
+    pub fn load_sequences_for_tenant(&self, tenant_id: u64) -> crate::Result<Vec<StoredSequence>> {
         let prefix = format!("{tenant_id}:");
         let read_txn = self
             .db
@@ -149,7 +149,7 @@ impl SystemCatalog {
     /// Load sequence runtime state.
     pub fn get_sequence_state(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
     ) -> crate::Result<Option<SequenceState>> {
         let key = sequence_key(tenant_id, name);
@@ -174,7 +174,7 @@ impl SystemCatalog {
     }
 }
 
-fn sequence_key(tenant_id: u32, name: &str) -> String {
+fn sequence_key(tenant_id: u64, name: &str) -> String {
     format!("{tenant_id}:{name}")
 }
 

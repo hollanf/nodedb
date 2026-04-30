@@ -51,7 +51,7 @@ impl EdgeStore {
             Some(label) => format!("{collection}\x00{dst}\x00{label}\x00"),
             None => format!("{collection}\x00{dst}\x00"),
         };
-        let t = tid.as_u32();
+        let t = tid.as_u64();
 
         let read_txn = self
             .db

@@ -22,7 +22,7 @@ pub fn create_wasm_aggregate(
     require_admin(identity, "create WASM aggregate functions")?;
 
     let parsed = parse_aggregate_create(sql)?;
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let catalog = state
         .credentials

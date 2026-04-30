@@ -58,7 +58,7 @@ pub fn create_collection(
 
     // Check if collection already exists.
     if let Some(catalog) = state.credentials.catalog()
-        && let Ok(Some(existing)) = catalog.get_collection(tenant_id.as_u32(), name)
+        && let Ok(Some(existing)) = catalog.get_collection(tenant_id.as_u64(), name)
         && existing.is_active
     {
         return Err(sqlstate_error(
@@ -164,7 +164,7 @@ pub fn create_collection(
         .map_err(|e| sqlstate_error("42601", &e))?;
 
     let coll = StoredCollection {
-        tenant_id: tenant_id.as_u32(),
+        tenant_id: tenant_id.as_u64(),
         name: name.to_string(),
         owner: identity.username.clone(),
         created_at: now,
@@ -223,7 +223,7 @@ pub fn create_collection(
     for field_name in &serial_fields {
         let seq_name = format!("{name}_{field_name}_seq");
         let mut seq_def = crate::control::security::catalog::sequence_types::StoredSequence::new(
-            tenant_id.as_u32(),
+            tenant_id.as_u64(),
             seq_name.clone(),
             identity.username.clone(),
         );

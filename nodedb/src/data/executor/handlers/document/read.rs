@@ -136,7 +136,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_document_scan(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         limit: usize,
         offset: usize,
@@ -583,7 +583,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_document_scan_as_of(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         limit: usize,
         offset: usize,

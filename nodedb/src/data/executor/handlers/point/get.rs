@@ -9,7 +9,7 @@ use crate::engine::document::store::surrogate_to_doc_id;
 use nodedb_types::Surrogate;
 
 pub(in crate::data::executor) struct PointGetParams<'a> {
-    pub tid: u32,
+    pub tid: u64,
     pub collection: &'a str,
     pub document_id: &'a str,
     /// Catalog-bound identity. Hex-encoded into the substrate row key

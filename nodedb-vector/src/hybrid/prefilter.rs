@@ -10,6 +10,7 @@ use roaring::RoaringBitmap;
 /// Identifies the origin of a pre-filter bitmap so the planner can attach
 /// provenance and cost hints to the composed semimask.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PrefilterSource {
     /// Array engine — e.g. genomic region bitmaps, dense boolean columns.
     Array,

@@ -23,7 +23,7 @@ pub struct CdcRouter {
     /// Stream registry (shared with DDL handlers).
     registry: Arc<StreamRegistry>,
     /// Per-stream retention buffers, keyed by `(tenant_id, stream_name)`.
-    buffers: std::sync::RwLock<HashMap<(u32, String), Arc<StreamBuffer>>>,
+    buffers: std::sync::RwLock<HashMap<(u64, String), Arc<StreamBuffer>>>,
 }
 
 impl CdcRouter {
@@ -41,7 +41,7 @@ impl CdcRouter {
     pub fn route_event(&self, event: &WriteEvent, watermark_tracker: &WatermarkTracker) {
         let matching = self
             .registry
-            .find_matching(event.tenant_id.as_u32(), &event.collection);
+            .find_matching(event.tenant_id.as_u64(), &event.collection);
 
         if matching.is_empty() {
             return;
@@ -87,7 +87,7 @@ impl CdcRouter {
             row_id: event.row_id.as_str().to_string(),
             event_time: now_ms,
             lsn: event.lsn.as_u64(),
-            tenant_id: event.tenant_id.as_u32(),
+            tenant_id: event.tenant_id.as_u64(),
             new_value: new_value.clone(),
             old_value: old_value.clone(),
             schema_version: 0,
@@ -137,7 +137,7 @@ impl CdcRouter {
                             row_id: event.row_id.as_str().to_string(),
                             event_time: now_ms,
                             lsn: event.lsn.as_u64(),
-                            tenant_id: event.tenant_id.as_u32(),
+                            tenant_id: event.tenant_id.as_u64(),
                             new_value: new_value.clone(),
                             old_value: None,
                             schema_version: 0,
@@ -168,7 +168,7 @@ impl CdcRouter {
     /// Get or create a buffer for a stream.
     fn get_or_create_buffer(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         stream_name: &str,
         retention: &super::stream_def::RetentionConfig,
     ) -> Arc<StreamBuffer> {
@@ -198,7 +198,7 @@ impl CdcRouter {
     /// Ensure a buffer exists for a given key (stream or topic). Creates if missing.
     pub fn ensure_buffer(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         name: &str,
         retention: &super::stream_def::RetentionConfig,
     ) -> Arc<StreamBuffer> {
@@ -206,14 +206,14 @@ impl CdcRouter {
     }
 
     /// Get a buffer for a stream (if it exists). Used by consumers to poll events.
-    pub fn get_buffer(&self, tenant_id: u32, stream_name: &str) -> Option<Arc<StreamBuffer>> {
+    pub fn get_buffer(&self, tenant_id: u64, stream_name: &str) -> Option<Arc<StreamBuffer>> {
         let key = (tenant_id, stream_name.to_string());
         let buffers = self.buffers.read().unwrap_or_else(|p| p.into_inner());
         buffers.get(&key).cloned()
     }
 
     /// Remove a buffer when a stream is dropped.
-    pub fn remove_buffer(&self, tenant_id: u32, stream_name: &str) {
+    pub fn remove_buffer(&self, tenant_id: u64, stream_name: &str) {
         let key = (tenant_id, stream_name.to_string());
         let mut buffers = self.buffers.write().unwrap_or_else(|p| p.into_inner());
         buffers.remove(&key);
@@ -239,7 +239,7 @@ impl CdcRouter {
 
 /// Buffer statistics for observability.
 pub struct BufferStats {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub stream_name: String,
     pub buffered_events: usize,
     pub total_pushed: u64,

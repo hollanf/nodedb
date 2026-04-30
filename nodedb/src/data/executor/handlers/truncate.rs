@@ -16,7 +16,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_truncate(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
     ) -> Response {
         debug!(core = self.core_id, %collection, "truncate");
@@ -101,7 +101,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_estimate_count(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         field: &str,
     ) -> Response {

@@ -321,7 +321,7 @@ pub fn broadcast_notify_to_cluster(
     let msg = NotifyBroadcastMsg {
         source_node: node_id,
         sequence,
-        tenant_id: event.tenant_id.as_u32(),
+        tenant_id: event.tenant_id.as_u64(),
         collection: event.collection.clone(),
         document_id: event.document_id.clone(),
         operation: event.operation.as_str().to_string(),

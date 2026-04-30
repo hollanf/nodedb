@@ -25,7 +25,7 @@ pub fn create_procedure(
     require_admin(identity, "create procedures")?;
 
     let parsed = parse_create_procedure(sql)?;
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let catalog = state
         .credentials

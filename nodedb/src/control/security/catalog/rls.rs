@@ -26,7 +26,7 @@ pub(super) const RLS_POLICIES: TableDefinition<&str, &[u8]> =
 /// versions of the runtime types so zerompk can derive the encoder.
 #[derive(zerompk::ToMessagePack, zerompk::FromMessagePack, Debug, Clone)]
 pub struct StoredRlsPolicy {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub collection: String,
     pub name: String,
     /// 0 = Read, 1 = Write, 2 = All.
@@ -125,7 +125,7 @@ impl StoredRlsPolicy {
     }
 }
 
-fn rls_key(tenant_id: u32, collection: &str, policy_name: &str) -> String {
+fn rls_key(tenant_id: u64, collection: &str, policy_name: &str) -> String {
     format!("{tenant_id}:{collection}:{policy_name}")
 }
 
@@ -152,7 +152,7 @@ impl SystemCatalog {
     /// Delete an RLS policy. Returns `true` if a row was removed.
     pub fn delete_rls_policy(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         policy_name: &str,
     ) -> crate::Result<bool> {
@@ -180,7 +180,7 @@ impl SystemCatalog {
     /// Read a single RLS policy by full key.
     pub fn get_rls_policy(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         policy_name: &str,
     ) -> crate::Result<Option<StoredRlsPolicy>> {
@@ -235,7 +235,7 @@ mod tests {
         SystemCatalog::open(&dir.path().join("system.redb")).unwrap()
     }
 
-    fn sample_policy(tenant_id: u32, collection: &str, name: &str) -> RlsPolicy {
+    fn sample_policy(tenant_id: u64, collection: &str, name: &str) -> RlsPolicy {
         RlsPolicy {
             name: name.into(),
             collection: collection.into(),

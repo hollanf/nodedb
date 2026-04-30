@@ -34,7 +34,7 @@ pub fn put(stored: &StoredOwner, catalog: &SystemCatalog) {
     }
 }
 
-pub fn delete(object_type: &str, tenant_id: u32, object_name: &str, catalog: &SystemCatalog) {
+pub fn delete(object_type: &str, tenant_id: u64, object_name: &str, catalog: &SystemCatalog) {
     if let Err(e) = catalog.delete_owner(object_type, tenant_id, object_name) {
         warn!(
             object_type = %object_type,
@@ -55,7 +55,7 @@ pub fn delete(object_type: &str, tenant_id: u32, object_name: &str, catalog: &Sy
 /// in-memory authorization map correctly on restart.
 pub(super) fn put_parent_owner(
     object_type: &'static str,
-    tenant_id: u32,
+    tenant_id: u64,
     object_name: &str,
     owner_username: &str,
     catalog: &SystemCatalog,
@@ -85,7 +85,7 @@ pub(super) fn put_parent_owner(
 /// rows after the primary record is gone.
 pub(super) fn delete_parent_owner(
     object_type: &'static str,
-    tenant_id: u32,
+    tenant_id: u64,
     object_name: &str,
     catalog: &SystemCatalog,
 ) {

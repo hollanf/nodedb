@@ -22,7 +22,7 @@ pub struct UsageStore {
     /// Persistent per-tenant usage summaries. Updated on every `ingest()` call.
     /// Serves as the queryable aggregation layer for `SHOW USAGE FOR TENANT`
     /// and `EXPORT USAGE`. Survives ring buffer eviction.
-    tenant_totals: RwLock<HashMap<u32, TenantUsageSummary>>,
+    tenant_totals: RwLock<HashMap<u64, TenantUsageSummary>>,
 }
 
 impl UsageStore {
@@ -132,7 +132,7 @@ impl UsageStore {
     }
 
     /// Query usage events filtered by tenant_id and optional time range.
-    pub fn query_by_tenant(&self, tenant_id: u32, since_secs: u64) -> Vec<UsageEvent> {
+    pub fn query_by_tenant(&self, tenant_id: u64, since_secs: u64) -> Vec<UsageEvent> {
         let events = self.events.read().unwrap_or_else(|p| p.into_inner());
         events
             .iter()
@@ -144,7 +144,7 @@ impl UsageStore {
     }
 
     /// Export usage for a specific tenant as JSON (billing integration format).
-    pub fn export_tenant_json(&self, tenant_id: u32, since_secs: u64) -> String {
+    pub fn export_tenant_json(&self, tenant_id: u64, since_secs: u64) -> String {
         let events = self.query_by_tenant(tenant_id, since_secs);
 
         let mut summary = TenantUsageSummary::default();
@@ -167,9 +167,9 @@ impl UsageStore {
     ///
     /// Returns a map of `tenant_id → TenantUsageSummary` with rolled-up
     /// read/write counts and engine-specific metrics.
-    pub fn aggregate_by_tenant(&self) -> HashMap<u32, TenantUsageSummary> {
+    pub fn aggregate_by_tenant(&self) -> HashMap<u64, TenantUsageSummary> {
         let events = self.events.read().unwrap_or_else(|p| p.into_inner());
-        let mut summaries: HashMap<u32, TenantUsageSummary> = HashMap::new();
+        let mut summaries: HashMap<u64, TenantUsageSummary> = HashMap::new();
 
         for e in events.iter() {
             let summary = summaries.entry(e.tenant_id).or_default();
@@ -183,7 +183,7 @@ impl UsageStore {
     ///
     /// Unlike `aggregate_by_tenant()` which recomputes from the event ring buffer,
     /// this reads from the persistent aggregation layer that survives ring buffer eviction.
-    pub fn tenant_summary(&self, tenant_id: u32) -> Option<TenantUsageSummary> {
+    pub fn tenant_summary(&self, tenant_id: u64) -> Option<TenantUsageSummary> {
         let totals = self.tenant_totals.read().unwrap_or_else(|p| p.into_inner());
         totals.get(&tenant_id).cloned()
     }

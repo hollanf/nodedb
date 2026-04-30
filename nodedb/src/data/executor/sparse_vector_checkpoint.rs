@@ -34,7 +34,7 @@ impl CoreLoop {
             }
             // Atomic write via temp file + rename.
             // Key is "{tid}:{collection}:{field}", replace ':' with '_' for filename safety.
-            let key_str = format!("{}:{}:{}", tid.as_u32(), coll, field);
+            let key_str = format!("{}:{}:{}", tid.as_u64(), coll, field);
             let safe_key = key_str.replace(':', "_");
             let ckpt_path = ckpt_dir.join(format!("{safe_key}.ckpt"));
             let tmp_path = ckpt_dir.join(format!("{safe_key}.ckpt.tmp"));
@@ -137,6 +137,6 @@ fn parse_sparse_key(key: &str) -> Option<(crate::types::TenantId, String, String
     let tid_str = parts.next()?;
     let coll = parts.next()?.to_string();
     let field = parts.next().unwrap_or("_sparse").to_string();
-    let tid_u32: u32 = tid_str.parse().ok()?;
-    Some((crate::types::TenantId::new(tid_u32), coll, field))
+    let tid_u64: u64 = tid_str.parse().ok()?;
+    Some((crate::types::TenantId::new(tid_u64), coll, field))
 }

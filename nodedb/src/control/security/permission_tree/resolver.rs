@@ -27,7 +27,7 @@ use super::types::PermissionTreeDef;
 pub fn resolve_permission(
     cache: &PermissionCache,
     def: &PermissionTreeDef,
-    tenant_id: u32,
+    tenant_id: u64,
     user_id: &str,
     user_roles: &[String],
     resource_id: &str,
@@ -81,7 +81,7 @@ pub fn resolve_permission(
 pub fn accessible_resources(
     cache: &PermissionCache,
     def: &PermissionTreeDef,
-    tenant_id: u32,
+    tenant_id: u64,
     user_id: &str,
     user_roles: &[String],
     required_level: &str,
@@ -112,7 +112,7 @@ pub fn accessible_resources(
 pub fn check_permission(
     cache: &PermissionCache,
     def: &PermissionTreeDef,
-    tenant_id: u32,
+    tenant_id: u64,
     user_id: &str,
     user_roles: &[String],
     resource_id: &str,

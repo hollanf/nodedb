@@ -59,13 +59,13 @@ impl RedbFtsBackend {
 impl FtsBackend for RedbFtsBackend {
     type Error = crate::Error;
 
-    fn read_postings(&self, tid: u32, collection: &str, term: &str) -> crate::Result<Vec<Posting>> {
+    fn read_postings(&self, tid: u64, collection: &str, term: &str) -> crate::Result<Vec<Posting>> {
         super::postings::read(self, tid, collection, term)
     }
 
     fn write_postings(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         term: &str,
         postings: &[Posting],
@@ -73,13 +73,13 @@ impl FtsBackend for RedbFtsBackend {
         super::postings::write(self, tid, collection, term, postings)
     }
 
-    fn remove_postings(&self, tid: u32, collection: &str, term: &str) -> crate::Result<()> {
+    fn remove_postings(&self, tid: u64, collection: &str, term: &str) -> crate::Result<()> {
         super::postings::remove(self, tid, collection, term)
     }
 
     fn read_doc_length(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         doc_id: Surrogate,
     ) -> crate::Result<Option<u32>> {
@@ -88,7 +88,7 @@ impl FtsBackend for RedbFtsBackend {
 
     fn write_doc_length(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         doc_id: Surrogate,
         length: u32,
@@ -98,32 +98,32 @@ impl FtsBackend for RedbFtsBackend {
 
     fn remove_doc_length(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         doc_id: Surrogate,
     ) -> crate::Result<()> {
         super::doc_lengths::remove(self, tid, collection, doc_id)
     }
 
-    fn collection_terms(&self, tid: u32, collection: &str) -> crate::Result<Vec<String>> {
+    fn collection_terms(&self, tid: u64, collection: &str) -> crate::Result<Vec<String>> {
         super::postings::collection_terms(self, tid, collection)
     }
 
-    fn collection_stats(&self, tid: u32, collection: &str) -> crate::Result<(u32, u64)> {
+    fn collection_stats(&self, tid: u64, collection: &str) -> crate::Result<(u32, u64)> {
         super::stats::read(self, tid, collection)
     }
 
-    fn increment_stats(&self, tid: u32, collection: &str, doc_len: u32) -> crate::Result<()> {
+    fn increment_stats(&self, tid: u64, collection: &str, doc_len: u32) -> crate::Result<()> {
         super::stats::increment(self, tid, collection, doc_len)
     }
 
-    fn decrement_stats(&self, tid: u32, collection: &str, doc_len: u32) -> crate::Result<()> {
+    fn decrement_stats(&self, tid: u64, collection: &str, doc_len: u32) -> crate::Result<()> {
         super::stats::decrement(self, tid, collection, doc_len)
     }
 
     fn read_meta(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         subkey: &str,
     ) -> crate::Result<Option<Vec<u8>>> {
@@ -132,7 +132,7 @@ impl FtsBackend for RedbFtsBackend {
 
     fn write_meta(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         subkey: &str,
         value: &[u8],
@@ -142,7 +142,7 @@ impl FtsBackend for RedbFtsBackend {
 
     fn write_segment(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         segment_id: &str,
         data: &[u8],
@@ -152,26 +152,26 @@ impl FtsBackend for RedbFtsBackend {
 
     fn read_segment(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         segment_id: &str,
     ) -> crate::Result<Option<Vec<u8>>> {
         super::segments::read(self, tid, collection, segment_id)
     }
 
-    fn list_segments(&self, tid: u32, collection: &str) -> crate::Result<Vec<String>> {
+    fn list_segments(&self, tid: u64, collection: &str) -> crate::Result<Vec<String>> {
         super::segments::list(self, tid, collection)
     }
 
-    fn remove_segment(&self, tid: u32, collection: &str, segment_id: &str) -> crate::Result<()> {
+    fn remove_segment(&self, tid: u64, collection: &str, segment_id: &str) -> crate::Result<()> {
         super::segments::remove(self, tid, collection, segment_id)
     }
 
-    fn purge_collection(&self, tid: u32, collection: &str) -> crate::Result<usize> {
+    fn purge_collection(&self, tid: u64, collection: &str) -> crate::Result<usize> {
         super::purge::collection(self, tid, collection)
     }
 
-    fn purge_tenant(&self, tid: u32) -> crate::Result<usize> {
+    fn purge_tenant(&self, tid: u64) -> crate::Result<usize> {
         super::purge::tenant(self, tid)
     }
 }

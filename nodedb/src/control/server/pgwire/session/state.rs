@@ -62,7 +62,7 @@ pub struct PgSession {
     /// Pending consumer offset commits deferred until COMMIT.
     /// Each entry: (tenant_id, stream_name, group_name, partition_id, lsn).
     /// Flushed atomically on COMMIT, discarded on ROLLBACK.
-    pub pending_offset_commits: Vec<(u32, String, String, u32, u64)>,
+    pub pending_offset_commits: Vec<(u64, String, String, u32, u64)>,
     /// Server-side cursors: name → (cached result rows as JSON strings, current position).
     pub cursors: HashMap<String, CursorState>,
     /// LIVE SELECT subscriptions: active change stream subscriptions for this connection.

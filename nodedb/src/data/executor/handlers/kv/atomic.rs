@@ -13,7 +13,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_incr(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
         delta: i64,
@@ -73,7 +73,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_incr_float(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
         delta: f64,
@@ -132,7 +132,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_cas(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
         expected: &[u8],
@@ -185,7 +185,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_getset(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
         new_value: &[u8],

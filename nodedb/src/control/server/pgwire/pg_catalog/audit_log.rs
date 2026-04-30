@@ -123,7 +123,7 @@ fn audit_log_from_memory(
         encoder.encode_field(&(entry.seq as i64))?;
         encoder.encode_field(&(entry.timestamp_us as i64))?;
         encoder.encode_field(&format!("{:?}", entry.event))?;
-        encoder.encode_field(&(entry.tenant_id.map_or(0i64, |t| t.as_u32() as i64)))?;
+        encoder.encode_field(&(entry.tenant_id.map_or(0i64, |t| t.as_u64() as i64)))?;
         encoder.encode_field(&entry.source.as_str())?;
         encoder.encode_field(&entry.detail.as_str())?;
         encoder.encode_field(&entry.prev_hash.as_str())?;

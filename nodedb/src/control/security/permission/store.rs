@@ -241,7 +241,7 @@ impl PermissionStore {
     /// `"collection:{tenant_id}:"`, plus any function-scoped grants
     /// belonging to the same tenant (`"func:{tenant_id}:"`).
     pub fn all_grants(&self, tenant_id: TenantId) -> Vec<Grant> {
-        let tid = tenant_id.as_u32();
+        let tid = tenant_id.as_u64();
         let col_prefix = format!("collection:{tid}:");
         let func_prefix = format!("function:{tid}:");
         let grants = match self.grants.read() {

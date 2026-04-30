@@ -26,7 +26,7 @@ pub fn create_function(
     require_admin(identity, "create functions")?;
 
     let parsed = parse_create_function(sql)?;
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     let catalog = state
         .credentials

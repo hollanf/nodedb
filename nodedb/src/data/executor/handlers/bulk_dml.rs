@@ -17,7 +17,7 @@ impl CoreLoop {
     /// Returns document IDs of all matching documents.
     pub(in crate::data::executor) fn scan_matching_documents(
         &self,
-        tid: u32,
+        tid: u64,
         collection: &str,
         filters: &[ScanFilter],
     ) -> crate::Result<Vec<String>> {
@@ -85,7 +85,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_bulk_update(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         filter_bytes: &[u8],
         updates: &[(String, crate::bridge::physical_plan::UpdateValue)],
@@ -284,7 +284,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_bulk_delete(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         filter_bytes: &[u8],
     ) -> Response {

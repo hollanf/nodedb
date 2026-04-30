@@ -53,7 +53,7 @@ pub fn propose_delete_owner(
 ) -> PgWireResult<()> {
     let entry = CatalogEntry::DeleteOwner {
         object_type: object_type.to_string(),
-        tenant_id: tenant_id.as_u32(),
+        tenant_id: tenant_id.as_u64(),
         object_name: object_name.to_string(),
     };
     let log_index = propose_catalog_entry(state, &entry)
@@ -61,12 +61,12 @@ pub fn propose_delete_owner(
     if log_index == 0 {
         if let Some(catalog) = state.credentials.catalog() {
             catalog
-                .delete_owner(object_type, tenant_id.as_u32(), object_name)
+                .delete_owner(object_type, tenant_id.as_u64(), object_name)
                 .map_err(|e| sqlstate_error("XX000", &format!("catalog write: {e}")))?;
         }
         state.permissions.install_replicated_remove_owner(
             object_type,
-            tenant_id.as_u32(),
+            tenant_id.as_u64(),
             object_name,
         );
     }

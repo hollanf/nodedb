@@ -234,7 +234,16 @@ impl NativeSession {
             peer_addr: &self.peer_addr,
         };
 
-        let RequestFields::Text(fields) = &req.fields;
+        let fields = match &req.fields {
+            RequestFields::Text(f) => f,
+            _ => {
+                return NativeResponse::error(
+                    seq,
+                    "0A000",
+                    "unsupported request field format for this server version",
+                );
+            }
+        };
 
         match op {
             // SQL: full DataFusion pipeline.
@@ -374,6 +383,9 @@ impl NativeSession {
 
             // Auth/Ping/Status handled above.
             OpCode::Auth | OpCode::Ping | OpCode::Status => unreachable!(),
+            // OpCode is #[non_exhaustive]; future opcodes that reach this
+            // handler before session.rs is updated return a typed error.
+            _ => NativeResponse::error(seq, "0A000", "opcode not supported by this server version"),
         }
     }
 
@@ -386,6 +398,9 @@ impl NativeSession {
                     return NativeResponse::error(seq, "28000", "missing 'auth' field");
                 }
             },
+            _ => {
+                return NativeResponse::error(seq, "0A000", "unsupported request fields variant");
+            }
         };
 
         match dispatch::handle_auth(
@@ -398,7 +413,7 @@ impl NativeSession {
                 let mut resp = NativeResponse::auth_ok(
                     seq,
                     identity.username.clone(),
-                    identity.tenant_id.as_u32(),
+                    identity.tenant_id.as_u64(),
                 );
                 if let Some(w) = warning {
                     resp.warnings.push(w);

@@ -57,7 +57,7 @@ pub async fn upsert_document(
 
     // Enforce type guards and CHECK constraints (after BEFORE trigger).
     if let Some(catalog) = state.credentials.catalog()
-        && let Ok(Some(coll_def)) = catalog.get_collection(tenant_id.as_u32(), &parsed.coll_name)
+        && let Ok(Some(coll_def)) = catalog.get_collection(tenant_id.as_u64(), &parsed.coll_name)
     {
         // Inject DEFAULT/VALUE + validate type guards (combined).
         if !coll_def.type_guards.is_empty()

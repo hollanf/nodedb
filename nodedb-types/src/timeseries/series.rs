@@ -100,6 +100,7 @@ pub type LiteId = String;
 
 /// Battery state reported by the host application for battery-aware flushing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum BatteryState {
     /// Battery level is sufficient (>50%) or device is on AC power.
     Normal,

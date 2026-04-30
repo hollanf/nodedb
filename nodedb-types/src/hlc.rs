@@ -15,6 +15,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 /// Hybrid Logical Clock timestamp.
+///
+/// `#[non_exhaustive]` — a `epoch_id` discriminant for multi-cluster
+/// logical epochs may be added in a future release.
+#[non_exhaustive]
 #[derive(
     Debug,
     Clone,

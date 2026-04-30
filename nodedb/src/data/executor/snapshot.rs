@@ -29,7 +29,7 @@ impl CoreLoop {
             .export_edges()?
             .into_iter()
             .map(|(tid, k, v)| TenantKvPair {
-                tenant_id: tid.as_u32(),
+                tenant_id: tid.as_u64(),
                 key: k,
                 value: v,
             })
@@ -44,7 +44,7 @@ impl CoreLoop {
                     return None;
                 }
                 Some(HnswSnapshot {
-                    tenant_id: key.0.as_u32(),
+                    tenant_id: key.0.as_u64(),
                     collection: key.1.clone(),
                     checkpoint_bytes,
                 })
@@ -56,7 +56,7 @@ impl CoreLoop {
             .iter()
             .map(|(tid, engine)| {
                 Ok(CrdtSnapshot {
-                    tenant_id: tid.as_u32(),
+                    tenant_id: tid.as_u64(),
                     peer_id: engine.peer_id(),
                     snapshot_bytes: engine.export_snapshot_bytes()?,
                 })

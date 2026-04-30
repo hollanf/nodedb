@@ -12,10 +12,10 @@ use super::core_loop::CoreLoop;
 fn parse_build_key(s: &str) -> (crate::types::TenantId, String) {
     match s.split_once(':') {
         Some((tid_str, coll_key)) => {
-            let tid = tid_str.parse::<u32>().unwrap_or(0);
+            let tid = tid_str.parse::<u64>().unwrap_or(0);
             (crate::types::TenantId::new(tid), coll_key.to_string())
         }
-        None => (crate::types::TenantId::new(0), s.to_string()),
+        None => (crate::types::TenantId::new(0_u64), s.to_string()),
     }
 }
 

@@ -114,7 +114,7 @@ pub async fn create_index(
             "catalog unavailable: CREATE INDEX requires persisted collections",
         ));
     };
-    let mut coll = match catalog.get_collection(tenant_id.as_u32(), collection) {
+    let mut coll = match catalog.get_collection(tenant_id.as_u64(), collection) {
         Ok(Some(c)) if c.is_active => c,
         _ => {
             return Err(sqlstate_error(
@@ -236,7 +236,7 @@ pub async fn create_index(
     // descriptor drain in cluster mode, serialized by pgwire session in
     // single-node) is folded in before we rewrite the index vector.
     if let Some(latest) = catalog
-        .get_collection(tenant_id.as_u32(), collection)
+        .get_collection(tenant_id.as_u64(), collection)
         .ok()
         .flatten()
     {
@@ -317,7 +317,7 @@ pub async fn drop_index(
         ));
     };
     let collections = catalog
-        .load_collections_for_tenant(tenant_id.as_u32())
+        .load_collections_for_tenant(tenant_id.as_u64())
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     let mut owning = collections
         .into_iter()

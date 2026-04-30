@@ -27,7 +27,7 @@ pub fn verify_roles(store: &RoleStore, catalog: &SystemCatalog) -> crate::Result
         .into_iter()
         .map(|r| {
             let parent = r.parent.unwrap_or_default();
-            let value = format!("{}|{}", r.tenant_id.as_u32(), parent);
+            let value = format!("{}|{}", r.tenant_id.as_u64(), parent);
             (r.name, value)
         })
         .collect();

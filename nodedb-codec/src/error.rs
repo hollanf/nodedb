@@ -2,6 +2,7 @@
 
 /// Errors that can occur during encoding or decoding.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum CodecError {
     /// Input data is too short or truncated.
     #[error("truncated input: expected at least {expected} bytes, got {actual}")]

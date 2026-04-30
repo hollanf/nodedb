@@ -39,7 +39,7 @@ pub fn handle_reindex(
         "TABLE" => {
             if let Some(catalog) = state.credentials.catalog()
                 && catalog
-                    .get_collection(tenant_id.as_u32(), &target_name)
+                    .get_collection(tenant_id.as_u64(), &target_name)
                     .ok()
                     .flatten()
                     .is_none()

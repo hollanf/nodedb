@@ -26,8 +26,8 @@ pub fn show_rls_policies(
         .iter()
         .position(|p| p.to_uppercase() == "TENANT")
         .and_then(|i| parts.get(i + 1))
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(identity.tenant_id.as_u32());
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or_else(|| identity.tenant_id.as_u64());
 
     let policies = if let Some(coll) = &collection {
         state.rls.all_policies(tenant_id, coll)

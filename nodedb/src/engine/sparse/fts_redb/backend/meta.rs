@@ -7,7 +7,7 @@ use crate::engine::sparse::fts_redb::tables::INDEX_META;
 
 pub(super) fn read(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     subkey: &str,
 ) -> crate::Result<Option<Vec<u8>>> {
@@ -27,7 +27,7 @@ pub(super) fn read(
 
 pub(super) fn write(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     subkey: &str,
     value: &[u8],

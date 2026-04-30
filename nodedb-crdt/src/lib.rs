@@ -43,7 +43,7 @@ pub struct CrdtAuthContext {
     /// Authenticated user_id (0 = unauthenticated/legacy).
     pub user_id: u64,
     /// Tenant this operation belongs to.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Unix timestamp (milliseconds) when this auth session expires.
     /// 0 = no expiry (trust mode / legacy).
     /// Agents accumulating deltas offline must re-authenticate before

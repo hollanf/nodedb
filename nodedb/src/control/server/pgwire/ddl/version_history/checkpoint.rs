@@ -44,7 +44,7 @@ pub async fn create_checkpoint(
         .as_secs();
 
     let record = CheckpointRecord {
-        tenant_id: tenant_id.as_u32(),
+        tenant_id: tenant_id.as_u64(),
         collection: collection.clone(),
         doc_id: doc_id.clone(),
         checkpoint_name: checkpoint_name.clone(),
@@ -58,7 +58,7 @@ pub async fn create_checkpoint(
         return Err(sqlstate_error("XX000", "catalog unavailable"));
     };
     if catalog
-        .get_checkpoint(tenant_id.as_u32(), &collection, &doc_id, &checkpoint_name)
+        .get_checkpoint(tenant_id.as_u64(), &collection, &doc_id, &checkpoint_name)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
         .is_some()
     {
@@ -98,7 +98,7 @@ pub async fn drop_checkpoint(
         return Err(sqlstate_error("XX000", "catalog unavailable"));
     };
     let existed = catalog
-        .delete_checkpoint(tenant_id.as_u32(), &collection, &doc_id, &checkpoint_name)
+        .delete_checkpoint(tenant_id.as_u64(), &collection, &doc_id, &checkpoint_name)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     if !existed {
         return Err(sqlstate_error(

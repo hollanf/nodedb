@@ -13,6 +13,10 @@ use zerompk::{FromMessagePack, ToMessagePack};
 /// **Anti-meridian convention:** When `min_lng > max_lng`, the bbox wraps
 /// across the ±180° date line. For example, a geometry spanning 170°E to
 /// 170°W has `min_lng = 170.0, max_lng = -170.0`.
+///
+/// `#[non_exhaustive]` — elevation (Z) bounds or a CRS tag may be added
+/// when 3D geometries are supported.
+#[non_exhaustive]
 #[derive(
     Debug,
     Clone,

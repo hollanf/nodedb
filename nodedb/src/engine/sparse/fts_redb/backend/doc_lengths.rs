@@ -9,7 +9,7 @@ use crate::engine::sparse::fts_redb::tables::DOC_LENGTHS;
 
 pub(super) fn read(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     doc_id: Surrogate,
 ) -> crate::Result<Option<u32>> {
@@ -33,7 +33,7 @@ pub(super) fn read(
 
 pub(super) fn write(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     doc_id: Surrogate,
     length: u32,
@@ -58,7 +58,7 @@ pub(super) fn write(
 
 pub(super) fn remove(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     doc_id: Surrogate,
 ) -> crate::Result<()> {

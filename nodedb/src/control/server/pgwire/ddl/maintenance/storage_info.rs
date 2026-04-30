@@ -29,7 +29,7 @@ pub fn handle_show_storage(
         })?
         .to_lowercase();
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Verify collection exists.
     if let Some(catalog) = state.credentials.catalog()

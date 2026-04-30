@@ -61,7 +61,7 @@ pub fn create_typeguard(
         return Err(err("XX000", "no catalog available"));
     };
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let mut coll = catalog
         .get_collection(tenant_id, &coll_name)
         .map_err(|e| err("XX000", &e.to_string()))?
@@ -118,7 +118,7 @@ pub fn alter_typeguard_add(
         return Err(err("XX000", "no catalog available"));
     };
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let mut coll = catalog
         .get_collection(tenant_id, &coll_name)
         .map_err(|e| err("XX000", &e.to_string()))?
@@ -176,7 +176,7 @@ pub fn alter_typeguard_drop(
         return Err(err("XX000", "no catalog available"));
     };
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let mut coll = catalog
         .get_collection(tenant_id, &coll_name)
         .map_err(|e| err("XX000", &e.to_string()))?
@@ -237,7 +237,7 @@ pub fn drop_typeguard(
         return Err(err("XX000", "no catalog available"));
     };
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let mut coll = catalog
         .get_collection(tenant_id, &coll_name)
         .map_err(|e| err("XX000", &e.to_string()))?
@@ -277,7 +277,7 @@ pub fn show_typeguard(
         return Err(err("XX000", "no catalog available"));
     };
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let coll = catalog
         .get_collection(tenant_id, &coll_name)
         .map_err(|e| err("XX000", &e.to_string()))?
@@ -317,7 +317,7 @@ pub fn show_typeguards(
         return Err(err("XX000", "no catalog available"));
     };
 
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let collections = catalog
         .load_collections_for_tenant(tenant_id)
         .map_err(|e| err("XX000", &e.to_string()))?;

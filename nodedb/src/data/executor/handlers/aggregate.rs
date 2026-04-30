@@ -23,7 +23,7 @@ use nodedb_query::msgpack_scan;
 // ── Cache key ──────────────────────────────────────────────────────────────
 
 fn aggregate_cache_key(
-    tid: u32,
+    tid: u64,
     collection: &str,
     group_by: &[String],
     aggregates: &[AggregateSpec],
@@ -113,7 +113,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_aggregate(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         group_by: &[String],
         aggregates: &[AggregateSpec],

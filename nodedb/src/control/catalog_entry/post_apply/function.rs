@@ -15,7 +15,7 @@ pub fn put(func: StoredFunction, shared: Arc<SharedState>) {
     super::owner::install_from_parent("function", func.tenant_id, &func.name, &func.owner, &shared);
 }
 
-pub fn delete(tenant_id: u32, name: String, shared: Arc<SharedState>) {
+pub fn delete(tenant_id: u64, name: String, shared: Arc<SharedState>) {
     shared.block_cache.clear();
     shared
         .permissions

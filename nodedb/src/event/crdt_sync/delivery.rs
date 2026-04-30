@@ -57,7 +57,7 @@ impl CrdtSyncDelivery {
         &self,
         session_id: String,
         peer_id: u64,
-        tenant_id: u32,
+        tenant_id: u64,
         subscribed_collections: Vec<String>,
         config: &DeliveryConfig,
     ) -> (
@@ -101,7 +101,7 @@ impl CrdtSyncDelivery {
     /// Lite client learns about the hard-delete within one network
     /// round-trip and can drop local state. Offline clients pick it
     /// up on reconnect via the `last_seen_lsn` replay path.
-    pub fn broadcast_collection_purged(&self, tenant_id: u32, collection: &str, purge_lsn: u64) {
+    pub fn broadcast_collection_purged(&self, tenant_id: u64, collection: &str, purge_lsn: u64) {
         let msg = nodedb_types::sync::wire::CollectionPurgedMsg {
             tenant_id,
             name: collection.to_string(),
@@ -158,7 +158,7 @@ impl CrdtSyncDelivery {
     }
 
     /// Check if any connected Lite session subscribes to this collection.
-    pub fn has_subscribers(&self, tenant_id: u32, collection: &str) -> bool {
+    pub fn has_subscribers(&self, tenant_id: u64, collection: &str) -> bool {
         let sessions = self.sessions.read().unwrap_or_else(|p| p.into_inner());
         sessions.values().any(|s| {
             s.tenant_id == tenant_id
@@ -172,7 +172,7 @@ impl CrdtSyncDelivery {
     /// Sends to each session whose tenant_id matches and that subscribes
     /// to the delta's collection. Uses `try_send` (non-blocking) — if the
     /// channel is full, the delta is dropped with a warning (backpressure).
-    pub fn enqueue(&self, tenant_id: u32, delta: OutboundDelta) {
+    pub fn enqueue(&self, tenant_id: u64, delta: OutboundDelta) {
         let sessions = self.sessions.read().unwrap_or_else(|p| p.into_inner());
 
         for session in sessions.values() {

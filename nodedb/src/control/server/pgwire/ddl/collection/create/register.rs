@@ -37,7 +37,7 @@ pub async fn dispatch_register_if_needed(
     let Some(catalog) = state.credentials.catalog() else {
         return;
     };
-    let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), &name) else {
+    let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u64(), &name) else {
         return;
     };
     let (fields, _serial_fields) =
@@ -60,7 +60,7 @@ pub async fn dispatch_register_by_name(
     let Some(catalog) = state.credentials.catalog() else {
         return;
     };
-    let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u32(), name) else {
+    let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u64(), name) else {
         return;
     };
     let mut indexes = derive_auto_indexes(coll.fields.iter().map(|(n, _)| n.as_str()));
@@ -197,7 +197,7 @@ async fn dispatch_register_from_stored_inner(
         transition_checks: coll.transition_checks.clone(),
         materialized_sum_sources: find_materialized_sum_bindings(
             catalog,
-            tenant_id.as_u32(),
+            tenant_id.as_u64(),
             &name,
         ),
         generated_columns: build_generated_column_specs(coll),

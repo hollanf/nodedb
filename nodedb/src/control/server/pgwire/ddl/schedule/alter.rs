@@ -20,7 +20,7 @@ pub fn alter_schedule(
     action: &str,
     cron_expr: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Look up the schedule in the registry.
     let mut def = state

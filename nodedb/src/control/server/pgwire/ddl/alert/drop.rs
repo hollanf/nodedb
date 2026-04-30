@@ -22,7 +22,7 @@ pub fn drop_alert(
         return Err(sqlstate_error("42601", "syntax: DROP ALERT <name>"));
     }
     let name = parts[2].to_lowercase();
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     if state.alert_registry.get(tenant_id, &name).is_none() {
         return Err(sqlstate_error(

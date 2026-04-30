@@ -35,7 +35,7 @@ pub fn drop_materialized_view(
     // that never touches raft.
     let exists_before = if let Some(catalog) = state.credentials.catalog() {
         matches!(
-            catalog.get_materialized_view(tenant_id.as_u32(), &name),
+            catalog.get_materialized_view(tenant_id.as_u64(), &name),
             Ok(Some(_))
         )
     } else {
@@ -54,7 +54,7 @@ pub fn drop_materialized_view(
     }
 
     let entry = crate::control::catalog_entry::CatalogEntry::DeleteMaterializedView {
-        tenant_id: tenant_id.as_u32(),
+        tenant_id: tenant_id.as_u64(),
         name: name.clone(),
     };
     let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
@@ -63,7 +63,7 @@ pub fn drop_materialized_view(
         && let Some(catalog) = state.credentials.catalog()
     {
         catalog
-            .delete_materialized_view(tenant_id.as_u32(), &name)
+            .delete_materialized_view(tenant_id.as_u64(), &name)
             .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     }
 
@@ -73,12 +73,12 @@ pub fn drop_materialized_view(
     // later CREATE COLLECTION with the same name.
     if let Some(catalog) = state.credentials.catalog()
         && matches!(
-            catalog.get_collection(tenant_id.as_u32(), &name),
+            catalog.get_collection(tenant_id.as_u64(), &name),
             Ok(Some(_))
         )
     {
         let coll_entry = crate::control::catalog_entry::CatalogEntry::DeactivateCollection {
-            tenant_id: tenant_id.as_u32(),
+            tenant_id: tenant_id.as_u64(),
             name: name.clone(),
         };
         let _ = crate::control::metadata_proposer::propose_catalog_entry(state, &coll_entry)

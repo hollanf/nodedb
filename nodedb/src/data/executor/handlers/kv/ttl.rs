@@ -12,7 +12,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_expire(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
         ttl_ms: u64,
@@ -29,7 +29,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_persist(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
     ) -> Response {
@@ -44,7 +44,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_kv_get_ttl(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         key: &[u8],
     ) -> Response {

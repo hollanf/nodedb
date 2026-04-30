@@ -105,7 +105,7 @@ fn parse_create_rls_policy(upper: &str, parts: &[&str], _trimmed: &str) -> Noded
         .iter()
         .position(|p| p.to_uppercase() == "TENANT")
         .and_then(|i| parts.get(i + 1))
-        .and_then(|s| s.parse::<u32>().ok());
+        .and_then(|s| s.parse::<u64>().ok());
 
     NodedbStatement::CreateRlsPolicy {
         name,

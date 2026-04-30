@@ -28,7 +28,7 @@ impl RlsPolicyStore {
     /// Returns `true` if a policy was removed.
     pub fn install_replicated_drop_policy(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         collection: &str,
         policy_name: &str,
     ) -> bool {
@@ -46,7 +46,7 @@ impl RlsPolicyStore {
     /// Check whether a policy with the given name already exists
     /// on the given (tenant, collection). Used by the handler
     /// pre-check before proposing `PutRlsPolicy`.
-    pub fn policy_exists(&self, tenant_id: u32, collection: &str, policy_name: &str) -> bool {
+    pub fn policy_exists(&self, tenant_id: u64, collection: &str, policy_name: &str) -> bool {
         let key = policy_key(tenant_id, collection);
         let policies = self.lock_read();
         policies

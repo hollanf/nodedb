@@ -24,7 +24,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_convert_collection(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         target_type: &str,
         schema_json: &str,
@@ -76,7 +76,7 @@ impl CoreLoop {
     fn convert_to_strict(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         schema_json: &str,
     ) -> Response {

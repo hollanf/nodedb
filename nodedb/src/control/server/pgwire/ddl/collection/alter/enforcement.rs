@@ -17,7 +17,7 @@ pub fn alter_collection_set_retention(
     name: &str,
     value: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let Some(catalog) = state.credentials.catalog() else {
         return Err(sqlstate_error("XX000", "no catalog available"));
     };
@@ -41,7 +41,7 @@ pub fn alter_collection_set_legal_hold(
     enabled: bool,
     tag: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let Some(catalog) = state.credentials.catalog() else {
         return Err(sqlstate_error("XX000", "no catalog available"));
     };
@@ -87,7 +87,7 @@ pub fn alter_collection_set_append_only(
     _identity: &AuthenticatedIdentity,
     name: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = _identity.tenant_id.as_u32();
+    let tenant_id = _identity.tenant_id.as_u64();
     let Some(catalog) = state.credentials.catalog() else {
         return Err(sqlstate_error("XX000", "no catalog available"));
     };
@@ -113,7 +113,7 @@ pub fn alter_collection_set_last_value_cache(
     name: &str,
     enabled: bool,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = _identity.tenant_id.as_u32();
+    let tenant_id = _identity.tenant_id.as_u64();
     let Some(catalog) = state.credentials.catalog() else {
         return Err(sqlstate_error("XX000", "no catalog available"));
     };

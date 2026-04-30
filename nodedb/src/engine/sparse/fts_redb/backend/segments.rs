@@ -7,7 +7,7 @@ use crate::engine::sparse::fts_redb::tables::SEGMENTS;
 
 pub(super) fn write(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     segment_id: &str,
     data: &[u8],
@@ -30,7 +30,7 @@ pub(super) fn write(
 
 pub(super) fn read(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     segment_id: &str,
 ) -> crate::Result<Option<Vec<u8>>> {
@@ -50,7 +50,7 @@ pub(super) fn read(
 
 pub(super) fn list(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
 ) -> crate::Result<Vec<String>> {
     let read_txn = backend
@@ -70,7 +70,7 @@ pub(super) fn list(
 
 pub(super) fn remove(
     backend: &RedbFtsBackend,
-    tid: u32,
+    tid: u64,
     collection: &str,
     segment_id: &str,
 ) -> crate::Result<()> {

@@ -30,7 +30,7 @@ pub struct BmwParams<'a> {
 /// Run BMW search over the FtsIndex.
 pub fn bmw_search<B: FtsBackend>(
     index: &FtsIndex<B>,
-    tid: u32,
+    tid: u64,
     collection: &str,
     p: &BmwParams<'_>,
 ) -> Result<Option<Vec<TextSearchResult>>, B::Error> {
@@ -95,7 +95,7 @@ pub fn bmw_search<B: FtsBackend>(
 fn to_compact<B: FtsBackend>(
     postings: &[Posting],
     index: &FtsIndex<B>,
-    tid: u32,
+    tid: u64,
     collection: &str,
 ) -> Result<Vec<CompactPosting>, B::Error> {
     let mut compact = Vec::with_capacity(postings.len());
@@ -122,7 +122,7 @@ mod tests {
     use crate::backend::memory::MemoryBackend;
     use crate::index::FtsIndex;
 
-    const T: u32 = 1;
+    const T: u64 = 1;
     const D1: Surrogate = Surrogate(1);
     const D2: Surrogate = Surrogate(2);
     const D3: Surrogate = Surrogate(3);

@@ -13,7 +13,7 @@ use tracing::info;
 /// A ceiling definition for a tenant.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TenantCeiling {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Maximum number of collections allowed.
     pub max_collections: u64,
     /// Maximum storage in bytes. 0 = unlimited.
@@ -26,7 +26,7 @@ pub struct TenantCeiling {
 /// Ceiling store: enforced limits that superusers cannot bypass.
 pub struct CeilingStore {
     /// tenant_id → ceiling.
-    ceilings: RwLock<HashMap<u32, TenantCeiling>>,
+    ceilings: RwLock<HashMap<u64, TenantCeiling>>,
 }
 
 impl CeilingStore {
@@ -53,13 +53,13 @@ impl CeilingStore {
     }
 
     /// Get the ceiling for a tenant (if defined).
-    pub fn get(&self, tenant_id: u32) -> Option<TenantCeiling> {
+    pub fn get(&self, tenant_id: u64) -> Option<TenantCeiling> {
         let ceilings = self.ceilings.read().unwrap_or_else(|p| p.into_inner());
         ceilings.get(&tenant_id).cloned()
     }
 
     /// Check if creating a new collection would exceed the ceiling.
-    pub fn check_collection_limit(&self, tenant_id: u32, current_count: u64) -> crate::Result<()> {
+    pub fn check_collection_limit(&self, tenant_id: u64, current_count: u64) -> crate::Result<()> {
         let ceilings = self.ceilings.read().unwrap_or_else(|p| p.into_inner());
         if let Some(c) = ceilings.get(&tenant_id)
             && c.max_collections > 0
@@ -76,7 +76,7 @@ impl CeilingStore {
     /// Check if adding storage would exceed the ceiling.
     pub fn check_storage_limit(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         current_bytes: u64,
         additional_bytes: u64,
     ) -> crate::Result<()> {
@@ -98,7 +98,7 @@ impl CeilingStore {
 
     /// Check if an audit entry is protected by the minimum retention ceiling.
     /// Returns `true` if the entry CANNOT be deleted.
-    pub fn is_audit_protected(&self, tenant_id: u32, entry_age_days: u32) -> bool {
+    pub fn is_audit_protected(&self, tenant_id: u64, entry_age_days: u32) -> bool {
         let ceilings = self.ceilings.read().unwrap_or_else(|p| p.into_inner());
         if let Some(c) = ceilings.get(&tenant_id) {
             return entry_age_days < c.audit_min_retention_days;

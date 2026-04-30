@@ -16,12 +16,12 @@ pub(super) fn wall_now_ms() -> i64 {
 
 pub struct DocumentEngine<'a> {
     pub(super) sparse: &'a SparseEngine,
-    pub(super) tenant_id: u32,
+    pub(super) tenant_id: u64,
     pub(super) configs: HashMap<String, CollectionConfig>,
 }
 
 impl<'a> DocumentEngine<'a> {
-    pub fn new(sparse: &'a SparseEngine, tenant_id: u32) -> Self {
+    pub fn new(sparse: &'a SparseEngine, tenant_id: u64) -> Self {
         Self {
             sparse,
             tenant_id,

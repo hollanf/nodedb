@@ -67,7 +67,7 @@ impl MvPersistence {
     /// Persist a single MV's state snapshot.
     pub fn save(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         mv_name: &str,
         snapshot: &[(String, Vec<GroupState>)],
     ) -> crate::Result<()> {
@@ -106,7 +106,7 @@ impl MvPersistence {
     }
 
     /// Load a persisted MV state snapshot.
-    pub fn load(&self, tenant_id: u32, mv_name: &str) -> crate::Result<Option<MvSnapshot>> {
+    pub fn load(&self, tenant_id: u64, mv_name: &str) -> crate::Result<Option<MvSnapshot>> {
         let key = format!("{tenant_id}:{mv_name}");
         let txn = self.db.begin_read().map_err(|e| crate::Error::Storage {
             engine: "event_plane".into(),
@@ -138,7 +138,7 @@ impl MvPersistence {
     }
 
     /// Delete persisted state for a dropped MV.
-    pub fn delete(&self, tenant_id: u32, mv_name: &str) -> crate::Result<()> {
+    pub fn delete(&self, tenant_id: u64, mv_name: &str) -> crate::Result<()> {
         let key = format!("{tenant_id}:{mv_name}");
         let txn = self.db.begin_write().map_err(|e| crate::Error::Storage {
             engine: "event_plane".into(),

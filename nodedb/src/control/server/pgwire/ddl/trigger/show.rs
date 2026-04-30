@@ -17,7 +17,7 @@ pub fn show_triggers(
     identity: &AuthenticatedIdentity,
     parts: &[&str],
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
 
     // Optional collection filter: SHOW TRIGGERS ON <collection>
     let collection_filter = if parts.len() >= 4 && parts[2].eq_ignore_ascii_case("ON") {

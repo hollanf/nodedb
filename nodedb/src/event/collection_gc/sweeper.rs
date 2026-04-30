@@ -86,7 +86,7 @@ async fn run_loop(shared: Arc<SharedState>) {
 /// `None` on the quota field means "inherit the system default".
 fn effective_retention_for_tenant(
     shared: &SharedState,
-    tenant_id: u32,
+    tenant_id: u64,
     fallback: Duration,
 ) -> Duration {
     let tenants = match shared.tenants.lock() {
@@ -119,7 +119,7 @@ pub fn sweep_once(shared: &SharedState, retention: Duration) -> crate::Result<()
     // tenants whose pending count just went to zero need the gauge
     // to zero out, not stay pinned at the previous value.
     if let Some(metrics) = shared.system_metrics.as_ref() {
-        let mut pending: HashMap<u32, u64> = HashMap::new();
+        let mut pending: HashMap<u64, u64> = HashMap::new();
         for coll in &dropped {
             *pending.entry(coll.tenant_id).or_insert(0) += 1;
         }

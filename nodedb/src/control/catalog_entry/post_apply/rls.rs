@@ -36,7 +36,7 @@ pub fn put(stored: StoredRlsPolicy, shared: Arc<SharedState>) {
     }
 }
 
-pub fn delete(tenant_id: u32, collection: String, name: String, shared: Arc<SharedState>) {
+pub fn delete(tenant_id: u64, collection: String, name: String, shared: Arc<SharedState>) {
     let removed = shared
         .rls
         .install_replicated_drop_policy(tenant_id, &collection, &name);

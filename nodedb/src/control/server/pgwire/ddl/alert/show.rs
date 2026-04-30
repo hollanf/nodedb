@@ -16,7 +16,7 @@ pub fn show_alerts(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let alerts = state.alert_registry.list_for_tenant(tenant_id);
 
     let schema = Arc::new(vec![
@@ -94,7 +94,7 @@ pub fn show_alert_status(
     identity: &AuthenticatedIdentity,
     name: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let tenant_id = identity.tenant_id.as_u32();
+    let tenant_id = identity.tenant_id.as_u64();
     let name = name.to_lowercase();
 
     // Verify alert exists.

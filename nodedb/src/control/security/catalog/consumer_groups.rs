@@ -29,7 +29,7 @@ impl SystemCatalog {
     /// Delete a consumer group. Returns true if it existed.
     pub fn delete_consumer_group(
         &self,
-        tenant_id: u32,
+        tenant_id: u64,
         stream: &str,
         group: &str,
     ) -> crate::Result<bool> {
@@ -75,7 +75,7 @@ impl SystemCatalog {
     }
 }
 
-fn group_key(tenant_id: u32, stream: &str, group: &str) -> String {
+fn group_key(tenant_id: u64, stream: &str, group: &str) -> String {
     format!("{tenant_id}:{stream}:{group}")
 }
 

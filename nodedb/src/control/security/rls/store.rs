@@ -55,7 +55,7 @@ impl RlsPolicyStore {
     }
 
     /// Drop an RLS policy. Returns `true` if a policy was removed.
-    pub fn drop_policy(&self, tenant_id: u32, collection: &str, policy_name: &str) -> bool {
+    pub fn drop_policy(&self, tenant_id: u64, collection: &str, policy_name: &str) -> bool {
         let key = policy_key(tenant_id, collection);
         let mut policies = self.lock_write();
         if let Some(list) = policies.get_mut(&key) {
@@ -68,7 +68,7 @@ impl RlsPolicyStore {
     }
 
     /// Get all enabled read policies for a tenant+collection.
-    pub fn read_policies(&self, tenant_id: u32, collection: &str) -> Vec<RlsPolicy> {
+    pub fn read_policies(&self, tenant_id: u64, collection: &str) -> Vec<RlsPolicy> {
         let key = policy_key(tenant_id, collection);
         let policies = self.lock_read();
         policies
@@ -85,7 +85,7 @@ impl RlsPolicyStore {
     }
 
     /// Get all enabled write policies for a tenant+collection.
-    pub fn write_policies(&self, tenant_id: u32, collection: &str) -> Vec<RlsPolicy> {
+    pub fn write_policies(&self, tenant_id: u64, collection: &str) -> Vec<RlsPolicy> {
         let key = policy_key(tenant_id, collection);
         let policies = self.lock_read();
         policies
@@ -140,14 +140,14 @@ impl RlsPolicyStore {
     }
 
     /// Get all policies for a tenant+collection.
-    pub fn all_policies(&self, tenant_id: u32, collection: &str) -> Vec<RlsPolicy> {
+    pub fn all_policies(&self, tenant_id: u64, collection: &str) -> Vec<RlsPolicy> {
         let key = policy_key(tenant_id, collection);
         let policies = self.lock_read();
         policies.get(&key).cloned().unwrap_or_default()
     }
 
     /// Get all policies for a tenant across all collections.
-    pub fn all_policies_for_tenant(&self, tenant_id: u32) -> Vec<RlsPolicy> {
+    pub fn all_policies_for_tenant(&self, tenant_id: u64) -> Vec<RlsPolicy> {
         let prefix = format!("{tenant_id}:");
         let policies = self.lock_read();
         policies

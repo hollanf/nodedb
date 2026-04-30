@@ -26,7 +26,7 @@ pub struct CdcEvent {
     /// WAL LSN for this event. Used for offset tracking and ordering.
     pub lsn: u64,
     /// Tenant ID.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// New row value (for INSERT and UPDATE). JSON bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_value: Option<serde_json::Value>,
@@ -92,7 +92,7 @@ impl zerompk::ToMessagePack for CdcEvent {
         writer.write_string("lsn")?;
         writer.write_u64(self.lsn)?;
         writer.write_string("tenant_id")?;
-        writer.write_u32(self.tenant_id)?;
+        writer.write_u64(self.tenant_id)?;
         writer.write_string("schema_version")?;
         writer.write_u64(self.schema_version)?;
         if let Some(ref v) = self.new_value {
@@ -129,7 +129,7 @@ impl<'a> zerompk::FromMessagePack<'a> for CdcEvent {
         let mut row_id = String::new();
         let mut event_time: u64 = 0;
         let mut lsn: u64 = 0;
-        let mut tenant_id: u32 = 0;
+        let mut tenant_id: u64 = 0;
         let mut schema_version: u64 = 0;
         let mut new_value: Option<serde_json::Value> = None;
         let mut old_value: Option<serde_json::Value> = None;
@@ -146,7 +146,7 @@ impl<'a> zerompk::FromMessagePack<'a> for CdcEvent {
                 "row_id" => row_id = reader.read_string()?.into_owned(),
                 "event_time" => event_time = reader.read_u64()?,
                 "lsn" => lsn = reader.read_u64()?,
-                "tenant_id" => tenant_id = reader.read_u32()?,
+                "tenant_id" => tenant_id = reader.read_u64()?,
                 "schema_version" => schema_version = reader.read_u64()?,
                 "new_value" => new_value = Some(JsonValue::read(reader)?.0),
                 "old_value" => old_value = Some(JsonValue::read(reader)?.0),

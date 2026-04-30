@@ -2,6 +2,7 @@
 ///
 /// Data flows downward: L0 → L1 → L2 as it ages and cools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StorageTier {
     /// L0 (Hot): Lock-free radix trees, memtables, active CRDT states.
     /// Pure RAM — no I/O.

@@ -216,7 +216,7 @@ pub struct TriggerBatch {
     /// Accumulated rows.
     pub rows: Vec<TriggerBatchRow>,
     /// Tenant ID.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
 }
 
 /// Accumulates WriteEvent row data into batches by collection.
@@ -232,7 +232,7 @@ pub struct TriggerBatchCollector {
 struct PendingBatch {
     collection: String,
     operation: String,
-    tenant_id: u32,
+    tenant_id: u64,
     rows: Vec<TriggerBatchRow>,
 }
 
@@ -252,7 +252,7 @@ impl TriggerBatchCollector {
         &mut self,
         collection: &str,
         operation: &str,
-        tenant_id: u32,
+        tenant_id: u64,
         row: TriggerBatchRow,
     ) -> Option<TriggerBatch> {
         // If the pending batch targets a different collection/operation, flush it first.
@@ -345,7 +345,7 @@ pub fn push_write_event(
         event.row_id.as_str().to_string(),
     );
 
-    collector.push(&event.collection, op_str, event.tenant_id.as_u32(), row)
+    collector.push(&event.collection, op_str, event.tenant_id.as_u64(), row)
 }
 
 #[cfg(test)]

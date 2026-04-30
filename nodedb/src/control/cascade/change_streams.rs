@@ -12,7 +12,7 @@ use crate::control::security::catalog::SystemCatalog;
 /// Returns stream names only, sorted.
 pub fn find_change_streams_on(
     catalog: &SystemCatalog,
-    tenant_id: u32,
+    tenant_id: u64,
     collection: &str,
 ) -> crate::Result<Vec<String>> {
     let all = catalog.load_all_change_streams()?;

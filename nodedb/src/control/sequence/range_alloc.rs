@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
     Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
 )]
 pub struct RangeAllocationRequest {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub sequence_name: String,
     /// How many values to allocate in this chunk.
     pub chunk_size: i64,
@@ -31,7 +31,7 @@ pub struct RangeAllocationRequest {
     Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
 )]
 pub struct GapFreeAdvanceRequest {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub sequence_name: String,
     /// The value being reserved (must match the local counter advance).
     pub reserved_value: i64,
@@ -73,7 +73,7 @@ impl RangeAllocator {
     pub fn allocate_chunk(
         &self,
         state: &crate::control::state::SharedState,
-        tenant_id: u32,
+        tenant_id: u64,
         sequence_name: &str,
         increment: i64,
         epoch: u64,
@@ -154,7 +154,7 @@ impl RangeAllocator {
     pub fn propose_gap_free_advance(
         &self,
         state: &crate::control::state::SharedState,
-        tenant_id: u32,
+        tenant_id: u64,
         sequence_name: &str,
         reserved_value: i64,
         epoch: u64,

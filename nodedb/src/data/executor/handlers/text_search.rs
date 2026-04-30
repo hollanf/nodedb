@@ -17,7 +17,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_text_search(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         query: &str,
         top_k: usize,
@@ -108,7 +108,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_hybrid_search(
         &self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         query_vector: &[f32],
         query_text: &str,

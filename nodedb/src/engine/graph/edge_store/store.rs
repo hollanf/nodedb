@@ -14,18 +14,18 @@ use redb::{Database, TableDefinition};
 pub(super) type BaseKey = (String, String, String, String);
 
 /// Tenant-qualified `BaseKey`. Used when scanning across tenants.
-pub(super) type TenantBaseKey = (u32, String, String, String, String);
+pub(super) type TenantBaseKey = (u64, String, String, String, String);
 
 /// Edge table: composite key `(tid, "collection\x00src\x00label\x00dst\x00{system_from:020}")` → value.
 ///
 /// Value is either an `EdgeValuePayload` (zerompk fixarray-3) or a single-byte
 /// sentinel (`TOMBSTONE_SENTINEL`, `GDPR_ERASURE_SENTINEL`).
-pub(super) const EDGES: TableDefinition<(u32, &str), &[u8]> = TableDefinition::new("edges");
+pub(super) const EDGES: TableDefinition<(u64, &str), &[u8]> = TableDefinition::new("edges");
 
 /// Reverse edge index: same versioned key shape as `EDGES` but with
 /// `dst`/`src` swapped. Value is empty for live edges, or a sentinel for
 /// soft-deleted / erased edges (symmetry with forward).
-pub(super) const REVERSE_EDGES: TableDefinition<(u32, &str), &[u8]> =
+pub(super) const REVERSE_EDGES: TableDefinition<(u64, &str), &[u8]> =
     TableDefinition::new("reverse_edges");
 
 pub(super) fn redb_err<E: std::fmt::Display>(ctx: &str, e: E) -> crate::Error {

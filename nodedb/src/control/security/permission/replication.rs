@@ -29,7 +29,7 @@ pub fn prepare_owner(
     StoredOwner {
         object_type: object_type.to_string(),
         object_name: object_name.to_string(),
-        tenant_id: tenant_id.as_u32(),
+        tenant_id: tenant_id.as_u64(),
         owner_username: owner_username.to_string(),
     }
 }
@@ -110,7 +110,7 @@ impl PermissionStore {
 
     /// Whether an owner record already exists (proposer-side
     /// pre-check). `tenant_id` is the raw `u32` value.
-    pub fn owner_exists(&self, object_type: &str, tenant_id: u32, object_name: &str) -> bool {
+    pub fn owner_exists(&self, object_type: &str, tenant_id: u64, object_name: &str) -> bool {
         let key = owner_key(object_type, tenant_id, object_name);
         let owners = match self.owners.read() {
             Ok(o) => o,
@@ -151,7 +151,7 @@ impl PermissionStore {
     pub fn install_replicated_remove_owner(
         &self,
         object_type: &str,
-        tenant_id: u32,
+        tenant_id: u64,
         object_name: &str,
     ) -> bool {
         let key = owner_key(object_type, tenant_id, object_name);

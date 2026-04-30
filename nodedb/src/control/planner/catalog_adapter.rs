@@ -51,7 +51,7 @@ use crate::control::state::SharedState;
 /// `QueryLeaseScope`.
 pub struct OriginCatalog {
     credentials: Arc<CredentialStore>,
-    tenant_id: u32,
+    tenant_id: u64,
     retention_policy_registry:
         Option<Arc<crate::engine::timeseries::retention_policy::RetentionPolicyRegistry>>,
     /// Array catalog handle. When `None`, `lookup_array` returns
@@ -95,7 +95,7 @@ impl OriginCatalog {
     /// `QueryLeaseScope`.
     pub fn new(
         credentials: Arc<CredentialStore>,
-        tenant_id: u32,
+        tenant_id: u64,
         retention_policy_registry: Option<
             Arc<crate::engine::timeseries::retention_policy::RetentionPolicyRegistry>,
         >,
@@ -117,7 +117,7 @@ impl OriginCatalog {
     /// DDL; the pgwire handler's retry loop then re-plans.
     pub fn new_with_lease(
         shared: &Arc<SharedState>,
-        tenant_id: u32,
+        tenant_id: u64,
         retention_policy_registry: Option<
             Arc<crate::engine::timeseries::retention_policy::RetentionPolicyRegistry>,
         >,
@@ -467,6 +467,9 @@ fn convert_column_type(ct: &nodedb_types::columnar::ColumnType) -> SqlDataType {
             SqlDataType::Bytes
         }
         ColumnType::Vector(dim) => SqlDataType::Vector(*dim as usize),
+        // ColumnType is #[non_exhaustive]; unknown types surface as Bytes
+        // until the planner learns about them.
+        _ => SqlDataType::Bytes,
     }
 }
 

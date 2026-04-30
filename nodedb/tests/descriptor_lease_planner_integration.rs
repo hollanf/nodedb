@@ -15,7 +15,7 @@ use std::time::Duration;
 use common::cluster_harness::{TestCluster, wait_for};
 use nodedb_cluster::{DescriptorId, DescriptorKind};
 
-const TENANT: u32 = 1;
+const TENANT: u64 = 1;
 const WAIT_BUDGET: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(20);
 

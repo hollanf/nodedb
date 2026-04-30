@@ -44,10 +44,10 @@ pub fn show_tenant_usage(
 
     let rows: Vec<_> = tenants
         .iter_usage()
-        .filter(|(tid, _, _)| filter_tid.is_none() || Some(tid.as_u32()) == filter_tid)
+        .filter(|(tid, _, _)| filter_tid.is_none() || Some(tid.as_u64()) == filter_tid)
         .map(|(tid, usage, _)| {
             let mut enc = DataRowEncoder::new(schema.clone());
-            let _ = enc.encode_field(&tid.as_u32().to_string());
+            let _ = enc.encode_field(&tid.as_u64().to_string());
             let _ = enc.encode_field(&usage.memory_bytes.to_string());
             let _ = enc.encode_field(&usage.storage_bytes.to_string());
             let _ = enc.encode_field(&usage.active_requests.to_string());
@@ -96,10 +96,10 @@ pub fn show_tenant_quota(
     let mut rows = Vec::new();
 
     for (tid, usage, quota) in tenants.iter_usage() {
-        if filter_tid.is_some() && Some(tid.as_u32()) != filter_tid {
+        if filter_tid.is_some() && Some(tid.as_u64()) != filter_tid {
             continue;
         }
-        let tid_str = tid.as_u32().to_string();
+        let tid_str = tid.as_u64().to_string();
 
         let entries: &[(&str, u64, u64)] = &[
             ("memory_bytes", quota.max_memory_bytes, usage.memory_bytes),
@@ -148,9 +148,9 @@ pub fn show_tenant_quota(
 }
 
 /// Parse `FOR <tenant_id>` from DDL parts. Returns `Some(tid)` if present.
-fn parse_tenant_for_clause(parts: &[&str]) -> Option<u32> {
+fn parse_tenant_for_clause(parts: &[&str]) -> Option<u64> {
     let for_idx = parts
         .iter()
         .position(|p: &&str| p.eq_ignore_ascii_case("FOR"))?;
-    parts.get(for_idx + 1)?.parse::<u32>().ok()
+    parts.get(for_idx + 1)?.parse::<u64>().ok()
 }

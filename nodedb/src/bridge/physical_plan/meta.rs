@@ -58,11 +58,11 @@ pub enum MetaOp {
 
     /// Snapshot a tenant's data from the sparse engine.
     /// Returns serialized `(documents, indexes)` as JSON payload.
-    CreateTenantSnapshot { tenant_id: u32 },
+    CreateTenantSnapshot { tenant_id: u64 },
 
     /// Restore a tenant's data across all engines from a snapshot.
     /// `snapshot` is a MessagePack-serialized `TenantDataSnapshot`.
-    RestoreTenantSnapshot { tenant_id: u32, snapshot: Vec<u8> },
+    RestoreTenantSnapshot { tenant_id: u64, snapshot: Vec<u8> },
 
     /// Pre-computed response payload. The Data Plane echoes it back without
     /// touching any engine. Used for constant queries (SELECT 1 AS value).
@@ -73,7 +73,7 @@ pub enum MetaOp {
     /// Deletes documents, indexes, vectors, graph edges, timeseries,
     /// KV entries, CRDT state, inverted index terms, and cache entries.
     /// Idempotent: safe to re-run after a crash.
-    PurgeTenant { tenant_id: u32 },
+    PurgeTenant { tenant_id: u64 },
 
     /// Purge a single collection across every engine on this core.
     ///
@@ -93,7 +93,7 @@ pub enum MetaOp {
     /// Idempotent: re-running after partial completion picks up
     /// where the previous run left off.
     UnregisterCollection {
-        tenant_id: u32,
+        tenant_id: u64,
         name: String,
         purge_lsn: u64,
     },
@@ -107,7 +107,7 @@ pub enum MetaOp {
     ///
     /// Idempotent: missing in-memory state is a no-op; missing files
     /// are a no-op. Runs on every node.
-    UnregisterMaterializedView { tenant_id: u32, name: String },
+    UnregisterMaterializedView { tenant_id: u64, name: String },
 
     /// Estimate the on-core data size (in bytes) for a single
     /// `(tenant_id, collection)` pair. Sums per-engine in-memory
@@ -118,7 +118,7 @@ pub enum MetaOp {
     /// Used by `_system.dropped_collections.size_bytes_estimate` to
     /// surface "how much storage will a hard-delete reclaim?"
     /// without waiting for a purge cycle.
-    QueryCollectionSize { tenant_id: u32, name: String },
+    QueryCollectionSize { tenant_id: u64, name: String },
 
     /// Enforce retention on a timeseries collection: drop segments older than
     /// the cutoff. Called by the retention policy enforcement loop.
@@ -133,7 +133,7 @@ pub enum MetaOp {
     /// reclaims only *superseded* history, not the current row.
     /// Emits one `RecordType::TemporalPurge` WAL record per purged batch.
     TemporalPurgeEdgeStore {
-        tenant_id: u32,
+        tenant_id: u64,
         collection: String,
         cutoff_system_ms: i64,
     },
@@ -145,7 +145,7 @@ pub enum MetaOp {
     /// never drop the single surviving version. Deletes index-version rows
     /// keyed to the purged document versions in the same transaction.
     TemporalPurgeDocumentStrict {
-        tenant_id: u32,
+        tenant_id: u64,
         collection: String,
         cutoff_system_ms: i64,
     },
@@ -157,7 +157,7 @@ pub enum MetaOp {
     /// Non-bitemporal columnar collections are a no-op (collection is
     /// expected to be flagged bitemporal by the caller).
     TemporalPurgeColumnar {
-        tenant_id: u32,
+        tenant_id: u64,
         collection: String,
         cutoff_system_ms: i64,
     },
@@ -167,7 +167,7 @@ pub enum MetaOp {
     /// from the per-collection bitemporal history sibling. Never removes
     /// the live row, so `AS OF now()` reads remain correct post-purge.
     TemporalPurgeCrdt {
-        tenant_id: u32,
+        tenant_id: u64,
         collection: String,
         cutoff_system_ms: i64,
     },
@@ -180,7 +180,7 @@ pub enum MetaOp {
     /// (latest) version of each tile is never removed. Arrays are
     /// globally-scoped — `tenant_id` carries the sentinel value `0`.
     TemporalPurgeArray {
-        tenant_id: u32,
+        tenant_id: u64,
         /// Global array id from `ArrayCatalogEntry::name`. Arrays are
         /// not yet tenant-scoped.
         array_id: String,

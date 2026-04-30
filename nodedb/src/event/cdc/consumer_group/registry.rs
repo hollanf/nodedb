@@ -12,7 +12,7 @@ use super::types::ConsumerGroupDef;
 ///
 /// Groups are keyed by `(tenant_id, stream_name, group_name)`.
 pub struct GroupRegistry {
-    groups: RwLock<HashMap<(u32, String, String), ConsumerGroupDef>>,
+    groups: RwLock<HashMap<(u64, String, String), ConsumerGroupDef>>,
 }
 
 impl GroupRegistry {
@@ -30,14 +30,14 @@ impl GroupRegistry {
     }
 
     /// Unregister a consumer group. Returns true if it existed.
-    pub fn unregister(&self, tenant_id: u32, stream: &str, group: &str) -> bool {
+    pub fn unregister(&self, tenant_id: u64, stream: &str, group: &str) -> bool {
         let key = (tenant_id, stream.to_string(), group.to_string());
         let mut map = self.groups.write().unwrap_or_else(|p| p.into_inner());
         map.remove(&key).is_some()
     }
 
     /// Get a group definition.
-    pub fn get(&self, tenant_id: u32, stream: &str, group: &str) -> Option<ConsumerGroupDef> {
+    pub fn get(&self, tenant_id: u64, stream: &str, group: &str) -> Option<ConsumerGroupDef> {
         let key = (tenant_id, stream.to_string(), group.to_string());
         let map = self.groups.read().unwrap_or_else(|p| p.into_inner());
         map.get(&key).cloned()
@@ -69,7 +69,7 @@ impl GroupRegistry {
     }
 
     /// List all groups for a given stream.
-    pub fn list_for_stream(&self, tenant_id: u32, stream: &str) -> Vec<ConsumerGroupDef> {
+    pub fn list_for_stream(&self, tenant_id: u64, stream: &str) -> Vec<ConsumerGroupDef> {
         let map = self.groups.read().unwrap_or_else(|p| p.into_inner());
         map.values()
             .filter(|g| g.tenant_id == tenant_id && g.stream_name == stream)

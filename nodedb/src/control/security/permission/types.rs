@@ -27,17 +27,17 @@ pub struct OwnerRecord {
 /// Build a `collection:{tenant}:{name}` target string for grants
 /// and ownership lookups.
 pub fn collection_target(tenant_id: TenantId, collection: &str) -> String {
-    format!("collection:{}:{}", tenant_id.as_u32(), collection)
+    format!("collection:{}:{}", tenant_id.as_u64(), collection)
 }
 
 /// Build a `function:{tenant}:{name}` target string.
 pub fn function_target(tenant_id: TenantId, function_name: &str) -> String {
-    format!("function:{}:{}", tenant_id.as_u32(), function_name)
+    format!("function:{}:{}", tenant_id.as_u64(), function_name)
 }
 
 /// `{object_type}:{tenant_id}:{object_name}` — the canonical key
 /// for both the in-memory owner map and the redb `OWNERS` table.
-pub fn owner_key(object_type: &str, tenant_id: u32, object_name: &str) -> String {
+pub fn owner_key(object_type: &str, tenant_id: u64, object_name: &str) -> String {
     crate::control::security::catalog::owner_key(object_type, tenant_id, object_name)
 }
 

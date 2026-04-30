@@ -29,7 +29,7 @@ pub fn handle_compact(
     // Verify collection exists.
     if let Some(catalog) = state.credentials.catalog()
         && catalog
-            .get_collection(tenant_id.as_u32(), &collection)
+            .get_collection(tenant_id.as_u64(), &collection)
             .ok()
             .flatten()
             .is_none()

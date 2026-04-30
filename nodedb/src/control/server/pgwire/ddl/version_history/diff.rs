@@ -44,7 +44,7 @@ pub async fn select_diff(
     // Resolve version names to VV JSON.
     let from_vv = super::at_version::resolve_checkpoint_vv(
         state,
-        tenant_id.as_u32(),
+        tenant_id.as_u64(),
         collection,
         doc_id,
         version_a_name,

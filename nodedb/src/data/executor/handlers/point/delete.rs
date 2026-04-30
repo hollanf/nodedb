@@ -13,7 +13,7 @@ impl CoreLoop {
     pub(in crate::data::executor) fn execute_point_delete(
         &mut self,
         task: &ExecutionTask,
-        tid: u32,
+        tid: u64,
         collection: &str,
         document_id: &str,
         surrogate: Surrogate,

@@ -281,6 +281,7 @@ impl std::fmt::Display for ResolvedColumnCodec {
 
 /// Column data type hint for codec auto-detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ColumnTypeHint {
     Timestamp,
     Float64,

@@ -42,7 +42,7 @@ impl InvertedIndex {
     /// tuple ranges on every FTS table.
     pub fn purge_tenant(&self, tid: TenantId) -> crate::Result<usize> {
         self.inner
-            .purge_tenant(tid.as_u32())
+            .purge_tenant(tid.as_u64())
             .map_err(into_result_err)
     }
 
@@ -50,7 +50,7 @@ impl InvertedIndex {
     /// Structural drop via tuple ranges on every FTS table.
     pub fn purge_collection(&self, tid: TenantId, collection: &str) -> crate::Result<usize> {
         self.inner
-            .purge_collection(tid.as_u32(), collection)
+            .purge_collection(tid.as_u64(), collection)
             .map_err(into_result_err)
     }
 
@@ -105,7 +105,7 @@ impl InvertedIndex {
     ) -> crate::Result<()> {
         use std::collections::HashMap;
 
-        let t = tid.as_u32();
+        let t = tid.as_u64();
 
         let mut term_postings: HashMap<&str, (u32, Vec<u32>)> = HashMap::new();
         for (pos, token) in tokens.iter().enumerate() {
@@ -170,7 +170,7 @@ impl InvertedIndex {
         collection: &str,
         delta: i64,
     ) -> crate::Result<()> {
-        let t = tid.as_u32();
+        let t = tid.as_u64();
         let mut stats = txn
             .open_table(STATS)
             .map_err(|e| inverted_err("open stats", e))?;
@@ -204,7 +204,7 @@ impl InvertedIndex {
         collection: &str,
         surrogate: Surrogate,
     ) -> crate::Result<()> {
-        let t = tid.as_u32();
+        let t = tid.as_u64();
 
         let db = self.inner.backend().db();
         let write_txn = db.begin_write().map_err(|e| inverted_err("write txn", e))?;
@@ -289,7 +289,7 @@ impl InvertedIndex {
         prefilter: Option<&nodedb_types::SurrogateBitmap>,
     ) -> crate::Result<Vec<TextSearchResult>> {
         self.inner.search(
-            tid.as_u32(),
+            tid.as_u64(),
             collection,
             query,
             top_k,
@@ -311,7 +311,7 @@ impl InvertedIndex {
         prefilter: Option<&nodedb_types::SurrogateBitmap>,
     ) -> crate::Result<Vec<TextSearchResult>> {
         self.inner.search_with_mode(
-            tid.as_u32(),
+            tid.as_u64(),
             collection,
             query,
             top_k,

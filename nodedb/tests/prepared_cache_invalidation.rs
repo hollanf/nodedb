@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use common::cluster_harness::{TestCluster, wait_for};
 
-const TENANT: u32 = 1;
+const TENANT: u64 = 1;
 // 10 s — every visibility check in this test rides on the metadata
 // Raft commit + apply + post-apply cache update path. Five seconds
 // (the original budget) was tight enough that fresh-cluster startup

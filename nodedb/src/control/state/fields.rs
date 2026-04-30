@@ -132,8 +132,14 @@ pub struct SharedState {
     /// Audit retention in days (0 = keep forever).
     pub(super) audit_retention_days: u32,
 
+    /// Maximum total audit entries in the catalog (0 = unlimited).
+    pub(super) audit_max_entries: u64,
+
     /// Idle session timeout in seconds (0 = no timeout).
     pub(super) idle_timeout_secs: u64,
+
+    /// Absolute session lifetime in seconds (0 = disabled).
+    pub(super) session_absolute_timeout_secs: u64,
 
     /// Cluster topology (None in single-node mode).
     pub cluster_topology: Option<Arc<RwLock<nodedb_cluster::ClusterTopology>>>,
@@ -485,7 +491,7 @@ pub struct SharedState {
     /// most recent observed dispatch for the same tenant —
     /// silently overwriting newer committed writes would otherwise
     /// be a correctness bug.
-    pub tenant_write_hlc: Arc<std::sync::Mutex<std::collections::HashMap<u32, u64>>>,
+    pub tenant_write_hlc: Arc<std::sync::Mutex<std::collections::HashMap<u64, u64>>>,
 
     /// Replicated descriptor lease drain state.
     /// Written by the metadata applier on `DescriptorDrainStart`
