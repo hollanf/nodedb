@@ -29,8 +29,8 @@ pub struct ExecuteRequest {
     /// Milliseconds remaining until the caller's deadline.
     /// 0 means the deadline has already expired — receiver returns DeadlineExceeded.
     pub deadline_remaining_ms: u64,
-    /// Distributed trace ID for observability.
-    pub trace_id: u64,
+    /// Distributed trace ID for observability (16-byte W3C-compatible TraceId).
+    pub trace_id: [u8; 16],
     /// Caller's view of descriptor versions for every collection touched by the plan.
     pub descriptor_versions: Vec<DescriptorVersionEntry>,
 }
@@ -160,7 +160,10 @@ mod tests {
             plan_bytes: b"msgpack-plan-bytes".to_vec(),
             tenant_id: 7,
             deadline_remaining_ms: 5000,
-            trace_id: 0xDEAD_BEEF_1234_5678,
+            trace_id: [
+                0xDE, 0xAD, 0xBE, 0xEF, 0x12, 0x34, 0x56, 0x78, 0xDE, 0xAD, 0xBE, 0xEF, 0x12, 0x34,
+                0x56, 0x78,
+            ],
             descriptor_versions: vec![
                 DescriptorVersionEntry {
                     collection: "orders".into(),
@@ -176,7 +179,10 @@ mod tests {
         assert_eq!(decoded.plan_bytes, req.plan_bytes);
         assert_eq!(decoded.tenant_id, 7);
         assert_eq!(decoded.deadline_remaining_ms, 5000);
-        assert_eq!(decoded.trace_id, req.trace_id);
+        assert_eq!(
+            decoded.trace_id, req.trace_id,
+            "trace_id roundtrips correctly"
+        );
         assert_eq!(decoded.descriptor_versions.len(), 2);
         assert_eq!(decoded.descriptor_versions[0].collection, "orders");
         assert_eq!(decoded.descriptor_versions[0].version, 42);
@@ -188,7 +194,7 @@ mod tests {
             plan_bytes: vec![0xAB, 0xCD],
             tenant_id: 0,
             deadline_remaining_ms: 1000,
-            trace_id: 0,
+            trace_id: [0u8; 16],
             descriptor_versions: vec![],
         };
         let decoded = roundtrip_req(req);

@@ -104,10 +104,10 @@ pub fn spiffe_id_from_cert_der(cert_der: &[u8]) -> Option<String> {
         .into_iter()
         .flatten()
     {
-        if let GeneralName::URI(uri) = san {
-            if uri.starts_with("spiffe://") {
-                return Some(uri.to_string());
-            }
+        if let GeneralName::URI(uri) = san
+            && uri.starts_with("spiffe://")
+        {
+            return Some(uri.to_string());
         }
     }
     None

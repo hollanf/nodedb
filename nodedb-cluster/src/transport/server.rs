@@ -13,7 +13,7 @@
 //! 2. verifies the MAC against the cluster MAC key held by
 //!    [`AuthContext`],
 //! 3. rejects replays via the per-peer sliding window,
-//! 3b. verifies the TLS peer certificate identity against the topology pin,
+//!    3b. verifies the TLS peer certificate identity against the topology pin,
 //! 4. decodes the inner frame and dispatches to the handler,
 //! 5. wraps the handler's response in its own authenticated envelope
 //!    with `from_node_id = local_node_id` and a fresh outbound seq for
@@ -188,45 +188,45 @@ async fn handle_stream<H: RaftRpcHandler, S: PeerIdentityStore>(
         // 3b. Peer identity check — binds the MAC-verified node_id to the
         //     TLS certificate.  Self-addressed frames skip the check by the
         //     same reasoning as the replay window above.
-        if fields.from_node_id != auth.local_node_id {
-            if let Some(cert_der) = &peer_cert_der {
-                let node_info = identity_store.get_node_info(fields.from_node_id);
-                match node_info {
-                    Some(ref info) => match verify_peer_identity(info, cert_der) {
-                        VerifyOutcome::Accepted { method } => {
-                            debug!(
-                                node_id = fields.from_node_id,
-                                ?method,
-                                "peer identity verified"
-                            );
-                        }
-                        VerifyOutcome::BootstrapAccepted => {
-                            warn!(
-                                node_id = fields.from_node_id,
-                                "peer identity not pinned — bootstrap window accepted"
-                            );
-                        }
-                        VerifyOutcome::Rejected => {
-                            warn!(
-                                node_id = fields.from_node_id,
-                                "peer identity mismatch — closing connection"
-                            );
-                            conn.close(IDENTITY_MISMATCH_QUIC_ERROR, b"peer identity mismatch");
-                            return Err(ClusterError::Transport {
-                                detail: format!(
-                                    "peer identity mismatch for node {}",
-                                    fields.from_node_id
-                                ),
-                            });
-                        }
-                    },
-                    None => {
-                        // Node not yet in topology — bootstrap window.
-                        warn!(
+        if fields.from_node_id != auth.local_node_id
+            && let Some(cert_der) = &peer_cert_der
+        {
+            let node_info = identity_store.get_node_info(fields.from_node_id);
+            match node_info {
+                Some(ref info) => match verify_peer_identity(info, cert_der) {
+                    VerifyOutcome::Accepted { method } => {
+                        debug!(
                             node_id = fields.from_node_id,
-                            "node not in topology — bootstrap window accepted"
+                            ?method,
+                            "peer identity verified"
                         );
                     }
+                    VerifyOutcome::BootstrapAccepted => {
+                        warn!(
+                            node_id = fields.from_node_id,
+                            "peer identity not pinned — bootstrap window accepted"
+                        );
+                    }
+                    VerifyOutcome::Rejected => {
+                        warn!(
+                            node_id = fields.from_node_id,
+                            "peer identity mismatch — closing connection"
+                        );
+                        conn.close(IDENTITY_MISMATCH_QUIC_ERROR, b"peer identity mismatch");
+                        return Err(ClusterError::Transport {
+                            detail: format!(
+                                "peer identity mismatch for node {}",
+                                fields.from_node_id
+                            ),
+                        });
+                    }
+                },
+                None => {
+                    // Node not yet in topology — bootstrap window.
+                    warn!(
+                        node_id = fields.from_node_id,
+                        "node not in topology — bootstrap window accepted"
+                    );
                 }
             }
         }
