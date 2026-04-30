@@ -78,7 +78,21 @@ impl NodeDbError {
         Self {
             code: ErrorCode::PLAN_ERROR,
             message: format!("query plan error: {detail}"),
-            details: ErrorDetails::PlanError,
+            details: ErrorDetails::PlanError {
+                phase: "unspecified".into(),
+                detail: detail.to_string(),
+            },
+            cause: None,
+        }
+    }
+
+    pub fn plan_error_at(phase: impl Into<String>, detail: impl Into<String>) -> Self {
+        let phase = phase.into();
+        let detail = detail.into();
+        Self {
+            code: ErrorCode::PLAN_ERROR,
+            message: format!("query plan error [{phase}]: {detail}"),
+            details: ErrorDetails::PlanError { phase, detail },
             cause: None,
         }
     }

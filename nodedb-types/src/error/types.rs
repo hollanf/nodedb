@@ -72,7 +72,7 @@ impl NodeDbError {
                 | ErrorDetails::MigrationInProgress
                 | ErrorDetails::NodeUnreachable
                 | ErrorDetails::SyncConnectionFailed
-                | ErrorDetails::Bridge
+                | ErrorDetails::Bridge { .. }
                 | ErrorDetails::MemoryExhausted { .. }
         )
     }
@@ -118,14 +118,14 @@ impl NodeDbError {
     pub fn is_storage(&self) -> bool {
         matches!(
             self.details,
-            ErrorDetails::Storage
-                | ErrorDetails::SegmentCorrupted
-                | ErrorDetails::ColdStorage
-                | ErrorDetails::Wal
+            ErrorDetails::Storage { .. }
+                | ErrorDetails::SegmentCorrupted { .. }
+                | ErrorDetails::ColdStorage { .. }
+                | ErrorDetails::Wal { .. }
         )
     }
     pub fn is_internal(&self) -> bool {
-        matches!(self.details, ErrorDetails::Internal)
+        matches!(self.details, ErrorDetails::Internal { .. })
     }
     pub fn is_type_mismatch(&self) -> bool {
         matches!(self.details, ErrorDetails::TypeMismatch { .. })

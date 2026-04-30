@@ -280,16 +280,18 @@ impl ToMessagePack for ErrorDetails {
             }
             ErrorDetails::CollectionDeactivated {
                 collection,
-                retention_expires_at_ms,
+                retention_expires_at_ns,
                 undrop_hint,
             } => write3(
                 writer,
                 TAG_COLLECTION_DEACTIVATED,
                 collection,
-                retention_expires_at_ms,
+                retention_expires_at_ns,
                 undrop_hint,
             ),
-            ErrorDetails::PlanError => write_unit(writer, TAG_PLAN_ERROR),
+            ErrorDetails::PlanError { phase, detail } => {
+                write2(writer, TAG_PLAN_ERROR, phase, detail)
+            }
             ErrorDetails::FanOutExceeded {
                 shards_touched,
                 limit,
@@ -311,12 +313,26 @@ impl ToMessagePack for ErrorDetails {
             ErrorDetails::ShapeSubscriptionFailed { shape_id } => {
                 write1(writer, TAG_SHAPE_SUBSCRIPTION_FAILED, shape_id)
             }
-            ErrorDetails::Storage => write_unit(writer, TAG_STORAGE),
-            ErrorDetails::SegmentCorrupted => write_unit(writer, TAG_SEGMENT_CORRUPTED),
-            ErrorDetails::ColdStorage => write_unit(writer, TAG_COLD_STORAGE),
-            ErrorDetails::Wal => write_unit(writer, TAG_WAL),
+            ErrorDetails::Storage {
+                component,
+                op,
+                detail,
+            } => write3(writer, TAG_STORAGE, component, op, detail),
+            ErrorDetails::SegmentCorrupted {
+                segment_id,
+                corruption,
+                detail,
+            } => write3(writer, TAG_SEGMENT_CORRUPTED, segment_id, corruption, detail),
+            ErrorDetails::ColdStorage {
+                backend,
+                op,
+                detail,
+            } => write3(writer, TAG_COLD_STORAGE, backend, op, detail),
+            ErrorDetails::Wal { stage, detail } => write2(writer, TAG_WAL, stage, detail),
             ErrorDetails::Serialization { format } => write1(writer, TAG_SERIALIZATION, format),
-            ErrorDetails::Codec => write_unit(writer, TAG_CODEC),
+            ErrorDetails::Codec { codec, op, detail } => {
+                write3(writer, TAG_CODEC, codec, op, detail)
+            }
             ErrorDetails::Config => write_unit(writer, TAG_CONFIG),
             ErrorDetails::BadRequest => write_unit(writer, TAG_BAD_REQUEST),
             ErrorDetails::NoLeader => write_unit(writer, TAG_NO_LEADER),
@@ -327,14 +343,22 @@ impl ToMessagePack for ErrorDetails {
             ErrorDetails::MemoryExhausted { engine } => {
                 write1(writer, TAG_MEMORY_EXHAUSTED, engine)
             }
-            ErrorDetails::Encryption => write_unit(writer, TAG_ENCRYPTION),
+            ErrorDetails::Encryption { cipher, detail } => {
+                write2(writer, TAG_ENCRYPTION, cipher, detail)
+            }
             ErrorDetails::Array { array } => write1(writer, TAG_ARRAY, array),
-            ErrorDetails::Bridge => write_unit(writer, TAG_BRIDGE),
-            ErrorDetails::Dispatch => write_unit(writer, TAG_DISPATCH),
+            ErrorDetails::Bridge { plane, op, detail } => {
+                write3(writer, TAG_BRIDGE, plane, op, detail)
+            }
+            ErrorDetails::Dispatch { stage, detail } => {
+                write2(writer, TAG_DISPATCH, stage, detail)
+            }
             ErrorDetails::UnsupportedOpcode { byte } => {
                 write1(writer, TAG_UNSUPPORTED_OPCODE, byte)
             }
-            ErrorDetails::Internal => write_unit(writer, TAG_INTERNAL),
+            ErrorDetails::Internal { component, detail } => {
+                write2(writer, TAG_INTERNAL, component, detail)
+            }
         }
     }
 }
@@ -428,17 +452,17 @@ impl<'a> FromMessagePack<'a> for ErrorDetails {
                 Ok(ErrorDetails::CollectionDraining { collection })
             }
             TAG_COLLECTION_DEACTIVATED => {
-                let (collection, retention_expires_at_ms, undrop_hint) =
+                let (collection, retention_expires_at_ns, undrop_hint) =
                     read_collection_deactivated(reader, field_count)?;
                 Ok(ErrorDetails::CollectionDeactivated {
                     collection,
-                    retention_expires_at_ms,
+                    retention_expires_at_ns,
                     undrop_hint,
                 })
             }
             TAG_PLAN_ERROR => {
-                skip_fields(reader, field_count)?;
-                Ok(ErrorDetails::PlanError)
+                let (phase, detail) = read2_str_tolerant(reader, field_count)?;
+                Ok(ErrorDetails::PlanError { phase, detail })
             }
             TAG_FAN_OUT_EXCEEDED => {
                 let (shards_touched, limit) = read_fan_out(reader, field_count)?;
@@ -472,28 +496,41 @@ impl<'a> FromMessagePack<'a> for ErrorDetails {
                 Ok(ErrorDetails::ShapeSubscriptionFailed { shape_id })
             }
             TAG_STORAGE => {
-                skip_fields(reader, field_count)?;
-                Ok(ErrorDetails::Storage)
+                let (component, op, detail) = read3_str_tolerant(reader, field_count)?;
+                Ok(ErrorDetails::Storage {
+                    component,
+                    op,
+                    detail,
+                })
             }
             TAG_SEGMENT_CORRUPTED => {
-                skip_fields(reader, field_count)?;
-                Ok(ErrorDetails::SegmentCorrupted)
+                let (segment_id, corruption, detail) =
+                    read_segment_corrupted_tolerant(reader, field_count)?;
+                Ok(ErrorDetails::SegmentCorrupted {
+                    segment_id,
+                    corruption,
+                    detail,
+                })
             }
             TAG_COLD_STORAGE => {
-                skip_fields(reader, field_count)?;
-                Ok(ErrorDetails::ColdStorage)
+                let (backend, op, detail) = read3_str_tolerant(reader, field_count)?;
+                Ok(ErrorDetails::ColdStorage {
+                    backend,
+                    op,
+                    detail,
+                })
             }
             TAG_WAL => {
-                skip_fields(reader, field_count)?;
-                Ok(ErrorDetails::Wal)
+                let (stage, detail) = read2_str_tolerant(reader, field_count)?;
+                Ok(ErrorDetails::Wal { stage, detail })
             }
             TAG_SERIALIZATION => {
                 let (format,) = read1_str(reader, field_count)?;
                 Ok(ErrorDetails::Serialization { format })
             }
             TAG_CODEC => {
-                skip_fields(reader, field_count)?;
-                Ok(ErrorDetails::Codec)
+                let (codec, op, detail) = read3_str_tolerant(reader, field_count)?;
+                Ok(ErrorDetails::Codec { codec, op, detail })
             }
             TAG_CONFIG => {
                 skip_fields(reader, field_count)?;
@@ -528,33 +565,36 @@ impl<'a> FromMessagePack<'a> for ErrorDetails {
                 Ok(ErrorDetails::MemoryExhausted { engine })
             }
             TAG_ENCRYPTION => {
-                skip_fields(reader, field_count)?;
-                Ok(ErrorDetails::Encryption)
+                let (cipher, detail) = read2_str_tolerant(reader, field_count)?;
+                Ok(ErrorDetails::Encryption { cipher, detail })
             }
             TAG_ARRAY => {
                 let (array,) = read1_str(reader, field_count)?;
                 Ok(ErrorDetails::Array { array })
             }
             TAG_BRIDGE => {
-                skip_fields(reader, field_count)?;
-                Ok(ErrorDetails::Bridge)
+                let (plane, op, detail) = read3_str_tolerant(reader, field_count)?;
+                Ok(ErrorDetails::Bridge { plane, op, detail })
             }
             TAG_DISPATCH => {
-                skip_fields(reader, field_count)?;
-                Ok(ErrorDetails::Dispatch)
+                let (stage, detail) = read2_str_tolerant(reader, field_count)?;
+                Ok(ErrorDetails::Dispatch { stage, detail })
             }
             TAG_UNSUPPORTED_OPCODE => {
                 let byte = read_u8_field(reader, field_count)?;
                 Ok(ErrorDetails::UnsupportedOpcode { byte })
             }
             TAG_INTERNAL => {
-                skip_fields(reader, field_count)?;
-                Ok(ErrorDetails::Internal)
+                let (component, detail) = read2_str_tolerant(reader, field_count)?;
+                Ok(ErrorDetails::Internal { component, detail })
             }
             // Unknown future variant — skip payload, treat as Internal.
             _unknown => {
                 skip_fields(reader, field_count)?;
-                Ok(ErrorDetails::Internal)
+                Ok(ErrorDetails::Internal {
+                    component: "unspecified".into(),
+                    detail: "unspecified".into(),
+                })
             }
         }
     }
@@ -610,21 +650,21 @@ fn read2_str<'a, R: Read<'a>>(
 fn read_collection_deactivated<'a, R: Read<'a>>(
     reader: &mut R,
     field_count: usize,
-) -> zerompk::Result<(String, i64, String)> {
+) -> zerompk::Result<(String, u64, String)> {
     if field_count < 3 {
         return Err(zerompk::Error::InvalidMarker(0));
     }
     let _k1 = reader.read_u8()?;
     let collection = reader.read_string()?.into_owned();
     let _k2 = reader.read_u8()?;
-    let retention_expires_at_ms = reader.read_i64()?;
+    let retention_expires_at_ns = reader.read_u64()?;
     let _k3 = reader.read_u8()?;
     let undrop_hint = reader.read_string()?.into_owned();
     for _ in 3..field_count {
         reader.read_u8()?;
         skip_one(reader)?;
     }
-    Ok((collection, retention_expires_at_ms, undrop_hint))
+    Ok((collection, retention_expires_at_ns, undrop_hint))
 }
 
 fn read_fan_out<'a, R: Read<'a>>(
@@ -643,6 +683,93 @@ fn read_fan_out<'a, R: Read<'a>>(
         skip_one(reader)?;
     }
     Ok((shards_touched, limit))
+}
+
+/// Read 2 string fields, tolerating `field_count < 2` by filling missing
+/// fields with `"unspecified"`.
+fn read2_str_tolerant<'a, R: Read<'a>>(
+    reader: &mut R,
+    field_count: usize,
+) -> zerompk::Result<(String, String)> {
+    let v1 = if field_count >= 1 {
+        reader.read_u8()?;
+        reader.read_string()?.into_owned()
+    } else {
+        "unspecified".into()
+    };
+    let v2 = if field_count >= 2 {
+        reader.read_u8()?;
+        reader.read_string()?.into_owned()
+    } else {
+        "unspecified".into()
+    };
+    for _ in 2..field_count {
+        reader.read_u8()?;
+        skip_one(reader)?;
+    }
+    Ok((v1, v2))
+}
+
+/// Read 3 string fields, tolerating `field_count < 3` by filling missing
+/// fields with `"unspecified"`.
+fn read3_str_tolerant<'a, R: Read<'a>>(
+    reader: &mut R,
+    field_count: usize,
+) -> zerompk::Result<(String, String, String)> {
+    let v1 = if field_count >= 1 {
+        reader.read_u8()?;
+        reader.read_string()?.into_owned()
+    } else {
+        "unspecified".into()
+    };
+    let v2 = if field_count >= 2 {
+        reader.read_u8()?;
+        reader.read_string()?.into_owned()
+    } else {
+        "unspecified".into()
+    };
+    let v3 = if field_count >= 3 {
+        reader.read_u8()?;
+        reader.read_string()?.into_owned()
+    } else {
+        "unspecified".into()
+    };
+    for _ in 3..field_count {
+        reader.read_u8()?;
+        skip_one(reader)?;
+    }
+    Ok((v1, v2, v3))
+}
+
+/// Read `SegmentCorrupted` fields: (segment_id: u64, corruption: String, detail: String).
+/// Tolerates `field_count < 3`; missing `segment_id` defaults to `0`.
+fn read_segment_corrupted_tolerant<'a, R: Read<'a>>(
+    reader: &mut R,
+    field_count: usize,
+) -> zerompk::Result<(u64, String, String)> {
+    let segment_id = if field_count >= 1 {
+        reader.read_u8()?;
+        reader.read_u64()?
+    } else {
+        0
+    };
+    let corruption = if field_count >= 2 {
+        reader.read_u8()?;
+        reader.read_string()?.into_owned()
+    } else {
+        "unspecified".into()
+    };
+    let detail = if field_count >= 3 {
+        reader.read_u8()?;
+        reader.read_string()?.into_owned()
+    } else {
+        "unspecified".into()
+    };
+    for _ in 3..field_count {
+        reader.read_u8()?;
+        skip_one(reader)?;
+    }
+    Ok((segment_id, corruption, detail))
 }
 
 fn read_sync_delta_rejected<'a, R: Read<'a>>(
@@ -674,28 +801,253 @@ mod tests {
     fn unit_variant_roundtrip() {
         for v in [
             ErrorDetails::DeadlineExceeded,
-            ErrorDetails::PlanError,
             ErrorDetails::SqlNotEnabled,
             ErrorDetails::AuthExpired,
             ErrorDetails::SyncConnectionFailed,
-            ErrorDetails::Storage,
-            ErrorDetails::SegmentCorrupted,
-            ErrorDetails::ColdStorage,
-            ErrorDetails::Wal,
-            ErrorDetails::Codec,
             ErrorDetails::Config,
             ErrorDetails::BadRequest,
             ErrorDetails::NoLeader,
             ErrorDetails::MigrationInProgress,
             ErrorDetails::NodeUnreachable,
             ErrorDetails::Cluster,
-            ErrorDetails::Encryption,
-            ErrorDetails::Bridge,
-            ErrorDetails::Dispatch,
-            ErrorDetails::Internal,
         ] {
             assert_eq!(roundtrip(&v), v, "unit variant roundtrip failed: {v:?}");
         }
+    }
+
+    // ── 10 enriched variant roundtrip tests ───────────────────────────────────
+
+    #[test]
+    fn storage_enriched_roundtrip() {
+        let v = ErrorDetails::Storage {
+            component: "redb".into(),
+            op: "write".into(),
+            detail: "disk full".into(),
+        };
+        assert_eq!(roundtrip(&v), v);
+    }
+
+    #[test]
+    fn segment_corrupted_enriched_roundtrip() {
+        let v = ErrorDetails::SegmentCorrupted {
+            segment_id: 42,
+            corruption: "crc_mismatch".into(),
+            detail: "footer checksum invalid".into(),
+        };
+        assert_eq!(roundtrip(&v), v);
+    }
+
+    #[test]
+    fn cold_storage_enriched_roundtrip() {
+        let v = ErrorDetails::ColdStorage {
+            backend: "s3".into(),
+            op: "get_object".into(),
+            detail: "403 forbidden".into(),
+        };
+        assert_eq!(roundtrip(&v), v);
+    }
+
+    #[test]
+    fn wal_enriched_roundtrip() {
+        let v = ErrorDetails::Wal {
+            stage: "fsync".into(),
+            detail: "io_uring submission failed".into(),
+        };
+        assert_eq!(roundtrip(&v), v);
+    }
+
+    #[test]
+    fn codec_enriched_roundtrip() {
+        let v = ErrorDetails::Codec {
+            codec: "alp".into(),
+            op: "encode".into(),
+            detail: "unsupported exponent range".into(),
+        };
+        assert_eq!(roundtrip(&v), v);
+    }
+
+    #[test]
+    fn encryption_enriched_roundtrip() {
+        let v = ErrorDetails::Encryption {
+            cipher: "aes_gcm".into(),
+            detail: "authentication tag mismatch".into(),
+        };
+        assert_eq!(roundtrip(&v), v);
+    }
+
+    #[test]
+    fn plan_error_enriched_roundtrip() {
+        let v = ErrorDetails::PlanError {
+            phase: "logical".into(),
+            detail: "ambiguous column reference".into(),
+        };
+        assert_eq!(roundtrip(&v), v);
+    }
+
+    #[test]
+    fn bridge_enriched_roundtrip() {
+        let v = ErrorDetails::Bridge {
+            plane: "data".into(),
+            op: "dispatch".into(),
+            detail: "ring buffer full".into(),
+        };
+        assert_eq!(roundtrip(&v), v);
+    }
+
+    #[test]
+    fn dispatch_enriched_roundtrip() {
+        let v = ErrorDetails::Dispatch {
+            stage: "route".into(),
+            detail: "vshard not found".into(),
+        };
+        assert_eq!(roundtrip(&v), v);
+    }
+
+    #[test]
+    fn internal_enriched_roundtrip() {
+        let v = ErrorDetails::Internal {
+            component: "compaction".into(),
+            detail: "unreachable state".into(),
+        };
+        assert_eq!(roundtrip(&v), v);
+    }
+
+    // ── 10 backward-compat tests (old-style payload with field_count = 0) ─────
+
+    /// Manually build a `[tag, {}]` payload (zero fields) and verify that
+    /// decode fills all string fields with "unspecified" and segment_id with 0.
+    fn decode_zero_fields(tag: u16) -> ErrorDetails {
+        let mut buf = Vec::new();
+        let mut w = zerompk::Writer::new(&mut buf);
+        w.write_array_len(2).unwrap();
+        w.write_u16(tag).unwrap();
+        w.write_map_len(0).unwrap();
+        zerompk::from_msgpack(&buf).expect("decode")
+    }
+
+    #[test]
+    fn storage_compat_zero_fields() {
+        let v = decode_zero_fields(TAG_STORAGE);
+        assert_eq!(
+            v,
+            ErrorDetails::Storage {
+                component: "unspecified".into(),
+                op: "unspecified".into(),
+                detail: "unspecified".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn segment_corrupted_compat_zero_fields() {
+        let v = decode_zero_fields(TAG_SEGMENT_CORRUPTED);
+        assert_eq!(
+            v,
+            ErrorDetails::SegmentCorrupted {
+                segment_id: 0,
+                corruption: "unspecified".into(),
+                detail: "unspecified".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn cold_storage_compat_zero_fields() {
+        let v = decode_zero_fields(TAG_COLD_STORAGE);
+        assert_eq!(
+            v,
+            ErrorDetails::ColdStorage {
+                backend: "unspecified".into(),
+                op: "unspecified".into(),
+                detail: "unspecified".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn wal_compat_zero_fields() {
+        let v = decode_zero_fields(TAG_WAL);
+        assert_eq!(
+            v,
+            ErrorDetails::Wal {
+                stage: "unspecified".into(),
+                detail: "unspecified".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn codec_compat_zero_fields() {
+        let v = decode_zero_fields(TAG_CODEC);
+        assert_eq!(
+            v,
+            ErrorDetails::Codec {
+                codec: "unspecified".into(),
+                op: "unspecified".into(),
+                detail: "unspecified".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn encryption_compat_zero_fields() {
+        let v = decode_zero_fields(TAG_ENCRYPTION);
+        assert_eq!(
+            v,
+            ErrorDetails::Encryption {
+                cipher: "unspecified".into(),
+                detail: "unspecified".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn plan_error_compat_zero_fields() {
+        let v = decode_zero_fields(TAG_PLAN_ERROR);
+        assert_eq!(
+            v,
+            ErrorDetails::PlanError {
+                phase: "unspecified".into(),
+                detail: "unspecified".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn bridge_compat_zero_fields() {
+        let v = decode_zero_fields(TAG_BRIDGE);
+        assert_eq!(
+            v,
+            ErrorDetails::Bridge {
+                plane: "unspecified".into(),
+                op: "unspecified".into(),
+                detail: "unspecified".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn dispatch_compat_zero_fields() {
+        let v = decode_zero_fields(TAG_DISPATCH);
+        assert_eq!(
+            v,
+            ErrorDetails::Dispatch {
+                stage: "unspecified".into(),
+                detail: "unspecified".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn internal_compat_zero_fields() {
+        let v = decode_zero_fields(TAG_INTERNAL);
+        assert_eq!(
+            v,
+            ErrorDetails::Internal {
+                component: "unspecified".into(),
+                detail: "unspecified".into(),
+            }
+        );
     }
 
     #[test]
@@ -747,7 +1099,7 @@ mod tests {
     fn collection_deactivated_roundtrip() {
         let v = ErrorDetails::CollectionDeactivated {
             collection: "old_logs".into(),
-            retention_expires_at_ms: 1_700_000_000_000_i64,
+            retention_expires_at_ns: 1_700_000_000_000_u64,
             undrop_hint: "UNDROP COLLECTION old_logs".into(),
         };
         assert_eq!(roundtrip(&v), v);

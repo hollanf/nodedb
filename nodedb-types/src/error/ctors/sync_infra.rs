@@ -51,7 +51,31 @@ impl NodeDbError {
         Self {
             code: ErrorCode::STORAGE,
             message: format!("storage error: {detail}"),
-            details: ErrorDetails::Storage,
+            details: ErrorDetails::Storage {
+                component: "unspecified".into(),
+                op: "unspecified".into(),
+                detail: detail.to_string(),
+            },
+            cause: None,
+        }
+    }
+
+    pub fn storage_op(
+        component: impl Into<String>,
+        op: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        let component = component.into();
+        let op = op.into();
+        let detail = detail.into();
+        Self {
+            code: ErrorCode::STORAGE,
+            message: format!("storage error [{component}/{op}]: {detail}"),
+            details: ErrorDetails::Storage {
+                component,
+                op,
+                detail,
+            },
             cause: None,
         }
     }
@@ -60,7 +84,30 @@ impl NodeDbError {
         Self {
             code: ErrorCode::SEGMENT_CORRUPTED,
             message: format!("segment corrupted: {detail}"),
-            details: ErrorDetails::SegmentCorrupted,
+            details: ErrorDetails::SegmentCorrupted {
+                segment_id: 0,
+                corruption: "unspecified".into(),
+                detail: detail.to_string(),
+            },
+            cause: None,
+        }
+    }
+
+    pub fn segment_corrupted_at(
+        segment_id: u64,
+        corruption: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        let corruption = corruption.into();
+        let detail = detail.into();
+        Self {
+            code: ErrorCode::SEGMENT_CORRUPTED,
+            message: format!("segment {segment_id} corrupted [{corruption}]: {detail}"),
+            details: ErrorDetails::SegmentCorrupted {
+                segment_id,
+                corruption,
+                detail,
+            },
             cause: None,
         }
     }
@@ -69,7 +116,31 @@ impl NodeDbError {
         Self {
             code: ErrorCode::COLD_STORAGE,
             message: format!("cold storage error: {detail}"),
-            details: ErrorDetails::ColdStorage,
+            details: ErrorDetails::ColdStorage {
+                backend: "unspecified".into(),
+                op: "unspecified".into(),
+                detail: detail.to_string(),
+            },
+            cause: None,
+        }
+    }
+
+    pub fn cold_storage_op(
+        backend: impl Into<String>,
+        op: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        let backend = backend.into();
+        let op = op.into();
+        let detail = detail.into();
+        Self {
+            code: ErrorCode::COLD_STORAGE,
+            message: format!("cold storage error [{backend}/{op}]: {detail}"),
+            details: ErrorDetails::ColdStorage {
+                backend,
+                op,
+                detail,
+            },
             cause: None,
         }
     }
@@ -78,7 +149,21 @@ impl NodeDbError {
         Self {
             code: ErrorCode::WAL,
             message: format!("WAL error: {detail}"),
-            details: ErrorDetails::Wal,
+            details: ErrorDetails::Wal {
+                stage: "unspecified".into(),
+                detail: detail.to_string(),
+            },
+            cause: None,
+        }
+    }
+
+    pub fn wal_at(stage: impl Into<String>, detail: impl Into<String>) -> Self {
+        let stage = stage.into();
+        let detail = detail.into();
+        Self {
+            code: ErrorCode::WAL,
+            message: format!("WAL error [{stage}]: {detail}"),
+            details: ErrorDetails::Wal { stage, detail },
             cause: None,
         }
     }
@@ -99,7 +184,27 @@ impl NodeDbError {
         Self {
             code: ErrorCode::CODEC,
             message: format!("codec error: {detail}"),
-            details: ErrorDetails::Codec,
+            details: ErrorDetails::Codec {
+                codec: "unspecified".into(),
+                op: "unspecified".into(),
+                detail: detail.to_string(),
+            },
+            cause: None,
+        }
+    }
+
+    pub fn codec_at(
+        codec: impl Into<String>,
+        op: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        let codec = codec.into();
+        let op = op.into();
+        let detail = detail.into();
+        Self {
+            code: ErrorCode::CODEC,
+            message: format!("codec error [{codec}/{op}]: {detail}"),
+            details: ErrorDetails::Codec { codec, op, detail },
             cause: None,
         }
     }
@@ -190,7 +295,21 @@ impl NodeDbError {
         Self {
             code: ErrorCode::ENCRYPTION,
             message: format!("encryption error: {detail}"),
-            details: ErrorDetails::Encryption,
+            details: ErrorDetails::Encryption {
+                cipher: "unspecified".into(),
+                detail: detail.to_string(),
+            },
+            cause: None,
+        }
+    }
+
+    pub fn encryption_at(cipher: impl Into<String>, detail: impl Into<String>) -> Self {
+        let cipher = cipher.into();
+        let detail = detail.into();
+        Self {
+            code: ErrorCode::ENCRYPTION,
+            message: format!("encryption error [{cipher}]: {detail}"),
+            details: ErrorDetails::Encryption { cipher, detail },
             cause: None,
         }
     }
@@ -213,7 +332,27 @@ impl NodeDbError {
         Self {
             code: ErrorCode::BRIDGE,
             message: format!("bridge error: {detail}"),
-            details: ErrorDetails::Bridge,
+            details: ErrorDetails::Bridge {
+                plane: "unspecified".into(),
+                op: "unspecified".into(),
+                detail: detail.to_string(),
+            },
+            cause: None,
+        }
+    }
+
+    pub fn bridge_op(
+        plane: impl Into<String>,
+        op: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        let plane = plane.into();
+        let op = op.into();
+        let detail = detail.into();
+        Self {
+            code: ErrorCode::BRIDGE,
+            message: format!("bridge error [{plane}/{op}]: {detail}"),
+            details: ErrorDetails::Bridge { plane, op, detail },
             cause: None,
         }
     }
@@ -222,7 +361,21 @@ impl NodeDbError {
         Self {
             code: ErrorCode::DISPATCH,
             message: format!("dispatch error: {detail}"),
-            details: ErrorDetails::Dispatch,
+            details: ErrorDetails::Dispatch {
+                stage: "unspecified".into(),
+                detail: detail.to_string(),
+            },
+            cause: None,
+        }
+    }
+
+    pub fn dispatch_at(stage: impl Into<String>, detail: impl Into<String>) -> Self {
+        let stage = stage.into();
+        let detail = detail.into();
+        Self {
+            code: ErrorCode::DISPATCH,
+            message: format!("dispatch error [{stage}]: {detail}"),
+            details: ErrorDetails::Dispatch { stage, detail },
             cause: None,
         }
     }
@@ -231,7 +384,21 @@ impl NodeDbError {
         Self {
             code: ErrorCode::INTERNAL,
             message: format!("internal error: {detail}"),
-            details: ErrorDetails::Internal,
+            details: ErrorDetails::Internal {
+                component: "unspecified".into(),
+                detail: detail.to_string(),
+            },
+            cause: None,
+        }
+    }
+
+    pub fn internal_at(component: impl Into<String>, detail: impl Into<String>) -> Self {
+        let component = component.into();
+        let detail = detail.into();
+        Self {
+            code: ErrorCode::INTERNAL,
+            message: format!("internal error [{component}]: {detail}"),
+            details: ErrorDetails::Internal { component, detail },
             cause: None,
         }
     }

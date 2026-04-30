@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// carries the human-readable explanation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ErrorDetails {
     // Write path
     ConstraintViolation {
@@ -83,7 +84,10 @@ pub enum ErrorDetails {
     },
 
     // Query
-    PlanError,
+    PlanError {
+        phase: String,
+        detail: String,
+    },
     FanOutExceeded {
         shards_touched: u16,
         limit: u16,
@@ -106,16 +110,35 @@ pub enum ErrorDetails {
     },
 
     // Storage (opaque infrastructure)
-    Storage,
-    SegmentCorrupted,
-    ColdStorage,
-    Wal,
+    Storage {
+        component: String,
+        op: String,
+        detail: String,
+    },
+    SegmentCorrupted {
+        segment_id: u64,
+        corruption: String,
+        detail: String,
+    },
+    ColdStorage {
+        backend: String,
+        op: String,
+        detail: String,
+    },
+    Wal {
+        stage: String,
+        detail: String,
+    },
 
     // Serialization
     Serialization {
         format: String,
     },
-    Codec,
+    Codec {
+        codec: String,
+        op: String,
+        detail: String,
+    },
 
     // Config
     Config,
@@ -136,7 +159,10 @@ pub enum ErrorDetails {
     },
 
     // Encryption
-    Encryption,
+    Encryption {
+        cipher: String,
+        detail: String,
+    },
 
     // Engine ops
     Array {
@@ -144,7 +170,17 @@ pub enum ErrorDetails {
     },
 
     // Bridge / Dispatch / Internal
-    Bridge,
-    Dispatch,
-    Internal,
+    Bridge {
+        plane: String,
+        op: String,
+        detail: String,
+    },
+    Dispatch {
+        stage: String,
+        detail: String,
+    },
+    Internal {
+        component: String,
+        detail: String,
+    },
 }
