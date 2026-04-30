@@ -19,7 +19,8 @@ use std::time::Duration;
 use nodedb_cluster::routing::{VSHARD_COUNT, vshard_for_collection};
 use nodedb_cluster::rpc_codec::{ExecuteRequest, ExecuteResponse, RaftRpc, TypedClusterError};
 use nodedb_types::backup_envelope::{
-    DEFAULT_MAX_TOTAL_BYTES, EnvelopeError, parse as parse_envelope,
+    DEFAULT_MAX_TOTAL_BYTES, EnvelopeError, VERSION_ENCRYPTED, VERSION_PLAIN,
+    parse as parse_envelope, parse_encrypted as parse_envelope_encrypted,
 };
 use serde::Serialize;
 
@@ -70,7 +71,39 @@ pub async fn restore_tenant(
     envelope_bytes: &[u8],
     dry_run: bool,
 ) -> Result<RestoreStats, Error> {
-    let env = parse_envelope(envelope_bytes, DEFAULT_MAX_TOTAL_BYTES).map_err(envelope_to_err)?;
+    // Detect envelope version from the 5th byte (version field in header).
+    // Version 2 envelopes are encrypted; version 1 are plaintext.
+    // If the byte slice is too short, `parse_envelope` / `parse_envelope_encrypted`
+    // will return `Truncated` as expected.
+    let envelope_version = envelope_bytes.get(4).copied().unwrap_or(0);
+    let env = if envelope_version == VERSION_ENCRYPTED {
+        match &state.backup_kek {
+            Some(kek) => parse_envelope_encrypted(envelope_bytes, DEFAULT_MAX_TOTAL_BYTES, kek)
+                .map_err(envelope_to_err)?,
+            None => {
+                return Err(Error::Internal {
+                    detail: "restore: envelope is encrypted (version 2) but no backup KEK \
+                             is configured; set [backup_encryption] in the server config"
+                        .into(),
+                });
+            }
+        }
+    } else {
+        // Version 1 (plaintext) or unknown — let parse surface the error.
+        if envelope_version != VERSION_PLAIN && envelope_version != 0 {
+            tracing::warn!(
+                envelope_version,
+                "restore: unrecognised envelope version; attempting plaintext parse"
+            );
+        }
+        if envelope_version == VERSION_PLAIN && state.backup_kek.is_some() {
+            tracing::warn!(
+                "restore: envelope is unencrypted (version 1) but a backup KEK is configured; \
+                 proceeding without decryption — re-backup to produce an encrypted envelope"
+            );
+        }
+        parse_envelope(envelope_bytes, DEFAULT_MAX_TOTAL_BYTES).map_err(envelope_to_err)?
+    };
     if env.meta.tenant_id != tenant_id {
         // Mismatch is a hard error — request is for a different tenant.
         return Err(Error::Internal {

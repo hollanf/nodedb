@@ -17,7 +17,7 @@ pub use observability::{
 };
 pub use retention::RetentionSettings;
 pub use scheduler::{CronTimezone, SchedulerConfig};
-pub use tls::{EncryptionSettings, TlsSettings};
+pub use tls::{BackupEncryptionSettings, EncryptionSettings, TlsSettings};
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -132,6 +132,13 @@ pub struct ServerConfig {
     #[serde(default)]
     pub encryption: Option<EncryptionSettings>,
 
+    /// Per-backup encryption configuration. If present, every backup envelope
+    /// is encrypted with a per-backup DEK wrapped by this KEK. If absent, a
+    /// warning is emitted once per process at the first backup operation.
+    /// The key MUST differ from the WAL key; a matching path triggers a warning.
+    #[serde(default)]
+    pub backup_encryption: Option<BackupEncryptionSettings>,
+
     /// Log output format: `"text"` (default, human-readable) or `"json"` (structured).
     /// Unknown values are rejected at startup — there is no silent fallback.
     #[serde(default)]
@@ -195,6 +202,7 @@ impl Default for ServerConfig {
             auth: super::AuthConfig::default(),
             tls: None,
             encryption: None,
+            backup_encryption: None,
             log_format: LogFormat::Text,
             checkpoint: CheckpointSettings::default(),
             retention: RetentionSettings::default(),

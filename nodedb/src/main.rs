@@ -528,6 +528,47 @@ async fn main() -> anyhow::Result<()> {
         state.governor = Some(Arc::clone(&governor));
     }
 
+    // Load and wire the backup KEK if configured. If the backup key path
+    // matches the WAL key path, emit a warning — sharing keys reduces
+    // security isolation between WAL and backup KEKs.
+    if let Some(ref benc) = config.backup_encryption {
+        match std::fs::read(&benc.key_path) {
+            Ok(raw) if raw.len() == 32 => {
+                let mut key_bytes = [0u8; 32];
+                key_bytes.copy_from_slice(&raw);
+                if let Some(state) = Arc::get_mut(&mut shared) {
+                    state.backup_kek = Some(Arc::new(key_bytes));
+                }
+                if let Some(ref enc) = config.encryption
+                    && enc.key_path == benc.key_path
+                {
+                    tracing::warn!(
+                        path = %benc.key_path.display(),
+                        "backup_encryption.key_path matches encryption.key_path — \
+                         backup KEK and WAL KEK should be distinct for security isolation"
+                    );
+                }
+                info!(key_path = %benc.key_path.display(), "backup encryption enabled");
+            }
+            Ok(raw) => {
+                tracing::error!(
+                    path = %benc.key_path.display(),
+                    len = raw.len(),
+                    "backup encryption key must be exactly 32 bytes — aborting startup"
+                );
+                std::process::exit(1);
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    path = %benc.key_path.display(),
+                    "failed to load backup encryption key — aborting startup"
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Wire the OTLP trace exporter. When `observability.otlp.export`
     // is disabled or its endpoint is empty, the exporter is a no-op
     // and gateway/executor emit calls skip all HTTP work — no

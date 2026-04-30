@@ -132,7 +132,26 @@ pub async fn backup_tenant(state: &Arc<SharedState>, tenant_id: u64) -> Result<B
         }
     }
 
-    Ok(Bytes::from(writer.finalize()))
+    // Encrypt the envelope if a backup KEK is configured; otherwise emit a
+    // one-time warning and produce a plaintext envelope. The warning is
+    // emitted unconditionally (not behind a once-cell) because backup is
+    // a rare, operator-driven operation — the per-call cost is negligible.
+    let envelope_bytes = match &state.backup_kek {
+        Some(kek) => writer
+            .finalize_encrypted(kek)
+            .map_err(|e| Error::Internal {
+                detail: format!("backup envelope encryption: {e}"),
+            })?,
+        None => {
+            tracing::warn!(
+                tenant_id,
+                "backup produced without encryption; configure [backup_encryption] \
+                 to encrypt backup envelopes at rest"
+            );
+            writer.finalize()
+        }
+    };
+    Ok(Bytes::from(envelope_bytes))
 }
 
 /// Enumerate the unique node IDs that hold any vShard right now.

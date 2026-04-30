@@ -304,6 +304,7 @@ impl SharedState {
             )),
             gateway_invalidator: None,
             gateway: None,
+            backup_kek: None,
             shutdown: Arc::clone(&shutdown),
             loop_registry: Arc::clone(&loop_registry),
             startup: Arc::clone(&startup_gate),
@@ -344,6 +345,7 @@ impl SharedState {
             auth_config.password_expiry_days,
             auth_config.password_expiry_grace_days,
         );
+        credentials.set_argon2_config(auth_config.argon2.clone());
 
         let api_keys = ApiKeyStore::new();
         let roles = RoleStore::new();
@@ -669,6 +671,7 @@ impl SharedState {
             permission_cache: Arc::new(tokio::sync::RwLock::new(permission_cache)),
             gateway_invalidator: None,
             gateway: None,
+            backup_kek: None,
             shutdown: Arc::clone(&shutdown),
             loop_registry: Arc::clone(&loop_registry),
             startup: Arc::clone(&startup_gate),

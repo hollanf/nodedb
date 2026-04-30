@@ -2,11 +2,30 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-/// Encryption at rest settings.
+/// Encryption at rest settings (WAL).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncryptionSettings {
-    /// Path to the 32-byte AES-256-GCM key file.
+    /// Path to the 32-byte AES-256-GCM key file used to encrypt WAL records.
     /// Generate with: `head -c 32 /dev/urandom > /etc/nodedb/keys/wal.key`
+    pub key_path: PathBuf,
+}
+
+/// Per-backup encryption settings.
+///
+/// When present, each backup envelope is encrypted with a per-backup DEK
+/// that is itself wrapped by this backup KEK (AES-256-GCM). The backup KEK
+/// MUST be distinct from the WAL KEK — a shared key is detected at startup
+/// and surfaced as a [`tracing::warn!`].
+///
+/// Configure via the `[backup_encryption]` TOML section:
+/// ```toml
+/// [backup_encryption]
+/// key_path = "/etc/nodedb/keys/backup.key"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupEncryptionSettings {
+    /// Path to the 32-byte AES-256-GCM key file used to wrap per-backup DEKs.
+    /// Generate with: `head -c 32 /dev/urandom > /etc/nodedb/keys/backup.key`
     pub key_path: PathBuf,
 }
 

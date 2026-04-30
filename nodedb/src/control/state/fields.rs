@@ -587,4 +587,16 @@ pub struct SharedState {
     /// construction; listeners should gate on `startup.await_ready()` before
     /// calling `gateway`.
     pub gateway: Option<Arc<crate::control::gateway::Gateway>>,
+
+    /// Per-backup KEK (Key Encryption Key) for wrapping per-backup DEKs.
+    ///
+    /// When `Some`, `backup_tenant` calls `EnvelopeWriter::finalize_encrypted`
+    /// and `restore_tenant` calls `parse_encrypted`. When `None`, backups are
+    /// unencrypted and a single `warn!` is emitted per process at the first
+    /// backup operation.
+    ///
+    /// Populated at startup from `config.backup_encryption.key_path` by `main.rs`.
+    /// The 32-byte key is stored in an `Arc` to allow cheap clones across async
+    /// task boundaries without copying the secret on each backup/restore call.
+    pub backup_kek: Option<Arc<[u8; 32]>>,
 }
