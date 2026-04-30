@@ -489,7 +489,7 @@ impl SystemMetrics {
         out
     }
 
-    /// Emit `shutdown_last_duration_ms{phase}` gauges.
+    /// Emit `nodedb_shutdown_phase_duration_seconds{phase}` gauges.
     fn prometheus_shutdown_phases(&self, out: &mut String) {
         use std::fmt::Write as _;
         let m = self
@@ -500,17 +500,21 @@ impl SystemMetrics {
             return;
         }
         let _ = out.write_str(
-            "# HELP shutdown_last_duration_ms Duration of each shutdown phase in the last graceful shutdown\n\
-             # TYPE shutdown_last_duration_ms gauge\n",
+            "# HELP nodedb_shutdown_phase_duration_seconds Duration of each shutdown phase in the last graceful shutdown\n\
+             # TYPE nodedb_shutdown_phase_duration_seconds gauge\n",
         );
         let mut pairs: Vec<_> = m.iter().collect();
         pairs.sort_by(|a, b| a.0.cmp(b.0));
         for (phase, ms) in pairs {
-            let _ = writeln!(out, r#"shutdown_last_duration_ms{{phase="{phase}"}} {ms}"#);
+            let secs = *ms as f64 / 1_000.0;
+            let _ = writeln!(
+                out,
+                r#"nodedb_shutdown_phase_duration_seconds{{phase="{phase}"}} {secs}"#
+            );
         }
     }
 
-    /// Emit `catalog_sanity_check_total{registry,outcome}` labeled counters.
+    /// Emit `nodedb_catalog_sanity_check_total{registry,outcome}` labeled counters.
     fn prometheus_catalog_sanity(&self, out: &mut String) {
         use std::fmt::Write as _;
         let m = self
@@ -521,15 +525,15 @@ impl SystemMetrics {
             return;
         }
         let _ = out.write_str(
-            "# HELP catalog_sanity_check_total Catalog sanity check outcomes per registry\n\
-             # TYPE catalog_sanity_check_total counter\n",
+            "# HELP nodedb_catalog_sanity_check_total Catalog sanity check outcomes per registry\n\
+             # TYPE nodedb_catalog_sanity_check_total counter\n",
         );
         let mut pairs: Vec<_> = m.iter().collect();
         pairs.sort_by(|a, b| a.0.cmp(b.0));
         for ((registry, outcome), count) in pairs {
             let _ = writeln!(
                 out,
-                r#"catalog_sanity_check_total{{registry="{registry}",outcome="{outcome}"}} {count}"#
+                r#"nodedb_catalog_sanity_check_total{{registry="{registry}",outcome="{outcome}"}} {count}"#
             );
         }
     }

@@ -189,7 +189,7 @@ impl SystemMetrics {
         // ── Contention ──
         counter(
             out,
-            "nodedb_mmap_major_faults",
+            "nodedb_mmap_major_faults_total",
             "mmap major page faults",
             self.mmap_major_faults.load(Ordering::Relaxed),
         );

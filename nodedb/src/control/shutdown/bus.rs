@@ -322,7 +322,7 @@ impl ShutdownBus {
         *self.phase_tx.borrow()
     }
 
-    /// Wire a metrics sink so the bus records `shutdown_last_duration_ms{phase}`
+    /// Wire a metrics sink so the bus records `nodedb_shutdown_phase_duration_seconds{phase}`
     /// for each phase transition during shutdown.
     ///
     /// Must be called before `initiate()` to have effect. Idempotent.

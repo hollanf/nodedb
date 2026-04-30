@@ -640,7 +640,7 @@ async fn main() -> anyhow::Result<()> {
     // existing `watch::Receiver<bool>` subscribers wake up as well.
     let (shutdown_bus, _shutdown_bus_handle) =
         nodedb::control::shutdown::ShutdownBus::new(Arc::clone(&shared.shutdown));
-    // Wire system metrics so the bus records `shutdown_last_duration_ms{phase}`
+    // Wire system metrics so the bus records `nodedb_shutdown_phase_duration_seconds{phase}`
     // for each phase transition during graceful shutdown.
     shutdown_bus.set_metrics(Arc::clone(&system_metrics));
 

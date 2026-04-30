@@ -75,11 +75,11 @@ impl SystemMetrics {
         );
 
         // ── Bridge ──
-        gauge(
+        gauge_f64(
             out,
-            "nodedb_bridge_utilization",
-            "SPSC bridge utilization percent",
-            self.bridge_utilization.load(Ordering::Relaxed),
+            "nodedb_bridge_utilization_ratio",
+            "SPSC bridge utilization as a ratio (0.0–1.0)",
+            self.bridge_utilization.load(Ordering::Relaxed) as f64 / 100.0,
         );
 
         // ── Compaction ──
@@ -97,8 +97,8 @@ impl SystemMetrics {
         );
         gauge(
             out,
-            "nodedb_compaction_throughput_bytes_sec",
-            "Compaction throughput bytes/sec",
+            "nodedb_compaction_throughput_bytes_per_second",
+            "Compaction throughput bytes per second",
             self.compaction_throughput_bytes_sec.load(Ordering::Relaxed),
         );
 

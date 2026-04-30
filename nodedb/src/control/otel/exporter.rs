@@ -129,13 +129,13 @@ fn build_metrics_request(metrics: &SystemMetrics, node_id: u64) -> ExportMetrics
             now_ns,
         ),
         gauge_metric(
-            "nodedb_wal_fsync_latency_us",
-            metrics.wal_fsync_latency_micros.load(Ordering::Relaxed) as f64,
+            "nodedb_wal_fsync_latency_seconds",
+            metrics.wal_fsync_latency_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
             now_ns,
         ),
         gauge_metric(
-            "nodedb_bridge_utilization",
-            metrics.bridge_utilization.load(Ordering::Relaxed) as f64,
+            "nodedb_bridge_utilization_ratio",
+            metrics.bridge_utilization.load(Ordering::Relaxed) as f64 / 100.0,
             now_ns,
         ),
         gauge_metric(
