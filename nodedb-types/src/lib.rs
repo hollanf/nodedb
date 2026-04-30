@@ -51,7 +51,7 @@ pub use columnar::{
     ColumnDef, ColumnType, ColumnarProfile, ColumnarSchema, DocumentMode, SchemaError, StrictSchema,
 };
 pub use config::TuningConfig;
-pub use datetime::{NdbDateTime, NdbDuration};
+pub use datetime::{NdbDateTime, NdbDateTimeError, NdbDuration};
 pub use document::Document;
 pub use dropped_collection::DroppedCollection;
 pub use error::NodeDbError;
@@ -59,7 +59,9 @@ pub use filter::{EdgeFilter, MetadataFilter};
 pub use graph::Direction;
 pub use hlc::{Hlc, HlcClock};
 pub use hnsw::{HnswCheckpoint, HnswNodeSnapshot, HnswParams};
-pub use id::{CollectionId, DocumentId, EdgeId, NodeId, ShapeId, TenantId};
+pub use id::{
+    CollectionId, DocumentId, EdgeId, EdgeIdParseError, IdError, IdType, NodeId, ShapeId, TenantId,
+};
 pub use json_msgpack::{
     JsonValue, json_from_msgpack, json_to_msgpack, json_to_msgpack_or_empty,
     msgpack_to_json_string, value_from_msgpack, value_to_msgpack,

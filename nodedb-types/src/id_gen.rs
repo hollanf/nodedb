@@ -7,6 +7,8 @@
 
 use rand::Rng;
 
+use crate::id::{IdError, IdType};
+
 // ── UUID ──
 
 /// Generate a random UUID v4 (128-bit, not time-sortable).
@@ -56,19 +58,33 @@ pub fn ulid_timestamp_ms(s: &str) -> Option<u64> {
 
 // ── CUID2 ──
 
-/// Generate a CUID2 (Collision-resistant Unique Identifier v2).
+/// CUID2 minimum allowed length (per spec).
+const CUID2_MIN_LEN: usize = 4;
+/// CUID2 maximum allowed length (per spec).
+const CUID2_MAX_LEN: usize = 32;
+
+/// Generate a CUID2 (Collision-resistant Unique Identifier v2) with default length 24.
 ///
-/// Variable length (default 24 chars), cryptographically random, starts with
-/// a letter (safe for HTML IDs, CSS selectors, database keys).
-///
-/// Implemented inline — no external crate dependency.
+/// Variable length (24 chars), cryptographically random, starts with a letter
+/// (safe for HTML IDs, CSS selectors, database keys).
 pub fn cuid2() -> String {
-    cuid2_with_length(24)
+    cuid2_with_length(24).expect("24 is within [4, 32]")
 }
 
-/// Generate a CUID2 with custom length (min 4, max 64).
-pub fn cuid2_with_length(length: usize) -> String {
-    let length = length.clamp(4, 64);
+/// Generate a CUID2 with a custom length.
+///
+/// # Errors
+///
+/// Returns [`IdError::LengthOutOfRange`] if `length` is outside `[4, 32]`.
+pub fn cuid2_with_length(length: usize) -> Result<String, IdError> {
+    if !(CUID2_MIN_LEN..=CUID2_MAX_LEN).contains(&length) {
+        return Err(IdError::LengthOutOfRange {
+            requested: length,
+            min: CUID2_MIN_LEN,
+            max: CUID2_MAX_LEN,
+        });
+    }
+
     let mut rng = rand::rng();
 
     // CUID2 always starts with a lowercase letter.
@@ -83,22 +99,35 @@ pub fn cuid2_with_length(length: usize) -> String {
         })
         .collect();
 
-    format!("{first}{rest}")
+    Ok(format!("{first}{rest}"))
 }
 
-/// Validate whether a string looks like a CUID2 (starts with letter, alphanumeric).
+/// Validate whether a string looks like a CUID2.
+///
+/// A valid CUID2:
+/// - Has length in `[4, 32]`
+/// - Starts with a lowercase ASCII letter
+/// - Contains only lowercase ASCII letters and ASCII digits
 pub fn is_cuid2(s: &str) -> bool {
-    if s.len() < 4 {
+    let len = s.len();
+    if !(CUID2_MIN_LEN..=CUID2_MAX_LEN).contains(&len) {
         return false;
     }
-    let first = s.as_bytes()[0];
-    if !first.is_ascii_lowercase() {
+    let bytes = s.as_bytes();
+    if !bytes[0].is_ascii_lowercase() {
         return false;
     }
-    s.bytes().all(|b| b.is_ascii_alphanumeric())
+    bytes
+        .iter()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }
 
 // ── NanoID ──
+
+/// NanoID minimum detection length.
+const NANOID_MIN_LEN: usize = 10;
+/// NanoID maximum detection length.
+const NANOID_MAX_LEN: usize = 64;
 
 /// Generate a NanoID (URL-friendly unique string identifier).
 ///
@@ -113,9 +142,14 @@ pub fn nanoid_with_length(length: usize) -> String {
     nanoid::nanoid!(length)
 }
 
-/// Validate whether a string looks like a NanoID (URL-safe characters, reasonable length).
+/// Validate whether a string looks like a NanoID.
+///
+/// A valid NanoID for detection purposes:
+/// - Has length in `[10, 64]`
+/// - Contains only `A-Za-z0-9`, `_`, or `-`
 pub fn is_nanoid(s: &str) -> bool {
-    if s.is_empty() || s.len() > 128 {
+    let len = s.len();
+    if !(NANOID_MIN_LEN..=NANOID_MAX_LEN).contains(&len) {
         return false;
     }
     s.bytes()
@@ -126,19 +160,21 @@ pub fn is_nanoid(s: &str) -> bool {
 
 /// Detect the type of a string ID.
 ///
-/// Returns one of: "uuid", "ulid", "cuid2", "nanoid", "unknown".
-/// Checks in order of specificity (UUID and ULID have strict formats).
-pub fn detect_id_type(s: &str) -> &'static str {
+/// Returns an [`IdType`] variant. Checks in order of specificity:
+/// UUID and ULID have strict structural formats; CUID2 and NanoID overlap
+/// in charset so CUID2 (stricter bounds) is tested first.
+/// Anything that doesn't match → [`IdType::Custom`].
+pub fn detect_id_type(s: &str) -> IdType {
     if is_uuid(s) {
-        "uuid"
+        IdType::Uuid
     } else if is_ulid(s) {
-        "ulid"
-    } else if is_cuid2(s) && s.len() >= 20 {
-        "cuid2"
+        IdType::Ulid
+    } else if is_cuid2(s) {
+        IdType::Cuid2
     } else if is_nanoid(s) {
-        "nanoid"
+        IdType::NanoId
     } else {
-        "unknown"
+        IdType::Custom
     }
 }
 
@@ -213,14 +249,41 @@ mod tests {
     }
 
     #[test]
-    fn cuid2_custom_length() {
-        let short = cuid2_with_length(8);
-        assert_eq!(short.len(), 8);
-        assert!(is_cuid2(&short));
+    fn cuid2_with_length_valid_range() {
+        for len in [4usize, 8, 16, 24, 32] {
+            let id = cuid2_with_length(len).unwrap_or_else(|e| panic!("len {len} failed: {e}"));
+            assert_eq!(id.len(), len, "length mismatch for requested {len}");
+            assert!(is_cuid2(&id), "is_cuid2 rejected id of len {len}");
+        }
+    }
 
-        let long = cuid2_with_length(48);
-        assert_eq!(long.len(), 48);
-        assert!(is_cuid2(&long));
+    #[test]
+    fn cuid2_with_length_out_of_range_errors() {
+        let too_small = cuid2_with_length(3);
+        assert!(
+            matches!(
+                too_small,
+                Err(IdError::LengthOutOfRange {
+                    requested: 3,
+                    min: 4,
+                    max: 32
+                })
+            ),
+            "expected LengthOutOfRange for len 3, got {too_small:?}"
+        );
+
+        let too_large = cuid2_with_length(33);
+        assert!(
+            matches!(
+                too_large,
+                Err(IdError::LengthOutOfRange {
+                    requested: 33,
+                    min: 4,
+                    max: 32
+                })
+            ),
+            "expected LengthOutOfRange for len 33, got {too_large:?}"
+        );
     }
 
     #[test]
@@ -229,6 +292,22 @@ mod tests {
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), 1000); // all unique
+    }
+
+    #[test]
+    fn is_cuid2_bounds() {
+        // Too short (3 chars)
+        assert!(!is_cuid2("abc"));
+        // Too long (33 chars) — exceeds CUID2_MAX_LEN
+        assert!(!is_cuid2("abcdefghijklmnopqrstuvwxyz1234567"));
+        // Uppercase start — rejected
+        assert!(!is_cuid2("Abcdefghijklmnopqrstuvwx"));
+        // Contains uppercase in body — rejected
+        assert!(!is_cuid2("abcDef"));
+        // Valid minimal (4 chars)
+        assert!(is_cuid2("abcd"));
+        // Valid maximal (32 chars)
+        assert!(is_cuid2("abcdefghijklmnopqrstuvwxyz123456"));
     }
 
     #[test]
@@ -246,11 +325,48 @@ mod tests {
     }
 
     #[test]
+    fn nanoid_detection_bounds() {
+        // Below minimum (9 chars) — not detected as nanoid
+        let short = nanoid_with_length(9);
+        assert!(!is_nanoid(&short), "9-char nanoid should not be detected");
+        // Above maximum (65 chars) — not detected
+        let long = nanoid_with_length(65);
+        assert!(!is_nanoid(&long), "65-char nanoid should not be detected");
+        // At bounds
+        assert!(is_nanoid(&nanoid_with_length(10)));
+        assert!(is_nanoid(&nanoid_with_length(64)));
+    }
+
+    #[test]
     fn detect_types() {
-        assert_eq!(detect_id_type(&uuid_v4()), "uuid");
-        assert_eq!(detect_id_type(&uuid_v7()), "uuid");
-        assert_eq!(detect_id_type(&ulid()), "ulid");
-        assert_eq!(detect_id_type("not-a-valid-id!@#"), "unknown");
+        assert_eq!(detect_id_type(&uuid_v4()), IdType::Uuid);
+        assert_eq!(detect_id_type(&uuid_v7()), IdType::Uuid);
+        assert_eq!(detect_id_type(&ulid()), IdType::Ulid);
+        assert_eq!(detect_id_type(&cuid2()), IdType::Cuid2);
+        assert_eq!(detect_id_type("not-a-valid-id!@#"), IdType::Custom);
+    }
+
+    #[test]
+    fn detect_id_type_exhaustive_match() {
+        // Compile-time check: exhaustive match with no `_` arm forces updating
+        // this test whenever a new IdType variant is added.
+        let id_type = detect_id_type(&cuid2());
+        match id_type {
+            IdType::Uuid => {}
+            IdType::Ulid => {}
+            IdType::Cuid2 => {}
+            IdType::NanoId => {}
+            IdType::Custom => {}
+        }
+    }
+
+    #[test]
+    fn id_type_as_str() {
+        assert_eq!(IdType::Uuid.as_str(), "uuid");
+        assert_eq!(IdType::Ulid.as_str(), "ulid");
+        assert_eq!(IdType::Cuid2.as_str(), "cuid2");
+        assert_eq!(IdType::NanoId.as_str(), "nanoid");
+        assert_eq!(IdType::Custom.as_str(), "custom");
     }
 
     #[test]
