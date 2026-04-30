@@ -114,8 +114,7 @@ impl CacheApplier {
     }
 
     /// Mutate the live topology handle (if attached) in response to
-    /// a committed `TopologyChange`. Silent no-op when no handle is
-    /// set — backward-compatible with older test wiring.
+    /// a committed `TopologyChange`. Optional; no-op when not configured.
     fn apply_topology_change(&self, change: &TopologyChange) {
         let Some(live) = &self.live_topology else {
             return;

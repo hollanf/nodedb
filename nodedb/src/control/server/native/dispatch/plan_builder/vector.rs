@@ -133,9 +133,14 @@ pub(crate) fn build_multi_search(
 }
 
 pub(crate) fn build_delete(fields: &TextFields, collection: &str) -> crate::Result<PhysicalPlan> {
-    let vector_id = fields.vector_id.ok_or_else(|| crate::Error::BadRequest {
+    let vector_id_wire = fields.vector_id.ok_or_else(|| crate::Error::BadRequest {
         detail: "missing 'vector_id'".to_string(),
     })?;
+    let vector_id: u32 = vector_id_wire
+        .try_into()
+        .map_err(|_| crate::Error::BadRequest {
+            detail: "vector_id exceeds 32-bit surrogate space".to_string(),
+        })?;
 
     Ok(PhysicalPlan::Vector(VectorOp::Delete {
         collection: collection.to_string(),

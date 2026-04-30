@@ -14,7 +14,7 @@ use super::parse_direction;
 /// rejecting out-of-range values rather than forwarding them to the
 /// engine. Mirrors the pgwire ingress so no entry point can saturate
 /// traversal with an unbounded fan-out.
-fn clamped_depth(value: Option<u64>, default: usize, field: &str) -> crate::Result<usize> {
+fn clamped_depth(value: Option<u32>, default: usize, field: &str) -> crate::Result<usize> {
     let v = value.map(|v| v as usize).unwrap_or(default);
     if v > MAX_GRAPH_TRAVERSAL_DEPTH {
         return Err(crate::Error::BadRequest {
