@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn display_contains_context() {
         let err = SwimError::StaleIncarnation {
-            node_id: NodeId::new("n1"),
+            node_id: NodeId::try_new("n1").expect("test fixture"),
             received: Incarnation::new(3),
             local: Incarnation::new(5),
         };
@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn bridges_to_cluster_error() {
         let err: crate::error::ClusterError = SwimError::UnknownMember {
-            node_id: NodeId::new("n42"),
+            node_id: NodeId::try_new("n42").expect("test fixture"),
         }
         .into();
         assert!(matches!(err, crate::error::ClusterError::Transport { .. }));

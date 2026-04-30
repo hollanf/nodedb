@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn new_alive_defaults() {
-        let m = Member::new_alive(NodeId::new("n1"), addr());
+        let m = Member::new_alive(NodeId::try_new("n1").expect("test fixture"), addr());
         assert_eq!(m.state, MemberState::Alive);
         assert_eq!(m.incarnation, Incarnation::ZERO);
         assert!(m.is_reachable());
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn update_roundtrip_via_from() {
-        let m = Member::new_alive(NodeId::new("n7"), addr());
+        let m = Member::new_alive(NodeId::try_new("n7").expect("test fixture"), addr());
         let u = MemberUpdate::from(&m);
         assert_eq!(u.node_id, m.node_id);
         assert_eq!(u.addr, m.addr.to_string());

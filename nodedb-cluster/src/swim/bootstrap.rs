@@ -119,7 +119,8 @@ pub async fn spawn_with_subscribers(
             continue;
         }
         membership.apply(&MemberUpdate {
-            node_id: NodeId::new(format!("seed:{seed_addr}")),
+            // SocketAddr display always produces a valid ID: non-empty, well under cap, no NUL.
+            node_id: NodeId::from_validated(format!("seed:{seed_addr}")),
             addr: seed_addr.to_string(),
             state: MemberState::Alive,
             incarnation: Incarnation::ZERO,
@@ -189,9 +190,15 @@ mod tests {
     async fn spawn_solo_cluster_has_only_local() {
         let fab = TransportFabric::new();
         let transport: Arc<dyn Transport> = Arc::new(fab.bind(addr(7100)).await);
-        let handle = spawn(cfg(), NodeId::new("a"), addr(7100), vec![], transport)
-            .await
-            .expect("spawn");
+        let handle = spawn(
+            cfg(),
+            NodeId::try_new("a").expect("test fixture"),
+            addr(7100),
+            vec![],
+            transport,
+        )
+        .await
+        .expect("spawn");
         assert_eq!(handle.membership().len(), 1);
         assert!(handle.membership().is_solo());
         handle.shutdown().await;
@@ -203,7 +210,7 @@ mod tests {
         let transport: Arc<dyn Transport> = Arc::new(fab.bind(addr(7110)).await);
         let handle = spawn(
             cfg(),
-            NodeId::new("a"),
+            NodeId::try_new("a").expect("test fixture"),
             addr(7110),
             vec![addr(7111), addr(7112)],
             transport,
@@ -220,7 +227,7 @@ mod tests {
         let transport: Arc<dyn Transport> = Arc::new(fab.bind(addr(7120)).await);
         let handle = spawn(
             cfg(),
-            NodeId::new("a"),
+            NodeId::try_new("a").expect("test fixture"),
             addr(7120),
             vec![addr(7120), addr(7121)],
             transport,
@@ -238,7 +245,14 @@ mod tests {
         let transport: Arc<dyn Transport> = Arc::new(fab.bind(addr(7130)).await);
         let mut bad = cfg();
         bad.probe_timeout = bad.probe_interval; // violates the strict-less rule
-        let res = spawn(bad, NodeId::new("a"), addr(7130), vec![], transport).await;
+        let res = spawn(
+            bad,
+            NodeId::try_new("a").expect("test fixture"),
+            addr(7130),
+            vec![],
+            transport,
+        )
+        .await;
         match res {
             Err(SwimError::InvalidConfig { .. }) => {}
             Err(other) => panic!("expected InvalidConfig, got {other:?}"),
@@ -250,9 +264,15 @@ mod tests {
     async fn shutdown_joins_promptly() {
         let fab = TransportFabric::new();
         let transport: Arc<dyn Transport> = Arc::new(fab.bind(addr(7140)).await);
-        let handle = spawn(cfg(), NodeId::new("a"), addr(7140), vec![], transport)
-            .await
-            .expect("spawn");
+        let handle = spawn(
+            cfg(),
+            NodeId::try_new("a").expect("test fixture"),
+            addr(7140),
+            vec![],
+            transport,
+        )
+        .await
+        .expect("spawn");
         let start = std::time::Instant::now();
         tokio::time::timeout(Duration::from_millis(500), handle.shutdown())
             .await

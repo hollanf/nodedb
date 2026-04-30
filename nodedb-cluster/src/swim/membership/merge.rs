@@ -106,7 +106,7 @@ mod tests {
 
     fn member(id: &str, state: MemberState, inc: u64) -> Member {
         Member {
-            node_id: NodeId::new(id),
+            node_id: NodeId::try_new(id).expect("test fixture"),
             addr: addr(),
             state,
             incarnation: Incarnation::new(inc),
@@ -116,7 +116,7 @@ mod tests {
 
     fn update(id: &str, state: MemberState, inc: u64) -> MemberUpdate {
         MemberUpdate {
-            node_id: NodeId::new(id),
+            node_id: NodeId::try_new(id).expect("test fixture"),
             addr: addr().to_string(),
             state,
             incarnation: Incarnation::new(inc),
@@ -124,7 +124,7 @@ mod tests {
     }
 
     fn me() -> NodeId {
-        NodeId::new("local")
+        NodeId::try_new("local").expect("test fixture")
     }
 
     #[test]

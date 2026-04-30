@@ -62,12 +62,16 @@ mod tests {
     }
 
     fn local_list() -> MembershipList {
-        MembershipList::new_local(NodeId::new("local"), addr(7000), Incarnation::ZERO)
+        MembershipList::new_local(
+            NodeId::try_new("local").expect("test fixture"),
+            addr(7000),
+            Incarnation::ZERO,
+        )
     }
 
     fn upd(id: &str, state: MemberState, inc: u64) -> MemberUpdate {
         MemberUpdate {
-            node_id: NodeId::new(id),
+            node_id: NodeId::try_new(id).expect("test fixture"),
             addr: addr(7001).to_string(),
             state,
             incarnation: Incarnation::new(inc),

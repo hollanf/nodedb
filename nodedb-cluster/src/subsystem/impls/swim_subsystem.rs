@@ -204,7 +204,7 @@ mod tests {
                 max_piggyback: 6,
                 fanout_lambda: 3,
             },
-            local_id: NodeId::new("1"),
+            local_id: NodeId::try_new("1").expect("test fixture"),
             swim_addr: "127.0.0.1:0".parse().unwrap(),
             seeds: vec![],
         };
@@ -228,7 +228,7 @@ mod tests {
                 max_piggyback: 6,
                 fanout_lambda: 3,
             },
-            local_id: NodeId::new("1"),
+            local_id: NodeId::try_new("1").expect("test fixture"),
             swim_addr: "127.0.0.1:0".parse().unwrap(),
             seeds: vec![],
         };

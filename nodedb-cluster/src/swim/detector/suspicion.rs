@@ -120,7 +120,7 @@ mod tests {
     async fn arm_and_expire() {
         let mut timer = SuspicionTimer::new();
         let now = Instant::now();
-        timer.arm(NodeId::new("n1"), now, &cfg(), 2);
+        timer.arm(NodeId::try_new("n1").expect("test fixture"), now, &cfg(), 2);
         assert_eq!(timer.len(), 1);
         // Not expired yet.
         assert!(timer.drain_expired(now).is_empty());
@@ -128,7 +128,7 @@ mod tests {
         tokio::time::advance(Duration::from_millis(600)).await;
         let later = Instant::now();
         let expired = timer.drain_expired(later);
-        assert_eq!(expired, vec![NodeId::new("n1")]);
+        assert_eq!(expired, vec![NodeId::try_new("n1").expect("test fixture")]);
         assert!(timer.is_empty());
     }
 
@@ -136,8 +136,8 @@ mod tests {
     fn cancel_removes_entry() {
         let mut timer = SuspicionTimer::new();
         let now = Instant::now();
-        timer.arm(NodeId::new("n1"), now, &cfg(), 2);
-        timer.cancel(&NodeId::new("n1"));
+        timer.arm(NodeId::try_new("n1").expect("test fixture"), now, &cfg(), 2);
+        timer.cancel(&NodeId::try_new("n1").expect("test fixture"));
         assert!(timer.is_empty());
     }
 
@@ -145,15 +145,15 @@ mod tests {
     async fn multiple_entries_expire_independently() {
         let mut timer = SuspicionTimer::new();
         let t0 = Instant::now();
-        timer.arm(NodeId::new("a"), t0, &cfg(), 2);
+        timer.arm(NodeId::try_new("a").expect("test fixture"), t0, &cfg(), 2);
         tokio::time::advance(Duration::from_millis(200)).await;
         let t1 = Instant::now();
-        timer.arm(NodeId::new("b"), t1, &cfg(), 2);
+        timer.arm(NodeId::try_new("b").expect("test fixture"), t1, &cfg(), 2);
         // Advance so `a` expires (>=500ms from t0) but `b` does not (<500ms from t1).
         tokio::time::advance(Duration::from_millis(350)).await;
         let now = Instant::now();
         let expired = timer.drain_expired(now);
-        assert_eq!(expired, vec![NodeId::new("a")]);
+        assert_eq!(expired, vec![NodeId::try_new("a").expect("test fixture")]);
         assert_eq!(timer.len(), 1);
     }
 }

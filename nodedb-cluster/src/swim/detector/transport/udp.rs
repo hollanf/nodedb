@@ -138,7 +138,7 @@ mod tests {
             .expect("bind b");
         let ping = SwimMessage::Ping(Ping {
             probe_id: ProbeId::new(42),
-            from: NodeId::new("a"),
+            from: NodeId::try_new("a").expect("test fixture"),
             incarnation: Incarnation::new(3),
             piggyback: vec![],
         });
@@ -161,7 +161,7 @@ mod tests {
             .expect("bind b");
         let ack = SwimMessage::Ack(Ack {
             probe_id: ProbeId::new(1),
-            from: NodeId::new("b"),
+            from: NodeId::try_new("b").expect("test fixture"),
             incarnation: Incarnation::new(7),
             piggyback: vec![],
         });
@@ -198,7 +198,7 @@ mod tests {
             .expect("bind");
         let ping = SwimMessage::Ping(Ping {
             probe_id: ProbeId::new(1),
-            from: NodeId::new("x"),
+            from: NodeId::try_new("x").expect("test fixture"),
             incarnation: Incarnation::ZERO,
             piggyback: vec![],
         });
@@ -225,7 +225,7 @@ mod tests {
             .expect("bind receiver");
         let ping = SwimMessage::Ping(Ping {
             probe_id: ProbeId::new(1),
-            from: NodeId::new("attacker"),
+            from: NodeId::try_new("attacker").expect("test fixture"),
             incarnation: Incarnation::ZERO,
             piggyback: vec![],
         });

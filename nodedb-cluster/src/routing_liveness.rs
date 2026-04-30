@@ -122,7 +122,7 @@ mod tests {
             RoutingLivenessHook::new(rt.clone(), resolver_for(&[("a", 1), ("b", 2), ("c", 3)]));
 
         hook.on_state_change(
-            &NodeId::new("a"),
+            &NodeId::try_new("a").expect("test fixture"),
             Some(MemberState::Alive),
             MemberState::Dead,
         );
@@ -139,7 +139,7 @@ mod tests {
         let rt = rt_with_leaders(&[(0, 7)], 1);
         let hook = RoutingLivenessHook::new(rt.clone(), resolver_for(&[("x", 7)]));
         hook.on_state_change(
-            &NodeId::new("x"),
+            &NodeId::try_new("x").expect("test fixture"),
             Some(MemberState::Alive),
             MemberState::Suspect,
         );
@@ -150,7 +150,11 @@ mod tests {
     fn alive_transition_is_noop() {
         let rt = rt_with_leaders(&[(0, 5)], 1);
         let hook = RoutingLivenessHook::new(rt.clone(), resolver_for(&[("q", 5)]));
-        hook.on_state_change(&NodeId::new("q"), None, MemberState::Alive);
+        hook.on_state_change(
+            &NodeId::try_new("q").expect("test fixture"),
+            None,
+            MemberState::Alive,
+        );
         assert_eq!(rt.read().unwrap().group_info(0).unwrap().leader, 5);
     }
 
@@ -160,7 +164,7 @@ mod tests {
         let hook = RoutingLivenessHook::new(rt.clone(), resolver_for(&[("a", 1)]));
         // NodeId "seed:127.0.0.1:9000" is not in the resolver map.
         hook.on_state_change(
-            &NodeId::new("seed:127.0.0.1:9000"),
+            &NodeId::try_new("seed:127.0.0.1:9000").expect("test fixture"),
             Some(MemberState::Alive),
             MemberState::Dead,
         );
@@ -173,7 +177,7 @@ mod tests {
         let rt = rt_with_leaders(&[(0, 2)], 1);
         let hook = RoutingLivenessHook::new(rt.clone(), resolver_for(&[("b", 2)]));
         hook.on_state_change(
-            &NodeId::new("b"),
+            &NodeId::try_new("b").expect("test fixture"),
             Some(MemberState::Alive),
             MemberState::Left,
         );

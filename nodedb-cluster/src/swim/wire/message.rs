@@ -75,7 +75,7 @@ mod tests {
 
     fn mk_update(id: &str) -> MemberUpdate {
         MemberUpdate {
-            node_id: NodeId::new(id),
+            node_id: NodeId::try_new(id).expect("test fixture"),
             addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 7000).to_string(),
             state: MemberState::Alive,
             incarnation: Incarnation::ZERO,
@@ -85,7 +85,7 @@ mod tests {
     fn ping_with_piggyback(n: usize) -> SwimMessage {
         SwimMessage::Ping(Ping {
             probe_id: ProbeId::new(1),
-            from: NodeId::new("a"),
+            from: NodeId::try_new("a").expect("test fixture"),
             incarnation: Incarnation::new(2),
             piggyback: (0..n).map(|i| mk_update(&format!("n{i}"))).collect(),
         })
@@ -117,20 +117,20 @@ mod tests {
             ping_with_piggyback(0),
             SwimMessage::PingReq(PingReq {
                 probe_id: ProbeId::ZERO,
-                from: NodeId::new("a"),
-                target: NodeId::new("b"),
+                from: NodeId::try_new("a").expect("test fixture"),
+                target: NodeId::try_new("b").expect("test fixture"),
                 target_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 7001).to_string(),
                 piggyback: vec![],
             }),
             SwimMessage::Ack(Ack {
                 probe_id: ProbeId::ZERO,
-                from: NodeId::new("b"),
+                from: NodeId::try_new("b").expect("test fixture"),
                 incarnation: Incarnation::ZERO,
                 piggyback: vec![],
             }),
             SwimMessage::Nack(Nack {
                 probe_id: ProbeId::ZERO,
-                from: NodeId::new("c"),
+                from: NodeId::try_new("c").expect("test fixture"),
                 reason: NackReason::TargetUnreachable,
                 piggyback: vec![],
             }),

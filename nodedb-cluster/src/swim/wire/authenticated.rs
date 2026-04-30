@@ -152,7 +152,7 @@ mod tests {
     fn sample_msg() -> SwimMessage {
         SwimMessage::Ping(Ping {
             probe_id: ProbeId::new(1),
-            from: NodeId::new("a"),
+            from: NodeId::try_new("a").expect("test fixture"),
             incarnation: Incarnation::ZERO,
             piggyback: vec![],
         })

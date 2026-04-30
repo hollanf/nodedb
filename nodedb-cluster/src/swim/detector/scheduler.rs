@@ -102,10 +102,14 @@ mod tests {
     }
 
     fn membership_with(peers: &[(&str, MemberState)]) -> MembershipList {
-        let list = MembershipList::new_local(NodeId::new("local"), addr(7000), Incarnation::ZERO);
+        let list = MembershipList::new_local(
+            NodeId::try_new("local").expect("test fixture"),
+            addr(7000),
+            Incarnation::ZERO,
+        );
         for (i, (id, state)) in peers.iter().enumerate() {
             list.apply(&MemberUpdate {
-                node_id: NodeId::new(*id),
+                node_id: NodeId::try_new(*id).expect("test fixture"),
                 addr: addr(7001 + i as u16).to_string(),
                 state: *state,
                 incarnation: Incarnation::new(1),
@@ -126,7 +130,7 @@ mod tests {
         let mut sched = ProbeScheduler::with_seed(1);
         let list = membership_with(&[("n1", MemberState::Alive)]);
         let (id, _) = sched.next_target(&list).expect("target");
-        assert_eq!(id, NodeId::new("n1"));
+        assert_eq!(id, NodeId::try_new("n1").expect("test fixture"));
     }
 
     #[test]
@@ -138,10 +142,10 @@ mod tests {
             ("n3", MemberState::Alive),
         ]);
         let (id, _) = sched.next_target(&list).expect("target");
-        assert_eq!(id, NodeId::new("n3"));
+        assert_eq!(id, NodeId::try_new("n3").expect("test fixture"));
         // Next call reshuffles; still only n3 is eligible.
         let (id, _) = sched.next_target(&list).expect("target");
-        assert_eq!(id, NodeId::new("n3"));
+        assert_eq!(id, NodeId::try_new("n3").expect("test fixture"));
     }
 
     #[test]
@@ -170,7 +174,7 @@ mod tests {
             ("n3", MemberState::Alive),
             ("n4", MemberState::Alive),
         ]);
-        let helpers = sched.pick_helpers(&list, &NodeId::new("n2"), 3);
+        let helpers = sched.pick_helpers(&list, &NodeId::try_new("n2").expect("test fixture"), 3);
         assert!(helpers.len() <= 3);
         for (id, _) in &helpers {
             assert_ne!(id.as_str(), "n2");
@@ -182,7 +186,7 @@ mod tests {
     fn pick_helpers_caps_at_pool_size() {
         let mut sched = ProbeScheduler::with_seed(7);
         let list = membership_with(&[("n1", MemberState::Alive), ("n2", MemberState::Alive)]);
-        let helpers = sched.pick_helpers(&list, &NodeId::new("n2"), 5);
+        let helpers = sched.pick_helpers(&list, &NodeId::try_new("n2").expect("test fixture"), 5);
         assert_eq!(helpers.len(), 1); // only n1 is a valid helper
     }
 

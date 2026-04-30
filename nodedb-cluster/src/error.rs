@@ -75,6 +75,9 @@ pub enum ClusterError {
     #[error("conf change commit timeout on group {group_id} (waited for index {log_index})")]
     JoinCommitTimeout { group_id: u64, log_index: u64 },
 
+    #[error("invalid cluster configuration: {detail}")]
+    Config { detail: String },
+
     #[error("migration checkpoint error: {0}")]
     MigrationCheckpoint(#[from] MigrationCheckpointError),
 

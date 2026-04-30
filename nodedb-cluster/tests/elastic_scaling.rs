@@ -142,7 +142,11 @@ async fn add_node_triggers_rebalance_via_kick() {
     provider.push(lm(4, 0, 0, 0.0, 0.0));
 
     // Fire the SWIM membership hook — this should kick the loop.
-    kick_hook.on_state_change(&NodeId::new("node-4"), None, MemberState::Alive);
+    kick_hook.on_state_change(
+        &NodeId::try_new("node-4").expect("test fixture"),
+        None,
+        MemberState::Alive,
+    );
 
     // Wait for the dispatcher to fire.
     let deadline = std::time::Instant::now() + Duration::from_secs(3);

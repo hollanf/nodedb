@@ -81,7 +81,7 @@ async fn swim_dead_leader_clears_routing_hint() {
 
     let h_a: SwimHandle = spawn_with_subscribers(
         fast_cfg(),
-        NodeId::new("a"),
+        NodeId::try_new("a").expect("test fixture"),
         addr_a,
         vec![addr_b, addr_c],
         t_a.clone() as Arc<dyn Transport>,
@@ -91,7 +91,7 @@ async fn swim_dead_leader_clears_routing_hint() {
     .expect("spawn a");
     let h_b: SwimHandle = spawn_swim(
         fast_cfg(),
-        NodeId::new("b"),
+        NodeId::try_new("b").expect("test fixture"),
         addr_b,
         vec![addr_a, addr_c],
         t_b.clone() as Arc<dyn Transport>,
@@ -100,7 +100,7 @@ async fn swim_dead_leader_clears_routing_hint() {
     .expect("spawn b");
     let h_c: SwimHandle = spawn_swim(
         fast_cfg(),
-        NodeId::new("c"),
+        NodeId::try_new("c").expect("test fixture"),
         addr_c,
         vec![addr_a, addr_b],
         t_c.clone() as Arc<dyn Transport>,
@@ -111,7 +111,10 @@ async fn swim_dead_leader_clears_routing_hint() {
     // --- Wait for A to learn about B (real id, not placeholder). ---
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let seen = h_a.membership().get(&NodeId::new("b")).is_some();
+        let seen = h_a
+            .membership()
+            .get(&NodeId::try_new("b").expect("test fixture"))
+            .is_some();
         if seen || Instant::now() >= deadline {
             assert!(seen, "A never learned B's real NodeId");
             break;

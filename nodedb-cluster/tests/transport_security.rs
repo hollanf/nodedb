@@ -345,7 +345,7 @@ async fn l3_swim_rejects_mismatched_mac_key() {
 
     let ping = SwimMessage::Ping(Ping {
         probe_id: ProbeId::new(1),
-        from: NodeId::new("attacker"),
+        from: NodeId::try_new("attacker").expect("test fixture"),
         incarnation: Incarnation::ZERO,
         piggyback: vec![],
     });

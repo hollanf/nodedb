@@ -271,13 +271,13 @@ mod tests {
         peers: &[(&str, u16, MemberState)],
     ) -> Arc<MembershipList> {
         let list = Arc::new(MembershipList::new_local(
-            NodeId::new(local),
+            NodeId::try_new(local).expect("test fixture"),
             addr(local_port),
             Incarnation::ZERO,
         ));
         for (id, port, state) in peers {
             list.apply(&MemberUpdate {
-                node_id: NodeId::new(*id),
+                node_id: NodeId::try_new(*id).expect("test fixture"),
                 addr: addr(*port).to_string(),
                 state: *state,
                 incarnation: Incarnation::new(1),
@@ -349,7 +349,7 @@ mod tests {
         assert_eq!(
             outcome,
             ProbeOutcome::Suspect {
-                target: NodeId::new("n1")
+                target: NodeId::try_new("n1").expect("test fixture")
             }
         );
     }
@@ -375,7 +375,7 @@ mod tests {
                             p.probe_id,
                             SwimMessage::Ack(Ack {
                                 probe_id: p.probe_id,
-                                from: NodeId::new("n1"),
+                                from: NodeId::try_new("n1").expect("test fixture"),
                                 incarnation: Incarnation::new(3),
                                 piggyback: vec![],
                             }),
@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(
             outcome,
             ProbeOutcome::Acked {
-                target: NodeId::new("n1"),
+                target: NodeId::try_new("n1").expect("test fixture"),
                 incarnation: Incarnation::new(3),
             }
         );
@@ -454,7 +454,7 @@ mod tests {
                                 from,
                                 SwimMessage::Ack(Ack {
                                     probe_id: ping.probe_id,
-                                    from: NodeId::new("n2"),
+                                    from: NodeId::try_new("n2").expect("test fixture"),
                                     incarnation: Incarnation::new(9),
                                     piggyback: vec![],
                                 }),

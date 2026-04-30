@@ -76,7 +76,7 @@ async fn three_node_udp_mesh_converges_and_detects_failure() {
     // Spawn each detector seeded with the other two addresses.
     let h_a: SwimHandle = spawn_swim(
         fast_cfg(),
-        NodeId::new("a"),
+        NodeId::try_new("a").expect("test fixture"),
         addr_a,
         vec![addr_b, addr_c],
         t_a,
@@ -85,7 +85,7 @@ async fn three_node_udp_mesh_converges_and_detects_failure() {
     .expect("spawn a");
     let h_b: SwimHandle = spawn_swim(
         fast_cfg(),
-        NodeId::new("b"),
+        NodeId::try_new("b").expect("test fixture"),
         addr_b,
         vec![addr_a, addr_c],
         t_b,
@@ -94,7 +94,7 @@ async fn three_node_udp_mesh_converges_and_detects_failure() {
     .expect("spawn b");
     let h_c: SwimHandle = spawn_swim(
         fast_cfg(),
-        NodeId::new("c"),
+        NodeId::try_new("c").expect("test fixture"),
         addr_c,
         vec![addr_a, addr_b],
         t_c,
@@ -109,7 +109,11 @@ async fn three_node_udp_mesh_converges_and_detects_failure() {
     // the Ack. We assert that at least one of {a,b,c} *by real id*
     // is present on every node.
     let converged = poll(Duration::from_secs(5), || {
-        let real_ids = [NodeId::new("a"), NodeId::new("b"), NodeId::new("c")];
+        let real_ids = [
+            NodeId::try_new("a").expect("test fixture"),
+            NodeId::try_new("b").expect("test fixture"),
+            NodeId::try_new("c").expect("test fixture"),
+        ];
         let check = |h: &SwimHandle| {
             real_ids
                 .iter()
@@ -129,7 +133,7 @@ async fn three_node_udp_mesh_converges_and_detects_failure() {
     // We check by real id, so this assertion survives even if the
     // merged entry's node_id ends up being "b" or "seed:<addr>".
     let detected = poll(Duration::from_secs(5), || {
-        let b_id = NodeId::new("b");
+        let b_id = NodeId::try_new("b").expect("test fixture");
         let state_of = |h: &SwimHandle| {
             h.membership()
                 .get(&b_id)

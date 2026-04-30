@@ -201,12 +201,16 @@ mod tests {
     }
 
     fn local() -> MembershipList {
-        MembershipList::new_local(NodeId::new("local"), addr(7000), Incarnation::ZERO)
+        MembershipList::new_local(
+            NodeId::try_new("local").expect("test fixture"),
+            addr(7000),
+            Incarnation::ZERO,
+        )
     }
 
     fn upd(id: &str, state: MemberState, inc: u64, port: u16) -> MemberUpdate {
         MemberUpdate {
-            node_id: NodeId::new(id),
+            node_id: NodeId::try_new(id).expect("test fixture"),
             addr: addr(port).to_string(),
             state,
             incarnation: Incarnation::new(inc),
@@ -237,7 +241,9 @@ mod tests {
         list.apply(&upd("n1", MemberState::Alive, 0, 7001));
         let out = list.apply(&upd("n1", MemberState::Suspect, 1, 7001));
         assert_eq!(out, MergeOutcome::Apply);
-        let m = list.get(&NodeId::new("n1")).expect("stored");
+        let m = list
+            .get(&NodeId::try_new("n1").expect("test fixture"))
+            .expect("stored");
         assert_eq!(m.state, MemberState::Suspect);
         assert_eq!(m.incarnation, Incarnation::new(1));
     }
@@ -248,7 +254,9 @@ mod tests {
         list.apply(&upd("n1", MemberState::Alive, 5, 7001));
         let out = list.apply(&upd("n1", MemberState::Suspect, 3, 7001));
         assert_eq!(out, MergeOutcome::Refute);
-        let m = list.get(&NodeId::new("n1")).expect("stored");
+        let m = list
+            .get(&NodeId::try_new("n1").expect("test fixture"))
+            .expect("stored");
         assert_eq!(m.state, MemberState::Alive);
         assert_eq!(m.incarnation, Incarnation::new(5));
     }
@@ -260,7 +268,9 @@ mod tests {
         list.apply(&upd("n1", MemberState::Left, 1, 7001));
         let out = list.apply(&upd("n1", MemberState::Alive, 99, 7001));
         assert_eq!(out, MergeOutcome::TerminalLeft);
-        let m = list.get(&NodeId::new("n1")).expect("stored");
+        let m = list
+            .get(&NodeId::try_new("n1").expect("test fixture"))
+            .expect("stored");
         assert_eq!(m.state, MemberState::Left);
     }
 
@@ -274,7 +284,9 @@ mod tests {
             }
             other => panic!("expected SelfRefute, got {other:?}"),
         }
-        let me = list.get(&NodeId::new("local")).expect("stored");
+        let me = list
+            .get(&NodeId::try_new("local").expect("test fixture"))
+            .expect("stored");
         assert_eq!(me.state, MemberState::Alive);
         assert_eq!(me.incarnation, Incarnation::new(4));
     }
@@ -288,7 +300,7 @@ mod tests {
                 for i in 0..500u64 {
                     let id = format!("n{}", i % 20);
                     list.apply(&MemberUpdate {
-                        node_id: NodeId::new(id),
+                        node_id: NodeId::try_new(id).expect("test fixture"),
                         addr: addr(7000 + (i as u16 % 20)).to_string(),
                         state: MemberState::Alive,
                         incarnation: Incarnation::new(i),
@@ -315,6 +327,9 @@ mod tests {
     #[test]
     fn get_returns_none_for_unknown() {
         let list = local();
-        assert!(list.get(&NodeId::new("ghost")).is_none());
+        assert!(
+            list.get(&NodeId::try_new("ghost").expect("test fixture"))
+                .is_none()
+        );
     }
 }

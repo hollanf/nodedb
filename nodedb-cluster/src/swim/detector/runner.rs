@@ -369,13 +369,13 @@ mod tests {
     ) {
         let transport: Arc<dyn Transport> = Arc::new(fab.bind(addr(port)).await);
         let list = Arc::new(MembershipList::new_local(
-            NodeId::new(id),
+            NodeId::try_new(id).expect("test fixture"),
             addr(port),
             Incarnation::ZERO,
         ));
         for (peer_id, peer_port) in peers {
             list.apply(&MemberUpdate {
-                node_id: NodeId::new(peer_id.as_str()),
+                node_id: NodeId::try_new(peer_id.as_str()).expect("test fixture"),
                 addr: addr(*peer_port).to_string(),
                 state: MemberState::Alive,
                 incarnation: Incarnation::new(1),
@@ -433,7 +433,10 @@ mod tests {
 
         // A's membership view must have marked b as Dead (Suspect →
         // Dead after suspicion timeout).
-        let m = det_a.membership.get(&NodeId::new("b")).expect("b in list");
+        let m = det_a
+            .membership
+            .get(&NodeId::try_new("b").expect("test fixture"))
+            .expect("b in list");
         assert!(
             matches!(m.state, MemberState::Suspect | MemberState::Dead),
             "expected Suspect or Dead, got {:?}",
@@ -462,7 +465,7 @@ mod tests {
                 addr(7020),
                 SwimMessage::Ping(Ping {
                     probe_id: ProbeId::new(42),
-                    from: NodeId::new("probe"),
+                    from: NodeId::try_new("probe").expect("test fixture"),
                     incarnation: Incarnation::ZERO,
                     piggyback: vec![],
                 }),
@@ -536,7 +539,7 @@ mod tests {
         // Synthetic rumour: "ghost" is an Alive peer A learned about
         // out of band. It is NOT in B or C's membership initially.
         det_a.dissemination().enqueue(MemberUpdate {
-            node_id: NodeId::new("ghost"),
+            node_id: NodeId::try_new("ghost").expect("test fixture"),
             addr: "127.0.0.1:9999".to_string(),
             state: MemberState::Alive,
             incarnation: Incarnation::new(1),
@@ -545,7 +548,7 @@ mod tests {
         // piggyback is still correct but there's nothing asserting the
         // local state. Apply it now.
         det_a.membership.apply(&MemberUpdate {
-            node_id: NodeId::new("ghost"),
+            node_id: NodeId::try_new("ghost").expect("test fixture"),
             addr: "127.0.0.1:9999".to_string(),
             state: MemberState::Alive,
             incarnation: Incarnation::new(1),
@@ -558,11 +561,17 @@ mod tests {
         }
 
         assert!(
-            det_b.membership.get(&NodeId::new("ghost")).is_some(),
+            det_b
+                .membership
+                .get(&NodeId::try_new("ghost").expect("test fixture"))
+                .is_some(),
             "B must learn about ghost via piggyback"
         );
         assert!(
-            det_c.membership.get(&NodeId::new("ghost")).is_some(),
+            det_c
+                .membership
+                .get(&NodeId::try_new("ghost").expect("test fixture"))
+                .is_some(),
             "C must learn about ghost via piggyback"
         );
 
@@ -588,10 +597,10 @@ mod tests {
                 addr(7060),
                 SwimMessage::Ping(Ping {
                     probe_id: ProbeId::new(1),
-                    from: NodeId::new("probe"),
+                    from: NodeId::try_new("probe").expect("test fixture"),
                     incarnation: Incarnation::ZERO,
                     piggyback: vec![MemberUpdate {
-                        node_id: NodeId::new("a"),
+                        node_id: NodeId::try_new("a").expect("test fixture"),
                         addr: addr(7060).to_string(),
                         state: MemberState::Suspect,
                         incarnation: Incarnation::new(7),
@@ -614,7 +623,10 @@ mod tests {
             "local incarnation {bumped:?} did not refute rumoured Suspect(7)"
         );
         // A's membership view for itself is Alive at the bumped value.
-        let me = det_a.membership.get(&NodeId::new("a")).expect("self");
+        let me = det_a
+            .membership
+            .get(&NodeId::try_new("a").expect("test fixture"))
+            .expect("self");
         assert_eq!(me.state, MemberState::Alive);
         assert!(me.incarnation > Incarnation::new(7));
 

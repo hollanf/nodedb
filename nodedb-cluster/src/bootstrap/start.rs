@@ -67,10 +67,14 @@ pub fn register_default_subsystems(
     config: &ClusterConfig,
     ctx: &BootstrapCtx,
     executor: Arc<MigrationExecutor>,
-) {
+) -> crate::error::Result<()> {
     let swim_cfg = SwimSubsystemConfig {
         swim: crate::swim::config::SwimConfig::default(),
-        local_id: NodeId::new(config.node_id.to_string()),
+        local_id: NodeId::try_new(config.node_id.to_string()).map_err(|e| {
+            crate::error::ClusterError::Config {
+                detail: format!("node_id is not a valid ID: {e}"),
+            }
+        })?,
         // Use the explicit SWIM UDP addr if set; otherwise let the OS
         // pick an ephemeral port by binding to port 0 on the listen addr.
         swim_addr: config.swim_udp_addr.unwrap_or_else(|| {
@@ -101,6 +105,8 @@ pub fn register_default_subsystems(
         RebalancerLoopConfig::default(),
         executor,
     )));
+
+    Ok(())
 }
 
 /// Start the cluster state machine — bootstrap, join, or restart.
@@ -196,7 +202,7 @@ pub async fn start_cluster_subsystems(
     ));
 
     let mut registry = SubsystemRegistry::new();
-    register_default_subsystems(&mut registry, config, &ctx, executor);
+    register_default_subsystems(&mut registry, config, &ctx, executor)?;
 
     registry
         .start_all(&ctx)

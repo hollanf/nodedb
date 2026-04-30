@@ -72,7 +72,7 @@ mod tests {
 
     fn upd(id: &str, inc: u64) -> MemberUpdate {
         MemberUpdate {
-            node_id: NodeId::new(id),
+            node_id: NodeId::try_new(id).expect("test fixture"),
             addr: "127.0.0.1:7000".to_string(),
             state: MemberState::Alive,
             incarnation: Incarnation::new(inc),

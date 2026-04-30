@@ -97,7 +97,11 @@ mod tests {
     async fn kick_fires_on_new_node_alive() {
         let (notify, counter, handle) = counting_notify();
         let hook = RebalancerKickHook::new(notify);
-        hook.on_state_change(&NodeId::new("new"), None, MemberState::Alive);
+        hook.on_state_change(
+            &NodeId::try_new("new").expect("test fixture"),
+            None,
+            MemberState::Alive,
+        );
         tokio::task::yield_now().await;
         tokio::task::yield_now().await;
         assert!(counter.load(Ordering::SeqCst) >= 1);
@@ -109,7 +113,7 @@ mod tests {
         let (notify, counter, handle) = counting_notify();
         let hook = RebalancerKickHook::new(notify);
         hook.on_state_change(
-            &NodeId::new("x"),
+            &NodeId::try_new("x").expect("test fixture"),
             Some(MemberState::Alive),
             MemberState::Dead,
         );
@@ -124,7 +128,7 @@ mod tests {
         let (notify, counter, handle) = counting_notify();
         let hook = RebalancerKickHook::new(notify);
         hook.on_state_change(
-            &NodeId::new("x"),
+            &NodeId::try_new("x").expect("test fixture"),
             Some(MemberState::Alive),
             MemberState::Left,
         );
@@ -139,7 +143,7 @@ mod tests {
         let notify = Arc::new(Notify::new());
         let hook = RebalancerKickHook::new(notify);
         hook.on_state_change(
-            &NodeId::new("x"),
+            &NodeId::try_new("x").expect("test fixture"),
             Some(MemberState::Alive),
             MemberState::Suspect,
         );

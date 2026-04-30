@@ -43,7 +43,7 @@ mod tests {
 
     fn update(id: &str, port: u16) -> MemberUpdate {
         MemberUpdate {
-            node_id: NodeId::new(id),
+            node_id: NodeId::try_new(id).expect("test fixture"),
             addr: addr(port).to_string(),
             state: MemberState::Alive,
             incarnation: Incarnation::new(1),
@@ -60,7 +60,7 @@ mod tests {
     fn ping_roundtrip_empty_piggyback() {
         assert_roundtrip(SwimMessage::Ping(Ping {
             probe_id: ProbeId::new(5),
-            from: NodeId::new("a"),
+            from: NodeId::try_new("a").expect("test fixture"),
             incarnation: Incarnation::new(3),
             piggyback: vec![],
         }));
@@ -70,7 +70,7 @@ mod tests {
     fn ping_roundtrip_with_piggyback() {
         assert_roundtrip(SwimMessage::Ping(Ping {
             probe_id: ProbeId::new(12),
-            from: NodeId::new("sender"),
+            from: NodeId::try_new("sender").expect("test fixture"),
             incarnation: Incarnation::new(7),
             piggyback: vec![update("n1", 7001), update("n2", 7002)],
         }));
@@ -80,8 +80,8 @@ mod tests {
     fn ping_req_roundtrip() {
         assert_roundtrip(SwimMessage::PingReq(PingReq {
             probe_id: ProbeId::new(9),
-            from: NodeId::new("a"),
-            target: NodeId::new("b"),
+            from: NodeId::try_new("a").expect("test fixture"),
+            target: NodeId::try_new("b").expect("test fixture"),
             target_addr: addr(7003).to_string(),
             piggyback: vec![update("helper", 7004)],
         }));
@@ -91,7 +91,7 @@ mod tests {
     fn ack_roundtrip() {
         assert_roundtrip(SwimMessage::Ack(Ack {
             probe_id: ProbeId::new(1),
-            from: NodeId::new("b"),
+            from: NodeId::try_new("b").expect("test fixture"),
             incarnation: Incarnation::new(11),
             piggyback: vec![],
         }));
@@ -106,7 +106,7 @@ mod tests {
         ] {
             assert_roundtrip(SwimMessage::Nack(Nack {
                 probe_id: ProbeId::new(2),
-                from: NodeId::new("c"),
+                from: NodeId::try_new("c").expect("test fixture"),
                 reason,
                 piggyback: vec![],
             }));
@@ -123,7 +123,7 @@ mod tests {
     fn decode_rejects_truncated() {
         let full = encode(&SwimMessage::Ping(Ping {
             probe_id: ProbeId::new(1),
-            from: NodeId::new("a"),
+            from: NodeId::try_new("a").expect("test fixture"),
             incarnation: Incarnation::ZERO,
             piggyback: vec![],
         }))
@@ -138,7 +138,7 @@ mod tests {
         // PascalCase variant name so a rename breaks this test loudly.
         let msg = SwimMessage::Ping(Ping {
             probe_id: ProbeId::new(1),
-            from: NodeId::new("a"),
+            from: NodeId::try_new("a").expect("test fixture"),
             incarnation: Incarnation::ZERO,
             piggyback: vec![],
         });
@@ -160,13 +160,13 @@ mod tests {
         // care about for wire compatibility.
         let ack = SwimMessage::Ack(Ack {
             probe_id: ProbeId::new(1),
-            from: NodeId::new("sender"),
+            from: NodeId::try_new("sender").expect("test fixture"),
             incarnation: Incarnation::ZERO,
             piggyback: vec![],
         });
         let ping = SwimMessage::Ping(Ping {
             probe_id: ProbeId::new(1),
-            from: NodeId::new("sender"),
+            from: NodeId::try_new("sender").expect("test fixture"),
             incarnation: Incarnation::ZERO,
             piggyback: vec![],
         });
@@ -185,8 +185,8 @@ mod tests {
     fn wire_tag_stability_ping_req() {
         let msg = SwimMessage::PingReq(PingReq {
             probe_id: ProbeId::new(1),
-            from: NodeId::new("a"),
-            target: NodeId::new("b"),
+            from: NodeId::try_new("a").expect("test fixture"),
+            target: NodeId::try_new("b").expect("test fixture"),
             target_addr: addr(7000).to_string(),
             piggyback: vec![],
         });
