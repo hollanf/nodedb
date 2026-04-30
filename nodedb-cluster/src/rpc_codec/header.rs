@@ -94,9 +94,7 @@ pub fn write_frame(rpc_type: u8, payload: &[u8], out: &mut Vec<u8>) -> Result<()
 pub fn parse_frame(data: &[u8]) -> Result<(u8, &[u8])> {
     if data.is_empty() {
         return Err(ClusterError::Codec {
-            detail: format!(
-                "frame too short: 0 bytes, need {HEADER_SIZE_V2}"
-            ),
+            detail: format!("frame too short: 0 bytes, need {HEADER_SIZE_V2}"),
         });
     }
 

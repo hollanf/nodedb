@@ -21,19 +21,8 @@ pub const WIRE_FORMAT_VERSION: u16 = 4;
 /// below this are rejected.
 pub const MIN_WIRE_FORMAT_VERSION: u16 = 1;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn min_does_not_exceed_current() {
-        assert!(MIN_WIRE_FORMAT_VERSION <= WIRE_FORMAT_VERSION);
-    }
-
-    #[test]
-    fn current_is_nonzero() {
-        // Version 0 is reserved for "unknown / legacy" handling on
-        // downstream paths and must never be the active version.
-        assert!(WIRE_FORMAT_VERSION > 0);
-    }
-}
+// Compile-time invariants — these constants must satisfy:
+//   - MIN_WIRE_FORMAT_VERSION <= WIRE_FORMAT_VERSION
+//   - WIRE_FORMAT_VERSION > 0  (version 0 is reserved for "unknown/legacy")
+const _: () = assert!(MIN_WIRE_FORMAT_VERSION <= WIRE_FORMAT_VERSION);
+const _: () = assert!(WIRE_FORMAT_VERSION > 0);
