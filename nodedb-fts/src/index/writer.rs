@@ -128,8 +128,7 @@ impl<B: FtsBackend> FtsIndex<B> {
             .map_err(FtsIndexError::backend)?;
 
         if self.memtable.should_flush() {
-            self.flush_memtable(tid, collection)
-                .map_err(FtsIndexError::backend)?;
+            self.flush_memtable(tid, collection)?;
         }
 
         debug!(tid, %collection, doc_id = doc_id.0, tokens = tokens.len(), terms = term_data.len(), "indexed document");
@@ -137,18 +136,18 @@ impl<B: FtsBackend> FtsIndex<B> {
     }
 
     /// Flush the active memtable to an immutable segment.
-    fn flush_memtable(&self, tid: u64, collection: &str) -> Result<(), B::Error> {
+    fn flush_memtable(&self, tid: u64, collection: &str) -> Result<(), FtsIndexError<B::Error>> {
         let drained = self.memtable.drain();
         if drained.is_empty() {
             return Ok(());
         }
 
-        let segment_bytes = seg_writer::flush_to_segment(drained)
-            .expect("memtable terms must not exceed u16::MAX bytes — analyzer invariant violated");
+        let segment_bytes = seg_writer::flush_to_segment(drained)?;
         let seg_id = self.next_segment_id.fetch_add(1, Ordering::Relaxed);
         let id = compaction::segment_id(seg_id, 0);
         self.backend
-            .write_segment(tid, collection, &id, &segment_bytes)?;
+            .write_segment(tid, collection, &id, &segment_bytes)
+            .map_err(FtsIndexError::backend)?;
 
         debug!(tid, %collection, seg_id, bytes = segment_bytes.len(), "flushed memtable to segment");
         Ok(())
@@ -217,6 +216,48 @@ mod tests {
 
     fn make_index() -> FtsIndex<MemoryBackend> {
         FtsIndex::new(MemoryBackend::new())
+    }
+
+    #[test]
+    fn flush_propagates_term_too_long_as_typed_error() {
+        let backend = MemoryBackend::new();
+        let idx = FtsIndex {
+            backend,
+            bm25_params: Bm25Params::default(),
+            memtable: Memtable::new(MemtableConfig {
+                max_postings: 1,
+                max_terms: 1,
+            }),
+            next_segment_id: AtomicU64::new(1),
+        };
+
+        // Insert a single posting under a term whose byte length exceeds the
+        // u16 segment-format cap. Bypasses the analyzer (which would tokenize
+        // away most pathological inputs); we want to exercise the flush-path
+        // boundary check directly.
+        let oversize_term = "x".repeat(crate::lsm::segment::format::MAX_TERM_LEN + 1);
+        idx.memtable.insert(
+            &super::memtable_key(T, "docs", &oversize_term),
+            CompactPosting {
+                doc_id: Surrogate(1),
+                term_freq: 1,
+                fieldnorm: 1,
+                positions: vec![0],
+            },
+        );
+        idx.memtable.record_doc(Surrogate(1), 1);
+
+        let err = idx
+            .flush_memtable(T, "docs")
+            .expect_err("flush must reject oversize term");
+        let key_overhead = super::memtable_key(T, "docs", "").len();
+        match err {
+            FtsIndexError::TermTooLong { len, max } => {
+                assert_eq!(len, oversize_term.len() + key_overhead);
+                assert_eq!(max, crate::lsm::segment::format::MAX_TERM_LEN);
+            }
+            other => panic!("expected TermTooLong, got {other:?}"),
+        }
     }
 
     #[test]
@@ -329,7 +370,7 @@ mod tests {
         assert!(idx.memtable.is_empty());
     }
 
-    // ── T1-20 surrogate boundary tests ────────────────────────────────────────
+    // ── Surrogate boundary tests ──────────────────────────────────────────────
 
     /// Spec: Surrogate::ZERO (the unassigned sentinel) must be rejected at index
     /// time with FtsIndexError::SurrogateOutOfRange, not written into the index.

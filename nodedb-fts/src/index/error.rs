@@ -46,9 +46,40 @@ pub enum FtsIndexError<E: std::fmt::Display> {
     )]
     SurrogateOutOfRange { surrogate: Surrogate },
 
+    /// A term in the document exceeds the on-disk `u16` length cap.
+    ///
+    /// The FTS segment format encodes term lengths as `u16` (see
+    /// `lsm/segment/format.rs::MAX_TERM_LEN`). Terms longer than
+    /// `u16::MAX` (65 535 bytes) cannot be persisted. After analysis,
+    /// real-world terms are typically 2-20 bytes — exceeding this cap
+    /// indicates a malformed analyzer or adversarial input.
+    #[error("term length {len} exceeds maximum {max} bytes (FTS segment format limit)")]
+    TermTooLong { len: usize, max: usize },
+
     /// An underlying backend storage operation failed.
     #[error("FTS backend error: {0}")]
     Backend(E),
+
+    /// A segment I/O or validation error not otherwise classified.
+    ///
+    /// Read-side variants (`BadMagic`, `UnsupportedVersion`, `ChecksumMismatch`,
+    /// `Truncated`) are not expected on the write/flush path but are propagated
+    /// here rather than panicking, so corrupt-state surprises surface as typed
+    /// errors at the public API boundary.
+    #[error("FTS segment error: {0}")]
+    Segment(crate::lsm::segment::error::SegmentError),
+}
+
+impl<E: std::fmt::Display> From<crate::lsm::segment::error::SegmentError> for FtsIndexError<E> {
+    fn from(err: crate::lsm::segment::error::SegmentError) -> Self {
+        use crate::lsm::segment::error::SegmentError;
+        match err {
+            SegmentError::TermTooLong { term_len, max } => {
+                FtsIndexError::TermTooLong { len: term_len, max }
+            }
+            other => FtsIndexError::Segment(other),
+        }
+    }
 }
 
 impl<E: std::fmt::Display> FtsIndexError<E> {
