@@ -7,7 +7,7 @@ pub fn str_arg(args: &[Value], idx: usize) -> Option<String> {
     match args.get(idx)? {
         Value::String(s) => Some(s.clone()),
         Value::Uuid(s) | Value::Ulid(s) | Value::Regex(s) => Some(s.clone()),
-        Value::DateTime(dt) => Some(dt.to_iso8601()),
+        Value::DateTime(dt) | Value::NaiveDateTime(dt) => Some(dt.to_iso8601()),
         Value::Duration(d) => Some(d.to_human()),
         _ => None,
     }

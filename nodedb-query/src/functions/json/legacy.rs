@@ -1,7 +1,4 @@
-//! JSON manipulation scalar functions.
-//!
-//! These functions operate on `nodedb_types::Value::Object` and `Value::Array`,
-//! which are the internal equivalents of JSON objects and arrays.
+//! Existing JSON manipulation scalar functions (json_extract, json_set, etc.)
 
 use std::collections::HashMap;
 

@@ -87,7 +87,7 @@ pub fn value_to_display_string(v: &Value) -> String {
         Value::Float(f) => f.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Uuid(s) | Value::Ulid(s) | Value::Regex(s) => s.clone(),
-        Value::DateTime(dt) => dt.to_iso8601(),
+        Value::DateTime(dt) | Value::NaiveDateTime(dt) => dt.to_iso8601(),
         Value::Duration(d) => d.to_human(),
         Value::Decimal(d) => d.to_string(),
         other => {

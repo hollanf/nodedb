@@ -7,7 +7,7 @@ pub(super) fn try_eval(name: &str, args: &[Value]) -> Option<Value> {
     let v = match name {
         "now" | "current_timestamp" => {
             let dt = nodedb_types::NdbDateTime::now();
-            Value::String(dt.to_iso8601())
+            Value::DateTime(dt)
         }
         "datetime" | "to_datetime" => args
             .first()
@@ -21,7 +21,9 @@ pub(super) fn try_eval(name: &str, args: &[Value]) -> Option<Value> {
                 Value::Float(f) => Some(Value::String(
                     nodedb_types::NdbDateTime::from_micros(*f as i64).to_iso8601(),
                 )),
-                Value::DateTime(dt) => Some(Value::String(dt.to_iso8601())),
+                Value::DateTime(dt) | Value::NaiveDateTime(dt) => {
+                    Some(Value::String(dt.to_iso8601()))
+                }
                 _ => None,
             })
             .unwrap_or(Value::Null),

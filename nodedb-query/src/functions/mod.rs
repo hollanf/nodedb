@@ -6,6 +6,7 @@
 mod array;
 mod conditional;
 mod datetime;
+pub(crate) mod fts;
 mod id;
 mod json;
 mod math;
@@ -39,6 +40,9 @@ pub fn eval_function(name: &str, args: &[Value]) -> Value {
         return v;
     }
     if let Some(v) = array::try_eval(name, args) {
+        return v;
+    }
+    if let Some(v) = fts::try_eval_fts(name, args) {
         return v;
     }
     // Geo / Spatial functions — delegated to geo_functions module.
