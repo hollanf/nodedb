@@ -48,23 +48,27 @@ pub(super) fn convert_insert(
 
     // Pre-expand rows with defaults for document engines.
     // Columnar engines apply defaults in rows_to_msgpack_array instead.
-    let expanded_rows: Vec<Vec<(String, SqlValue)>> = rows
-        .iter()
-        .map(|row| {
-            if column_defaults.is_empty() {
-                return row.clone();
+    let mut expanded_rows: Vec<Vec<(String, SqlValue)>> = Vec::with_capacity(rows.len());
+    for row in rows {
+        if column_defaults.is_empty() {
+            expanded_rows.push(row.clone());
+            continue;
+        }
+        let mut expanded = row.clone();
+        for (col_name, default_expr) in column_defaults {
+            if !expanded.iter().any(|(k, _)| k == col_name)
+                && let Some(val) =
+                    super::value::evaluate_default_expr(default_expr).map_err(|e| {
+                        crate::Error::PlanError {
+                            detail: format!("default for column '{col_name}': {e}"),
+                        }
+                    })?
+            {
+                expanded.push((col_name.clone(), nodedb_value_to_sql(val)));
             }
-            let mut expanded = row.clone();
-            for (col_name, default_expr) in column_defaults {
-                if !expanded.iter().any(|(k, _)| k == col_name)
-                    && let Some(val) = super::value::evaluate_default_expr(default_expr)
-                {
-                    expanded.push((col_name.clone(), nodedb_value_to_sql(val)));
-                }
-            }
-            expanded
-        })
-        .collect();
+        }
+        expanded_rows.push(expanded);
+    }
 
     for (i, row) in expanded_rows.iter().enumerate() {
         let doc_id = row

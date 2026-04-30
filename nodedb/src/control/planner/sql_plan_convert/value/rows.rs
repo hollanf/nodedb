@@ -9,23 +9,24 @@ pub(crate) fn rows_to_msgpack_array(
     rows: &[&Vec<(String, SqlValue)>],
     column_defaults: &[(String, String)],
 ) -> crate::Result<Vec<u8>> {
-    let arr: Vec<nodedb_types::Value> = rows
-        .iter()
-        .map(|row| {
-            let mut map = std::collections::HashMap::new();
-            for (key, val) in row.iter() {
-                map.insert(key.clone(), sql_value_to_nodedb_value(val));
+    let mut arr: Vec<nodedb_types::Value> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut map = std::collections::HashMap::new();
+        for (key, val) in row.iter() {
+            map.insert(key.clone(), sql_value_to_nodedb_value(val));
+        }
+        for (col_name, default_expr) in column_defaults {
+            if !map.contains_key(col_name)
+                && let Some(val) =
+                    evaluate_default_expr(default_expr).map_err(|e| crate::Error::PlanError {
+                        detail: format!("default for column '{col_name}': {e}"),
+                    })?
+            {
+                map.insert(col_name.clone(), val);
             }
-            for (col_name, default_expr) in column_defaults {
-                if !map.contains_key(col_name)
-                    && let Some(val) = evaluate_default_expr(default_expr)
-                {
-                    map.insert(col_name.clone(), val);
-                }
-            }
-            nodedb_types::Value::Object(map)
-        })
-        .collect();
+        }
+        arr.push(nodedb_types::Value::Object(map));
+    }
     let val = nodedb_types::Value::Array(arr);
     nodedb_types::value_to_msgpack(&val).map_err(|e| crate::Error::Serialization {
         format: "msgpack".into(),

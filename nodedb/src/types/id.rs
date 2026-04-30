@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn document_id_str() {
-        let d = DocumentId::new("doc-abc-123");
+        let d = DocumentId::try_new("doc-abc-123").expect("test fixture");
         assert_eq!(d.as_str(), "doc-abc-123");
     }
 }

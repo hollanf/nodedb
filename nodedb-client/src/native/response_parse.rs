@@ -73,7 +73,7 @@ pub(crate) fn parse_subgraph_response(
                         if let Some(id) = n.get("id").and_then(|v| v.as_str()) {
                             let depth = n.get("depth").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
                             nodes.push(SubGraphNode {
-                                id: NodeId::new(id),
+                                id: NodeId::from_validated(id.to_owned()),
                                 depth,
                                 properties: HashMap::new(),
                             });
@@ -94,9 +94,14 @@ pub(crate) fn parse_subgraph_response(
                             .unwrap_or("");
                         let label = e.get("label").and_then(|v| v.as_str()).unwrap_or("");
                         edges.push(SubGraphEdge {
-                            id: EdgeId::from_components(from, to, label),
-                            from: NodeId::new(from),
-                            to: NodeId::new(to),
+                            id: EdgeId::try_first(
+                                NodeId::from_validated(from.to_owned()),
+                                NodeId::from_validated(to.to_owned()),
+                                label,
+                            )
+                            .expect("server wire label already validated"),
+                            from: NodeId::from_validated(from.to_owned()),
+                            to: NodeId::from_validated(to.to_owned()),
                             label: label.to_string(),
                             properties: HashMap::new(),
                         });
@@ -108,7 +113,7 @@ pub(crate) fn parse_subgraph_response(
                     if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
                         let depth = item.get("depth").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
                         nodes.push(SubGraphNode {
-                            id: NodeId::new(id),
+                            id: NodeId::from_validated(id.to_owned()),
                             depth,
                             properties: HashMap::new(),
                         });

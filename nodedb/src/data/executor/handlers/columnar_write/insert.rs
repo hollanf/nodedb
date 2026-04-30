@@ -112,22 +112,33 @@ impl CoreLoop {
             } else {
                 0
             };
-            let values: Vec<Value> = schema
+            let values: Vec<Value> = match schema
                 .columns
                 .iter()
                 .map(|col| match col.name.as_str() {
-                    "_ts_system" if bitemporal => Value::Integer(sys_now),
-                    "_ts_valid_from" if bitemporal => match obj.get("_ts_valid_from") {
+                    "_ts_system" if bitemporal => Ok(Value::Integer(sys_now)),
+                    "_ts_valid_from" if bitemporal => Ok(match obj.get("_ts_valid_from") {
                         Some(Value::Integer(i)) => Value::Integer(*i),
                         _ => Value::Integer(i64::MIN),
-                    },
-                    "_ts_valid_until" if bitemporal => match obj.get("_ts_valid_until") {
+                    }),
+                    "_ts_valid_until" if bitemporal => Ok(match obj.get("_ts_valid_until") {
                         Some(Value::Integer(i)) => Value::Integer(*i),
                         _ => Value::Integer(i64::MAX),
-                    },
+                    }),
                     _ => ndb_field_to_value(obj.get(&col.name), &col.column_type),
                 })
-                .collect();
+                .collect::<Result<Vec<Value>, String>>()
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    return self.response_error(
+                        task,
+                        ErrorCode::Internal {
+                            detail: format!("columnar insert coercion: {e}"),
+                        },
+                    );
+                }
+            };
 
             // Resolve the actual row to write (merged for ON CONFLICT DO
             // UPDATE, plain otherwise). This runs before the mutable
@@ -187,13 +198,24 @@ impl CoreLoop {
                                     );
                                 }
                             };
-                            schema
+                            match schema
                                 .columns
                                 .iter()
                                 .map(|col| {
                                     ndb_field_to_value(merged_obj.get(&col.name), &col.column_type)
                                 })
-                                .collect()
+                                .collect::<Result<Vec<Value>, String>>()
+                            {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    return self.response_error(
+                                        task,
+                                        ErrorCode::Internal {
+                                            detail: format!("columnar ON CONFLICT coercion: {e}"),
+                                        },
+                                    );
+                                }
+                            }
                         }
                     }
                 }

@@ -287,7 +287,8 @@ fn sql_type_to_column_type(sql_type: &str) -> nodedb_types::columnar::ColumnType
             scale: 10,
         },
         "BOOL" | "BOOLEAN" => ColumnType::Bool,
-        "TIMESTAMP" | "TIMESTAMPTZ" => ColumnType::Timestamp,
+        "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => ColumnType::Timestamp,
+        "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => ColumnType::Timestamptz,
         "BLOB" | "BYTEA" | "BINARY" => ColumnType::Bytes,
         "UUID" => ColumnType::Uuid,
         "JSON" | "JSONB" => ColumnType::Json,
@@ -352,7 +353,8 @@ fn typeguard_type_to_column_type(type_expr: &str) -> nodedb_types::columnar::Col
         "STRING" | "TEXT" | "VARCHAR" => ColumnType::String,
         "BOOL" | "BOOLEAN" => ColumnType::Bool,
         "BYTES" | "BYTEA" | "BLOB" => ColumnType::Bytes,
-        "TIMESTAMP" | "TIMESTAMPTZ" => ColumnType::Timestamp,
+        "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => ColumnType::Timestamp,
+        "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => ColumnType::Timestamptz,
         "DECIMAL" | "NUMERIC" => ColumnType::Decimal {
             precision: 38,
             scale: 10,
@@ -441,5 +443,47 @@ mod tests {
     #[test]
     fn parse_convert_unknown_type_errors() {
         assert!(parse_convert_sql("CONVERT COLLECTION users TO graph").is_err());
+    }
+
+    #[test]
+    fn sql_type_to_column_type_distinguishes_timestamp_from_timestamptz() {
+        use nodedb_types::columnar::ColumnType;
+        assert!(matches!(
+            sql_type_to_column_type("TIMESTAMP"),
+            ColumnType::Timestamp
+        ));
+        assert!(matches!(
+            sql_type_to_column_type("TIMESTAMP WITHOUT TIME ZONE"),
+            ColumnType::Timestamp
+        ));
+        assert!(matches!(
+            sql_type_to_column_type("TIMESTAMPTZ"),
+            ColumnType::Timestamptz
+        ));
+        assert!(matches!(
+            sql_type_to_column_type("TIMESTAMP WITH TIME ZONE"),
+            ColumnType::Timestamptz
+        ));
+    }
+
+    #[test]
+    fn typeguard_type_to_column_type_distinguishes_timestamp_from_timestamptz() {
+        use nodedb_types::columnar::ColumnType;
+        assert!(matches!(
+            typeguard_type_to_column_type("TIMESTAMP"),
+            ColumnType::Timestamp
+        ));
+        assert!(matches!(
+            typeguard_type_to_column_type("TIMESTAMP WITHOUT TIME ZONE"),
+            ColumnType::Timestamp
+        ));
+        assert!(matches!(
+            typeguard_type_to_column_type("TIMESTAMPTZ"),
+            ColumnType::Timestamptz
+        ));
+        assert!(matches!(
+            typeguard_type_to_column_type("TIMESTAMP WITH TIME ZONE"),
+            ColumnType::Timestamptz
+        ));
     }
 }

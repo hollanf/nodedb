@@ -26,22 +26,29 @@ pub struct FieldDiff {
 #[serde(rename_all = "snake_case")]
 pub enum DiffOp {
     /// Field value changed (old → new). Used for non-string or complex changes.
+    #[serde(rename = "modified")]
     Modified,
     /// Field added (not present in old, present in new).
+    #[serde(rename = "added")]
     Added,
     /// Field removed (present in old, not present in new).
+    #[serde(rename = "removed")]
     Removed,
     /// Array element inserted at index.
+    #[serde(rename = "array_insert")]
     ArrayInsert,
     /// Array element removed at index.
+    #[serde(rename = "array_remove")]
     ArrayRemove,
     /// Text inserted at a position within a string field.
     /// `new_value` contains the inserted text, `old_value` contains
     /// position as JSON number (character offset).
+    #[serde(rename = "text_insert")]
     TextInsert,
     /// Text deleted at a position within a string field.
     /// `old_value` contains the deleted text, `new_value` contains
     /// position as JSON number (character offset).
+    #[serde(rename = "text_delete")]
     TextDelete,
 }
 

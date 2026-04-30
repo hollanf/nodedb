@@ -273,15 +273,18 @@ fn coerce_value(val: &Value, col_type: &ColumnType, col_name: &str) -> Result<Va
             Value::NaiveDateTime(_) => Ok(val.clone()),
             Value::DateTime(dt) => Ok(Value::NaiveDateTime(*dt)),
             Value::Integer(ms) => Ok(Value::NaiveDateTime(
-                nodedb_types::NdbDateTime::from_millis(*ms),
+                nodedb_types::NdbDateTime::from_millis(*ms)
+                    .map_err(|e| format!("column '{col_name}': {e}"))?,
             )),
             Value::Float(f) => Ok(Value::NaiveDateTime(
-                nodedb_types::NdbDateTime::from_millis(*f as i64),
+                nodedb_types::NdbDateTime::from_millis(*f as i64)
+                    .map_err(|e| format!("column '{col_name}': {e}"))?,
             )),
             Value::String(s) => {
                 if let Ok(ms) = s.parse::<i64>() {
                     Ok(Value::NaiveDateTime(
-                        nodedb_types::NdbDateTime::from_millis(ms),
+                        nodedb_types::NdbDateTime::from_millis(ms)
+                            .map_err(|e| format!("column '{col_name}': {e}"))?,
                     ))
                 } else {
                     Ok(Value::String(s.clone()))
@@ -294,13 +297,20 @@ fn coerce_value(val: &Value, col_type: &ColumnType, col_name: &str) -> Result<Va
         ColumnType::Timestamptz => match val {
             Value::DateTime(_) => Ok(val.clone()),
             Value::NaiveDateTime(dt) => Ok(Value::DateTime(*dt)),
-            Value::Integer(ms) => Ok(Value::DateTime(nodedb_types::NdbDateTime::from_millis(*ms))),
-            Value::Float(f) => Ok(Value::DateTime(nodedb_types::NdbDateTime::from_millis(
-                *f as i64,
-            ))),
+            Value::Integer(ms) => Ok(Value::DateTime(
+                nodedb_types::NdbDateTime::from_millis(*ms)
+                    .map_err(|e| format!("column '{col_name}': {e}"))?,
+            )),
+            Value::Float(f) => Ok(Value::DateTime(
+                nodedb_types::NdbDateTime::from_millis(*f as i64)
+                    .map_err(|e| format!("column '{col_name}': {e}"))?,
+            )),
             Value::String(s) => {
                 if let Ok(ms) = s.parse::<i64>() {
-                    Ok(Value::DateTime(nodedb_types::NdbDateTime::from_millis(ms)))
+                    Ok(Value::DateTime(
+                        nodedb_types::NdbDateTime::from_millis(ms)
+                            .map_err(|e| format!("column '{col_name}': {e}"))?,
+                    ))
                 } else {
                     Ok(Value::String(s.clone()))
                 }

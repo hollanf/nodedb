@@ -247,34 +247,18 @@ impl NodeDb for NativeClient {
             },
         )
         .await?;
-        Ok(EdgeId::from_components(
-            from.as_str(),
-            to.as_str(),
-            edge_type,
-        ))
+        EdgeId::try_first(from.clone(), to.clone(), edge_type)
+            .map_err(|e| NodeDbError::storage(format!("invalid edge label: {e}")))
     }
 
     async fn graph_delete_edge(&self, edge_id: &EdgeId) -> NodeDbResult<()> {
-        let parts: Vec<&str> = edge_id.as_str().splitn(3, "--").collect();
-        if parts.len() < 3 {
-            return Err(NodeDbError::bad_request(format!(
-                "invalid edge ID format: {}",
-                edge_id.as_str()
-            )));
-        }
-        let src = parts[0];
-        let rest = parts[1];
-        let (label, dst) = rest
-            .split_once("-->")
-            .ok_or_else(|| NodeDbError::bad_request("invalid edge ID"))?;
-
         let mut conn = self.pool.acquire().await?;
         conn.send(
             OpCode::EdgeDelete,
             TextFields {
-                from_node: Some(src.to_string()),
-                to_node: Some(dst.to_string()),
-                edge_type: Some(label.to_string()),
+                from_node: Some(edge_id.src.as_str().to_string()),
+                to_node: Some(edge_id.dst.as_str().to_string()),
+                edge_type: Some(edge_id.label.clone()),
                 ..Default::default()
             },
         )

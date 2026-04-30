@@ -45,22 +45,32 @@ impl CoreLoop {
             .iter()
             .map(|(k, v)| (k.clone(), Value::from(v.clone())))
             .collect();
-        let values: Vec<Value> = schema
+        let values: Vec<Value> = match schema
             .columns
             .iter()
             .map(|col| match col.name.as_str() {
-                "_ts_system" if bitemporal => Value::Integer(sys_now),
-                "_ts_valid_from" if bitemporal => match ndb_obj.get("_ts_valid_from") {
+                "_ts_system" if bitemporal => Ok(Value::Integer(sys_now)),
+                "_ts_valid_from" if bitemporal => Ok(match ndb_obj.get("_ts_valid_from") {
                     Some(Value::Integer(i)) => Value::Integer(*i),
                     _ => Value::Integer(i64::MIN),
-                },
-                "_ts_valid_until" if bitemporal => match ndb_obj.get("_ts_valid_until") {
+                }),
+                "_ts_valid_until" if bitemporal => Ok(match ndb_obj.get("_ts_valid_until") {
                     Some(Value::Integer(i)) => Value::Integer(*i),
                     _ => Value::Integer(i64::MAX),
-                },
+                }),
                 _ => ndb_field_to_value(ndb_obj.get(&col.name), &col.column_type),
             })
-            .collect();
+            .collect::<Result<Vec<Value>, String>>()
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    collection,
+                    "spatial columnar ingest skipped: timestamp coercion overflow: {e}"
+                );
+                return;
+            }
+        };
 
         let _ = engine.insert(&values);
     }

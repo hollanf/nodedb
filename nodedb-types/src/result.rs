@@ -122,7 +122,7 @@ mod tests {
     fn search_result() {
         let r = SearchResult {
             id: "vec-1".into(),
-            node_id: Some(NodeId::new("node-1")),
+            node_id: Some(NodeId::try_new("node-1").expect("test fixture")),
             distance: 0.123,
             metadata: HashMap::new(),
         };
@@ -134,19 +134,24 @@ mod tests {
     fn subgraph_construction() {
         let mut sg = SubGraph::empty();
         sg.nodes.push(SubGraphNode {
-            id: NodeId::new("a"),
+            id: NodeId::try_new("a").expect("test fixture"),
             depth: 0,
             properties: HashMap::new(),
         });
         sg.nodes.push(SubGraphNode {
-            id: NodeId::new("b"),
+            id: NodeId::try_new("b").expect("test fixture"),
             depth: 1,
             properties: HashMap::new(),
         });
         sg.edges.push(SubGraphEdge {
-            id: EdgeId::from_components("a", "b", "KNOWS"),
-            from: NodeId::new("a"),
-            to: NodeId::new("b"),
+            id: EdgeId::try_first(
+                NodeId::try_new("a").expect("test fixture"),
+                NodeId::try_new("b").expect("test fixture"),
+                "KNOWS",
+            )
+            .expect("test fixture"),
+            from: NodeId::try_new("a").expect("test fixture"),
+            to: NodeId::try_new("b").expect("test fixture"),
             label: "KNOWS".into(),
             properties: HashMap::new(),
         });

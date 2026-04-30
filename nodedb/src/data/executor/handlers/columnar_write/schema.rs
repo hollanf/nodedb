@@ -17,9 +17,16 @@ pub(super) fn row_values_to_object(schema: &ColumnarSchema, row: &[Value]) -> no
 }
 
 /// Coerce a `nodedb_types::Value` field to match the column type.
-pub(super) fn ndb_field_to_value(val: Option<&Value>, col_type: &ColumnType) -> Value {
-    let Some(val) = val else { return Value::Null };
-    match (col_type, val) {
+///
+/// Returns `Err` if a millisecond timestamp value overflows `i64` microseconds.
+pub(super) fn ndb_field_to_value(
+    val: Option<&Value>,
+    col_type: &ColumnType,
+) -> Result<Value, String> {
+    let Some(val) = val else {
+        return Ok(Value::Null);
+    };
+    let v = match (col_type, val) {
         (_, Value::Null) => Value::Null,
         (ColumnType::Int64, Value::Integer(_)) => val.clone(),
         (ColumnType::Int64, Value::Float(f)) => Value::Integer(*f as i64),
@@ -33,21 +40,25 @@ pub(super) fn ndb_field_to_value(val: Option<&Value>, col_type: &ColumnType) -> 
         }
         (ColumnType::Bool, Value::Bool(_)) => val.clone(),
         (ColumnType::String, Value::String(_)) => val.clone(),
-        (ColumnType::Timestamp, Value::Integer(n)) => {
-            Value::NaiveDateTime(nodedb_types::NdbDateTime::from_millis(*n))
-        }
-        (ColumnType::Timestamp, Value::Float(f)) => {
-            Value::NaiveDateTime(nodedb_types::NdbDateTime::from_millis(*f as i64))
-        }
+        (ColumnType::Timestamp, Value::Integer(n)) => Value::NaiveDateTime(
+            nodedb_types::NdbDateTime::from_millis(*n)
+                .map_err(|e| format!("timestamp coercion: {e}"))?,
+        ),
+        (ColumnType::Timestamp, Value::Float(f)) => Value::NaiveDateTime(
+            nodedb_types::NdbDateTime::from_millis(*f as i64)
+                .map_err(|e| format!("timestamp coercion: {e}"))?,
+        ),
         (ColumnType::Timestamp, Value::String(s)) => nodedb_types::datetime::NdbDateTime::parse(s)
             .map(Value::NaiveDateTime)
             .unwrap_or_else(|| Value::String(s.clone())),
-        (ColumnType::Timestamptz, Value::Integer(n)) => {
-            Value::DateTime(nodedb_types::NdbDateTime::from_millis(*n))
-        }
-        (ColumnType::Timestamptz, Value::Float(f)) => {
-            Value::DateTime(nodedb_types::NdbDateTime::from_millis(*f as i64))
-        }
+        (ColumnType::Timestamptz, Value::Integer(n)) => Value::DateTime(
+            nodedb_types::NdbDateTime::from_millis(*n)
+                .map_err(|e| format!("timestamptz coercion: {e}"))?,
+        ),
+        (ColumnType::Timestamptz, Value::Float(f)) => Value::DateTime(
+            nodedb_types::NdbDateTime::from_millis(*f as i64)
+                .map_err(|e| format!("timestamptz coercion: {e}"))?,
+        ),
         (ColumnType::Timestamptz, Value::String(s)) => {
             nodedb_types::datetime::NdbDateTime::parse(s)
                 .map(Value::DateTime)
@@ -58,7 +69,8 @@ pub(super) fn ndb_field_to_value(val: Option<&Value>, col_type: &ColumnType) -> 
         (ColumnType::Float64, _) => Value::Null,
         (ColumnType::Int64, _) => Value::Null,
         _ => val.clone(),
-    }
+    };
+    Ok(v)
 }
 
 /// Infer a columnar schema from a `nodedb_types::Value::Object` (first row).

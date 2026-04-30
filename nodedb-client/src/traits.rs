@@ -258,8 +258,11 @@ pub trait NodeDb: NodeDbMarker {
     /// Batch insert graph edges — amortizes CRDT delta export to O(1) per batch.
     async fn batch_graph_insert_edges(&self, edges: &[(&str, &str, &str)]) -> NodeDbResult<()> {
         for &(from, to, label) in edges {
-            self.graph_insert_edge(&NodeId::new(from), &NodeId::new(to), label, None)
-                .await?;
+            let src = NodeId::try_new(from)
+                .map_err(|e| NodeDbError::storage(format!("invalid node id: {e}")))?;
+            let dst = NodeId::try_new(to)
+                .map_err(|e| NodeDbError::storage(format!("invalid node id: {e}")))?;
+            self.graph_insert_edge(&src, &dst, label, None).await?;
         }
         Ok(())
     }
@@ -491,11 +494,8 @@ mod tests {
             edge_type: &str,
             _properties: Option<Document>,
         ) -> NodeDbResult<EdgeId> {
-            Ok(EdgeId::from_components(
-                from.as_str(),
-                to.as_str(),
-                edge_type,
-            ))
+            EdgeId::try_first(from.clone(), to.clone(), edge_type)
+                .map_err(|e| NodeDbError::storage(format!("invalid edge label: {e}")))
         }
 
         async fn graph_delete_edge(&self, _edge_id: &EdgeId) -> NodeDbResult<()> {
@@ -566,17 +566,20 @@ mod tests {
     #[tokio::test]
     async fn mock_graph_operations() {
         let db = MockDb;
-        let start = NodeId::new("alice");
+        let start = NodeId::try_new("alice").expect("test fixture");
         let subgraph = db.graph_traverse(&start, 2, None).await.unwrap();
         assert_eq!(subgraph.node_count(), 0);
 
-        let from = NodeId::new("alice");
-        let to = NodeId::new("bob");
+        let from = NodeId::try_new("alice").expect("test fixture");
+        let to = NodeId::try_new("bob").expect("test fixture");
         let edge_id = db
             .graph_insert_edge(&from, &to, "KNOWS", None)
             .await
             .unwrap();
-        assert_eq!(edge_id.as_str(), "alice--KNOWS-->bob");
+        assert_eq!(edge_id.src.as_str(), "alice");
+        assert_eq!(edge_id.dst.as_str(), "bob");
+        assert_eq!(edge_id.label, "KNOWS");
+        assert_eq!(edge_id.seq, 0);
 
         db.graph_delete_edge(&edge_id).await.unwrap();
     }
@@ -621,7 +624,7 @@ mod tests {
             .unwrap();
         assert!(!results.is_empty());
 
-        let start = NodeId::new(results[0].id.clone());
+        let start = NodeId::from_validated(results[0].id.clone());
         let _subgraph = db.graph_traverse(&start, 2, None).await.unwrap();
 
         let doc = Document::new("note-1");

@@ -234,7 +234,7 @@ impl NodeDb for NodeDbRemote {
 
             if seen_nodes.insert(node_id_str.to_string()) {
                 nodes.push(SubGraphNode {
-                    id: NodeId::new(node_id_str),
+                    id: NodeId::from_validated(node_id_str.to_owned()),
                     depth: d,
                     properties: HashMap::new(),
                 });
@@ -246,9 +246,14 @@ impl NodeDb for NodeDbRemote {
                 row.get(4).and_then(|v| v.as_str()),
             ) {
                 edges.push(SubGraphEdge {
-                    id: EdgeId::from_components(src, dst, label),
-                    from: NodeId::new(src),
-                    to: NodeId::new(dst),
+                    id: EdgeId::try_first(
+                        NodeId::from_validated(src.to_owned()),
+                        NodeId::from_validated(dst.to_owned()),
+                        label,
+                    )
+                    .expect("server wire label already validated"),
+                    from: NodeId::from_validated(src.to_owned()),
+                    to: NodeId::from_validated(dst.to_owned()),
                     label: label.to_string(),
                     properties: HashMap::new(),
                 });
@@ -277,18 +282,19 @@ impl NodeDb for NodeDbRemote {
         self.execute_raw(sql, &[&from_str, &to_str, &edge_type, &props_json])
             .await?;
 
-        Ok(EdgeId::from_components(
-            from.as_str(),
-            to.as_str(),
-            edge_type,
-        ))
+        EdgeId::try_first(from.clone(), to.clone(), edge_type)
+            .map_err(|e| NodeDbError::storage(format!("invalid edge label: {e}")))
     }
 
     async fn graph_delete_edge(&self, edge_id: &EdgeId) -> NodeDbResult<()> {
-        // Edge IDs are formatted as "src--label-->dst".
-        let id_str = edge_id.as_str();
-        let sql = "DELETE FROM edges WHERE id = $1";
-        self.execute_raw(sql, &[&id_str]).await?;
+        // Structured fields are passed so the server can match on (src, label, dst, seq)
+        // without relying on the Display form of EdgeId.
+        let src = edge_id.src.as_str();
+        let dst = edge_id.dst.as_str();
+        let label = edge_id.label.as_str();
+        let seq = edge_id.seq as i64;
+        let sql = "DELETE FROM edges WHERE src = $1 AND dst = $2 AND label = $3 AND seq = $4";
+        self.execute_raw(sql, &[&src, &dst, &label, &seq]).await?;
         Ok(())
     }
 
@@ -449,7 +455,7 @@ fn parse_graph_traverse_json(json_text: &str) -> NodeDbResult<SubGraph> {
                 .to_string();
             let depth = item.get("depth").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
             nodes.push(SubGraphNode {
-                id: NodeId::new(id),
+                id: NodeId::from_validated(id),
                 depth,
                 properties: HashMap::new(),
             });
@@ -462,9 +468,14 @@ fn parse_graph_traverse_json(json_text: &str) -> NodeDbResult<SubGraph> {
             let dst = item.get("to").and_then(|v| v.as_str()).unwrap_or("");
             let label = item.get("label").and_then(|v| v.as_str()).unwrap_or("");
             edges.push(SubGraphEdge {
-                id: EdgeId::from_components(src, dst, label),
-                from: NodeId::new(src),
-                to: NodeId::new(dst),
+                id: EdgeId::try_first(
+                    NodeId::from_validated(src.to_owned()),
+                    NodeId::from_validated(dst.to_owned()),
+                    label,
+                )
+                .expect("server wire label already validated"),
+                from: NodeId::from_validated(src.to_owned()),
+                to: NodeId::from_validated(dst.to_owned()),
                 label: label.to_string(),
                 properties: HashMap::new(),
             });

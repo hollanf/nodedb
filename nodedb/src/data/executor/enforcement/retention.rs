@@ -121,7 +121,9 @@ pub fn parse_retention_period(s: &str) -> Result<RetentionDuration, String> {
 /// For months/years, uses actual calendar offsets (not fixed 30/365 day approximations).
 pub fn retention_expired(created_at_secs: u64, duration: &RetentionDuration) -> bool {
     let now = nodedb_types::NdbDateTime::now();
-    let created = nodedb_types::NdbDateTime::from_secs(created_at_secs as i64);
+    let Ok(created) = nodedb_types::NdbDateTime::from_secs(created_at_secs as i64) else {
+        return false;
+    };
 
     let now_c = now.components();
     let created_c = created.components();
@@ -313,7 +315,7 @@ mod tests {
         let now = nodedb_types::NdbDateTime::now();
         let c = now.components();
         // Build a timestamp 7 years ago, same month/day.
-        let seven_years_ago = nodedb_types::NdbDateTime::from_secs(0); // approximation for test
+        let seven_years_ago = nodedb_types::NdbDateTime::from_secs(0).expect("0 secs in range"); // approximation for test
         // Instead: use a row from epoch 0 with 1-year retention — definitely expired.
         let r = dur(1, RetentionUnit::Years);
         assert!(retention_expired(0, &r)); // epoch 0 is > 1 year ago
