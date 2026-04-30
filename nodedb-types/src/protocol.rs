@@ -332,17 +332,15 @@ pub enum ResponseStatus {
 #[serde(tag = "method", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AuthMethod {
+    #[serde(rename = "trust")]
     Trust {
         #[serde(default = "default_username")]
         username: String,
     },
-    Password {
-        username: String,
-        password: String,
-    },
-    ApiKey {
-        token: String,
-    },
+    #[serde(rename = "password")]
+    Password { username: String, password: String },
+    #[serde(rename = "api_key")]
+    ApiKey { token: String },
 }
 
 fn default_username() -> String {

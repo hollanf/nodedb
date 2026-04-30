@@ -66,20 +66,31 @@ pub struct AggregateExpr {
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AggFunction {
+    #[serde(rename = "sum")]
     Sum,
+    #[serde(rename = "count")]
     Count,
+    #[serde(rename = "min")]
     Min,
+    #[serde(rename = "max")]
     Max,
+    #[serde(rename = "avg")]
     Avg,
+    #[serde(rename = "first")]
     First,
+    #[serde(rename = "last")]
     Last,
     /// Approximate count distinct via HyperLogLog.
+    #[serde(rename = "count_distinct")]
     CountDistinct,
     /// Approximate percentile via TDigest. Inner value is the quantile (0.0–1.0).
+    #[serde(rename = "percentile")]
     Percentile(f64),
     /// Approximate top-K heavy hitters via SpaceSaving. Inner value is K.
+    #[serde(rename = "topk")]
     TopK(usize),
 }
 
@@ -120,15 +131,20 @@ impl AggFunction {
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum RefreshPolicy {
     /// Refresh on every memtable flush. Lowest latency.
     #[default]
+    #[serde(rename = "on_flush")]
     OnFlush,
     /// Refresh when a partition is sealed. Lower CPU cost.
+    #[serde(rename = "on_seal")]
     OnSeal,
     /// Refresh every N milliseconds.
+    #[serde(rename = "periodic")]
     Periodic(u64),
     /// Only refresh via explicit REFRESH command.
+    #[serde(rename = "manual")]
     Manual,
 }

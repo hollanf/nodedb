@@ -24,9 +24,11 @@ use serde::{Deserialize, Serialize};
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CompensationHint {
     /// UNIQUE constraint violated — another device wrote the same value first.
+    #[serde(rename = "unique_violation")]
     UniqueViolation {
         /// The field that has the UNIQUE constraint (e.g., "username").
         field: String,
@@ -35,6 +37,7 @@ pub enum CompensationHint {
     },
 
     /// Foreign key reference missing — the referenced entity doesn't exist.
+    #[serde(rename = "foreign_key_missing")]
     ForeignKeyMissing {
         /// The ID that was referenced but not found.
         referenced_id: String,
@@ -42,15 +45,18 @@ pub enum CompensationHint {
 
     /// Permission denied — the user doesn't have write access.
     /// No details are leaked (security: the edge is untrusted).
+    #[serde(rename = "permission_denied")]
     PermissionDenied,
 
     /// Rate limit exceeded — try again later.
+    #[serde(rename = "rate_limited")]
     RateLimited {
         /// Suggested delay before retrying (milliseconds).
         retry_after_ms: u64,
     },
 
     /// Schema violation — the delta doesn't conform to the collection schema.
+    #[serde(rename = "schema_violation")]
     SchemaViolation {
         /// Which field failed validation.
         field: String,
@@ -59,6 +65,7 @@ pub enum CompensationHint {
     },
 
     /// Custom application-defined constraint violation.
+    #[serde(rename = "custom")]
     Custom {
         /// Constraint name.
         constraint: String,
@@ -68,6 +75,7 @@ pub enum CompensationHint {
 
     /// Data integrity violation — CRC32C checksum mismatch on delta payload.
     /// The client should re-send the delta.
+    #[serde(rename = "integrity_violation")]
     IntegrityViolation,
 }
 

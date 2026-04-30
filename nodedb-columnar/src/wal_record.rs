@@ -13,6 +13,7 @@ use zerompk::{FromMessagePack, ToMessagePack};
 
 /// A WAL record for a columnar collection operation.
 #[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ColumnarWalRecord {
     /// A row was inserted into the memtable.
@@ -20,6 +21,7 @@ pub enum ColumnarWalRecord {
     /// Contains the collection name and the row data as packed binary
     /// (the columnar wire format, not MessagePack). On replay, the row
     /// is re-inserted into the memtable.
+    #[serde(rename = "insert_row")]
     InsertRow {
         collection: String,
         /// Row data as packed binary values. Each value is encoded per its
@@ -32,6 +34,7 @@ pub enum ColumnarWalRecord {
     ///
     /// On replay, these row indices are re-applied to the segment's
     /// delete bitmap.
+    #[serde(rename = "delete_rows")]
     DeleteRows {
         collection: String,
         segment_id: u64,
@@ -45,6 +48,7 @@ pub enum ColumnarWalRecord {
     /// - If new segments exist on disk: complete the metadata swap.
     /// - If new segments don't exist: the compaction was interrupted before
     ///   writing; discard and treat old segments as authoritative.
+    #[serde(rename = "compaction_commit")]
     CompactionCommit {
         collection: String,
         old_segment_ids: Vec<u64>,
@@ -56,6 +60,7 @@ pub enum ColumnarWalRecord {
     /// On replay, if the segment file exists, update metadata to include it.
     /// If it doesn't exist, the flush was interrupted; rows are already in
     /// the memtable via InsertRow records.
+    #[serde(rename = "memtable_flushed")]
     MemtableFlushed {
         collection: String,
         segment_id: u64,

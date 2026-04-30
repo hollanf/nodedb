@@ -28,9 +28,11 @@ pub struct ResyncRequestMsg {
 #[derive(
     Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
 )]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ResyncReason {
     /// Detected missing mutation IDs in the delta stream.
+    #[serde(rename = "sequence_gap")]
     SequenceGap {
         /// The expected next mutation ID.
         expected: u64,
@@ -38,11 +40,13 @@ pub enum ResyncReason {
         received: u64,
     },
     /// CRC32C checksum mismatch on a delta payload.
+    #[serde(rename = "checksum_mismatch")]
     ChecksumMismatch {
         /// The mutation ID of the corrupted delta.
         mutation_id: u64,
     },
     /// Corruption detected on cold start, need full re-sync.
+    #[serde(rename = "corrupted_state")]
     CorruptedState,
 }
 

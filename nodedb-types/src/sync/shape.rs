@@ -101,11 +101,13 @@ impl ArrayCoordRange {
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ShapeType {
     /// Document shape: all documents in a collection matching a predicate.
     ///
     /// Predicate is serialized filter bytes (MessagePack). Empty = all documents.
+    #[serde(rename = "document")]
     Document {
         collection: String,
         /// Serialized predicate bytes. Empty = no filter (all documents).
@@ -116,6 +118,7 @@ pub enum ShapeType {
     ///
     /// Includes all nodes and edges reachable within `max_depth` hops
     /// from the root nodes. Edge label filter is optional.
+    #[serde(rename = "graph")]
     Graph {
         root_nodes: Vec<String>,
         max_depth: usize,
@@ -125,6 +128,7 @@ pub enum ShapeType {
     /// Vector shape: all vectors in a collection/namespace.
     ///
     /// Optionally filtered by field_name (named vector fields).
+    #[serde(rename = "vector")]
     Vector {
         collection: String,
         field_name: Option<String>,
@@ -135,6 +139,7 @@ pub enum ShapeType {
     ///
     /// `coord_range = None` means "subscribe to all ops on this array".
     /// When set, only ops whose coord falls within the range are delivered.
+    #[serde(rename = "array")]
     Array {
         array_name: String,
         coord_range: Option<ArrayCoordRange>,

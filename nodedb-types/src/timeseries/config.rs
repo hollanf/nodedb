@@ -14,11 +14,15 @@ pub struct ConfigValidationError {
 
 /// Compression codec for archived (cold) partitions.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum ArchiveCompression {
     #[default]
+    #[serde(rename = "zstd")]
     Zstd,
+    #[serde(rename = "lz4")]
     Lz4,
+    #[serde(rename = "snappy")]
     Snappy,
 }
 

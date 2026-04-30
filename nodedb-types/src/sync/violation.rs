@@ -22,23 +22,32 @@ use serde::{Deserialize, Serialize};
     rkyv::Serialize,
     rkyv::Deserialize,
 )]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ViolationType {
     /// RLS write policy rejected the delta.
+    #[serde(rename = "rls_policy_violation")]
     RlsPolicyViolation { policy_name: String },
     /// UNIQUE constraint violation.
+    #[serde(rename = "unique_violation")]
     UniqueViolation { field: String, value: String },
     /// Foreign key reference missing.
+    #[serde(rename = "foreign_key_missing")]
     ForeignKeyMissing { referenced_id: String },
     /// Permission denied (no write access to target resource).
+    #[serde(rename = "permission_denied")]
     PermissionDenied,
     /// Rate limit exceeded for this session.
+    #[serde(rename = "rate_limited")]
     RateLimited,
     /// JWT token expired during active session.
+    #[serde(rename = "token_expired")]
     TokenExpired,
     /// Schema validation failed.
+    #[serde(rename = "schema_violation")]
     SchemaViolation { field: String, reason: String },
     /// Generic constraint violation (catch-all).
+    #[serde(rename = "constraint_violation")]
     ConstraintViolation { detail: String },
 }
 
