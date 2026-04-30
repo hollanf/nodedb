@@ -1,13 +1,15 @@
 //! Catalog format migration runner.
 //!
-//! This module exists as infrastructure, not because there are
-//! currently any legacy catalogs to migrate. The format version
-//! stamped into every new catalog by `ClusterCatalog::open` is the
-//! pivot that future schema changes land on: when the next
+//! The format version stamped into every catalog by `ClusterCatalog::open`
+//! is the pivot that future schema changes land on: when the next
 //! breaking change to a zerompk-persisted type ships, add a
 //! `v{N}_to_v{N+1}` arm to [`migrate_if_needed`], bump
 //! `CATALOG_FORMAT_VERSION`, and the upgrade path is wired
 //! automatically.
+//!
+//! The **lowest accepted catalog version is 3**. Catalogs older than v3
+//! cannot be opened; the process aborts with a `ClusterError::Codec`
+//! error.
 //!
 //! # Why zerompk needs versioning at all
 //!
@@ -38,9 +40,8 @@ use tracing::info;
 
 use crate::error::{ClusterError, Result};
 
-use super::cluster_settings::{ClusterSettings, KEY_CLUSTER_SETTINGS};
 use super::core::{read_format_version, write_format_version};
-use super::schema::{CATALOG_FORMAT_VERSION, METADATA_TABLE, catalog_err};
+use super::schema::CATALOG_FORMAT_VERSION;
 
 /// Stamp a fresh catalog and validate the on-disk format version
 /// against the current binary.
@@ -78,30 +79,6 @@ pub(super) fn migrate_if_needed(db: &redb::Database) -> Result<()> {
                 ),
             })
         }
-        Some(1) => {
-            // v1 → v2: write default ClusterSettings when the key is absent.
-            info!("migrating catalog v1 → v2: writing default cluster_settings");
-            migrate_v1_to_v2(db)?;
-            // Fall through to v2 → v3 in a chained call rather than
-            // duplicating the stamp. We call migrate_if_needed recursively
-            // once, which will now see v2 and apply the next arm.
-            write_format_version(db, 2)?;
-            migrate_if_needed(db)
-        }
-        Some(2) => {
-            // v2 → v3: `Hlc::logical` widened from u32 to u64 (T4-11).
-            // No on-disk data transformation is needed: MessagePack
-            // integers decode by value, so existing logical counters
-            // (which fit in u32) deserialise correctly as u64. The
-            // migration only advances the format version so that old
-            // binaries (which compiled `logical: u32`) refuse to open
-            // a v3 catalog and cannot silently truncate the field.
-            info!(
-                "migrating catalog v2 → v3: Hlc::logical widened to u64 (no data rewrite needed)"
-            );
-            write_format_version(db, CATALOG_FORMAT_VERSION)?;
-            Ok(())
-        }
         Some(v) => {
             // Older format that we have no migration arm for.
             Err(ClusterError::Codec {
@@ -111,41 +88,6 @@ pub(super) fn migrate_if_needed(db: &redb::Database) -> Result<()> {
             })
         }
     }
-}
-
-/// v1 → v2: insert default `ClusterSettings` if absent.
-///
-/// A v1 catalog was written before `cluster_settings` existed. We write
-/// the default value so the key is present and future opens can always
-/// deserialize it without a second migration hop.
-fn migrate_v1_to_v2(db: &redb::Database) -> Result<()> {
-    // Only write the key if it's absent — the migration must be idempotent.
-    {
-        let txn = db.begin_read().map_err(catalog_err)?;
-        let table = txn.open_table(METADATA_TABLE).map_err(catalog_err)?;
-        if table
-            .get(KEY_CLUSTER_SETTINGS)
-            .map_err(catalog_err)?
-            .is_some()
-        {
-            return Ok(());
-        }
-    }
-
-    let defaults = ClusterSettings::default();
-    let bytes = zerompk::to_msgpack_vec(&defaults).map_err(|e| ClusterError::Codec {
-        detail: format!("serialize default ClusterSettings during v1→v2 migration: {e}"),
-    })?;
-
-    let txn = db.begin_write().map_err(catalog_err)?;
-    {
-        let mut table = txn.open_table(METADATA_TABLE).map_err(catalog_err)?;
-        table
-            .insert(KEY_CLUSTER_SETTINGS, bytes.as_slice())
-            .map_err(catalog_err)?;
-    }
-    txn.commit().map_err(catalog_err)?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -214,80 +156,6 @@ mod tests {
         assert!(
             err.contains("older than supported"),
             "expected older-without-arm rejection, got: {err}"
-        );
-    }
-
-    #[test]
-    fn v1_catalog_migrates_to_v2_with_default_cluster_settings() {
-        use super::super::cluster_settings::{ClusterSettings, PlacementHashId};
-
-        let (_dir, db) = temp_db();
-        // Stamp v1 explicitly (simulates a catalog written by the previous binary).
-        write_format_version(&db, 1).unwrap();
-
-        // Migration must succeed.
-        migrate_if_needed(&db).unwrap();
-
-        // Format version must be bumped to the current value.
-        assert_eq!(
-            read_format_version(&db).unwrap(),
-            Some(CATALOG_FORMAT_VERSION)
-        );
-
-        // The cluster_settings key must now be present with default values.
-        let txn = db.begin_read().unwrap();
-        let table = txn
-            .open_table(super::super::schema::METADATA_TABLE)
-            .unwrap();
-        let guard = table
-            .get(super::super::cluster_settings::KEY_CLUSTER_SETTINGS)
-            .unwrap()
-            .expect("cluster_settings must be written by migration");
-        let settings: ClusterSettings = zerompk::from_msgpack(guard.value()).unwrap();
-        assert_eq!(settings.placement_hash_id, PlacementHashId::Fnv1a);
-        assert_eq!(settings.vshard_count, crate::routing::VSHARD_COUNT);
-        assert_eq!(settings.min_wire_version, 1);
-    }
-
-    #[test]
-    fn v1_to_current_migration_is_idempotent() {
-        let (_dir, db) = temp_db();
-        write_format_version(&db, 1).unwrap();
-        migrate_if_needed(&db).unwrap();
-        // Running again must be a no-op (current-version fast path).
-        migrate_if_needed(&db).unwrap();
-        assert_eq!(
-            read_format_version(&db).unwrap(),
-            Some(CATALOG_FORMAT_VERSION)
-        );
-    }
-
-    #[test]
-    fn v2_catalog_migrates_to_v3() {
-        let (_dir, db) = temp_db();
-        // Stamp v2 explicitly (simulates a catalog written by the pre-T4-11 binary).
-        write_format_version(&db, 2).unwrap();
-
-        // Migration must succeed.
-        migrate_if_needed(&db).unwrap();
-
-        // Format version must be bumped to the current value (3).
-        assert_eq!(
-            read_format_version(&db).unwrap(),
-            Some(CATALOG_FORMAT_VERSION)
-        );
-    }
-
-    #[test]
-    fn v2_to_v3_migration_is_idempotent() {
-        let (_dir, db) = temp_db();
-        write_format_version(&db, 2).unwrap();
-        migrate_if_needed(&db).unwrap();
-        // Running again must be a no-op.
-        migrate_if_needed(&db).unwrap();
-        assert_eq!(
-            read_format_version(&db).unwrap(),
-            Some(CATALOG_FORMAT_VERSION)
         );
     }
 }

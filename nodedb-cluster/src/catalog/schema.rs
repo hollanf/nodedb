@@ -56,7 +56,7 @@ pub(super) const KEY_FORMAT_VERSION: &str = "format_version";
 /// - 2: added `cluster_settings` (PlacementHashId, vshard_count,
 ///   replication_factor, min_wire_version). Migration arm
 ///   writes defaults when upgrading from v1.
-/// - 3: `Hlc::logical` widened from `u32` to `u64` (T4-11). All
+/// - 3: `Hlc::logical` widened from `u32` to `u64`. All
 ///   zerompk-persisted types embedding `Hlc` (e.g. `DescriptorDrainStart`)
 ///   now encode `logical` as a 64-bit integer. Old nodes cannot decode
 ///   entries written by new nodes when `logical > u32::MAX`. Migration
