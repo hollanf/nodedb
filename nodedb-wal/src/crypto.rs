@@ -21,6 +21,71 @@ use crate::error::{Result, WalError};
 use crate::record::HEADER_SIZE;
 use crate::secure_mem;
 
+/// Security gate for WAL key files: enforces no-symlink, regular-file,
+/// Unix mode bits (no group/world), and owner-UID checks.
+///
+/// Mirrors the logic in `nodedb::control::security::keystore::key_file_security`
+/// but is duplicated here so that `nodedb-wal` has zero dependency on the
+/// `nodedb` application crate.
+fn check_key_file_wal(path: &std::path::Path) -> Result<()> {
+    let symlink_meta = std::fs::symlink_metadata(path).map_err(|e| WalError::EncryptionError {
+        detail: format!("cannot stat WAL key file {}: {e}", path.display()),
+    })?;
+
+    if symlink_meta.file_type().is_symlink() {
+        return Err(WalError::EncryptionError {
+            detail: format!(
+                "WAL key file {} is a symlink, which is not permitted \
+                 (path traversal / TOCTOU risk)",
+                path.display()
+            ),
+        });
+    }
+
+    if !symlink_meta.is_file() {
+        return Err(WalError::EncryptionError {
+            detail: format!("WAL key file {} is not a regular file", path.display()),
+        });
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+
+        let mode = symlink_meta.mode();
+        if mode & 0o077 != 0 {
+            return Err(WalError::EncryptionError {
+                detail: format!(
+                    "WAL key file {} has insecure permissions: 0o{:03o} \
+                     (must be 0o400 or 0o600 — no group or world access)",
+                    path.display(),
+                    mode & 0o777,
+                ),
+            });
+        }
+
+        let file_uid = symlink_meta.uid();
+        // SAFETY: geteuid() is always safe to call; it has no preconditions.
+        let process_uid = unsafe { libc::geteuid() };
+        if file_uid != process_uid {
+            return Err(WalError::EncryptionError {
+                detail: format!(
+                    "WAL key file {} is owned by UID {} but process runs as UID {} \
+                     — key files must be owned by the server process user",
+                    path.display(),
+                    file_uid,
+                    process_uid,
+                ),
+            });
+        }
+    }
+
+    // On Windows: ACL-based permission enforcement is not implemented.
+    // The symlink check above still applies on all platforms.
+
+    Ok(())
+}
+
 /// AES-256-GCM key with a random per-lifetime epoch for nonce disambiguation.
 ///
 /// The epoch is generated randomly at construction time. Each WAL lifetime
@@ -81,7 +146,14 @@ impl WalEncryptionKey {
     }
 
     /// Load key from a file (must contain exactly 32 bytes).
+    ///
+    /// Before reading, the file is checked for:
+    /// - No symlinks (TOCTOU / path-traversal risk).
+    /// - Regular file (not a device, FIFO, or directory).
+    /// - Unix: no group or world access bits (`mode & 0o077 == 0`).
+    /// - Unix: file owner matches the current process UID.
     pub fn from_file(path: &std::path::Path) -> Result<Self> {
+        check_key_file_wal(path)?;
         let key_bytes = std::fs::read(path).map_err(WalError::Io)?;
         if key_bytes.len() != 32 {
             return Err(WalError::EncryptionError {
@@ -91,7 +163,7 @@ impl WalEncryptionKey {
                 ),
             });
         }
-        let mut key_arr = [0u8; 32];
+        let mut key_arr = zeroize::Zeroizing::new([0u8; 32]);
         key_arr.copy_from_slice(&key_bytes);
         Self::from_bytes(&key_arr)
     }
@@ -381,6 +453,90 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn from_file_0o600_accepted() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key.bin");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(&[0x42u8; 32]).unwrap();
+        drop(f);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        WalEncryptionKey::from_file(&path).expect("0o600 key file must be accepted");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn from_file_0o400_accepted() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key.bin");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(&[0x42u8; 32]).unwrap();
+        drop(f);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+
+        WalEncryptionKey::from_file(&path).expect("0o400 key file must be accepted");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn from_file_0o644_rejected() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key.bin");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(&[0x42u8; 32]).unwrap();
+        drop(f);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let err = match WalEncryptionKey::from_file(&path) {
+            Ok(_) => panic!("expected insecure-permissions error, got Ok"),
+            Err(e) => e,
+        };
+        let detail = format!("{err:?}");
+        assert!(
+            detail.contains("insecure") || detail.contains("644"),
+            "expected insecure-permissions error, got: {detail}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn from_file_symlink_rejected() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.bin");
+        let mut f = std::fs::File::create(&target).unwrap();
+        f.write_all(&[0x42u8; 32]).unwrap();
+        drop(f);
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let link = dir.path().join("link.bin");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let err = match WalEncryptionKey::from_file(&link) {
+            Ok(_) => panic!("expected symlink rejection, got Ok"),
+            Err(e) => e,
+        };
+        let detail = format!("{err:?}");
+        assert!(
+            detail.contains("symlink"),
+            "expected symlink rejection, got: {detail}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn same_lsn_different_wal_lifetimes_produce_different_ciphertext() {
         // Simulate two WAL lifetimes: same key bytes, same LSN=1, but
         // separate WalEncryptionKey instances (each gets a fresh random epoch).
