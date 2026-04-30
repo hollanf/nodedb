@@ -23,8 +23,8 @@ pub(super) fn try_eval(name: &str, args: &[Value]) -> Option<Value> {
         "id_type" => args
             .first()
             .and_then(|v| v.as_str())
-            .map_or(Value::String("unknown".into()), |s| {
-                Value::String(nodedb_types::id_gen::detect_id_type(s).to_string())
+            .map_or(Value::String("custom".into()), |s| {
+                Value::String(nodedb_types::id_gen::detect_id_type(s).as_str().to_string())
             }),
         "uuid_version" => args
             .first()

@@ -117,7 +117,10 @@ pub(super) fn try_eval(name: &str, args: &[Value]) -> Option<Value> {
                 .and_then(|v| v.as_str())
                 .and_then(nodedb_types::NdbDuration::parse);
             match (dt, dur) {
-                (Some(dt), Some(dur)) => Value::String(dt.add_duration(dur).to_iso8601()),
+                (Some(dt), Some(dur)) => dt
+                    .add_duration(dur)
+                    .map(|r| Value::String(r.to_iso8601()))
+                    .unwrap_or(Value::Null),
                 _ => Value::Null,
             }
         }
@@ -131,7 +134,10 @@ pub(super) fn try_eval(name: &str, args: &[Value]) -> Option<Value> {
                 .and_then(|v| v.as_str())
                 .and_then(nodedb_types::NdbDuration::parse);
             match (dt, dur) {
-                (Some(dt), Some(dur)) => Value::String(dt.sub_duration(dur).to_iso8601()),
+                (Some(dt), Some(dur)) => dt
+                    .sub_duration(dur)
+                    .map(|r| Value::String(r.to_iso8601()))
+                    .unwrap_or(Value::Null),
                 _ => Value::Null,
             }
         }
@@ -145,7 +151,10 @@ pub(super) fn try_eval(name: &str, args: &[Value]) -> Option<Value> {
                 .and_then(|v| v.as_str())
                 .and_then(nodedb_types::NdbDateTime::parse);
             match (dt1, dt2) {
-                (Some(a), Some(b)) => to_value_number(a.duration_since(&b).as_secs_f64()),
+                (Some(a), Some(b)) => a
+                    .duration_since(&b)
+                    .map(|d| to_value_number(d.as_secs_f64()))
+                    .unwrap_or(Value::Null),
                 _ => Value::Null,
             }
         }
