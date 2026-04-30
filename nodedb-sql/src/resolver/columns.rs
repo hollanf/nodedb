@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 
 use crate::error::{Result, SqlError};
-use crate::parser::normalize::{normalize_ident, normalize_object_name, table_name_from_factor};
+use crate::parser::normalize::{
+    normalize_ident, normalize_object_name_checked, table_name_from_factor,
+};
 use crate::types::{
     ArrayCatalogView, CollectionInfo, ColumnInfo, EngineType, SqlCatalog, SqlDataType,
 };
@@ -161,7 +163,7 @@ impl TableScope {
             self.add(resolved)?;
             return Ok(());
         }
-        if let Some((name, alias)) = table_name_from_factor(factor) {
+        if let Some((name, alias)) = table_name_from_factor(factor)? {
             let info = catalog
                 .get_collection(&name)?
                 .ok_or_else(|| SqlError::UnknownTable { name: name.clone() })?;
@@ -185,7 +187,7 @@ fn resolve_array_tvf(
             alias,
             ..
         } => (
-            normalize_object_name(name),
+            normalize_object_name_checked(name)?,
             args,
             alias.as_ref().map(|a| normalize_ident(&a.name)),
         ),
@@ -282,7 +284,7 @@ fn extract_string_literal_arg(arg: &sqlparser::ast::FunctionArg) -> Option<Strin
     };
     match expr {
         Expr::Value(v) => match &v.value {
-            Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) => Some(s.clone()),
+            Value::SingleQuotedString(s) => Some(s.clone()),
             _ => None,
         },
         _ => None,

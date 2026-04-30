@@ -2,9 +2,9 @@
 
 use sqlparser::ast;
 
-use crate::error::Result;
+use crate::error::{Result, SqlError};
 use crate::functions::registry::FunctionRegistry;
-use crate::parser::normalize::normalize_ident;
+use crate::parser::normalize::{SCHEMA_QUALIFIED_MSG, normalize_ident};
 use crate::resolver::expr::convert_expr;
 use crate::types::{SortKey, WindowSpec};
 
@@ -30,6 +30,23 @@ pub fn extract_window_functions(
 }
 
 fn convert_window_spec(func: &ast::Function, alias: &str) -> Result<WindowSpec> {
+    if func.name.0.len() > 1 {
+        let qualified: String = func
+            .name
+            .0
+            .iter()
+            .map(|p| match p {
+                ast::ObjectNamePart::Identifier(ident) => ident.value.clone(),
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>()
+            .join(".");
+        return Err(SqlError::Unsupported {
+            detail: format!(
+                "schema-qualified window function name '{qualified}': {SCHEMA_QUALIFIED_MSG}"
+            ),
+        });
+    }
     let name = func
         .name
         .0

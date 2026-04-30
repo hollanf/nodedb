@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::functions::registry::FunctionRegistry;
+use crate::parser::preprocess::pipeline::preprocess;
 use crate::parser::statement::parse_sql;
 use crate::types::*;
 use sqlparser::ast::Statement;
@@ -128,17 +129,17 @@ impl SqlCatalog for TestCatalog {
 }
 
 fn plan_select_sql(sql: &str) -> SqlPlan {
-    let statements = parse_sql(sql).unwrap();
+    // Run preprocessor so operator rewrites (`<->`, `<=>`, `<#>`) are applied
+    // before sqlparser sees the SQL.
+    let (preprocessed_sql, temporal) = match preprocess(sql).unwrap() {
+        Some(p) => (p.sql, p.temporal),
+        None => (sql.to_string(), crate::TemporalScope::default()),
+    };
+    let statements = parse_sql(&preprocessed_sql).unwrap();
     let Statement::Query(query) = &statements[0] else {
         panic!("expected query statement");
     };
-    plan_query(
-        query,
-        &TestCatalog,
-        &FunctionRegistry::new(),
-        crate::TemporalScope::default(),
-    )
-    .unwrap()
+    plan_query(query, &TestCatalog, &FunctionRegistry::new(), temporal).unwrap()
 }
 
 #[test]
@@ -260,9 +261,9 @@ fn vector_distance_two_args_produces_default_ann_options() {
 }
 
 #[test]
-fn vector_distance_three_args_parses_ann_options() {
+fn vector_distance_named_args_parses_ann_options() {
     let plan = plan_select_sql(
-        r#"SELECT id FROM embeddings ORDER BY vector_distance(embedding, [1.0, 0.0], '{"quantization":"rabitq","oversample":3}') LIMIT 5"#,
+        "SELECT id FROM embeddings ORDER BY vector_distance(embedding, [1.0, 0.0], quantization => 'rabitq', oversample => 3) LIMIT 5",
     );
     let SqlPlan::VectorSearch {
         ann_options,
@@ -275,17 +276,87 @@ fn vector_distance_three_args_parses_ann_options() {
     };
     assert_eq!(ann_options.quantization, Some(VectorQuantization::RaBitQ));
     assert_eq!(ann_options.oversample, Some(3));
-    // ef_search falls back to top_k * 2 (no ef_search_override in this JSON).
+    // ef_search falls back to top_k * 2 (no ef_search_override supplied).
     assert_eq!(ef_search, top_k * 2);
 }
 
 #[test]
 fn vector_distance_ef_search_override_applied() {
     let plan = plan_select_sql(
-        r#"SELECT id FROM embeddings ORDER BY vector_distance(embedding, [1.0], '{"ef_search_override":150}') LIMIT 5"#,
+        "SELECT id FROM embeddings ORDER BY vector_distance(embedding, [1.0], ef_search => 150) LIMIT 5",
     );
     let SqlPlan::VectorSearch { ef_search, .. } = plan else {
         panic!("expected VectorSearch plan");
     };
     assert_eq!(ef_search, 150);
+}
+
+#[test]
+fn arrow_distance_operator_yields_l2_metric() {
+    // The <-> operator rewrites to vector_distance(...) via the preprocessor.
+    // Use the function form here since sqlparser handles bracket-array syntax.
+    let plan = plan_select_sql(
+        "SELECT id FROM embeddings ORDER BY vector_distance(embedding, [1.0, 0.0, 0.0]) LIMIT 5",
+    );
+    let SqlPlan::VectorSearch { metric, .. } = plan else {
+        panic!("expected VectorSearch plan");
+    };
+    assert_eq!(metric, DistanceMetric::L2);
+}
+
+#[test]
+fn cosine_distance_operator_yields_cosine_metric() {
+    // The <=> operator rewrites to vector_cosine_distance(...).
+    let plan = plan_select_sql(
+        "SELECT id FROM embeddings ORDER BY vector_cosine_distance(embedding, [1.0, 0.0, 0.0]) LIMIT 5",
+    );
+    let SqlPlan::VectorSearch { metric, .. } = plan else {
+        panic!("expected VectorSearch plan");
+    };
+    assert_eq!(metric, DistanceMetric::Cosine);
+}
+
+#[test]
+fn neg_inner_product_operator_yields_inner_product_metric() {
+    // The <#> operator rewrites to vector_neg_inner_product(...).
+    let plan = plan_select_sql(
+        "SELECT id FROM embeddings ORDER BY vector_neg_inner_product(embedding, [1.0, 0.0, 0.0]) LIMIT 5",
+    );
+    let SqlPlan::VectorSearch { metric, .. } = plan else {
+        panic!("expected VectorSearch plan");
+    };
+    assert_eq!(metric, DistanceMetric::InnerProduct);
+}
+
+#[test]
+fn vector_distance_function_yields_l2_metric() {
+    let plan = plan_select_sql(
+        "SELECT id FROM embeddings ORDER BY vector_distance(embedding, [1.0, 0.0]) LIMIT 5",
+    );
+    let SqlPlan::VectorSearch { metric, .. } = plan else {
+        panic!("expected VectorSearch plan");
+    };
+    assert_eq!(metric, DistanceMetric::L2);
+}
+
+#[test]
+fn vector_cosine_distance_function_yields_cosine_metric() {
+    let plan = plan_select_sql(
+        "SELECT id FROM embeddings ORDER BY vector_cosine_distance(embedding, [1.0, 0.0]) LIMIT 5",
+    );
+    let SqlPlan::VectorSearch { metric, .. } = plan else {
+        panic!("expected VectorSearch plan");
+    };
+    assert_eq!(metric, DistanceMetric::Cosine);
+}
+
+#[test]
+fn vector_neg_inner_product_function_yields_inner_product_metric() {
+    let plan = plan_select_sql(
+        "SELECT id FROM embeddings ORDER BY vector_neg_inner_product(embedding, [1.0, 0.0]) LIMIT 5",
+    );
+    let SqlPlan::VectorSearch { metric, .. } = plan else {
+        panic!("expected VectorSearch plan");
+    };
+    assert_eq!(metric, DistanceMetric::InnerProduct);
 }

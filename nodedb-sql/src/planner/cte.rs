@@ -4,7 +4,7 @@ use sqlparser::ast::{self, Query, SetExpr};
 
 use crate::error::{Result, SqlError};
 use crate::functions::registry::FunctionRegistry;
-use crate::parser::normalize::{normalize_ident, normalize_object_name};
+use crate::parser::normalize::{normalize_ident, normalize_object_name_checked};
 use crate::types::*;
 
 /// Plan a WITH RECURSIVE query.
@@ -224,7 +224,7 @@ fn extract_qualified_column(expr: &ast::Expr) -> Option<(String, String)> {
 
 fn extract_table_name(relation: &ast::TableFactor) -> Option<String> {
     match relation {
-        ast::TableFactor::Table { name, .. } => Some(normalize_object_name(name)),
+        ast::TableFactor::Table { name, .. } => normalize_object_name_checked(name).ok(),
         _ => None,
     }
 }

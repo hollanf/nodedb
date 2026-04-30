@@ -30,7 +30,7 @@ pub(super) fn try_plan_relation(
         } => name,
         _ => return Ok(None),
     };
-    let fn_name = crate::parser::normalize::normalize_object_name(name);
+    let fn_name = crate::parser::normalize::normalize_object_name_checked(name)?;
     if !is_array_tvf(&fn_name) {
         return Ok(None);
     }

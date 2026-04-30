@@ -36,9 +36,11 @@ pub(super) fn try_extract_where_search(
                         let query_text = extract_string_literal(&args[1])?;
                         return Ok(Some(SqlPlan::TextSearch {
                             collection: table.name.clone(),
-                            query: query_text,
+                            query: crate::fts_types::FtsQuery::Plain {
+                                text: query_text,
+                                fuzzy: true,
+                            },
                             top_k: 1000,
-                            fuzzy: true,
                             filters: Vec::new(),
                         }));
                     }

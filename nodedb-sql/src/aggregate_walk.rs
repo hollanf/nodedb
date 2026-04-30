@@ -148,7 +148,29 @@ impl Visitor for AggregateExtractor<'_> {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
+/// Return the function name, or a qualified stub that will never match any
+/// registered function if the name is schema-qualified.
+///
+/// Detection (`contains_aggregate`) uses this to look up the function in the
+/// registry — a qualified name won't be found, so the aggregate check is a
+/// safe no-op. Extraction (`extract_aggregates`) will not reach this path
+/// for schema-qualified names because `convert_expr` rejects them first.
 fn function_name(f: &ast::Function) -> String {
+    if f.name.0.len() > 1 {
+        // Return a sentinel that cannot match any registry entry.
+        // The actual rejection happens in convert_expr / convert_function_depth.
+        let qualified: String = f
+            .name
+            .0
+            .iter()
+            .map(|p| match p {
+                ast::ObjectNamePart::Identifier(ident) => ident.value.clone(),
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>()
+            .join(".");
+        return format!("__schema_qualified__{qualified}");
+    }
     f.name
         .0
         .iter()

@@ -13,3 +13,4 @@ sqlparser = { version = "0.61", features = ["visitor"] }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 sonic-rs = { workspace = true }
+rust_decimal = { workspace = true }

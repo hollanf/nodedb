@@ -30,7 +30,13 @@ pub enum ParamValue {
     Bool(bool),
     Int64(i64),
     Float64(f64),
+    /// Exact arbitrary-precision decimal from a NUMERIC/DECIMAL pgwire parameter.
+    Decimal(rust_decimal::Decimal),
     Text(String),
+    /// Naive (no-timezone) timestamp from a TIMESTAMP pgwire parameter.
+    Timestamp(nodedb_types::datetime::NdbDateTime),
+    /// UTC (timezone-aware) timestamp from a TIMESTAMPTZ pgwire parameter.
+    Timestamptz(nodedb_types::datetime::NdbDateTime),
 }
 
 /// Substitute all `$N` placeholders in a parsed statement with concrete values.
@@ -74,7 +80,12 @@ fn placeholder_to_value(placeholder: &str, params: &[ParamValue]) -> Option<Valu
         ParamValue::Bool(false) => Value::Boolean(false),
         ParamValue::Int64(n) => Value::Number(n.to_string(), false),
         ParamValue::Float64(f) => Value::Number(f.to_string(), false),
+        ParamValue::Decimal(d) => Value::Number(d.to_string(), false),
         ParamValue::Text(s) => Value::SingleQuotedString(s.clone()),
+        // Timestamp/Timestamptz: emit as a typed SQL literal so the resolver
+        // can produce the correct SqlValue variant (Timestamp vs Timestamptz).
+        ParamValue::Timestamp(dt) => Value::SingleQuotedString(dt.to_iso8601()),
+        ParamValue::Timestamptz(dt) => Value::SingleQuotedString(dt.to_iso8601()),
     })
 }
 

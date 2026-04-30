@@ -118,7 +118,7 @@ pub fn plan_join_from_select(
 /// Build a `SqlPlan::Scan` for a named-table TableFactor.
 fn scan_for_relation(rel: &ast::TableFactor, scope: &TableScope) -> Result<SqlPlan> {
     let (rel_name, rel_alias) =
-        crate::parser::normalize::table_name_from_factor(rel).ok_or_else(|| {
+        crate::parser::normalize::table_name_from_factor(rel)?.ok_or_else(|| {
             SqlError::Unsupported {
                 detail: "non-table JOIN target".into(),
             }

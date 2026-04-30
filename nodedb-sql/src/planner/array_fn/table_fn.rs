@@ -46,7 +46,7 @@ pub fn try_plan_array_table_fn(
         } => (name, args),
         _ => return Ok(None),
     };
-    let fn_name = crate::parser::normalize::normalize_object_name(name);
+    let fn_name = crate::parser::normalize::normalize_object_name_checked(name)?;
     let arg_exprs = collect_args(&args.args);
     match fn_name.as_str() {
         "ndarray_slice" => Ok(Some(plan_slice(&arg_exprs, catalog, temporal)?)),

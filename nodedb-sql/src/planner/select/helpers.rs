@@ -5,7 +5,7 @@ use sqlparser::ast;
 
 use crate::error::{Result, SqlError};
 use crate::functions::registry::FunctionRegistry;
-use crate::parser::normalize::normalize_ident;
+use crate::parser::normalize::{SCHEMA_QUALIFIED_MSG, normalize_ident};
 use crate::resolver::expr::convert_expr;
 use crate::types::*;
 
@@ -44,7 +44,7 @@ pub fn convert_projection(items: &[ast::SelectItem]) -> Result<Vec<Projection>> 
             ast::SelectItem::QualifiedWildcard(kind, _) => {
                 let table_name = match kind {
                     ast::SelectItemQualifiedWildcardKind::ObjectName(name) => {
-                        crate::parser::normalize::normalize_object_name(name)
+                        crate::parser::normalize::normalize_object_name_checked(name)?
                     }
                     _ => String::new(),
                 };
@@ -125,6 +125,18 @@ pub(super) fn extract_geometry_arg(expr: &ast::Expr) -> Result<String> {
 pub(super) fn extract_column_name(expr: &ast::Expr) -> Result<String> {
     match expr {
         ast::Expr::Identifier(ident) => Ok(normalize_ident(ident)),
+        ast::Expr::CompoundIdentifier(parts) if parts.len() >= 3 => {
+            let qualified: String = parts
+                .iter()
+                .map(normalize_ident)
+                .collect::<Vec<_>>()
+                .join(".");
+            Err(SqlError::Unsupported {
+                detail: format!(
+                    "schema-qualified column reference '{qualified}': {SCHEMA_QUALIFIED_MSG}"
+                ),
+            })
+        }
         ast::Expr::CompoundIdentifier(parts) => Ok(parts
             .iter()
             .map(normalize_ident)
@@ -139,7 +151,7 @@ pub(super) fn extract_column_name(expr: &ast::Expr) -> Result<String> {
 pub fn extract_string_literal(expr: &ast::Expr) -> Result<String> {
     match expr {
         ast::Expr::Value(v) => match &v.value {
-            ast::Value::SingleQuotedString(s) | ast::Value::DoubleQuotedString(s) => Ok(s.clone()),
+            ast::Value::SingleQuotedString(s) => Ok(s.clone()),
             _ => Err(SqlError::Unsupported {
                 detail: format!("expected string literal, got: {expr}"),
             }),

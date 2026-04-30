@@ -8,7 +8,9 @@ use super::dml_helpers::{
 };
 use crate::engine_rules::{self, DeleteParams, InsertParams, UpdateParams};
 use crate::error::{Result, SqlError};
-use crate::parser::normalize::{normalize_ident, normalize_object_name};
+use crate::parser::normalize::{
+    SCHEMA_QUALIFIED_MSG, normalize_ident, normalize_object_name_checked,
+};
 use crate::resolver::expr::convert_expr;
 use crate::types::*;
 
@@ -36,7 +38,7 @@ fn classify_on_conflict(ins: &ast::Insert) -> Result<OnConflict> {
             let mut pairs = Vec::with_capacity(do_update.assignments.len());
             for a in &do_update.assignments {
                 let name = match &a.target {
-                    ast::AssignmentTarget::ColumnName(obj) => normalize_object_name(obj),
+                    ast::AssignmentTarget::ColumnName(obj) => normalize_object_name_checked(obj)?,
                     _ => {
                         return Err(SqlError::Unsupported {
                             detail: "ON CONFLICT DO UPDATE SET target must be a column name".into(),
@@ -64,7 +66,7 @@ pub fn plan_insert(ins: &ast::Insert, catalog: &dyn SqlCatalog) -> Result<Vec<Sq
         }
     };
     let table_name = match &ins.table {
-        ast::TableObject::TableName(name) => normalize_object_name(name),
+        ast::TableObject::TableName(name) => normalize_object_name_checked(name)?,
         ast::TableObject::TableFunction(_) => {
             return Err(SqlError::Unsupported {
                 detail: "INSERT INTO table function not supported".into(),
@@ -170,6 +172,14 @@ fn build_vector_primary_insert_plan(
                             .map(|v| match v {
                                 SqlValue::Float(f) => Ok(*f as f32),
                                 SqlValue::Int(i) => Ok(*i as f32),
+                                SqlValue::Decimal(d) => {
+                                    use rust_decimal::prelude::ToPrimitive;
+                                    d.to_f32().ok_or_else(|| SqlError::Parse {
+                                        detail: format!(
+                                            "vector element decimal '{d}' is out of f32 range"
+                                        ),
+                                    })
+                                }
                                 other => Err(SqlError::Parse {
                                     detail: format!(
                                         "vector field must contain numbers, got {other:?}"
@@ -221,7 +231,7 @@ fn build_vector_primary_insert_plan(
 /// Same parsing as INSERT but routes through `engine_rules.plan_upsert()`.
 pub fn plan_upsert(ins: &ast::Insert, catalog: &dyn SqlCatalog) -> Result<Vec<SqlPlan>> {
     let table_name = match &ins.table {
-        ast::TableObject::TableName(name) => normalize_object_name(name),
+        ast::TableObject::TableName(name) => normalize_object_name_checked(name)?,
         ast::TableObject::TableFunction(_) => {
             return Err(SqlError::Unsupported {
                 detail: "UPSERT INTO table function not supported".into(),
@@ -286,7 +296,7 @@ fn plan_upsert_with_on_conflict(
     on_conflict_updates: Vec<(String, SqlExpr)>,
 ) -> Result<Vec<SqlPlan>> {
     let table_name = match &ins.table {
-        ast::TableObject::TableName(name) => normalize_object_name(name),
+        ast::TableObject::TableName(name) => normalize_object_name_checked(name)?,
         ast::TableObject::TableFunction(_) => {
             return Err(SqlError::Unsupported {
                 detail: "INSERT ... ON CONFLICT on a table function is not supported".into(),
@@ -410,11 +420,21 @@ pub fn plan_update(stmt: &ast::Statement, catalog: &dyn SqlCatalog) -> Result<Ve
         .iter()
         .map(|a| {
             let col = match &a.target {
-                ast::AssignmentTarget::ColumnName(name) => normalize_object_name(name),
+                ast::AssignmentTarget::ColumnName(name) => {
+                    // Reject schema-qualified SET targets (e.g. `public.col`).
+                    if name.0.len() > 1 {
+                        return Err(SqlError::Unsupported {
+                            detail: format!(
+                                "qualified column name in SET target: {SCHEMA_QUALIFIED_MSG}"
+                            ),
+                        });
+                    }
+                    normalize_object_name_checked(name)?
+                }
                 ast::AssignmentTarget::Tuple(names) => names
                     .iter()
-                    .map(normalize_object_name)
-                    .collect::<Vec<_>>()
+                    .map(normalize_object_name_checked)
+                    .collect::<Result<Vec<_>>>()?
                     .join(","),
             };
             let val = convert_expr(&a.value)?;
@@ -494,7 +514,7 @@ pub fn plan_truncate_stmt(stmt: &ast::Statement) -> Result<Vec<SqlPlan>> {
         .iter()
         .map(|t| {
             Ok(SqlPlan::Truncate {
-                collection: normalize_object_name(&t.name),
+                collection: normalize_object_name_checked(&t.name)?,
                 restart_identity,
             })
         })

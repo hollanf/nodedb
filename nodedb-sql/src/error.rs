@@ -1,7 +1,7 @@
 //! Error types for the nodedb-sql crate.
 
 /// Errors produced during SQL parsing, resolution, or planning.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 pub enum SqlError {
     #[error("parse error: {detail}")]
     Parse { detail: String },
@@ -33,6 +33,13 @@ pub enum SqlError {
     /// from `SqlCatalogError::RetryableSchemaChanged`.
     #[error("retryable schema change on {descriptor}")]
     RetryableSchemaChanged { descriptor: String },
+
+    /// Identifier is a NodeDB reserved keyword. Use a quoted identifier to bypass.
+    #[error(
+        "identifier '{name}' is reserved by NodeDB ({reason}); \
+         use a quoted identifier (e.g., \"{name}\") to bypass"
+    )]
+    ReservedIdentifier { name: String, reason: &'static str },
 
     /// Collection is soft-deleted (within retention window).
     /// Propagated from `SqlCatalogError::CollectionDeactivated`;

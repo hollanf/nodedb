@@ -40,9 +40,7 @@ use sqlparser::ast;
 pub fn as_usize_literal(value: &ast::Value) -> Option<usize> {
     match value {
         ast::Value::Number(n, _) => n.parse::<usize>().ok(),
-        ast::Value::SingleQuotedString(s) | ast::Value::DoubleQuotedString(s) => {
-            s.parse::<usize>().ok()
-        }
+        ast::Value::SingleQuotedString(s) => s.parse::<usize>().ok(),
         _ => None,
     }
 }
@@ -74,9 +72,7 @@ pub fn expr_as_usize_literal(expr: &ast::Expr) -> Option<usize> {
 pub fn as_f64_literal(value: &ast::Value) -> Option<f64> {
     match value {
         ast::Value::Number(n, _) => n.parse::<f64>().ok(),
-        ast::Value::SingleQuotedString(s) | ast::Value::DoubleQuotedString(s) => {
-            s.parse::<f64>().ok()
-        }
+        ast::Value::SingleQuotedString(s) => s.parse::<f64>().ok(),
         _ => None,
     }
 }

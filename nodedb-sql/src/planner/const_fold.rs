@@ -50,6 +50,7 @@ pub fn fold_constant(expr: &SqlExpr, registry: &FunctionRegistry) -> Option<SqlV
         } => match fold_constant(expr, registry)? {
             SqlValue::Int(i) => Some(SqlValue::Int(-i)),
             SqlValue::Float(f) => Some(SqlValue::Float(-f)),
+            SqlValue::Decimal(d) => Some(SqlValue::Decimal(-d)),
             _ => None,
         },
         SqlExpr::BinaryOp { left, op, right } => {
@@ -64,12 +65,53 @@ pub fn fold_constant(expr: &SqlExpr, registry: &FunctionRegistry) -> Option<SqlV
 
 fn fold_binary(l: SqlValue, op: BinaryOp, r: SqlValue) -> Option<SqlValue> {
     Some(match (l, op, r) {
+        // Int × Int arithmetic.
         (SqlValue::Int(a), BinaryOp::Add, SqlValue::Int(b)) => SqlValue::Int(a.checked_add(b)?),
         (SqlValue::Int(a), BinaryOp::Sub, SqlValue::Int(b)) => SqlValue::Int(a.checked_sub(b)?),
         (SqlValue::Int(a), BinaryOp::Mul, SqlValue::Int(b)) => SqlValue::Int(a.checked_mul(b)?),
+        // Float × Float arithmetic.
         (SqlValue::Float(a), BinaryOp::Add, SqlValue::Float(b)) => SqlValue::Float(a + b),
         (SqlValue::Float(a), BinaryOp::Sub, SqlValue::Float(b)) => SqlValue::Float(a - b),
         (SqlValue::Float(a), BinaryOp::Mul, SqlValue::Float(b)) => SqlValue::Float(a * b),
+        // Decimal × Decimal arithmetic.
+        (SqlValue::Decimal(a), BinaryOp::Add, SqlValue::Decimal(b)) => {
+            SqlValue::Decimal(a.checked_add(b)?)
+        }
+        (SqlValue::Decimal(a), BinaryOp::Sub, SqlValue::Decimal(b)) => {
+            SqlValue::Decimal(a.checked_sub(b)?)
+        }
+        (SqlValue::Decimal(a), BinaryOp::Mul, SqlValue::Decimal(b)) => {
+            SqlValue::Decimal(a.checked_mul(b)?)
+        }
+        (SqlValue::Decimal(a), BinaryOp::Div, SqlValue::Decimal(b)) => {
+            SqlValue::Decimal(a.checked_div(b)?)
+        }
+        // Decimal × Int widening (Int promotes to Decimal).
+        (SqlValue::Decimal(a), BinaryOp::Add, SqlValue::Int(b)) => {
+            SqlValue::Decimal(a.checked_add(rust_decimal::Decimal::from(b))?)
+        }
+        (SqlValue::Int(a), BinaryOp::Add, SqlValue::Decimal(b)) => {
+            SqlValue::Decimal(rust_decimal::Decimal::from(a).checked_add(b)?)
+        }
+        (SqlValue::Decimal(a), BinaryOp::Sub, SqlValue::Int(b)) => {
+            SqlValue::Decimal(a.checked_sub(rust_decimal::Decimal::from(b))?)
+        }
+        (SqlValue::Int(a), BinaryOp::Sub, SqlValue::Decimal(b)) => {
+            SqlValue::Decimal(rust_decimal::Decimal::from(a).checked_sub(b)?)
+        }
+        (SqlValue::Decimal(a), BinaryOp::Mul, SqlValue::Int(b)) => {
+            SqlValue::Decimal(a.checked_mul(rust_decimal::Decimal::from(b))?)
+        }
+        (SqlValue::Int(a), BinaryOp::Mul, SqlValue::Decimal(b)) => {
+            SqlValue::Decimal(rust_decimal::Decimal::from(a).checked_mul(b)?)
+        }
+        (SqlValue::Decimal(a), BinaryOp::Div, SqlValue::Int(b)) => {
+            SqlValue::Decimal(a.checked_div(rust_decimal::Decimal::from(b))?)
+        }
+        (SqlValue::Int(a), BinaryOp::Div, SqlValue::Decimal(b)) => {
+            SqlValue::Decimal(rust_decimal::Decimal::from(a).checked_div(b)?)
+        }
+        // String concat.
         (SqlValue::String(a), BinaryOp::Concat, SqlValue::String(b)) => {
             SqlValue::String(format!("{a}{b}"))
         }
@@ -113,9 +155,12 @@ fn sql_to_ndb_value(v: SqlValue) -> Value {
         SqlValue::Bool(b) => Value::Bool(b),
         SqlValue::Int(i) => Value::Integer(i),
         SqlValue::Float(f) => Value::Float(f),
+        SqlValue::Decimal(d) => Value::Decimal(d),
         SqlValue::String(s) => Value::String(s),
         SqlValue::Bytes(b) => Value::Bytes(b),
         SqlValue::Array(a) => Value::Array(a.into_iter().map(sql_to_ndb_value).collect()),
+        SqlValue::Timestamp(dt) => Value::NaiveDateTime(dt),
+        SqlValue::Timestamptz(dt) => Value::DateTime(dt),
     }
 }
 
@@ -128,10 +173,12 @@ fn ndb_to_sql_value(v: Value) -> SqlValue {
         Value::String(s) => SqlValue::String(s),
         Value::Bytes(b) => SqlValue::Bytes(b),
         Value::Array(a) => SqlValue::Array(a.into_iter().map(ndb_to_sql_value).collect()),
-        Value::DateTime(dt) => SqlValue::String(dt.to_iso8601()),
+        // TZ-aware DateTime → Timestamptz; naive → Timestamp.
+        Value::DateTime(dt) => SqlValue::Timestamptz(dt),
+        Value::NaiveDateTime(dt) => SqlValue::Timestamp(dt),
         Value::Uuid(s) | Value::Ulid(s) | Value::Regex(s) => SqlValue::String(s),
         Value::Duration(d) => SqlValue::String(d.to_human()),
-        Value::Decimal(d) => SqlValue::String(d.to_string()),
+        Value::Decimal(d) => SqlValue::Decimal(d),
         // Structured and opaque types collapse to Null — callers that
         // need these go through the runtime expression path, not folding.
         Value::Object(_)
@@ -148,7 +195,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fold_now_produces_non_epoch_string() {
+    fn fold_now_produces_timestamptz() {
         let registry = FunctionRegistry::new();
         let expr = SqlExpr::Function {
             name: "now".into(),
@@ -157,16 +204,16 @@ mod tests {
         };
         let val = fold_constant(&expr, &registry).expect("now() should fold");
         match val {
-            SqlValue::String(s) => {
-                assert!(!s.starts_with("1970"), "got {s}");
-                assert!(s.contains('T'), "not ISO-8601: {s}");
+            SqlValue::Timestamptz(dt) => {
+                // Sanity: must not be epoch (year 1970).
+                assert!(dt.micros > 0, "expected post-epoch timestamp, got micros=0");
             }
-            other => panic!("expected string, got {other:?}"),
+            other => panic!("expected SqlValue::Timestamptz, got {other:?}"),
         }
     }
 
     #[test]
-    fn fold_current_timestamp() {
+    fn fold_current_timestamp_produces_timestamptz() {
         let registry = FunctionRegistry::new();
         let expr = SqlExpr::Function {
             name: "current_timestamp".into(),
@@ -175,7 +222,7 @@ mod tests {
         };
         assert!(matches!(
             fold_constant(&expr, &registry),
-            Some(SqlValue::String(_))
+            Some(SqlValue::Timestamptz(_))
         ));
     }
 
@@ -209,5 +256,60 @@ mod tests {
             name: "name".into(),
         };
         assert!(fold_constant(&expr, &registry).is_none());
+    }
+
+    #[test]
+    fn fold_decimal_literal() {
+        let registry = FunctionRegistry::new();
+        let d = rust_decimal::Decimal::new(12345, 2); // 123.45
+        let expr = SqlExpr::Literal(SqlValue::Decimal(d));
+        assert_eq!(fold_constant(&expr, &registry), Some(SqlValue::Decimal(d)));
+    }
+
+    #[test]
+    fn fold_decimal_addition() {
+        use rust_decimal::Decimal;
+        let registry = FunctionRegistry::new();
+        let a = Decimal::new(12345, 2); // 123.45
+        let b = Decimal::new(45678, 2); // 456.78
+        let expr = SqlExpr::BinaryOp {
+            left: Box::new(SqlExpr::Literal(SqlValue::Decimal(a))),
+            op: BinaryOp::Add,
+            right: Box::new(SqlExpr::Literal(SqlValue::Decimal(b))),
+        };
+        let expected = Decimal::new(58023, 2); // 580.23
+        assert_eq!(
+            fold_constant(&expr, &registry),
+            Some(SqlValue::Decimal(expected))
+        );
+    }
+
+    #[test]
+    fn fold_decimal_negation() {
+        use rust_decimal::Decimal;
+        let registry = FunctionRegistry::new();
+        let d = Decimal::new(100, 0);
+        let expr = SqlExpr::UnaryOp {
+            op: crate::types::UnaryOp::Neg,
+            expr: Box::new(SqlExpr::Literal(SqlValue::Decimal(d))),
+        };
+        assert_eq!(fold_constant(&expr, &registry), Some(SqlValue::Decimal(-d)));
+    }
+
+    #[test]
+    fn fold_decimal_int_widening() {
+        use rust_decimal::Decimal;
+        let registry = FunctionRegistry::new();
+        let d = Decimal::new(100, 0); // 100
+        let expr = SqlExpr::BinaryOp {
+            left: Box::new(SqlExpr::Literal(SqlValue::Decimal(d))),
+            op: BinaryOp::Add,
+            right: Box::new(SqlExpr::Literal(SqlValue::Int(50))),
+        };
+        let expected = Decimal::new(150, 0);
+        assert_eq!(
+            fold_constant(&expr, &registry),
+            Some(SqlValue::Decimal(expected))
+        );
     }
 }

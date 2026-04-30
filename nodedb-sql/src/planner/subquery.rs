@@ -12,7 +12,7 @@ use sqlparser::ast::{self, Expr, SetExpr};
 
 use crate::error::{Result, SqlError};
 use crate::functions::registry::FunctionRegistry;
-use crate::parser::normalize::normalize_ident;
+use crate::parser::normalize::{SCHEMA_QUALIFIED_MSG, normalize_ident};
 use crate::types::*;
 
 /// Result of extracting subqueries from a WHERE clause.
@@ -160,6 +160,18 @@ fn try_plan_in_subquery(
     // Extract outer column name.
     let outer_col = match outer_expr {
         Expr::Identifier(ident) => normalize_ident(ident),
+        Expr::CompoundIdentifier(parts) if parts.len() >= 3 => {
+            let qualified: String = parts
+                .iter()
+                .map(normalize_ident)
+                .collect::<Vec<_>>()
+                .join(".");
+            return Err(SqlError::Unsupported {
+                detail: format!(
+                    "schema-qualified column reference '{qualified}': {SCHEMA_QUALIFIED_MSG}"
+                ),
+            });
+        }
         Expr::CompoundIdentifier(parts) if parts.len() == 2 => normalize_ident(&parts[1]),
         _ => return Ok(None), // Complex expression, can't rewrite.
     };
@@ -207,6 +219,18 @@ fn extract_single_projected_column(query: &ast::Query) -> Result<String> {
     match &select.projection[0] {
         ast::SelectItem::UnnamedExpr(expr) => match expr {
             Expr::Identifier(ident) => Ok(normalize_ident(ident)),
+            Expr::CompoundIdentifier(parts) if parts.len() >= 3 => {
+                let qualified: String = parts
+                    .iter()
+                    .map(normalize_ident)
+                    .collect::<Vec<_>>()
+                    .join(".");
+                Err(SqlError::Unsupported {
+                    detail: format!(
+                        "schema-qualified column reference '{qualified}': {SCHEMA_QUALIFIED_MSG}"
+                    ),
+                })
+            }
             Expr::CompoundIdentifier(parts) if parts.len() == 2 => Ok(normalize_ident(&parts[1])),
             _ => Err(SqlError::Unsupported {
                 detail: "subquery projection must be a column reference".into(),
@@ -293,8 +317,16 @@ fn extract_correlated_eq(expr: &Expr) -> Option<(String, String)> {
 }
 
 /// Extract table.column from a qualified identifier.
+///
+/// Returns `None` for schema-qualified references (`schema.table.col`) — those
+/// are rejected upstream by `convert_expr` when the expression is fully evaluated.
 fn extract_qualified_column(expr: &Expr) -> Option<(String, String)> {
     match expr {
+        Expr::CompoundIdentifier(parts) if parts.len() >= 3 => {
+            // Schema-qualified: cannot extract table/column sensibly.
+            // convert_expr will reject this path with Unsupported.
+            None
+        }
         Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
             Some((normalize_ident(&parts[0]), normalize_ident(&parts[1])))
         }
@@ -372,6 +404,10 @@ fn extract_scalar_column(query: &ast::Query) -> Option<String> {
         ast::SelectItem::ExprWithAlias { alias, .. } => Some(normalize_ident(alias)),
         ast::SelectItem::UnnamedExpr(expr) => match expr {
             Expr::Identifier(ident) => Some(normalize_ident(ident)),
+            Expr::CompoundIdentifier(parts) if parts.len() >= 3 => {
+                // Schema-qualified: return None to propagate "unsupported" through convert_expr.
+                None
+            }
             Expr::CompoundIdentifier(parts) if parts.len() == 2 => Some(normalize_ident(&parts[1])),
             Expr::Function(func) => {
                 let func_name = func
@@ -393,6 +429,9 @@ fn extract_scalar_column(query: &ast::Query) -> Option<String> {
                             ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
                                 Expr::Identifier(ident),
                             )) => Some(normalize_ident(ident)),
+                            ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
+                                Expr::CompoundIdentifier(parts),
+                            )) if parts.len() >= 3 => None,
                             ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
                                 Expr::CompoundIdentifier(parts),
                             )) if parts.len() == 2 => Some(normalize_ident(&parts[1])),

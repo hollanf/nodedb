@@ -75,10 +75,10 @@ fn extract_join_constraint(constraint: &ast::JoinConstraint) -> Result<JoinConst
             let keys = columns
                 .iter()
                 .map(|c| {
-                    let name = crate::parser::normalize::normalize_object_name(c);
-                    (name.clone(), name)
+                    let name = crate::parser::normalize::normalize_object_name_checked(c)?;
+                    Ok((name.clone(), name))
                 })
-                .collect();
+                .collect::<Result<Vec<_>>>()?;
             Ok((keys, None))
         }
         ast::JoinConstraint::Natural => Err(SqlError::Unsupported {
@@ -125,13 +125,16 @@ fn extract_equi_keys(
 fn extract_col_ref(expr: &ast::Expr) -> Option<String> {
     match expr {
         ast::Expr::Identifier(ident) => Some(normalize_ident(ident)),
-        ast::Expr::CompoundIdentifier(parts) if !parts.is_empty() => Some(
-            parts
-                .iter()
-                .map(normalize_ident)
-                .collect::<Vec<_>>()
-                .join("."),
-        ),
+        // Two-part: table.column — preserve the qualified form as the join key.
+        ast::Expr::CompoundIdentifier(parts) if parts.len() == 2 => Some(format!(
+            "{}.{}",
+            normalize_ident(&parts[0]),
+            normalize_ident(&parts[1])
+        )),
+        // Three or more parts: schema.table.column — reject by returning None;
+        // the caller will push the expression into non_equi which convert_expr
+        // then rejects with SqlError::Unsupported.
+        ast::Expr::CompoundIdentifier(_) => None,
         _ => None,
     }
 }

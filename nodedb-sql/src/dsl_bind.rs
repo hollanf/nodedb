@@ -116,7 +116,11 @@ fn placeholder_literal_token(placeholder: &str, params: &[ParamValue]) -> Option
         ParamValue::Bool(false) => Token::make_keyword("FALSE"),
         ParamValue::Int64(n) => Token::Number(n.to_string(), false),
         ParamValue::Float64(f) => Token::Number(f.to_string(), false),
+        ParamValue::Decimal(d) => Token::Number(d.to_string(), false),
         ParamValue::Text(s) => Token::SingleQuotedString(s.clone()),
+        ParamValue::Timestamp(dt) | ParamValue::Timestamptz(dt) => {
+            Token::SingleQuotedString(dt.to_iso8601())
+        }
     })
 }
 

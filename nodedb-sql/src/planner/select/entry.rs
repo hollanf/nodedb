@@ -14,7 +14,7 @@ use crate::functions::registry::{FunctionRegistry, SearchTrigger};
 use crate::parser::normalize::normalize_ident;
 use crate::resolver::expr::convert_expr;
 use crate::temporal::TemporalScope;
-use crate::types::{Projection, SqlExpr, *};
+use crate::types::{DistanceMetric, Projection, SqlExpr, *};
 
 /// Default `ef_search` multiplier applied when the user has not supplied
 /// `ef_search_override` in the `vector_distance` options. Wider beams trade
@@ -41,11 +41,14 @@ fn is_pure_vector_projection(projection: &[Projection]) -> bool {
                 }
             }
             Projection::Computed { expr, .. } => {
-                // Accept vector_distance(...) calls only.
+                // Accept any of the three vector distance function names.
                 let SqlExpr::Function { name, .. } = expr else {
                     return false;
                 };
-                if !name.eq_ignore_ascii_case("vector_distance") {
+                if !name.eq_ignore_ascii_case("vector_distance")
+                    && !name.eq_ignore_ascii_case("vector_cosine_distance")
+                    && !name.eq_ignore_ascii_case("vector_neg_inner_product")
+                {
                     return false;
                 }
             }
@@ -375,6 +378,22 @@ fn apply_order_by(
     }
 }
 
+/// Map a vector distance function name to its `DistanceMetric`.
+///
+/// - `vector_distance`        → `L2` (pgvector `<->` convention)
+/// - `vector_cosine_distance` → `Cosine`
+/// - `vector_neg_inner_product` → `InnerProduct`
+/// - anything else (unexpected) → `L2` as safe default
+fn metric_from_func_name(name: &str) -> DistanceMetric {
+    if name.eq_ignore_ascii_case("vector_cosine_distance") {
+        DistanceMetric::Cosine
+    } else if name.eq_ignore_ascii_case("vector_neg_inner_product") {
+        DistanceMetric::InnerProduct
+    } else {
+        DistanceMetric::L2
+    }
+}
+
 /// Try to detect search-triggering ORDER BY expressions.
 fn try_extract_sort_search(
     expr: &ast::Expr,
@@ -401,6 +420,10 @@ fn try_extract_sort_search(
             _ => return Ok(None),
         };
         let args = extract_func_args(func)?;
+        let raw_func_args: &[ast::FunctionArg] = match &func.args {
+            ast::FunctionArguments::List(list) => &list.args,
+            _ => &[],
+        };
 
         match functions.search_trigger(&name) {
             SearchTrigger::VectorSearch => {
@@ -409,7 +432,7 @@ fn try_extract_sort_search(
                 }
                 let field = extract_column_name(&args[0])?;
                 let vector = extract_float_array(&args[1])?;
-                let ann_options = parse_ann_options(args.get(2))?;
+                let ann_options = parse_ann_options(raw_func_args)?;
                 let limit = match plan {
                     SqlPlan::Scan { limit, .. } => limit.unwrap_or(10),
                     SqlPlan::Join { limit, .. } => *limit,
@@ -418,12 +441,14 @@ fn try_extract_sort_search(
                 let ef_search = ann_options
                     .ef_search_override
                     .unwrap_or(limit * DEFAULT_EF_SEARCH_MULTIPLIER);
+                let metric = metric_from_func_name(&name);
                 return Ok(Some(SqlPlan::VectorSearch {
                     collection,
                     field,
                     query_vector: vector,
                     top_k: limit,
                     ef_search,
+                    metric,
                     filters: match plan {
                         SqlPlan::Scan { filters, .. } => filters.clone(),
                         _ => Vec::new(),
@@ -445,9 +470,11 @@ fn try_extract_sort_search(
                 };
                 return Ok(Some(SqlPlan::TextSearch {
                     collection,
-                    query: query_text,
+                    query: crate::fts_types::FtsQuery::Plain {
+                        text: query_text,
+                        fuzzy: true,
+                    },
                     top_k: limit,
-                    fuzzy: true,
                     filters: match plan {
                         SqlPlan::Scan { filters, .. } => filters.clone(),
                         _ => Vec::new(),

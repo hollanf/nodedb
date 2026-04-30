@@ -25,7 +25,7 @@ pub fn try_plan_array_maint_fn(
         } => f,
         _ => return Ok(None),
     };
-    let fn_name = crate::parser::normalize::normalize_object_name(&func.name);
+    let fn_name = crate::parser::normalize::normalize_object_name_checked(&func.name)?;
     let arg_exprs = match &func.args {
         ast::FunctionArguments::List(list) => collect_args(&list.args),
         _ => Vec::new(),

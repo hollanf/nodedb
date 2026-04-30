@@ -5,7 +5,7 @@
 use sqlparser::ast;
 
 use crate::error::{Result, SqlError};
-use crate::parser::normalize::{normalize_ident, normalize_object_name};
+use crate::parser::normalize::{normalize_ident, normalize_object_name_checked};
 use crate::resolver::expr::convert_value;
 use crate::types::*;
 
@@ -38,6 +38,7 @@ pub(super) fn expr_to_sql_value(expr: &ast::Expr) -> Result<SqlValue> {
             match val {
                 SqlValue::Int(n) => Ok(SqlValue::Int(-n)),
                 SqlValue::Float(f) => Ok(SqlValue::Float(-f)),
+                SqlValue::Decimal(d) => Ok(SqlValue::Decimal(-d)),
                 _ => Err(SqlError::TypeMismatch {
                     detail: "cannot negate non-numeric value".into(),
                 }),
@@ -102,7 +103,7 @@ pub(super) fn extract_table_name_from_table_with_joins(
     table: &ast::TableWithJoins,
 ) -> Result<String> {
     match &table.relation {
-        ast::TableFactor::Table { name, .. } => Ok(normalize_object_name(name)),
+        ast::TableFactor::Table { name, .. } => Ok(normalize_object_name_checked(name)?),
         _ => Err(SqlError::Unsupported {
             detail: "non-table target in DML".into(),
         }),
@@ -172,6 +173,8 @@ fn collect_pk_equalities(expr: &ast::Expr, pk: &str, keys: &mut Vec<SqlValue>) {
 fn is_column(expr: &ast::Expr, name: &str) -> bool {
     match expr {
         ast::Expr::Identifier(ident) => normalize_ident(ident) == name,
+        // Three or more parts: schema.table.col — never matches a plain pk name.
+        ast::Expr::CompoundIdentifier(parts) if parts.len() >= 3 => false,
         ast::Expr::CompoundIdentifier(parts) if parts.len() == 2 => {
             normalize_ident(&parts[1]) == name
         }

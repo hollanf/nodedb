@@ -6,7 +6,7 @@ use sqlparser::ast;
 use nodedb_types::Value;
 
 use crate::error::{Result, SqlError};
-use crate::parser::normalize::normalize_ident;
+use crate::parser::normalize::{SCHEMA_QUALIFIED_MSG, normalize_ident};
 use crate::types::SqlCatalog;
 use crate::types_array::ArrayCoordLiteral;
 
@@ -30,11 +30,18 @@ pub(super) fn require_array_name(
     })?;
     let name = match expr {
         ast::Expr::Identifier(ident) => normalize_ident(ident),
-        ast::Expr::CompoundIdentifier(parts) => parts
-            .iter()
-            .map(normalize_ident)
-            .collect::<Vec<_>>()
-            .join("."),
+        ast::Expr::CompoundIdentifier(parts) if parts.len() >= 2 => {
+            let qualified: String = parts
+                .iter()
+                .map(normalize_ident)
+                .collect::<Vec<_>>()
+                .join(".");
+            return Err(SqlError::Unsupported {
+                detail: format!(
+                    "schema-qualified array name '{qualified}': {SCHEMA_QUALIFIED_MSG}"
+                ),
+            });
+        }
         _ => expect_string_literal(expr, &format!("{fn_name} array name"))?,
     };
     if !catalog.array_exists(&name) {
@@ -48,7 +55,7 @@ pub(super) fn require_array_name(
 pub(super) fn expect_string_literal(expr: &ast::Expr, ctx: &str) -> Result<String> {
     match expr {
         ast::Expr::Value(v) => match &v.value {
-            ast::Value::SingleQuotedString(s) | ast::Value::DoubleQuotedString(s) => Ok(s.clone()),
+            ast::Value::SingleQuotedString(s) => Ok(s.clone()),
             other => Err(SqlError::Unsupported {
                 detail: format!("{ctx}: expected string literal, got {other}"),
             }),
@@ -81,7 +88,9 @@ pub(super) fn expect_string_array(expr: &ast::Expr, ctx: &str) -> Result<Vec<Str
         ast::Expr::Array(arr) => arr.elem.clone(),
         ast::Expr::Function(f)
             if matches!(
-                crate::parser::normalize::normalize_object_name(&f.name).as_str(),
+                crate::parser::normalize::normalize_object_name_checked(&f.name)
+                    .as_deref()
+                    .unwrap_or(""),
                 "make_array" | "array"
             ) =>
         {
