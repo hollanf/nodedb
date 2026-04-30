@@ -3,6 +3,7 @@ pub mod client;
 pub mod config;
 pub mod credentials;
 pub mod peer_identity_verifier;
+pub mod pinned_verifier;
 pub mod server;
 
 pub use auth_context::AuthContext;
@@ -13,6 +14,7 @@ pub use config::{
     generate_node_credentials_multi_san, issue_leaf_for_sans, load_crls_from_pem,
     make_raft_client_config_mtls, make_raft_server_config_mtls,
 };
+pub use pinned_verifier::{PinnedClientVerifier, PinnedServerVerifier};
 
 /// Re-exported PKI types used in the public shape of [`TlsCredentials`].
 ///

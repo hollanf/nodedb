@@ -95,11 +95,11 @@ pub use rpc_codec::{MacKey, RaftRpc};
 pub use topology::{ClusterTopology, NodeInfo, NodeState};
 pub use transport::{
     IDENTITY_MISMATCH_QUIC_ERROR, NexarTransport, NoopIdentityStore, PeerIdentityStore,
-    RaftRpcHandler, TlsCredentials, TransportCredentials, TransportPeerSnapshot, VerifyMethod,
-    VerifyOutcome, ca_fingerprint, ca_fingerprint_hex, generate_node_credentials,
-    generate_node_credentials_multi_san, insecure_transport_count, issue_leaf_for_sans,
-    load_crls_from_pem, make_raft_client_config_mtls, make_raft_server_config_mtls,
-    spki_pin_from_cert_der,
+    PinnedClientVerifier, PinnedServerVerifier, RaftRpcHandler, TlsCredentials,
+    TransportCredentials, TransportPeerSnapshot, VerifyMethod, VerifyOutcome, ca_fingerprint,
+    ca_fingerprint_hex, generate_node_credentials, generate_node_credentials_multi_san,
+    insecure_transport_count, issue_leaf_for_sans, load_crls_from_pem,
+    make_raft_client_config_mtls, make_raft_server_config_mtls, spki_pin_from_cert_der,
 };
 pub use wire::VShardEnvelope;
 

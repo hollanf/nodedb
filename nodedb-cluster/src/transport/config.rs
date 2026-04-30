@@ -7,6 +7,8 @@ use std::time::Duration;
 use nodedb_types::config::tuning::ClusterTransportTuning;
 
 use crate::error::{ClusterError, Result};
+use crate::transport::pinned_verifier::{PinnedClientVerifier, PinnedServerVerifier};
+use crate::transport::server::PeerIdentityStore;
 
 /// Install rustls' `ring` CryptoProvider exactly once per process.
 ///
@@ -171,9 +173,15 @@ pub struct TlsCredentials {
 /// Build a QUIC server config with mutual TLS (production mode).
 ///
 /// Requires connecting clients to present a certificate signed by the cluster CA.
+/// When `identity_store` contains topology entries, the `PinnedClientVerifier`
+/// wraps the WebPki chain verifier and additionally checks the connecting
+/// client's SPKI fingerprint or SPIFFE URI SAN against the topology pin.
+/// Connections from nodes not yet in the topology are accepted in the bootstrap
+/// window (defense-in-depth: `verify_peer_identity` at the app layer also fires).
 pub fn make_raft_server_config_mtls(
     creds: &TlsCredentials,
     tuning: &ClusterTransportTuning,
+    identity_store: Arc<dyn PeerIdentityStore>,
 ) -> Result<quinn::ServerConfig> {
     ensure_rustls_crypto_provider();
     let mut root_store = rustls::RootCertStore::empty();
@@ -201,11 +209,16 @@ pub fn make_raft_server_config_mtls(
         verifier_builder = verifier_builder.with_crls(vec![crl.clone()]);
     }
 
-    let client_verifier = verifier_builder
+    let inner_verifier = verifier_builder
         .build()
         .map_err(|e| ClusterError::Transport {
             detail: format!("build client verifier: {e}"),
         })?;
+
+    let pinned_verifier = Arc::new(PinnedClientVerifier {
+        inner: inner_verifier,
+        identity_store,
+    });
 
     let provider = rustls::crypto::ring::default_provider();
     let mut tls_config = rustls::ServerConfig::builder_with_provider(Arc::new(provider))
@@ -213,7 +226,7 @@ pub fn make_raft_server_config_mtls(
         .map_err(|e| ClusterError::Transport {
             detail: format!("server TLS protocol versions: {e}"),
         })?
-        .with_client_cert_verifier(client_verifier)
+        .with_client_cert_verifier(pinned_verifier)
         .with_single_cert(vec![creds.cert.clone()], creds.key.clone_key())
         .map_err(|e| ClusterError::Transport {
             detail: format!("mTLS server config: {e}"),
@@ -234,9 +247,14 @@ pub fn make_raft_server_config_mtls(
 /// Build a QUIC client config with mutual TLS (production mode).
 ///
 /// Verifies server cert and presents client cert, both signed by cluster CA.
+/// When `identity_store` contains topology entries, the `PinnedServerVerifier`
+/// wraps the standard WebPki verifier and additionally checks the server's SPKI
+/// fingerprint or SPIFFE URI SAN against the pinned topology entry, if any.
+/// Unknown server SPKI is accepted (bootstrap window).
 pub fn make_raft_client_config_mtls(
     creds: &TlsCredentials,
     tuning: &ClusterTransportTuning,
+    identity_store: Arc<dyn PeerIdentityStore>,
 ) -> Result<quinn::ClientConfig> {
     ensure_rustls_crypto_provider();
     let mut root_store = rustls::RootCertStore::empty();
@@ -258,12 +276,30 @@ pub fn make_raft_client_config_mtls(
     }
 
     let provider = rustls::crypto::ring::default_provider();
-    let mut tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(provider))
+
+    // Build the WebPki-backed inner verifier that validates chain, expiry, and revocation.
+    let inner_webpki = rustls::client::WebPkiServerVerifier::builder_with_provider(
+        Arc::new(root_store),
+        Arc::new(provider),
+    )
+    .build()
+    .map_err(|e| ClusterError::Transport {
+        detail: format!("build server verifier: {e}"),
+    })?;
+
+    let pinned_verifier = Arc::new(PinnedServerVerifier {
+        inner: inner_webpki,
+        identity_store,
+    });
+
+    let provider2 = rustls::crypto::ring::default_provider();
+    let mut tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(provider2))
         .with_safe_default_protocol_versions()
         .map_err(|e| ClusterError::Transport {
             detail: format!("client TLS protocol versions: {e}"),
         })?
-        .with_root_certificates(root_store)
+        .dangerous()
+        .with_custom_certificate_verifier(pinned_verifier)
         .with_client_auth_cert(vec![creds.cert.clone()], creds.key.clone_key())
         .map_err(|e| ClusterError::Transport {
             detail: format!("mTLS client config: {e}"),

@@ -66,6 +66,15 @@ pub enum ClusterError {
     #[error("codec error: {detail}")]
     Codec { detail: String },
 
+    #[error(
+        "unsupported wire version: got {got}, this node accepts [{supported_min}..={supported_max}]"
+    )]
+    UnsupportedWireVersion {
+        got: u8,
+        supported_min: u8,
+        supported_max: u8,
+    },
+
     #[error("circuit open for node {node_id}: peer has {failures} consecutive failures")]
     CircuitOpen { node_id: u64, failures: u32 },
 

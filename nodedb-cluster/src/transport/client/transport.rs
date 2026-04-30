@@ -13,6 +13,7 @@ use crate::error::{ClusterError, Result};
 use crate::transport::auth_context::AuthContext;
 use crate::transport::config;
 use crate::transport::credentials::{self, TransportCredentials};
+use crate::transport::server::{NoopIdentityStore, PeerIdentityStore};
 
 /// QUIC-based Raft transport with retry and circuit breaker.
 ///
@@ -53,6 +54,10 @@ impl NexarTransport {
     /// [`TransportCredentials`]. Uses `ClusterTransportTuning::default()`
     /// for all QUIC and RPC settings. Prefer [`NexarTransport::with_tuning`]
     /// in production to read values from the server's `TuningConfig`.
+    ///
+    /// Uses [`NoopIdentityStore`] for TLS-layer SPKI pinning, which accepts
+    /// all CA-signed certs in the bootstrap window. For production clusters
+    /// with an active topology, use [`NexarTransport::with_tuning_and_identity`].
     pub fn new(node_id: u64, listen_addr: SocketAddr, creds: TransportCredentials) -> Result<Self> {
         Self::with_timeout(node_id, listen_addr, config::DEFAULT_RPC_TIMEOUT, creds)
     }
@@ -61,6 +66,7 @@ impl NexarTransport {
     ///
     /// `creds` selects channel-level authentication. Uses
     /// `ClusterTransportTuning::default()` for all QUIC settings.
+    /// Uses [`NoopIdentityStore`] for TLS-layer SPKI pinning.
     pub fn with_timeout(
         node_id: u64,
         listen_addr: SocketAddr,
@@ -68,7 +74,14 @@ impl NexarTransport {
         creds: TransportCredentials,
     ) -> Result<Self> {
         let defaults = ClusterTransportTuning::default();
-        Self::build(node_id, listen_addr, rpc_timeout, &defaults, creds)
+        Self::build(
+            node_id,
+            listen_addr,
+            rpc_timeout,
+            &defaults,
+            creds,
+            Arc::new(NoopIdentityStore),
+        )
     }
 
     /// Create a new transport using values from `ClusterTransportTuning`.
@@ -77,6 +90,9 @@ impl NexarTransport {
     /// the RPC timeout are read from `tuning`. `creds` selects channel-level
     /// authentication. Use this in production so that operators can override
     /// defaults via the `[tuning.cluster_transport]` section of `config.toml`.
+    ///
+    /// Uses [`NoopIdentityStore`] for TLS-layer SPKI pinning. For a fully
+    /// pinned production cluster, use [`NexarTransport::with_tuning_and_identity`].
     pub fn with_tuning(
         node_id: u64,
         listen_addr: SocketAddr,
@@ -84,7 +100,40 @@ impl NexarTransport {
         creds: TransportCredentials,
     ) -> Result<Self> {
         let rpc_timeout = Duration::from_secs(tuning.rpc_timeout_secs);
-        Self::build(node_id, listen_addr, rpc_timeout, tuning, creds)
+        Self::build(
+            node_id,
+            listen_addr,
+            rpc_timeout,
+            tuning,
+            creds,
+            Arc::new(NoopIdentityStore),
+        )
+    }
+
+    /// Create a new transport using tuning and an explicit identity store for
+    /// TLS-layer SPKI/SPIFFE pinning.
+    ///
+    /// Pass the cluster topology (wrapped as `Arc<dyn PeerIdentityStore>`) to
+    /// enable per-node cert pinning at the TLS handshake layer. The pinning is
+    /// additive: the WebPki chain verifier (CA trust, expiry, CRL) still runs
+    /// first, and the SPKI check fires only when a topology entry exists for
+    /// the connecting peer's cert.
+    pub fn with_tuning_and_identity(
+        node_id: u64,
+        listen_addr: SocketAddr,
+        tuning: &ClusterTransportTuning,
+        creds: TransportCredentials,
+        identity_store: Arc<dyn PeerIdentityStore>,
+    ) -> Result<Self> {
+        let rpc_timeout = Duration::from_secs(tuning.rpc_timeout_secs);
+        Self::build(
+            node_id,
+            listen_addr,
+            rpc_timeout,
+            tuning,
+            creds,
+            identity_store,
+        )
     }
 
     /// Internal assembly shared by every constructor.
@@ -94,11 +143,12 @@ impl NexarTransport {
         rpc_timeout: Duration,
         tuning: &ClusterTransportTuning,
         creds: TransportCredentials,
+        identity_store: Arc<dyn PeerIdentityStore>,
     ) -> Result<Self> {
         let (server_config, client_config) = match &creds {
             TransportCredentials::Mtls(tls) => (
-                config::make_raft_server_config_mtls(tls, tuning)?,
-                config::make_raft_client_config_mtls(tls, tuning)?,
+                config::make_raft_server_config_mtls(tls, tuning, Arc::clone(&identity_store))?,
+                config::make_raft_client_config_mtls(tls, tuning, Arc::clone(&identity_store))?,
             ),
             TransportCredentials::Insecure => {
                 credentials::announce_insecure_transport(node_id);
