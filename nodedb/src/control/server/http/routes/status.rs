@@ -1,6 +1,6 @@
 //! Cluster/node status endpoint.
 //!
-//! GET /status — returns node and cluster health information.
+//! GET /v1/status — returns node and cluster health information.
 
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -8,7 +8,7 @@ use axum::response::IntoResponse;
 
 use crate::control::server::http::auth::{ApiError, AppState, resolve_identity};
 
-/// GET /status
+/// GET /v1/status
 ///
 /// Returns node status, cluster topology (if clustered), and resource usage.
 /// Requires authentication (any valid identity).

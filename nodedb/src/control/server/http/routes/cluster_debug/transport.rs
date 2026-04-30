@@ -1,4 +1,4 @@
-//! `GET /cluster/debug/transport` — dump the QUIC transport's
+//! `GET /v1/cluster/debug/transport` — dump the QUIC transport's
 //! connection cache + per-peer circuit-breaker state.
 
 use axum::extract::State;

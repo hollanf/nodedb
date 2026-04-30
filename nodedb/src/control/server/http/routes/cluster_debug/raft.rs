@@ -1,4 +1,4 @@
-//! `GET /cluster/debug/raft/{group_id}` — dump the Raft state for one
+//! `GET /v1/cluster/debug/raft/{group_id}` — dump the Raft state for one
 //! group from the node-local `raft_status_fn`.
 //!
 //! The status closure is published by `control::cluster::start_raft`

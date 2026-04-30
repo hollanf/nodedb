@@ -1,6 +1,6 @@
 //! Cluster observability endpoint.
 //!
-//! `GET /cluster/status` returns a full JSON snapshot of the
+//! `GET /v1/cluster/status` returns a full JSON snapshot of the
 //! cluster's observability surface — lifecycle phase, every known
 //! peer, every Raft group hosted on this node — sourced from the
 //! `ClusterObserver` published by `control::cluster::start_raft`.
@@ -15,7 +15,7 @@ use axum::response::{IntoResponse, Response};
 
 use super::super::auth::{AppState, ResolvedIdentity};
 
-/// `GET /cluster/status` — full observability snapshot.
+/// `GET /v1/cluster/status` — full observability snapshot.
 ///
 /// Requires authentication — cluster metadata (peer addresses, Raft group
 /// membership, shard topology) must not leak to unauthenticated callers.
@@ -39,7 +39,7 @@ pub async fn cluster_status(
         }
         None => json_response(
             StatusCode::SERVICE_UNAVAILABLE,
-            r#"{"error":"cluster mode not enabled","detail":"this node is running in single-node mode; /cluster/status requires a [cluster] config section"}"#
+            r#"{"error":"cluster mode not enabled","detail":"this node is running in single-node mode; /v1/cluster/status requires a [cluster] config section"}"#
                 .to_string(),
         ),
     }

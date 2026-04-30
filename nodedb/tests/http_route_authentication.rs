@@ -10,7 +10,7 @@
 //!   * `/ws` (WebSocket RPC) hardcoded `tenant_id = 1`
 //!   * `/v1/streams/{s}/poll`, `/v1/streams/{s}/events` read
 //!     `tenant_id` from the query string
-//!   * `/cdc/{collection}`, `/cdc/{collection}/poll` same
+//!   * `/v1/cdc/{collection}`, `/v1/cdc/{collection}/poll` same
 //!   * `/cluster/status` performed no auth at all (admin info leak)
 //!   * `/obsv/api/v1/*` (PromQL) performed no auth; remote_write
 //!     hardcoded `tenant_id = 1`
@@ -177,7 +177,7 @@ async fn ws_upgrade_refused_without_bearer_token() {
     // state is attached. Post-upgrade "reject the first message" is not
     // sufficient: the handler is already running, the tenant is already pinned.
     let srv = start_http(AuthMode::Password).await;
-    let url = format!("ws://{}/ws", srv.local_addr);
+    let url = format!("ws://{}/v1/ws", srv.local_addr);
     let result = tokio_tungstenite::connect_async(&url).await;
     assert!(
         result.is_err(),
@@ -192,7 +192,7 @@ async fn ws_live_on_unauthenticated_socket_registers_no_subscription() {
     // escape hatch, future middleware bug), a `live` method without prior
     // successful `auth` must not register a change-stream subscription.
     let srv = start_http(AuthMode::Password).await;
-    let url = format!("ws://{}/ws", srv.local_addr);
+    let url = format!("ws://{}/v1/ws", srv.local_addr);
     let Ok((mut ws, _)) = tokio_tungstenite::connect_async(&url).await else {
         // Upgrade refused — upstream guard caught it. Subscription count
         // must trivially still be zero.
@@ -213,12 +213,12 @@ async fn ws_live_on_unauthenticated_socket_registers_no_subscription() {
     );
 }
 
-// ─── /cdc/{collection} (SSE) and /cdc/{collection}/poll ─────────────────────
+// ─── /v1/cdc/{collection} (SSE) and /v1/cdc/{collection}/poll ───────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cdc_sse_stream_rejects_missing_bearer_token() {
     let srv = start_http(AuthMode::Password).await;
-    let url = format!("http://{}/cdc/orders", srv.local_addr);
+    let url = format!("http://{}/v1/cdc/orders", srv.local_addr);
     let resp = reqwest::Client::new().get(&url).send().await.unwrap();
     assert_eq!(
         resp.status(),
@@ -230,7 +230,7 @@ async fn cdc_sse_stream_rejects_missing_bearer_token() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cdc_sse_stream_rejects_cross_tenant_tenant_id_parameter() {
     let srv = start_http(AuthMode::Trust).await;
-    let url = format!("http://{}/cdc/orders?tenant_id=42", srv.local_addr);
+    let url = format!("http://{}/v1/cdc/orders?tenant_id=42", srv.local_addr);
     let resp = reqwest::Client::new().get(&url).send().await.unwrap();
     assert!(
         is_unauthorized_ish(resp.status()),
@@ -242,7 +242,7 @@ async fn cdc_sse_stream_rejects_cross_tenant_tenant_id_parameter() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cdc_poll_changes_rejects_missing_bearer_token() {
     let srv = start_http(AuthMode::Password).await;
-    let url = format!("http://{}/cdc/orders/poll", srv.local_addr);
+    let url = format!("http://{}/v1/cdc/orders/poll", srv.local_addr);
     let resp = reqwest::Client::new().get(&url).send().await.unwrap();
     assert_eq!(
         resp.status(),
@@ -251,12 +251,12 @@ async fn cdc_poll_changes_rejects_missing_bearer_token() {
     );
 }
 
-// ─── /cluster/status (admin info leak) ───────────────────────────────────────
+// ─── /v1/cluster/status (admin info leak) ───────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cluster_status_rejects_missing_bearer_token() {
     let srv = start_http(AuthMode::Password).await;
-    let url = format!("http://{}/cluster/status", srv.local_addr);
+    let url = format!("http://{}/v1/cluster/status", srv.local_addr);
     let resp = reqwest::Client::new().get(&url).send().await.unwrap();
     assert_eq!(
         resp.status(),
@@ -266,7 +266,7 @@ async fn cluster_status_rejects_missing_bearer_token() {
     );
 }
 
-// ─── /obsv/api/v1/* (PromQL) ────────────────────────────────────────────────
+// ─── /v1/obsv/api/v1/* (PromQL) ──────────────────────────────────────────────
 
 #[cfg(feature = "promql")]
 mod promql {
@@ -289,13 +289,13 @@ mod promql {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn promql_instant_query_rejects_missing_bearer() {
-        expect_401("/obsv/api/v1/query?query=up", reqwest::Method::GET).await;
+        expect_401("/v1/obsv/api/v1/query?query=up", reqwest::Method::GET).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn promql_range_query_rejects_missing_bearer() {
         expect_401(
-            "/obsv/api/v1/query_range?query=up&start=0&end=1&step=1",
+            "/v1/obsv/api/v1/query_range?query=up&start=0&end=1&step=1",
             reqwest::Method::GET,
         )
         .await;
@@ -303,38 +303,38 @@ mod promql {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn promql_series_rejects_missing_bearer() {
-        expect_401("/obsv/api/v1/series", reqwest::Method::GET).await;
+        expect_401("/v1/obsv/api/v1/series", reqwest::Method::GET).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn promql_label_names_rejects_missing_bearer() {
-        expect_401("/obsv/api/v1/labels", reqwest::Method::GET).await;
+        expect_401("/v1/obsv/api/v1/labels", reqwest::Method::GET).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn promql_label_values_rejects_missing_bearer() {
-        expect_401("/obsv/api/v1/label/job/values", reqwest::Method::GET).await;
+        expect_401("/v1/obsv/api/v1/label/job/values", reqwest::Method::GET).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn promql_metadata_rejects_missing_bearer() {
-        expect_401("/obsv/api/v1/metadata", reqwest::Method::GET).await;
+        expect_401("/v1/obsv/api/v1/metadata", reqwest::Method::GET).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn promql_remote_write_rejects_missing_bearer() {
         // remote_write is the worst: hardcodes tenant=1 AND accepts writes.
-        expect_401("/obsv/api/v1/write", reqwest::Method::POST).await;
+        expect_401("/v1/obsv/api/v1/write", reqwest::Method::POST).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn promql_remote_read_rejects_missing_bearer() {
-        expect_401("/obsv/api/v1/read", reqwest::Method::POST).await;
+        expect_401("/v1/obsv/api/v1/read", reqwest::Method::POST).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn promql_annotations_rejects_missing_bearer() {
-        expect_401("/obsv/api/v1/annotations", reqwest::Method::POST).await;
+        expect_401("/v1/obsv/api/v1/annotations", reqwest::Method::POST).await;
     }
 }
 

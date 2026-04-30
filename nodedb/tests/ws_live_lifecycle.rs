@@ -117,7 +117,7 @@ async fn ws_disconnect_drops_active_subscriptions() {
     assert_eq!(shared.change_stream.subscriber_count(), 0);
 
     // Open a WS connection, register 5 LIVE subscriptions.
-    let url = format!("ws://{local_addr}/ws");
+    let url = format!("ws://{local_addr}/v1/ws");
     let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
     for i in 0..5 {
         let sql = format!(r#"LIVE SELECT * FROM orders_{i}"#);

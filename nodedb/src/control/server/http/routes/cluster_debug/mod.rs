@@ -1,4 +1,4 @@
-//! `/cluster/debug/*` authenticated dev-ops endpoints (J.5).
+//! `/v1/cluster/debug/*` authenticated dev-ops endpoints (J.5).
 //!
 //! Each handler dumps a different slice of in-memory cluster state:
 //!

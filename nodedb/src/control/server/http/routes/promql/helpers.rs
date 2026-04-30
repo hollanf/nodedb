@@ -82,16 +82,16 @@ pub async fn fetch_series_for_query(
                 sys.active_connections.load(Ordering::Relaxed) as f64,
             ),
             (
-                "nodedb_wal_fsync_latency_us",
-                sys.wal_fsync_latency_micros.load(Ordering::Relaxed) as f64,
+                "nodedb_wal_fsync_latency_seconds",
+                sys.wal_fsync_latency_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
             ),
             (
                 "nodedb_raft_apply_lag",
                 sys.raft_apply_lag.load(Ordering::Relaxed) as f64,
             ),
             (
-                "nodedb_bridge_utilization",
-                sys.bridge_utilization.load(Ordering::Relaxed) as f64,
+                "nodedb_bridge_utilization_ratio",
+                sys.bridge_utilization.load(Ordering::Relaxed) as f64 / 100.0,
             ),
             (
                 "nodedb_compaction_debt",

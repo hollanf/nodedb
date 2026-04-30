@@ -1,4 +1,4 @@
-//! `GET /cluster/debug/catalog/descriptors` — snapshot of the
+//! `GET /v1/cluster/debug/catalog/descriptors` — snapshot of the
 //! replicated `MetadataCache`.
 //!
 //! The cache itself isn't `Serialize` (it owns `HashMap<..., Lease>`

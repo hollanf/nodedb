@@ -1,7 +1,7 @@
 //! Opaque session handle HTTP endpoint.
 //!
 //! ```text
-//! POST /api/auth/session
+//! POST /v1/auth/session
 //! Authorization: Bearer <jwt-or-api-key>
 //!
 //! Response: { "session_id": "nds_...", "expires_in": 3600 }
@@ -22,8 +22,9 @@ use axum::response::IntoResponse;
 use crate::control::security::session_handle::ClientFingerprint;
 
 use super::super::auth::{ApiError, AppState, resolve_auth};
+use super::super::types::{HttpSessionResponse, HttpStatusOk};
 
-/// `POST /api/auth/session` — Create an opaque session handle.
+/// `POST /v1/auth/session` — Create an opaque session handle.
 ///
 /// Validates the bearer token (JWT or API key), creates a server-side
 /// cached `AuthContext`, and returns a UUID handle the client can use
@@ -42,16 +43,16 @@ pub async fn create_session(
     let fingerprint = ClientFingerprint::from_peer(identity.tenant_id, &peer);
     let handle = state.shared.session_handles.create(auth_ctx, fingerprint);
 
-    Ok(axum::Json(serde_json::json!({
-        "session_id": handle,
-        "expires_in": 3600,
-    })))
+    Ok(axum::Json(HttpSessionResponse {
+        session_id: handle,
+        expires_in: 3600,
+    }))
 }
 
-/// `DELETE /api/auth/session` — Invalidate a session handle.
+/// `DELETE /v1/auth/session` — Invalidate a session handle.
 ///
 /// ```text
-/// DELETE /api/auth/session
+/// DELETE /v1/auth/session
 /// X-Session-Id: nds_...
 /// ```
 pub async fn delete_session(
@@ -68,5 +69,5 @@ pub async fn delete_session(
         return Err(ApiError::BadRequest("session handle not found".into()));
     }
 
-    Ok(axum::Json(serde_json::json!({ "status": "ok" })))
+    Ok(axum::Json(HttpStatusOk::ok()))
 }

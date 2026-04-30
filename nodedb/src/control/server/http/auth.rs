@@ -158,12 +158,14 @@ pub enum ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        use super::types::HttpError;
+
         match self {
             ApiError::RateLimited {
                 message,
                 retry_after_secs,
             } => {
-                let body = serde_json::json!({ "error": message });
+                let body = HttpError::new(message);
                 let mut resp = (StatusCode::TOO_MANY_REQUESTS, axum::Json(body)).into_response();
                 if let Ok(val) = retry_after_secs.to_string().parse() {
                     resp.headers_mut().insert("Retry-After", val);
@@ -182,7 +184,7 @@ impl IntoResponse for ApiError {
                         msg,
                     ),
                 };
-                let body = serde_json::json!({ "error": message });
+                let body = HttpError::new(message);
                 (status, axum::Json(body)).into_response()
             }
         }

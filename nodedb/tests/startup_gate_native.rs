@@ -110,9 +110,10 @@ async fn native_status_returns_ok_after_gateway_enable() {
         .expect("native connect timed out")
         .expect("native TCP connect failed");
 
-    // STATUS request: {"op":3,"seq":1,...} — op 0x03 = Status.
-    // The RequestFields for Status has no additional fields; use empty TextFields.
-    let status_req = br#"{"op":3,"seq":1}"#;
+    // STATUS request: op 0x03 = Status. `RequestFields` is `#[serde(flatten)]`-ed
+    // into `NativeRequest`, and is internally tagged with `kind = "text"`,
+    // so the discriminant lives at the top level alongside `op` and `seq`.
+    let status_req = br#"{"op":3,"seq":1,"kind":"text"}"#;
     let frame = encode_json_frame(status_req);
     stream
         .write_all(&frame)

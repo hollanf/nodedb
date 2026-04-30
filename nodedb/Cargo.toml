@@ -150,6 +150,7 @@ proptest = "1"
 nodedb-types = { workspace = true }
 reqwest = { workspace = true }
 nodedb-array = { workspace = true, features = ["test-utils"] }
+tower = { workspace = true }
 
 [features]
 default = []

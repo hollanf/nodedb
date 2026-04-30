@@ -24,15 +24,15 @@ pub async fn metadata(
                 "Active client connections",
             ),
             (
-                "nodedb_wal_fsync_latency_us",
+                "nodedb_wal_fsync_latency_seconds",
                 "gauge",
-                "WAL fsync latency in microseconds",
+                "WAL fsync latency in seconds",
             ),
             ("nodedb_raft_apply_lag", "gauge", "Raft apply lag entries"),
             (
-                "nodedb_bridge_utilization",
+                "nodedb_bridge_utilization_ratio",
                 "gauge",
-                "SPSC bridge utilization percent",
+                "SPSC bridge utilization (0..1 ratio)",
             ),
             (
                 "nodedb_compaction_debt",

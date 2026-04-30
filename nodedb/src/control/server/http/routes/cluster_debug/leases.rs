@@ -1,4 +1,4 @@
-//! `GET /cluster/debug/leases` — dump live descriptor leases + the
+//! `GET /v1/cluster/debug/leases` — dump live descriptor leases + the
 //! local drain tracker.
 
 use axum::extract::State;

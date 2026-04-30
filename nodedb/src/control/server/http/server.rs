@@ -1,12 +1,39 @@
 //! HTTP API server using axum + axum-server (for TLS).
 //!
-//! Endpoints:
+//! Probe routes (unversioned, always reachable):
 //! - GET  /healthz      — k8s readiness/liveness (always reachable; 503 until GatewayEnable)
 //! - GET  /health/live  — unconditional liveness probe
 //! - GET  /health/ready — readiness (WAL recovered)
 //! - POST /health/drain — trigger graceful drain
 //! - GET  /metrics      — Prometheus-format metrics (requires monitor role)
-//! - POST /query        — execute DDL via HTTP (requires auth)
+//!
+//! All other routes are versioned under `/v1/`.
+//!
+//! # API versioning policy
+//!
+//! The version segment is part of the route path (`/v1/...`), not a header or
+//! query parameter. The contract is:
+//!
+//! - **Additive changes** within a major version (new fields, new routes, new
+//!   optional query params) are non-breaking and ship under the existing
+//!   `/vN/` prefix. Clients must ignore unknown response fields.
+//! - **Breaking changes** (removed fields, changed semantics, renamed routes,
+//!   changed status-code meaning) require a new `/vN+1/` prefix. The previous
+//!   prefix continues to serve the old contract until the deprecation window
+//!   elapses.
+//! - **Deprecation window**: when `/vN+1/` ships, `/vN/` routes are kept for a
+//!   minimum of two minor releases, with a `Deprecation` and `Sunset` header
+//!   on every response. Removal happens in the release after the sunset date,
+//!   never within a patch release.
+//! - **Probe routes** (`/healthz`, `/health/*`, `/metrics`) are intentionally
+//!   unversioned: they are operational contracts consumed by load balancers
+//!   and scrapers, and their shape is governed by the underlying ecosystem
+//!   (Kubernetes probes, Prometheus exposition format), not by NodeDB.
+//!
+//! When adding `/v2/` routes in the future, mount them on this same router
+//! alongside the existing `/v1/` entries — do not fork the router. Shared
+//! middleware (auth, startup-gate, tracing) must apply uniformly across
+//! versions.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -27,48 +54,48 @@ use super::routes;
 /// Build the axum router with all endpoints.
 fn build_router(state: AppState) -> Router {
     let router = Router::new()
-        // /healthz is always reachable — returns 503 during startup, 200 after.
+        // Probe routes — unversioned, always reachable (bypass startup gate).
         .route("/healthz", get(routes::health::healthz))
         .route("/health/live", get(routes::health::live))
         .route("/health/ready", get(routes::health::ready))
         .route("/health/drain", post(routes::health::drain))
         .route("/metrics", get(routes::metrics::metrics))
-        .route("/query", post(routes::query::query))
-        .route("/status", get(routes::status::status))
-        .route("/cluster/status", get(routes::cluster::cluster_status))
+        // Versioned API routes.
+        .route("/v1/query", post(routes::query::query))
+        .route("/v1/query/stream", post(routes::query::query_ndjson))
+        .route("/v1/status", get(routes::status::status))
+        .route("/v1/cluster/status", get(routes::cluster::cluster_status))
         .route(
-            "/cluster/debug/raft/{group_id}",
+            "/v1/cluster/debug/raft/{group_id}",
             get(routes::cluster_debug::raft::raft_debug),
         )
         .route(
-            "/cluster/debug/transport",
+            "/v1/cluster/debug/transport",
             get(routes::cluster_debug::transport::transport_debug),
         )
         .route(
-            "/cluster/debug/catalog/descriptors",
+            "/v1/cluster/debug/catalog/descriptors",
             get(routes::cluster_debug::catalog::catalog_debug),
         )
         .route(
-            "/cluster/debug/leases",
+            "/v1/cluster/debug/leases",
             get(routes::cluster_debug::leases::leases_debug),
         )
         .route(
-            "/api/auth/exchange-key",
+            "/v1/auth/exchange-key",
             post(routes::auth_key::exchange_key),
         )
         .route(
-            "/api/auth/session",
+            "/v1/auth/session",
             post(routes::auth_session::create_session).delete(routes::auth_session::delete_session),
         )
         .route(
-            "/collections/{name}/crdt/apply",
+            "/v1/collections/{name}/crdt/apply",
             post(routes::crdt::crdt_apply),
         )
-        .route("/query/stream", post(routes::query::query_ndjson))
-        .route("/ws", get(routes::ws_rpc::ws_handler))
-        .route("/cdc/{collection}", get(routes::cdc::sse_stream))
-        .route("/cdc/{collection}/poll", get(routes::cdc::poll_changes))
-        // Event Plane change stream endpoints (new CDC system).
+        .route("/v1/ws", get(routes::ws_rpc::ws_handler))
+        .route("/v1/cdc/{collection}", get(routes::cdc::sse_stream))
+        .route("/v1/cdc/{collection}/poll", get(routes::cdc::poll_changes))
         .route(
             "/v1/streams/{stream}/poll",
             get(routes::stream_poll::poll_stream),
@@ -81,28 +108,28 @@ fn build_router(state: AppState) -> Router {
     #[cfg(feature = "promql")]
     let router = router
         .route(
-            "/obsv/api/v1/query",
+            "/v1/obsv/api/v1/query",
             get(routes::promql::instant_query).post(routes::promql::instant_query),
         )
         .route(
-            "/obsv/api/v1/query_range",
+            "/v1/obsv/api/v1/query_range",
             get(routes::promql::range_query).post(routes::promql::range_query),
         )
-        .route("/obsv/api/v1/series", get(routes::promql::series_query))
-        .route("/obsv/api/v1/labels", get(routes::promql::label_names))
+        .route("/v1/obsv/api/v1/series", get(routes::promql::series_query))
+        .route("/v1/obsv/api/v1/labels", get(routes::promql::label_names))
         .route(
-            "/obsv/api/v1/label/{name}/values",
+            "/v1/obsv/api/v1/label/{name}/values",
             get(routes::promql::label_values),
         )
         .route(
-            "/obsv/api/v1/status/buildinfo",
+            "/v1/obsv/api/v1/status/buildinfo",
             get(routes::promql::buildinfo),
         )
-        .route("/obsv/api/v1/metadata", get(routes::promql::metadata))
-        .route("/obsv/api/v1/write", post(routes::promql::remote_write))
-        .route("/obsv/api/v1/read", post(routes::promql::remote_read))
+        .route("/v1/obsv/api/v1/metadata", get(routes::promql::metadata))
+        .route("/v1/obsv/api/v1/write", post(routes::promql::remote_write))
+        .route("/v1/obsv/api/v1/read", post(routes::promql::remote_read))
         .route(
-            "/obsv/api/v1/annotations",
+            "/v1/obsv/api/v1/annotations",
             post(routes::promql::annotations),
         );
 
@@ -274,4 +301,155 @@ pub async fn run(
 
     drain_guard.report_drained();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use axum::routing::{get, post};
+    use tower::ServiceExt;
+
+    /// Build a stub router with the same path registrations as the real
+    /// server but using trivial `StatusCode::OK` handlers. Used to assert
+    /// the route table itself.
+    fn stub_router() -> Router {
+        async fn ok() -> StatusCode {
+            StatusCode::OK
+        }
+
+        Router::new()
+            // Probe routes (unversioned).
+            .route("/healthz", get(ok))
+            .route("/health/live", get(ok))
+            .route("/health/ready", get(ok))
+            .route("/health/drain", post(ok))
+            .route("/metrics", get(ok))
+            // Versioned API routes.
+            .route("/v1/query", post(ok))
+            .route("/v1/query/stream", post(ok))
+            .route("/v1/status", get(ok))
+            .route("/v1/cluster/status", get(ok))
+            .route("/v1/cluster/debug/raft/{group_id}", get(ok))
+            .route("/v1/cluster/debug/transport", get(ok))
+            .route("/v1/cluster/debug/catalog/descriptors", get(ok))
+            .route("/v1/cluster/debug/leases", get(ok))
+            .route("/v1/auth/exchange-key", post(ok))
+            .route("/v1/auth/session", post(ok).delete(ok))
+            .route("/v1/collections/{name}/crdt/apply", post(ok))
+            .route("/v1/ws", get(ok))
+            .route("/v1/streams/{stream}/poll", get(ok))
+            .route("/v1/streams/{stream}/events", get(ok))
+            .route("/v1/cdc/{collection}", get(ok))
+            .route("/v1/cdc/{collection}/poll", get(ok))
+            // PromQL nested under /v1/obsv.
+            .route("/v1/obsv/api/v1/query", get(ok).post(ok))
+    }
+
+    async fn status_for(router: &Router, method: Method, path: &str) -> StatusCode {
+        let req = Request::builder()
+            .method(method)
+            .uri(path)
+            .body(Body::empty())
+            .unwrap();
+        router.clone().oneshot(req).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn probe_paths_unversioned() {
+        let r = stub_router();
+        assert_eq!(
+            status_for(&r, Method::GET, "/healthz").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::GET, "/health/live").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::GET, "/health/ready").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::POST, "/health/drain").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::GET, "/metrics").await,
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn v1_routes_exist() {
+        let r = stub_router();
+        assert_eq!(
+            status_for(&r, Method::POST, "/v1/query").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::POST, "/v1/query/stream").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::GET, "/v1/status").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::GET, "/v1/cluster/status").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::POST, "/v1/auth/exchange-key").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::POST, "/v1/auth/session").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::DELETE, "/v1/auth/session").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::POST, "/v1/collections/mycoll/crdt/apply").await,
+            StatusCode::OK
+        );
+        assert_eq!(status_for(&r, Method::GET, "/v1/ws").await, StatusCode::OK);
+        assert_eq!(
+            status_for(&r, Method::GET, "/v1/streams/mystream/poll").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::GET, "/v1/streams/mystream/events").await,
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn promql_route_exists() {
+        let r = stub_router();
+        assert_eq!(
+            status_for(&r, Method::POST, "/v1/obsv/api/v1/query").await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            status_for(&r, Method::GET, "/v1/obsv/api/v1/query").await,
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn versioned_cdc_routes_exist() {
+        let r = stub_router();
+        assert_eq!(
+            status_for(&r, Method::GET, "/v1/cdc/mycoll").await,
+            StatusCode::OK,
+        );
+        assert_eq!(
+            status_for(&r, Method::GET, "/v1/cdc/mycoll/poll").await,
+            StatusCode::OK,
+        );
+    }
 }

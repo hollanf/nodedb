@@ -1,6 +1,6 @@
 //! Query endpoint — execute SQL/DDL via HTTP POST.
 //!
-//! POST /query { "sql": "SELECT * FROM users LIMIT 10" }
+//! POST /v1/query { "sql": "SELECT * FROM users LIMIT 10" }
 //! Authorization: Bearer ndb_...
 //!
 //! Supports both DDL commands (SHOW USERS, CREATE COLLECTION, etc.) and
@@ -18,22 +18,22 @@ use crate::control::security::identity::{required_permission, role_grants_permis
 use crate::types::{TraceId, VShardId};
 
 use super::super::auth::{ApiError, AppState, resolve_identity};
+use super::super::types::HttpQueryRequest;
+use super::super::types::HttpQueryResponse;
 
-/// POST /query — execute a SQL/DDL statement.
+/// POST /v1/query — execute a SQL/DDL statement.
 ///
 /// Request body: `{ "sql": "..." }`
 /// Response: `{ "status": "ok", "rows": [...] }` or `{ "error": "..." }`
 pub async fn query(
     headers: HeaderMap,
     State(state): State<AppState>,
-    axum::Json(body): axum::Json<serde_json::Value>,
+    axum::Json(body): axum::Json<HttpQueryRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let identity = resolve_identity(&headers, &state, "http")?;
     let trace_id = crate::control::trace_context::extract_from_headers(&headers);
 
-    let sql = body["sql"]
-        .as_str()
-        .ok_or_else(|| ApiError::BadRequest("missing 'sql' field".into()))?;
+    let sql = body.sql.as_str();
 
     // Try DDL commands first (same as pgwire handler).
     if let Some(result) =
@@ -42,10 +42,7 @@ pub async fn query(
         return match result {
             Ok(responses) => {
                 let json_rows = responses_to_json(responses);
-                Ok(axum::Json(serde_json::json!({
-                    "status": "ok",
-                    "rows": json_rows,
-                })))
+                Ok(axum::Json(HttpQueryResponse::ok(json_rows)))
             }
             Err(e) => Err(ApiError::BadRequest(e.to_string())),
         };
@@ -82,10 +79,7 @@ pub async fn query(
         .map_err(|e| ApiError::BadRequest(format!("SQL planning failed: {e}")))?;
 
     if tasks.is_empty() {
-        return Ok(axum::Json(serde_json::json!({
-            "status": "ok",
-            "rows": [],
-        })));
+        return Ok(axum::Json(HttpQueryResponse::ok(vec![])));
     }
 
     // Track active request for quota accounting.
@@ -171,10 +165,7 @@ pub async fn query(
             }
         }
 
-        Ok(axum::Json(serde_json::json!({
-            "status": "ok",
-            "rows": result_rows,
-        })))
+        Ok(axum::Json(HttpQueryResponse::ok(result_rows)))
     }
     .await;
 
@@ -261,7 +252,7 @@ fn responses_to_json(responses: Vec<pgwire::api::results::Response>) -> Vec<serd
     rows
 }
 
-/// POST /query/stream — execute SQL and return results as NDJSON (newline-delimited JSON).
+/// POST /v1/query/stream — execute SQL and return results as NDJSON (newline-delimited JSON).
 ///
 /// Each result row is a separate JSON line terminated by `\n`.
 /// Content-Type: application/x-ndjson
@@ -271,7 +262,7 @@ fn responses_to_json(responses: Vec<pgwire::api::results::Response>) -> Vec<serd
 pub async fn query_ndjson(
     State(state): State<AppState>,
     headers: HeaderMap,
-    body: String,
+    axum::Json(body): axum::Json<crate::control::server::http::types::HttpQueryStreamRequest>,
 ) -> impl IntoResponse {
     use axum::response::Response;
 
@@ -280,7 +271,7 @@ pub async fn query_ndjson(
         Err(e) => return e.into_response(),
     };
 
-    let sql = body.trim().trim_matches('"');
+    let sql = body.sql.trim();
     if sql.is_empty() {
         return (StatusCode::BAD_REQUEST, "empty SQL").into_response();
     }
