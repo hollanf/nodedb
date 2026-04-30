@@ -1,9 +1,16 @@
 //! Shared token-extraction helpers for the DDL parsers.
 
+use crate::error::SqlError;
+use crate::reserved::check_identifier;
+
 /// Extract the object name that follows a keyword (e.g. "COLLECTION"
 /// in "CREATE COLLECTION users ..."). Handles IF NOT EXISTS by
-/// skipping those tokens.
-pub(super) fn extract_name_after_keyword(parts: &[&str], keyword: &str) -> Option<String> {
+/// skipping those tokens. Returns `None` when the keyword is absent,
+/// `Some(Err(...))` when the extracted name is a reserved identifier.
+pub(super) fn extract_name_after_keyword(
+    parts: &[&str],
+    keyword: &str,
+) -> Option<Result<String, SqlError>> {
     let kw_upper = keyword.to_uppercase();
     let pos = parts.iter().position(|p| p.to_uppercase() == kw_upper)?;
     let mut idx = pos + 1;
@@ -17,16 +24,22 @@ pub(super) fn extract_name_after_keyword(parts: &[&str], keyword: &str) -> Optio
             idx += 1;
         }
     }
-    parts.get(idx).map(|s| s.to_string())
+    parts.get(idx).map(|s| check_identifier(s))
 }
 
 /// Extract the object name for DROP-style commands where IF EXISTS
-/// may appear between the keyword and the name.
-pub(super) fn extract_name_after_if_exists(parts: &[&str], keyword: &str) -> Option<String> {
+/// may appear between the keyword and the name. Returns `None` when
+/// the keyword is absent, `Some(Err(...))` for reserved identifiers.
+pub(super) fn extract_name_after_if_exists(
+    parts: &[&str],
+    keyword: &str,
+) -> Option<Result<String, SqlError>> {
     extract_name_after_keyword(parts, keyword)
 }
 
-/// Extract the token after a keyword like "ON" or "TO".
+/// Extract the token after a keyword like "ON" or "TO" without
+/// reserved-word validation (used for non-user-facing structural
+/// tokens such as collection references in trigger definitions).
 pub(super) fn extract_after_keyword(parts: &[&str], keyword: &str) -> Option<String> {
     let kw_upper = keyword.to_uppercase();
     let pos = parts.iter().position(|p| p.to_uppercase() == kw_upper)?;

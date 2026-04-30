@@ -1,19 +1,23 @@
 //! Parse BACKUP TENANT / RESTORE TENANT.
 
 use crate::ddl_ast::statement::NodedbStatement;
+use crate::error::SqlError;
 
-pub(super) fn try_parse(upper: &str, _parts: &[&str], trimmed: &str) -> Option<NodedbStatement> {
+pub(super) fn try_parse(
+    upper: &str,
+    parts: &[&str],
+    _trimmed: &str,
+) -> Option<Result<NodedbStatement, SqlError>> {
     if upper.starts_with("BACKUP TENANT ") {
-        return Some(NodedbStatement::BackupTenant {
-            raw_sql: trimmed.to_string(),
-        });
+        // BACKUP TENANT <tenant_id>
+        let tenant_id = parts.get(2).map(|s| s.to_string()).unwrap_or_default();
+        return Some(Ok(NodedbStatement::BackupTenant { tenant_id }));
     }
     if upper.starts_with("RESTORE TENANT ") {
+        // RESTORE TENANT <tenant_id> FROM '<path>' [DRY RUN]
         let dry_run = upper.ends_with(" DRY RUN") || upper.ends_with(" DRYRUN");
-        return Some(NodedbStatement::RestoreTenant {
-            dry_run,
-            raw_sql: trimmed.to_string(),
-        });
+        let tenant_id = parts.get(2).map(|s| s.to_string()).unwrap_or_default();
+        return Some(Ok(NodedbStatement::RestoreTenant { dry_run, tenant_id }));
     }
     None
 }

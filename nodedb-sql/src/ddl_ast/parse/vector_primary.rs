@@ -25,13 +25,18 @@ pub fn parse_vector_primary_options(sql: &str) -> Result<Option<VectorPrimaryCon
     let primary_val = extract_with_str(sql, "primary");
 
     match primary_val.as_deref() {
-        None | Some("document") | Some("strict") | Some("kv") | Some("key_value")
-        | Some("columnar") | Some("timeseries") | Some("spatial") => return Ok(None),
+        None
+        | Some("document_schemaless")
+        | Some("document_strict")
+        | Some("kv")
+        | Some("columnar")
+        | Some("timeseries")
+        | Some("spatial") => return Ok(None),
         Some("vector") => {}
         Some(other) => {
             return Err(NodeDbError::bad_request(format!(
-                "unknown primary engine '{other}'; valid values: document, strict, kv, \
-                 columnar, timeseries, spatial, vector"
+                "unknown primary engine '{other}'; valid values: \
+                 document_schemaless, document_strict, kv, columnar, timeseries, spatial, vector"
             )));
         }
     }
@@ -173,6 +178,107 @@ pub fn validate_payload_indexes(
         slot.1 = infer_payload_kind(&upper_type);
     }
     Ok(())
+}
+
+/// Parse vector-primary options from pre-extracted `(key, value)` pairs.
+///
+/// This is the typed-AST entry point, used when the CREATE COLLECTION parser
+/// has already split the WITH clause into `Vec<(String, String)>`. The raw-SQL
+/// entry point (`parse_vector_primary_options`) delegates here after extracting
+/// its own pairs.
+pub fn parse_vector_primary_options_from_kvs(
+    options: &[(String, String)],
+) -> Result<Option<VectorPrimaryConfig>, NodeDbError> {
+    let get = |key: &str| -> Option<String> {
+        options
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v.clone())
+    };
+
+    let primary_val = get("primary");
+    match primary_val.as_deref() {
+        None
+        | Some("document_schemaless")
+        | Some("document_strict")
+        | Some("kv")
+        | Some("columnar")
+        | Some("timeseries")
+        | Some("spatial") => return Ok(None),
+        Some("vector") => {}
+        Some(other) => {
+            return Err(NodeDbError::bad_request(format!(
+                "unknown primary engine '{other}'; valid values: \
+                 document_schemaless, document_strict, kv, columnar, timeseries, spatial, vector"
+            )));
+        }
+    }
+
+    let vector_field = get("vector_field")
+        .ok_or_else(|| NodeDbError::bad_request("primary='vector' requires vector_field option"))?;
+    if vector_field.is_empty() {
+        return Err(NodeDbError::bad_request(
+            "vector_field must be a non-empty column name",
+        ));
+    }
+
+    let dim = get("dim")
+        .and_then(|v| v.parse::<u32>().ok())
+        .ok_or_else(|| {
+            NodeDbError::bad_request("primary='vector' requires dim option (e.g. dim=1024)")
+        })?;
+
+    let quantization = match get("quantization").as_deref() {
+        None => VectorQuantization::default(),
+        Some(q) => parse_quantization(q)?,
+    };
+
+    let m: u8 = get("m")
+        .and_then(|v| v.parse::<u32>().ok())
+        .and_then(|v| u8::try_from(v).ok())
+        .unwrap_or(16);
+
+    let ef_construction: u16 = get("ef_construction")
+        .and_then(|v| v.parse::<u32>().ok())
+        .and_then(|v| u16::try_from(v).ok())
+        .unwrap_or(200);
+
+    let metric = match get("metric").as_deref() {
+        None => DistanceMetric::Cosine,
+        Some(m) => parse_metric(m)?,
+    };
+
+    // payload_indexes is stored as a single value by the collection parser
+    // as a comma-separated list (stripped of bracket syntax).
+    let payload_indexes = get("payload_indexes")
+        .map(|v| {
+            v.split(',')
+                .filter_map(|s| {
+                    let s = s
+                        .trim()
+                        .trim_matches('\'')
+                        .trim_matches('"')
+                        .trim()
+                        .to_lowercase();
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some((s, nodedb_types::PayloadIndexKind::Equality))
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(Some(VectorPrimaryConfig {
+        vector_field,
+        dim,
+        quantization,
+        m,
+        ef_construction,
+        metric,
+        payload_indexes,
+    }))
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -415,14 +521,15 @@ mod tests {
 
     #[test]
     fn primary_document_returns_none() {
-        let sql = "CREATE COLLECTION c (id BIGINT PRIMARY KEY) WITH (primary='document')";
+        let sql =
+            "CREATE COLLECTION c (id BIGINT PRIMARY KEY) WITH (primary='document_schemaless')";
         let result = parse_vector_primary_options(sql).expect("parse ok");
         assert!(result.is_none());
     }
 
     #[test]
     fn primary_strict_returns_none() {
-        let sql = "CREATE COLLECTION c (id BIGINT PRIMARY KEY) WITH (primary='strict')";
+        let sql = "CREATE COLLECTION c (id BIGINT PRIMARY KEY) WITH (primary='document_strict')";
         let result = parse_vector_primary_options(sql).expect("parse ok");
         assert!(result.is_none());
     }

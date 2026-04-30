@@ -11,7 +11,43 @@ pub enum NodedbStatement {
     CreateCollection {
         name: String,
         if_not_exists: bool,
-        raw_sql: String,
+        /// Canonical engine name (e.g. `"kv"`, `"vector"`, `"document_strict"`).
+        /// `None` means no `engine=` key was present — the handler applies its
+        /// default (`document_schemaless` for `CREATE COLLECTION`).
+        engine: Option<String>,
+        /// `(col_name, col_type)` pairs extracted from the parenthesised column
+        /// list, e.g. `[(id, BIGINT), (name, TEXT)]`. Empty when no column
+        /// list is present.
+        columns: Vec<(String, String)>,
+        /// Key-value pairs from the `WITH (...)` clause, excluding `engine=`
+        /// (already in `engine`). E.g. `[(partition_by, 1h), (vector_field, emb)]`.
+        options: Vec<(String, String)>,
+        /// Free-standing modifier keywords detected at parse time:
+        /// `APPEND_ONLY`, `HASH_CHAIN`, `BITEMPORAL`.
+        flags: Vec<String>,
+        /// Raw interior of a `BALANCED ON (group_key = col, ...)` clause,
+        /// or `None` when the clause is absent. The handler calls
+        /// `parse_balanced_clause_from_raw` to produce the typed constraint.
+        balanced_raw: Option<String>,
+    },
+    /// `CREATE TABLE <name> (<col_list>)` — Postgres-style strict-default DDL.
+    ///
+    /// Parsed from `CREATE TABLE` (not `CREATE COLLECTION`). The handler
+    /// infers strict relational mode unless overridden via `WITH (engine='...')`.
+    /// No column list → rejected with SQLSTATE `42601`.
+    CreateTable {
+        name: String,
+        if_not_exists: bool,
+        /// See `CreateCollection.engine`.
+        engine: Option<String>,
+        /// See `CreateCollection.columns`.
+        columns: Vec<(String, String)>,
+        /// See `CreateCollection.options`.
+        options: Vec<(String, String)>,
+        /// See `CreateCollection.flags`.
+        flags: Vec<String>,
+        /// See `CreateCollection.balanced_raw`.
+        balanced_raw: Option<String>,
     },
     DropCollection {
         name: String,
@@ -41,7 +77,8 @@ pub enum NodedbStatement {
     },
     AlterCollection {
         name: String,
-        raw_sql: String,
+        /// Typed sub-operation — one variant per `ALTER COLLECTION` form.
+        operation: AlterCollectionOp,
     },
     DescribeCollection {
         name: String,
@@ -51,7 +88,17 @@ pub enum NodedbStatement {
     // ── Index ────────────────────────────────────────────────────
     CreateIndex {
         unique: bool,
-        raw_sql: String,
+        /// Optional explicit index name. `None` means auto-generate from
+        /// `idx_{collection}_{field}` in the handler.
+        index_name: Option<String>,
+        /// Target collection name (lowercased).
+        collection: String,
+        /// Index field or path expression, e.g. `$.price` or `tags[]`.
+        field: String,
+        /// `COLLATE NOCASE` / `COLLATE CI` was present.
+        case_insensitive: bool,
+        /// Optional `WHERE` predicate text (original case, trimmed).
+        where_condition: Option<String>,
     },
     DropIndex {
         name: String,
@@ -68,9 +115,22 @@ pub enum NodedbStatement {
     // ── Trigger ──────────────────────────────────────────────────
     CreateTrigger {
         or_replace: bool,
-        deferred: bool,
-        sync: bool,
-        raw_sql: String,
+        /// "ASYNC", "SYNC", or "DEFERRED".
+        execution_mode: String,
+        name: String,
+        /// "BEFORE", "AFTER", or "INSTEAD OF".
+        timing: String,
+        events_insert: bool,
+        events_update: bool,
+        events_delete: bool,
+        collection: String,
+        /// "ROW" or "STATEMENT".
+        granularity: String,
+        when_condition: Option<String>,
+        priority: i32,
+        /// "INVOKER" or "DEFINER".
+        security: String,
+        body_sql: String,
     },
     DropTrigger {
         name: String,
@@ -78,7 +138,12 @@ pub enum NodedbStatement {
         if_exists: bool,
     },
     AlterTrigger {
-        raw_sql: String,
+        /// Trigger name (lowercased).
+        name: String,
+        /// "ENABLE", "DISABLE", or "OWNER" (when combined with `new_owner`).
+        action: String,
+        /// Present when `action == "OWNER"`.
+        new_owner: Option<String>,
     },
     ShowTriggers {
         collection: Option<String>,
@@ -86,14 +151,26 @@ pub enum NodedbStatement {
 
     // ── Schedule ─────────────────────────────────────────────────
     CreateSchedule {
-        raw_sql: String,
+        name: String,
+        cron_expr: String,
+        body_sql: String,
+        /// "NORMAL" or "LOCAL".
+        scope: String,
+        /// "SKIP", "CATCH_UP", or "QUEUE".
+        missed_policy: String,
+        allow_overlap: bool,
     },
     DropSchedule {
         name: String,
         if_exists: bool,
     },
     AlterSchedule {
-        raw_sql: String,
+        /// Schedule name (lowercased).
+        name: String,
+        /// "ENABLE", "DISABLE", or "SET".
+        action: String,
+        /// The quoted cron expression when `action == "SET"`.
+        cron_expr: Option<String>,
     },
     ShowSchedules,
     ShowScheduleHistory {
@@ -104,14 +181,41 @@ pub enum NodedbStatement {
     CreateSequence {
         name: String,
         if_not_exists: bool,
-        raw_sql: String,
+        /// `START [WITH] n` value, or `None` for engine default.
+        start: Option<i64>,
+        /// `INCREMENT [BY] n` value, or `None` for default (1).
+        increment: Option<i64>,
+        /// `MINVALUE n` value, or `None` for default.
+        min_value: Option<i64>,
+        /// `MAXVALUE n` value, or `None` for default.
+        max_value: Option<i64>,
+        /// `CYCLE` or `NO CYCLE`. Default: `false`.
+        cycle: bool,
+        /// `CACHE n` value, or `None` for default (1).
+        cache: Option<i64>,
+        /// Raw `FORMAT 'template'` string (quotes stripped), or `None`.
+        /// The handler calls `parse_format_template` on this.
+        format_template_raw: Option<String>,
+        /// Raw `RESET YEARLY|MONTHLY|QUARTERLY|DAILY` token, or `None`.
+        /// The handler calls `ResetScope::parse` on this.
+        reset_period_raw: Option<String>,
+        /// `GAP_FREE` modifier was present.
+        gap_free: bool,
+        /// `SCOPE TENANT` or similar scope specifier, or `None`.
+        scope: Option<String>,
     },
     DropSequence {
         name: String,
         if_exists: bool,
     },
     AlterSequence {
-        raw_sql: String,
+        /// Sequence name (lowercased).
+        name: String,
+        /// "RESTART" or "FORMAT".
+        action: String,
+        /// For RESTART: optional WITH value token.
+        /// For FORMAT: the quoted format string (quotes stripped).
+        with_value: Option<String>,
     },
     DescribeSequence {
         name: String,
@@ -120,14 +224,33 @@ pub enum NodedbStatement {
 
     // ── Alert ────────────────────────────────────────────────────
     CreateAlert {
-        raw_sql: String,
+        name: String,
+        collection: String,
+        /// Optional WHERE filter text (original case, between WHERE and CONDITION keywords).
+        where_filter: Option<String>,
+        /// Raw condition text after CONDITION keyword, e.g. "AVG(temperature) > 90.0".
+        condition_raw: String,
+        /// GROUP BY column list (lowercased).
+        group_by: Vec<String>,
+        /// WINDOW duration string (e.g. "5 minutes").
+        window_raw: String,
+        /// FOR 'N consecutive windows' count (default 1).
+        fire_after: u32,
+        /// RECOVER AFTER 'N consecutive windows' count (default 1).
+        recover_after: u32,
+        severity: String,
+        /// Raw NOTIFY section text after NOTIFY keyword.
+        notify_targets_raw: String,
     },
     DropAlert {
         name: String,
         if_exists: bool,
     },
     AlterAlert {
-        raw_sql: String,
+        /// Alert name (lowercased).
+        name: String,
+        /// "ENABLE" or "DISABLE".
+        action: String,
     },
     ShowAlerts,
     ShowAlertStatus {
@@ -136,33 +259,54 @@ pub enum NodedbStatement {
 
     // ── Retention policy ─────────────────────────────────────────
     CreateRetentionPolicy {
-        raw_sql: String,
+        name: String,
+        collection: String,
+        /// Raw policy body — everything between the outer parentheses.
+        body_raw: String,
+        /// Optional EVAL_INTERVAL value string from WITH clause.
+        eval_interval_raw: Option<String>,
     },
     DropRetentionPolicy {
         name: String,
         if_exists: bool,
     },
     AlterRetentionPolicy {
-        raw_sql: String,
+        /// Policy name (lowercased).
+        name: String,
+        /// "ENABLE", "DISABLE", or "SET".
+        action: String,
+        /// The SET target key, e.g. "AUTO_TIER" or "EVAL_INTERVAL".
+        set_key: Option<String>,
+        /// The raw value string for the SET target.
+        set_value: Option<String>,
     },
     ShowRetentionPolicies,
 
     // ── Change stream ────────────────────────────────────────────
     CreateChangeStream {
-        raw_sql: String,
+        name: String,
+        collection: String,
+        /// Raw WITH clause key=value pairs string (everything inside the outer parens), or empty.
+        with_clause_raw: String,
     },
     DropChangeStream {
         name: String,
         if_exists: bool,
     },
     AlterChangeStream {
-        raw_sql: String,
+        /// Stream name (lowercased).
+        name: String,
+        /// Action token, e.g. "ENABLE", "DISABLE", "SUSPEND".
+        action: String,
     },
     ShowChangeStreams,
 
     // ── Consumer group ───────────────────────────────────────────
     CreateConsumerGroup {
-        raw_sql: String,
+        /// Consumer group name.
+        group_name: String,
+        /// Change stream or topic name (after ON).
+        stream_name: String,
     },
     DropConsumerGroup {
         name: String,
@@ -175,7 +319,20 @@ pub enum NodedbStatement {
 
     // ── RLS policy ───────────────────────────────────────────────
     CreateRlsPolicy {
-        raw_sql: String,
+        /// Policy name.
+        name: String,
+        /// Target collection name.
+        collection: String,
+        /// Policy type token: "READ", "WRITE", or "ALL".
+        policy_type: String,
+        /// Predicate expression text (outer parens stripped).
+        predicate_raw: String,
+        /// RESTRICTIVE modifier present.
+        is_restrictive: bool,
+        /// Optional ON DENY clause text (everything after ON DENY).
+        on_deny_raw: Option<String>,
+        /// Optional TENANT <id> override.
+        tenant_id_override: Option<u32>,
     },
     DropRlsPolicy {
         name: String,
@@ -188,7 +345,11 @@ pub enum NodedbStatement {
 
     // ── Materialized view ────────────────────────────────────────
     CreateMaterializedView {
-        raw_sql: String,
+        name: String,
+        source: String,
+        query_sql: String,
+        /// "FULL", "INCREMENTAL", or "STREAMING".
+        refresh_mode: String,
     },
     DropMaterializedView {
         name: String,
@@ -198,7 +359,16 @@ pub enum NodedbStatement {
 
     // ── Continuous aggregate ─────────────────────────────────────
     CreateContinuousAggregate {
-        raw_sql: String,
+        name: String,
+        source: String,
+        /// BUCKET interval string (e.g. "5m").
+        bucket_raw: String,
+        /// Raw AGGREGATE expressions text (everything after AGGREGATE keyword up to GROUP BY or WITH).
+        aggregate_exprs_raw: String,
+        /// GROUP BY column list (lowercased).
+        group_by: Vec<String>,
+        /// Raw WITH clause inner text (everything inside outer parens), or empty.
+        with_clause_raw: String,
     },
     DropContinuousAggregate {
         name: String,
@@ -208,11 +378,13 @@ pub enum NodedbStatement {
 
     // ── Backup / restore ─────────────────────────────────────────
     BackupTenant {
-        raw_sql: String,
+        /// Tenant ID as a string token from the SQL.
+        tenant_id: String,
     },
     RestoreTenant {
         dry_run: bool,
-        raw_sql: String,
+        /// Tenant ID as a string token from the SQL.
+        tenant_id: String,
     },
 
     // ── Cluster admin ────────────────────────────────────────────
@@ -235,7 +407,12 @@ pub enum NodedbStatement {
         group_id: String,
     },
     AlterRaftGroup {
-        raw_sql: String,
+        /// Raft group ID as a string token from the SQL.
+        group_id: String,
+        /// "ADD" or "REMOVE".
+        action: String,
+        /// Node ID as a string token from the SQL.
+        node_id: String,
     },
 
     // ── Maintenance ──────────────────────────────────────────────
@@ -252,26 +429,55 @@ pub enum NodedbStatement {
 
     // ── User / auth / grant ──────────────────────────────────────
     CreateUser {
-        raw_sql: String,
+        username: String,
+        password: String,
+        /// Role name string (e.g. "read_write", "admin"); handler converts to Role enum.
+        role: Option<String>,
+        /// Optional tenant ID override (superuser only).
+        tenant_id: Option<u32>,
     },
     DropUser {
         username: String,
     },
     AlterUser {
-        raw_sql: String,
+        username: String,
+        /// "PASSWORD" or "ROLE"
+        action: String,
+        /// New password (quoted) or role name.
+        value: String,
     },
     ShowUsers,
     GrantRole {
-        raw_sql: String,
+        /// Role name token from the SQL.
+        role: String,
+        /// Target username (token after TO).
+        username: String,
     },
     RevokeRole {
-        raw_sql: String,
+        /// Role name token from the SQL.
+        role: String,
+        /// Target username (token after FROM).
+        username: String,
     },
     GrantPermission {
-        raw_sql: String,
+        /// Permission token, e.g. "READ", "WRITE", "ALL".
+        permission: String,
+        /// "COLLECTION" or "FUNCTION".
+        target_type: String,
+        /// The collection or function name.
+        target_name: String,
+        /// Grantee username (token after TO).
+        grantee: String,
     },
     RevokePermission {
-        raw_sql: String,
+        /// Permission token, e.g. "READ", "WRITE", "ALL".
+        permission: String,
+        /// "COLLECTION" or "FUNCTION".
+        target_type: String,
+        /// The collection or function name.
+        target_name: String,
+        /// Grantee username (token after FROM).
+        grantee: String,
     },
     ShowPermissions {
         collection: Option<String>,
@@ -374,6 +580,45 @@ pub enum NodedbStatement {
     Other {
         raw_sql: String,
     },
+}
+
+/// Typed sub-operation for `ALTER COLLECTION <name> ...`.
+///
+/// Each variant corresponds to one ALTER sub-command parsed by
+/// `nodedb-sql/src/ddl_ast/parse/collection.rs`. The handler in
+/// `nodedb/src/control/server/pgwire/ddl/collection/alter/` matches
+/// on this enum instead of rescanning raw SQL.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AlterCollectionOp {
+    /// `ADD [COLUMN] <name> <type> [NOT NULL] [DEFAULT expr]`
+    AddColumn {
+        column_name: String,
+        column_type: String,
+        not_null: bool,
+        default_expr: Option<String>,
+    },
+    /// `DROP COLUMN <name>`
+    DropColumn { column_name: String },
+    /// `RENAME COLUMN <old> TO <new>`
+    RenameColumn { old_name: String, new_name: String },
+    /// `ALTER COLUMN <name> TYPE <type>`
+    AlterColumnType {
+        column_name: String,
+        new_type: String,
+    },
+    /// `OWNER TO <user>`
+    OwnerTo { new_owner: String },
+    /// `SET RETENTION = '<duration>'`
+    SetRetention { value: String },
+    /// `SET APPEND_ONLY`
+    SetAppendOnly,
+    /// `SET LAST_VALUE_CACHE = TRUE|FALSE`
+    SetLastValueCache { enabled: bool },
+    /// `SET LEGAL_HOLD = TRUE|FALSE TAG '<tag>'`
+    SetLegalHold { enabled: bool, tag: String },
+    /// `ADD COLUMN ... AS MATERIALIZED_SUM ...` — the full raw SQL is
+    /// forwarded to `add_materialized_sum` which has its own deep parser.
+    AddMaterializedSum { raw_sql: String },
 }
 
 /// Traversal direction for graph DSL variants. Mirrors the engine's
