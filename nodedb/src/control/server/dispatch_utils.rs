@@ -8,7 +8,7 @@ use crate::bridge::envelope::Payload;
 use crate::bridge::envelope::{PhysicalPlan, Priority, Request, Response};
 use crate::bridge::physical_plan::{DocumentOp, KvOp, TimeseriesOp};
 use crate::control::state::SharedState;
-use crate::types::{ReadConsistency, TenantId, VShardId};
+use crate::types::{ReadConsistency, TenantId, TraceId, VShardId};
 
 pub use super::broadcast::{broadcast_count_to_all_cores, broadcast_raw, broadcast_to_all_cores};
 pub use super::graph_dispatch::{
@@ -90,7 +90,7 @@ pub async fn dispatch_to_data_plane(
     tenant_id: TenantId,
     vshard_id: VShardId,
     plan: PhysicalPlan,
-    trace_id: u64,
+    trace_id: TraceId,
 ) -> crate::Result<Response> {
     dispatch_to_data_plane_with_source(
         shared,
@@ -113,7 +113,7 @@ pub async fn dispatch_to_data_plane_with_source(
     tenant_id: TenantId,
     vshard_id: VShardId,
     plan: PhysicalPlan,
-    trace_id: u64,
+    trace_id: TraceId,
     event_source: crate::event::EventSource,
 ) -> crate::Result<Response> {
     // Extract write metadata before the plan is moved into the request.

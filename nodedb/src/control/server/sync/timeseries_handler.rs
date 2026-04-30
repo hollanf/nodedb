@@ -13,7 +13,7 @@ use tracing::{debug, error};
 
 use super::session::SyncSession;
 use super::wire::*;
-use crate::types::{TenantId, VShardId};
+use crate::types::{TenantId, TraceId, VShardId};
 
 // ── Dispatcher trait ─────────────────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ impl<'a> TimeseriesDispatcher for SharedStateDispatcher<'a> {
             tenant_id,
             vshard,
             plan,
-            0,
+            TraceId::ZERO,
             EventSource::CrdtSync,
         )
         .await

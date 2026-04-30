@@ -12,7 +12,7 @@ use crate::bridge::physical_plan::GraphOp;
 use crate::control::scatter_gather;
 use crate::control::state::SharedState;
 use crate::engine::graph::traversal_options::GraphTraversalOptions;
-use crate::types::TenantId;
+use crate::types::{TenantId, TraceId};
 
 use super::helpers::{encode_path, ok_response};
 
@@ -70,9 +70,13 @@ pub async fn cross_core_shortest_path(
             max_results: remaining_budget,
             rls_filters: Vec::new(),
         });
-        let resp =
-            crate::control::server::broadcast::broadcast_to_all_cores(shared, tenant_id, plan, 0)
-                .await?;
+        let resp = crate::control::server::broadcast::broadcast_to_all_cores(
+            shared,
+            tenant_id,
+            plan,
+            TraceId::ZERO,
+        )
+        .await?;
         if !resp.payload.is_empty() {
             let json_text =
                 crate::data::executor::response_codec::decode_payload_to_json(&resp.payload);

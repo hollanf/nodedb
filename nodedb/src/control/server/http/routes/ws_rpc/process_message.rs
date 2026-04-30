@@ -5,7 +5,7 @@ use tracing::debug;
 
 use crate::control::change_stream::LiveSubscriptionSet;
 use crate::control::state::SharedState;
-use crate::types::TenantId;
+use crate::types::{TenantId, TraceId};
 
 use super::execute_sql::execute_sql;
 use super::format::{
@@ -30,7 +30,7 @@ pub async fn process_message(
     shared: &SharedState,
     query_ctx: &crate::control::planner::context::QueryContext,
     tenant_id: TenantId,
-    trace_id: u64,
+    trace_id: TraceId,
     text: &str,
     live_tx: &tokio::sync::mpsc::Sender<String>,
     live_set: &mut LiveSubscriptionSet,

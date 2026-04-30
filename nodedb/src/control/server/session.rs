@@ -10,7 +10,8 @@ use tracing::{debug, instrument, warn};
 use crate::bridge::envelope::{PhysicalPlan, Priority, Request, Status};
 use crate::bridge::physical_plan::{CrdtOp, DocumentOp, GraphOp, VectorOp};
 use crate::control::state::SharedState;
-use crate::types::{ReadConsistency, RequestId, TenantId, VShardId};
+use crate::types::{ReadConsistency, RequestId, TenantId, TraceId, VShardId};
+use nodedb_types::vector_distance::DistanceMetric;
 
 /// Maximum frame size: 16 MiB.
 const MAX_FRAME_SIZE: u32 = 16 * 1024 * 1024;
@@ -278,6 +279,7 @@ impl Session {
                     query_vector,
                     top_k,
                     ef_search: 0,
+                    metric: DistanceMetric::L2,
                     filter_bitmap: None,
                     field_name: String::new(),
                     rls_filters: Vec::new(),
@@ -411,7 +413,7 @@ impl Session {
             deadline: Instant::now()
                 + Duration::from_secs(self.state.tuning.network.default_deadline_secs),
             priority: Priority::Normal,
-            trace_id: 0,
+            trace_id: TraceId::generate(),
             consistency: ReadConsistency::Strong,
             idempotency_key: None,
             event_source: crate::event::EventSource::User,

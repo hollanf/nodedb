@@ -1,5 +1,6 @@
 //! Transaction control: BEGIN, COMMIT, ROLLBACK.
 
+use nodedb_types::TraceId;
 use nodedb_types::protocol::NativeResponse;
 
 use crate::bridge::envelope::PhysicalPlan;
@@ -91,7 +92,7 @@ pub(crate) async fn handle_commit(ctx: &DispatchCtx<'_>, seq: u64) -> NativeResp
             Some(gw) => {
                 let gw_ctx = GatewayQueryContext {
                     tenant_id,
-                    trace_id: 0,
+                    trace_id: TraceId::generate(),
                 };
                 gw.execute(&gw_ctx, batch_plan).await.err().map(|e| {
                     let (_code, msg) = GatewayErrorMap::to_native(&e);
@@ -110,7 +111,7 @@ pub(crate) async fn handle_commit(ctx: &DispatchCtx<'_>, seq: u64) -> NativeResp
                     batch_task.tenant_id,
                     batch_task.vshard_id,
                     batch_task.plan,
-                    0,
+                    TraceId::ZERO,
                 )
                 .await
                 .err()

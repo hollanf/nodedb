@@ -13,7 +13,7 @@ use crate::control::gateway::core::QueryContext;
 use crate::control::server::dispatch_utils;
 use crate::control::server::wal_dispatch;
 use crate::control::state::SharedState;
-use crate::types::{Lsn, RequestId, VShardId};
+use crate::types::{Lsn, RequestId, TraceId, VShardId};
 
 use super::session::RespSession;
 
@@ -33,7 +33,7 @@ pub(super) async fn dispatch_kv(
         Some(gw) => {
             let gw_ctx = QueryContext {
                 tenant_id: session.tenant_id,
-                trace_id: 0,
+                trace_id: TraceId::generate(),
             };
             gw.execute(&gw_ctx, plan)
                 .await
@@ -44,9 +44,15 @@ pub(super) async fn dispatch_kv(
         }
         None => {
             let vshard = VShardId::from_collection(&session.collection);
-            dispatch_utils::dispatch_to_data_plane(state, session.tenant_id, vshard, plan, 0)
-                .await
-                .map_err(map_busy_error)
+            dispatch_utils::dispatch_to_data_plane(
+                state,
+                session.tenant_id,
+                vshard,
+                plan,
+                TraceId::ZERO,
+            )
+            .await
+            .map_err(map_busy_error)
         }
     }
 }
@@ -66,7 +72,7 @@ pub(super) async fn dispatch_kv_write(
         Some(gw) => {
             let gw_ctx = QueryContext {
                 tenant_id: session.tenant_id,
-                trace_id: 0,
+                trace_id: TraceId::generate(),
             };
             gw.execute(&gw_ctx, plan)
                 .await
@@ -75,9 +81,15 @@ pub(super) async fn dispatch_kv_write(
                 })
                 .map(gateway_payloads_to_response)
         }
-        None => dispatch_utils::dispatch_to_data_plane(state, session.tenant_id, vshard, plan, 0)
-            .await
-            .map_err(map_busy_error),
+        None => dispatch_utils::dispatch_to_data_plane(
+            state,
+            session.tenant_id,
+            vshard,
+            plan,
+            TraceId::ZERO,
+        )
+        .await
+        .map_err(map_busy_error),
     }
 }
 

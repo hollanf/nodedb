@@ -1,6 +1,7 @@
 //! Vector engine plan builders.
 
 use nodedb_types::protocol::TextFields;
+use nodedb_types::vector_distance::DistanceMetric;
 
 use super::super::DispatchCtx;
 use crate::bridge::envelope::PhysicalPlan;
@@ -22,6 +23,10 @@ pub(crate) fn build_search(fields: &TextFields, collection: &str) -> crate::Resu
         query_vector: query_vector.clone(),
         top_k,
         ef_search,
+        // The native protocol has no SQL operator context; use the collection
+        // default metric (L2 as the wire sentinel — the Data Plane will apply
+        // the collection-configured metric when these match).
+        metric: DistanceMetric::L2,
         filter_bitmap: None,
         field_name,
         rls_filters: Vec::new(),

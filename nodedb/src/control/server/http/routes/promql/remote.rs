@@ -18,7 +18,7 @@ use crate::control::promql::remote_proto::{
 };
 use crate::control::promql::{self, types::DEFAULT_LOOKBACK_MS};
 use crate::control::server::http::auth::{AppState, ResolvedIdentity};
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 /// POST `/obsv/api/v1/write` — Prometheus remote write endpoint.
 ///
@@ -85,7 +85,7 @@ pub async fn remote_write(
             Some(gw) => {
                 let gw_ctx = QueryContext {
                     tenant_id,
-                    trace_id: 0,
+                    trace_id: TraceId::generate(),
                 };
                 gw.execute(&gw_ctx, plan).await
             }
@@ -94,7 +94,7 @@ pub async fn remote_write(
                 tenant_id,
                 vshard,
                 plan,
-                0,
+                TraceId::generate(),
             )
             .await
             .map(|_| vec![]),

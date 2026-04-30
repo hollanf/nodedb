@@ -6,7 +6,7 @@ use crate::bridge::envelope::{Payload, Response, Status};
 use crate::control::gateway::GatewayErrorMap;
 use crate::control::gateway::core::QueryContext as GatewayQueryContext;
 use crate::data::executor::response_codec;
-use crate::types::{Lsn, RequestId};
+use crate::types::{Lsn, RequestId, TraceId};
 
 use super::super::super::dispatch_utils;
 use super::{DispatchCtx, error_to_native};
@@ -61,7 +61,7 @@ pub(crate) async fn handle_direct_op(
         Some(gw) => {
             let gw_ctx = GatewayQueryContext {
                 tenant_id,
-                trace_id: 0,
+                trace_id: TraceId::generate(),
             };
             match gw.execute(&gw_ctx, plan).await {
                 Ok(payloads) => {
@@ -74,8 +74,14 @@ pub(crate) async fn handle_direct_op(
             }
         }
         None => {
-            match dispatch_utils::dispatch_to_data_plane(ctx.state, tenant_id, vshard_id, plan, 0)
-                .await
+            match dispatch_utils::dispatch_to_data_plane(
+                ctx.state,
+                tenant_id,
+                vshard_id,
+                plan,
+                TraceId::ZERO,
+            )
+            .await
             {
                 Ok(resp) => data_plane_response_to_native(seq, &resp),
                 Err(e) => error_to_native(seq, &e),

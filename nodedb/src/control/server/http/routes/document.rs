@@ -8,7 +8,7 @@ use axum::http::HeaderMap;
 
 use crate::bridge::envelope::{PhysicalPlan, Priority, Request, Status};
 use crate::control::server::http::auth::{ApiError, AppState};
-use crate::types::{ReadConsistency, TenantId, VShardId};
+use crate::types::{ReadConsistency, TenantId, TraceId, VShardId};
 
 /// Extract X-Request-Id from headers, or generate one.
 pub(super) fn extract_request_id(headers: &HeaderMap) -> u64 {
@@ -31,7 +31,7 @@ pub(super) async fn dispatch_plan(
     collection: &str,
     plan: PhysicalPlan,
 ) -> Result<Vec<u8>, ApiError> {
-    dispatch_plan_with_trace(state, tenant_id, collection, plan, 0).await
+    dispatch_plan_with_trace(state, tenant_id, collection, plan, TraceId::ZERO).await
 }
 
 /// Dispatch a physical plan with trace ID and await the response.
@@ -40,7 +40,7 @@ pub(super) async fn dispatch_plan_with_trace(
     tenant_id: TenantId,
     collection: &str,
     plan: PhysicalPlan,
-    trace_id: u64,
+    trace_id: TraceId,
 ) -> Result<Vec<u8>, ApiError> {
     let vshard_id = VShardId::from_collection(collection);
     let request_id = state.shared.next_request_id();

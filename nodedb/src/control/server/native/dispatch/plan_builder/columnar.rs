@@ -160,6 +160,7 @@ fn value_to_pk_bytes(v: &nodedb_types::Value) -> Vec<u8> {
         | V::Object(_)
         | V::Array(_)
         | V::DateTime(_)
+        | V::NaiveDateTime(_)
         | V::Duration(_)
         | V::Decimal(_)
         | V::Geometry(_)

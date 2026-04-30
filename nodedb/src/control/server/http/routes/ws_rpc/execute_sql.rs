@@ -2,7 +2,7 @@
 
 use crate::control::gateway::core::QueryContext;
 use crate::control::state::SharedState;
-use crate::types::TenantId;
+use crate::types::{TenantId, TraceId};
 
 /// Execute SQL and return result as JSON.
 ///
@@ -14,7 +14,7 @@ pub async fn execute_sql(
     query_ctx: &crate::control::planner::context::QueryContext,
     tenant_id: TenantId,
     sql: &str,
-    trace_id: u64,
+    trace_id: TraceId,
 ) -> crate::Result<serde_json::Value> {
     // Quota enforcement — reject before planning or dispatch.
     shared.check_tenant_quota(tenant_id)?;

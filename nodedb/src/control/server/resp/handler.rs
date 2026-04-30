@@ -92,15 +92,15 @@ fn handle_select(cmd: &RespCommand, session: &mut RespSession) -> RespValue {
 /// AUTH [username] password
 ///
 /// Redis supports two forms:
-/// - `AUTH password` — authenticates with default username "admin"
+/// - `AUTH password` — authenticates with default username "nodedb"
 /// - `AUTH username password` — authenticates with explicit username
 ///
 /// On success, updates `session.tenant_id` from the authenticated identity.
 fn handle_auth(cmd: &RespCommand, session: &mut RespSession, state: &SharedState) -> RespValue {
     let (username, password) = match cmd.argc() {
-        1 => ("admin", cmd.arg_str(0).unwrap_or("")),
+        1 => ("nodedb", cmd.arg_str(0).unwrap_or("")),
         2 => (
-            cmd.arg_str(0).unwrap_or("admin"),
+            cmd.arg_str(0).unwrap_or("nodedb"),
             cmd.arg_str(1).unwrap_or(""),
         ),
         _ => return RespValue::err("ERR wrong number of arguments for 'auth' command"),

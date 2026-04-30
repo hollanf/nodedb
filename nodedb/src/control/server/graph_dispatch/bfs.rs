@@ -12,7 +12,7 @@ use crate::bridge::physical_plan::GraphOp;
 use crate::control::scatter_gather;
 use crate::control::state::SharedState;
 use crate::engine::graph::traversal_options::GraphTraversalOptions;
-use crate::types::{Lsn, RequestId, TenantId};
+use crate::types::{Lsn, RequestId, TenantId, TraceId};
 
 /// Cross-core BFS orchestration for graph traversal.
 ///
@@ -95,9 +95,13 @@ pub async fn cross_core_bfs_with_options(
             rls_filters: Vec::new(),
         });
 
-        let resp =
-            crate::control::server::broadcast::broadcast_to_all_cores(shared, tenant_id, plan, 0)
-                .await?;
+        let resp = crate::control::server::broadcast::broadcast_to_all_cores(
+            shared,
+            tenant_id,
+            plan,
+            TraceId::ZERO,
+        )
+        .await?;
 
         if !resp.payload.is_empty() {
             let json_text =

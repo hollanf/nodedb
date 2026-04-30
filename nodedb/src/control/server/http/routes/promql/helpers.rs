@@ -83,7 +83,7 @@ pub async fn fetch_series_for_query(
             ),
             (
                 "nodedb_wal_fsync_latency_us",
-                sys.wal_fsync_latency_us.load(Ordering::Relaxed) as f64,
+                sys.wal_fsync_latency_micros.load(Ordering::Relaxed) as f64,
             ),
             (
                 "nodedb_raft_apply_lag",
@@ -106,8 +106,8 @@ pub async fn fetch_series_for_query(
                 sys.graph_traversals.load(Ordering::Relaxed) as f64,
             ),
             (
-                "nodedb_text_searches_total",
-                sys.text_searches.load(Ordering::Relaxed) as f64,
+                "nodedb_fts_searches_total",
+                sys.fts_searches.load(Ordering::Relaxed) as f64,
             ),
             (
                 "nodedb_kv_gets_total",

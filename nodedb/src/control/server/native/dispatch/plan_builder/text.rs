@@ -17,7 +17,7 @@ pub(crate) fn build_search(fields: &TextFields, collection: &str) -> crate::Resu
 
     Ok(PhysicalPlan::Text(TextOp::Search {
         collection: collection.to_string(),
-        query: query_text.clone(),
+        query: query_text.to_string(),
         top_k,
         fuzzy,
         prefilter: None,

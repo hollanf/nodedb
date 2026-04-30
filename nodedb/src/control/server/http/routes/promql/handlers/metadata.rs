@@ -50,9 +50,9 @@ pub async fn metadata(
                 "Graph traversal operations",
             ),
             (
-                "nodedb_text_searches_total",
+                "nodedb_fts_searches_total",
                 "counter",
-                "Text search operations",
+                "Full-text search operations",
             ),
             ("nodedb_kv_gets_total", "counter", "KV GET operations"),
             ("nodedb_kv_memory_bytes", "gauge", "KV engine memory usage"),

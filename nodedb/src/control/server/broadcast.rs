@@ -10,7 +10,7 @@ use crate::bridge::envelope::{PhysicalPlan, Priority, Request, Response};
 use crate::bridge::physical_plan::QueryOp;
 use crate::control::arrow_convert;
 use crate::control::state::SharedState;
-use crate::types::{Lsn, ReadConsistency, RequestId, TenantId, VShardId};
+use crate::types::{Lsn, ReadConsistency, RequestId, TenantId, TraceId, VShardId};
 
 /// Total number of `broadcast_to_all_cores` / `broadcast_count_to_all_cores`
 /// invocations since process start. Exposed so callers (including test
@@ -32,7 +32,7 @@ pub async fn broadcast_to_all_cores(
     shared: &SharedState,
     tenant_id: TenantId,
     plan: PhysicalPlan,
-    trace_id: u64,
+    trace_id: TraceId,
 ) -> crate::Result<Response> {
     BROADCAST_CALLS.fetch_add(1, Ordering::Relaxed);
     let num_cores = match shared.dispatcher.lock() {
@@ -153,7 +153,7 @@ pub async fn broadcast_count_to_all_cores(
     shared: &SharedState,
     tenant_id: TenantId,
     plan: PhysicalPlan,
-    trace_id: u64,
+    trace_id: TraceId,
     count_key: &str,
 ) -> crate::Result<Response> {
     BROADCAST_CALLS.fetch_add(1, Ordering::Relaxed);
@@ -253,7 +253,7 @@ pub async fn broadcast_raw(
     shared: &SharedState,
     tenant_id: TenantId,
     plan: PhysicalPlan,
-    trace_id: u64,
+    trace_id: TraceId,
 ) -> crate::Result<Vec<u8>> {
     BROADCAST_CALLS.fetch_add(1, Ordering::Relaxed);
     let num_cores = match shared.dispatcher.lock() {

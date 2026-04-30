@@ -2,9 +2,8 @@
 //!
 //! | Endpoint          | Method | Purpose                     | k8s probe     |
 //! |-------------------|--------|-----------------------------|---------------|
-//! | `/health/live`    | GET    | Process alive (always 200)  | liveness      |
 //! | `/healthz`        | GET    | Ready to serve traffic      | readiness     |
-//! | `/health`         | GET    | Liveness with cluster info  | —             |
+//! | `/health/live`    | GET    | Process alive (always 200)  | liveness      |
 //! | `/health/ready`   | GET    | WAL recovered               | readiness alt |
 //! | `/health/drain`   | POST   | Trigger graceful drain      | preStop hook  |
 
@@ -48,32 +47,6 @@ pub async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
     let health = crate::control::startup::health::observe(&state.shared.startup);
     let (status, body) = crate::control::startup::health::to_http_response(&health);
     (status, axum::Json(body))
-}
-
-/// GET /health — liveness check.
-pub async fn health(State(state): State<AppState>) -> impl IntoResponse {
-    // Derive both the node count and version view from the live
-    // cluster topology in one read. Single-node mode reports 1
-    // via the view's fallback.
-    let view = state.shared.cluster_version_view();
-    let nodes = if view.node_count > 0 {
-        view.node_count
-    } else {
-        1
-    };
-    let cluster_version = json!({
-        "nodes": nodes,
-        "min_version": view.min_version,
-        "max_version": view.max_version,
-        "mixed_version": view.is_mixed_version(),
-        "compat_mode": crate::control::rolling_upgrade::should_compat_mode(&view),
-    });
-    let body = json!({
-        "status": "ok",
-        "node_id": state.shared.node_id,
-        "cluster_version": cluster_version,
-    });
-    (StatusCode::OK, axum::Json(body))
 }
 
 /// GET /health/ready — readiness check (WAL recovered, cores initialized).

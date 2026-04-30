@@ -11,7 +11,7 @@ use crate::control::gateway::GatewayErrorMap;
 use crate::control::gateway::core::QueryContext as GatewayQueryContext;
 use crate::control::planner::physical::PhysicalTask;
 use crate::control::server::dispatch_utils;
-use crate::types::{Lsn, RequestId};
+use crate::types::{Lsn, RequestId, TraceId};
 
 use super::DispatchCtx;
 
@@ -33,7 +33,7 @@ pub(super) async fn dispatch_task_via_gateway(
         Some(gw) => {
             let gw_ctx = GatewayQueryContext {
                 tenant_id,
-                trace_id: 0,
+                trace_id: TraceId::generate(),
             };
             gw.execute(&gw_ctx, plan)
                 .await
@@ -48,7 +48,14 @@ pub(super) async fn dispatch_task_via_gateway(
         None => {
             // Boot fallback: no gateway yet, dispatch locally.
             dispatch_utils::wal_append_if_write(&ctx.state.wal, tenant_id, vshard_id, &plan)?;
-            dispatch_utils::dispatch_to_data_plane(ctx.state, tenant_id, vshard_id, plan, 0).await
+            dispatch_utils::dispatch_to_data_plane(
+                ctx.state,
+                tenant_id,
+                vshard_id,
+                plan,
+                TraceId::ZERO,
+            )
+            .await
         }
     }
 }

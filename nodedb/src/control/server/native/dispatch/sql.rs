@@ -1,5 +1,6 @@
 //! SQL dispatch: DataFusion planning + Data Plane execution.
 
+use nodedb_types::TraceId;
 use nodedb_types::protocol::NativeResponse;
 use nodedb_types::value::Value;
 
@@ -221,7 +222,7 @@ async fn dispatch_task(ctx: &DispatchCtx<'_>, task: PhysicalTask) -> crate::Resu
             ctx.state,
             task.tenant_id,
             task.plan,
-            0,
+            TraceId::ZERO,
             "inserted",
         )
         .await;
@@ -238,7 +239,7 @@ async fn dispatch_task(ctx: &DispatchCtx<'_>, task: PhysicalTask) -> crate::Resu
             ctx.state,
             task.tenant_id,
             task.plan,
-            0,
+            TraceId::ZERO,
             "dropped",
         )
         .await;
@@ -246,8 +247,13 @@ async fn dispatch_task(ctx: &DispatchCtx<'_>, task: PhysicalTask) -> crate::Resu
 
     // Broadcast scans must fan-out to all cores regardless of gateway state.
     if task.plan.is_broadcast_scan() {
-        return dispatch_utils::broadcast_to_all_cores(ctx.state, task.tenant_id, task.plan, 0)
-            .await;
+        return dispatch_utils::broadcast_to_all_cores(
+            ctx.state,
+            task.tenant_id,
+            task.plan,
+            TraceId::ZERO,
+        )
+        .await;
     }
 
     // All other tasks — point ops, writes, Raft-replicated writes — route

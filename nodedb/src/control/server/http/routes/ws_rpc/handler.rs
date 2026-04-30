@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use tracing::debug;
@@ -40,18 +41,24 @@ use super::process_message::process_message;
 /// "reject the first message" approach still pins a tenant inside the handler.
 pub async fn ws_handler(
     identity: ResolvedIdentity,
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let tenant_id = identity.tenant_id();
-    ws.on_upgrade(move |socket| handle_ws_connection(socket, state, tenant_id))
+    let trace_id = crate::control::trace_context::extract_from_headers(&headers);
+    ws.on_upgrade(move |socket| handle_ws_connection(socket, state, tenant_id, trace_id))
 }
 
 /// Handle a single WebSocket connection.
-async fn handle_ws_connection(socket: WebSocket, state: AppState, tenant_id: TenantId) {
+async fn handle_ws_connection(
+    socket: WebSocket,
+    state: AppState,
+    tenant_id: TenantId,
+    trace_id: nodedb_types::TraceId,
+) {
     let (mut sender, mut receiver) = socket.split();
     let shared = Arc::clone(&state.shared);
-    let trace_id = crate::control::trace_context::generate_trace_id();
 
     // Bounded channel for live notifications → WS sender.
     // 256 messages provides ~10s of buffer at 25 events/sec.

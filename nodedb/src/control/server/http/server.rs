@@ -2,7 +2,6 @@
 //!
 //! Endpoints:
 //! - GET  /healthz      — k8s readiness/liveness (always reachable; 503 until GatewayEnable)
-//! - GET  /health       — liveness
 //! - GET  /health/live  — unconditional liveness probe
 //! - GET  /health/ready — readiness (WAL recovered)
 //! - POST /health/drain — trigger graceful drain
@@ -30,7 +29,6 @@ fn build_router(state: AppState) -> Router {
     let router = Router::new()
         // /healthz is always reachable — returns 503 during startup, 200 after.
         .route("/healthz", get(routes::health::healthz))
-        .route("/health", get(routes::health::health))
         .route("/health/live", get(routes::health::live))
         .route("/health/ready", get(routes::health::ready))
         .route("/health/drain", post(routes::health::drain))
@@ -131,7 +129,7 @@ async fn startup_gate_middleware(
 
     let path = req.uri().path();
     // Health-probe paths bypass the gate — these must be reachable during startup.
-    let is_health_path = path == "/healthz" || path == "/health" || path.starts_with("/health/");
+    let is_health_path = path == "/healthz" || path.starts_with("/health/");
 
     if !is_health_path {
         let gate = &app_state.shared.startup;

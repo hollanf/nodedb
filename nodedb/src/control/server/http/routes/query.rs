@@ -15,7 +15,7 @@ use crate::bridge::envelope::{PhysicalPlan, Status};
 use crate::control::gateway::GatewayErrorMap;
 use crate::control::gateway::core::QueryContext;
 use crate::control::security::identity::{required_permission, role_grants_permission};
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 use super::super::auth::{ApiError, AppState, resolve_identity};
 
@@ -204,7 +204,7 @@ async fn dispatch_to_data_plane(
     tenant_id: crate::types::TenantId,
     vshard_id: VShardId,
     plan: PhysicalPlan,
-    trace_id: u64,
+    trace_id: TraceId,
 ) -> crate::Result<crate::bridge::envelope::Response> {
     crate::control::server::dispatch_utils::dispatch_to_data_plane(
         &state.shared,

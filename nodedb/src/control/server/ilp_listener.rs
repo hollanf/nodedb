@@ -26,7 +26,7 @@ use crate::control::gateway::GatewayErrorMap;
 use crate::control::gateway::core::QueryContext;
 use crate::control::server::conn_stream::ConnStream;
 use crate::control::state::SharedState;
-use crate::types::{Lsn, RequestId, TenantId, VShardId};
+use crate::types::{Lsn, RequestId, TenantId, TraceId, VShardId};
 
 /// ILP TCP listener.
 pub struct IlpListener {
@@ -422,7 +422,7 @@ async fn flush_ilp_batch_inner(
             Some(gw) => {
                 let gw_ctx = QueryContext {
                     tenant_id,
-                    trace_id: 0,
+                    trace_id: TraceId::generate(),
                 };
                 gw.execute(&gw_ctx, plan)
                     .await
@@ -454,7 +454,11 @@ async fn flush_ilp_batch_inner(
             }
             None => {
                 crate::control::server::dispatch_utils::dispatch_to_data_plane(
-                    state, tenant_id, vshard_id, plan, 0,
+                    state,
+                    tenant_id,
+                    vshard_id,
+                    plan,
+                    TraceId::ZERO,
                 )
                 .await?
             }
