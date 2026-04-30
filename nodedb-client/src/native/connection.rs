@@ -156,10 +156,8 @@ impl NativeConnection {
     /// negotiated `proto_version`, `capabilities`, `server_version`, and `limits`
     /// on the connection so callers can inspect them via the `NodeDb` trait.
     ///
-    /// Handshake is optional for pre-T2-01 servers: if the first byte returned is
-    /// not part of the `HelloAck` magic (`0x4E` = 'N'), the frame is treated as a
-    /// legacy server that does not support handshake, and all negotiated fields
-    /// keep their zero-value defaults.
+    /// Returns a protocol error if the server does not respond with a valid
+    /// `HelloAckFrame` (wrong magic or a frame too short to contain the magic).
     pub async fn perform_client_handshake(&mut self) -> NodeDbResult<()> {
         // Client capability mask — advertise everything this SDK understands.
         let client_caps = CAP_STREAMING
@@ -199,15 +197,20 @@ impl NativeConnection {
         let mut ack_buf = vec![0u8; ack_len as usize];
         self.stream.read_exact(&mut ack_buf).await.map_err(io_err)?;
 
-        // If the magic doesn't match, this is a legacy server — ignore and return.
         let magic_bytes: [u8; 4] = if ack_buf.len() >= 4 {
             [ack_buf[0], ack_buf[1], ack_buf[2], ack_buf[3]]
         } else {
-            return Ok(()); // Too short — legacy server.
+            return Err(NodeDbError::internal(format!(
+                "HelloAck frame too short to contain magic: {} bytes",
+                ack_buf.len()
+            )));
         };
         if u32::from_be_bytes(magic_bytes) != nodedb_types::protocol::HELLO_ACK_MAGIC {
-            // Pre-handshake server: leave negotiated fields at defaults.
-            return Ok(());
+            return Err(NodeDbError::internal(format!(
+                "HelloAck magic mismatch: expected {:#010x}, got {:#010x}",
+                nodedb_types::protocol::HELLO_ACK_MAGIC,
+                u32::from_be_bytes(magic_bytes)
+            )));
         }
 
         let ack = HelloAckFrame::decode(&ack_buf)

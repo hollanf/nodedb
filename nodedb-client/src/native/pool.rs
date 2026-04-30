@@ -146,7 +146,7 @@ impl Pool {
         .await
         .map_err(|_| NodeDbError::sync_connection_failed("connect timeout"))??;
 
-        // Perform the native protocol handshake (no-op on pre-T2-01 servers).
+        // Perform the native protocol handshake.
         conn.perform_client_handshake().await?;
 
         // Authenticate.

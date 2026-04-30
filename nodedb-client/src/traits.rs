@@ -271,8 +271,8 @@ pub trait NodeDb: NodeDbMarker {
 
     /// The protocol version negotiated during the connection handshake.
     ///
-    /// Returns `0` when no handshake was performed (e.g. pre-T2-01 servers
-    /// or implementations that do not maintain a persistent connection).
+    /// Returns `0` for implementations that do not maintain a persistent
+    /// connection and therefore never perform a handshake.
     fn proto_version(&self) -> u16 {
         0
     }

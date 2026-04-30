@@ -157,7 +157,7 @@ impl NodeDb for NativeClient {
                 TextFields {
                     collection: Some(collection.to_string()),
                     query_vector: Some(query.to_vec()),
-                    top_k: Some(k as u64),
+                    top_k: Some(k as u32),
                     ..Default::default()
                 },
             )
