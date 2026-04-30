@@ -1,6 +1,6 @@
 //! Spatial engine operations dispatched to the Data Plane.
 
-use nodedb_types::SurrogateBitmap;
+use nodedb_types::{SurrogateBitmap, geometry::Geometry};
 
 /// Spatial predicate type for R-tree index scan.
 #[derive(
@@ -42,8 +42,8 @@ pub enum SpatialOp {
         collection: String,
         field: String,
         predicate: SpatialPredicate,
-        /// Query geometry serialized as GeoJSON bytes.
-        query_geometry: Vec<u8>,
+        /// Typed query geometry, parsed and validated on the Control Plane.
+        query_geometry: Geometry,
         /// Distance threshold in meters (for ST_DWithin). 0 for non-distance predicates.
         distance_meters: f64,
         /// Additional attribute filters applied after spatial candidates.

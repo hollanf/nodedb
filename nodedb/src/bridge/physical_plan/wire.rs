@@ -208,7 +208,7 @@ mod tests {
             collection: "places".into(),
             field: "location".into(),
             predicate: SpatialPredicate::DWithin,
-            query_geometry: b"{}".to_vec(),
+            query_geometry: nodedb_types::geometry::Geometry::point(0.0, 0.0),
             distance_meters: 500.0,
             attribute_filters: vec![],
             limit: 20,

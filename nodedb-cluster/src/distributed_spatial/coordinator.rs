@@ -12,8 +12,8 @@ pub struct SpatialScatterPayload {
     pub collection: String,
     pub field: String,
     pub predicate: String,
-    /// Raw query geometry bytes (GeoJSON, passed through as-is).
-    pub query_geometry: Vec<u8>,
+    /// Typed query geometry, parsed and validated on the originating CP.
+    pub query_geometry: nodedb_types::geometry::Geometry,
     pub distance_meters: f64,
     pub limit: u32,
 }
@@ -44,7 +44,7 @@ impl SpatialScatterGather {
         collection: &str,
         field: &str,
         predicate: &str,
-        query_geometry_json: &[u8],
+        query_geometry: nodedb_types::geometry::Geometry,
         distance_meters: f64,
         limit: usize,
     ) -> Vec<(u32, VShardEnvelope)> {
@@ -52,7 +52,7 @@ impl SpatialScatterGather {
             collection: collection.to_string(),
             field: field.to_string(),
             predicate: predicate.to_string(),
-            query_geometry: query_geometry_json.to_vec(),
+            query_geometry,
             distance_meters,
             limit: limit as u32,
         };
@@ -106,11 +106,14 @@ mod tests {
     #[test]
     fn scatter_envelopes_built() {
         let coord = SpatialScatterGather::new(1, vec![0, 1, 2]);
-        let query =
-            serde_json::to_vec(&serde_json::json!({"type": "Point", "coordinates": [0.0, 0.0]}))
-                .unwrap();
-        let envs =
-            coord.build_scatter_envelopes("buildings", "geom", "st_dwithin", &query, 1000.0, 100);
+        let envs = coord.build_scatter_envelopes(
+            "buildings",
+            "geom",
+            "st_dwithin",
+            nodedb_types::geometry::Geometry::point(0.0, 0.0),
+            1000.0,
+            100,
+        );
         assert_eq!(envs.len(), 3);
         for (shard_id, env) in &envs {
             assert_eq!(env.msg_type, VShardMessageType::SpatialScatterRequest);

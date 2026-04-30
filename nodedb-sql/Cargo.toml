@@ -9,6 +9,7 @@ description = "SQL parser, planner, and optimizer for NodeDB"
 [dependencies]
 nodedb-types = { workspace = true }
 nodedb-query = { workspace = true }
+nodedb-spatial = { workspace = true }
 sqlparser = { version = "0.61", features = ["visitor"] }
 thiserror = { workspace = true }
 chrono = { workspace = true }

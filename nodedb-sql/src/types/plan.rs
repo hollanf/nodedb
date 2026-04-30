@@ -361,7 +361,7 @@ pub enum SqlPlan {
         collection: String,
         field: String,
         predicate: SpatialPredicate,
-        query_geometry: Vec<u8>,
+        query_geometry: nodedb_types::geometry::Geometry,
         distance_meters: f64,
         attribute_filters: Vec<Filter>,
         limit: usize,

@@ -733,7 +733,7 @@ pub(super) fn convert_spatial_scan(p: SpatialScanParams<'_>) -> crate::Result<Ve
             collection: collection.into(),
             field: field.to_string(),
             predicate: sp,
-            query_geometry: query_geometry.to_vec(),
+            query_geometry: query_geometry.clone(),
             distance_meters: *distance_meters,
             attribute_filters: attr_bytes,
             limit: *limit,

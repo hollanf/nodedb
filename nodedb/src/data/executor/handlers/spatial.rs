@@ -6,7 +6,6 @@
 //!
 //! Internal document representation: `nodedb_types::Value` (no JSON intermediary).
 
-use sonic_rs;
 use tracing::debug;
 
 use super::super::response_codec;
@@ -32,7 +31,7 @@ impl CoreLoop {
         collection: &str,
         field: &str,
         predicate: &SpatialPredicate,
-        query_geometry_bytes: &[u8],
+        query_geometry: &nodedb_types::geometry::Geometry,
         distance_meters: f64,
         attribute_filters: &[u8],
         limit: usize,
@@ -54,19 +53,8 @@ impl CoreLoop {
             Err(resp) => return resp,
         };
 
-        // 1. Parse query geometry.
-        let query_geom: nodedb_types::geometry::Geometry =
-            match sonic_rs::from_slice(query_geometry_bytes) {
-                Ok(g) => g,
-                Err(e) => {
-                    return self.response_error(
-                        task,
-                        ErrorCode::Internal {
-                            detail: format!("invalid query geometry GeoJSON: {e}"),
-                        },
-                    );
-                }
-            };
+        // The query geometry was parsed and validated on the Control Plane.
+        let query_geom = query_geometry;
 
         // 2. Deserialize attribute and RLS filters.
         let attr_filters: Vec<ScanFilter> = if attribute_filters.is_empty() {
@@ -81,7 +69,7 @@ impl CoreLoop {
         };
 
         // 3. Compute search bbox (expand by distance for ST_DWithin).
-        let query_bbox = nodedb_types::bbox::geometry_bbox(&query_geom);
+        let query_bbox = nodedb_types::bbox::geometry_bbox(query_geom);
         let search_bbox = if distance_meters > 0.0 {
             expand_bbox(&query_bbox, distance_meters)
         } else {
@@ -101,7 +89,7 @@ impl CoreLoop {
                 collection,
                 field,
                 predicate,
-                &query_geom,
+                query_geom,
                 distance_meters,
                 limit,
                 projection,
@@ -187,7 +175,7 @@ impl CoreLoop {
                 None => continue,
             };
 
-            if !apply_predicate(predicate, &query_geom, &doc_geom, distance_meters) {
+            if !apply_predicate(predicate, query_geom, &doc_geom, distance_meters) {
                 continue;
             }
 
@@ -460,9 +448,9 @@ mod tests {
         doc_id
     }
 
-    /// GeoJSON Point query centred on (0.0, 0.0) as bytes for DWithin.
-    fn origin_point_bytes() -> Vec<u8> {
-        serde_json::to_vec(&serde_json::json!({"type":"Point","coordinates":[0.0,0.0]})).unwrap()
+    /// GeoJSON Point query centred on (0.0, 0.0) for DWithin.
+    fn origin_point() -> nodedb_types::geometry::Geometry {
+        nodedb_types::geometry::Geometry::point(0.0, 0.0)
     }
 
     fn dummy_spatial_plan() -> PhysicalPlan {
@@ -470,7 +458,7 @@ mod tests {
             collection: "places".into(),
             field: "loc".into(),
             predicate: crate::bridge::physical_plan::SpatialPredicate::DWithin,
-            query_geometry: origin_point_bytes(),
+            query_geometry: origin_point(),
             distance_meters: 1_000_000.0,
             attribute_filters: Vec::new(),
             limit: 100,
@@ -527,7 +515,7 @@ mod tests {
             collection,
             field,
             &crate::bridge::physical_plan::SpatialPredicate::DWithin,
-            &origin_point_bytes(),
+            &origin_point(),
             1_000_000.0,
             &[],
             100,

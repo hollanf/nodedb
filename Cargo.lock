@@ -4482,6 +4482,7 @@ version = "0.0.6"
 dependencies = [
  "chrono",
  "nodedb-query",
+ "nodedb-spatial",
  "nodedb-types",
  "rust_decimal",
  "sonic-rs",

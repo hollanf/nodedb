@@ -97,6 +97,16 @@ fn plan_spatial_from_where(
         context: name.into(),
     })?;
     let geom_str = extract_geometry_arg(geom_arg)?;
+    let geometry: nodedb_types::geometry::Geometry =
+        sonic_rs::from_str(&geom_str).map_err(|e| SqlError::InvalidFunction {
+            detail: format!("invalid geometry in {name}: {e}"),
+        })?;
+    let issues = nodedb_spatial::validate::validate_geometry(&geometry);
+    if !issues.is_empty() {
+        return Err(SqlError::InvalidFunction {
+            detail: format!("invalid geometry in {name}: {}", issues.join("; ")),
+        });
+    }
     let distance = if args.len() >= 3 {
         extract_float(&args[2]).unwrap_or(0.0)
     } else {
@@ -106,7 +116,7 @@ fn plan_spatial_from_where(
         collection: table.name.clone(),
         field,
         predicate,
-        query_geometry: geom_str.into_bytes(),
+        query_geometry: geometry,
         distance_meters: distance,
         attribute_filters: Vec::new(),
         limit: 1000,

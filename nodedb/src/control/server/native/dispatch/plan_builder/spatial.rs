@@ -6,13 +6,24 @@ use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::{SpatialOp, SpatialPredicate};
 
 pub(crate) fn build_scan(fields: &TextFields, collection: &str) -> crate::Result<PhysicalPlan> {
-    let query_geometry = fields
+    let raw_bytes = fields
         .query_geometry
         .as_ref()
         .ok_or_else(|| crate::Error::BadRequest {
             detail: "missing 'query_geometry'".to_string(),
-        })?
-        .clone();
+        })?;
+
+    let geometry: nodedb_types::geometry::Geometry =
+        sonic_rs::from_slice(raw_bytes).map_err(|e| crate::Error::BadRequest {
+            detail: format!("invalid query geometry: {e}"),
+        })?;
+
+    let issues = nodedb_spatial::validate::validate_geometry(&geometry);
+    if !issues.is_empty() {
+        return Err(crate::Error::BadRequest {
+            detail: format!("invalid query geometry: {}", issues.join("; ")),
+        });
+    }
 
     let predicate_str = fields.spatial_predicate.as_deref().unwrap_or("dwithin");
     let predicate = match predicate_str.to_lowercase().as_str() {
@@ -35,7 +46,7 @@ pub(crate) fn build_scan(fields: &TextFields, collection: &str) -> crate::Result
         collection: collection.to_string(),
         field,
         predicate,
-        query_geometry,
+        query_geometry: geometry,
         distance_meters,
         attribute_filters: Vec::new(),
         limit,
