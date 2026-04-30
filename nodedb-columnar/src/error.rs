@@ -2,6 +2,7 @@
 
 /// Errors from columnar segment encoding, decoding, and validation.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ColumnarError {
     #[error("codec error: {0}")]
     Codec(#[from] nodedb_codec::CodecError),
@@ -47,4 +48,7 @@ pub enum ColumnarError {
 
     #[error("primary key not found")]
     PrimaryKeyNotFound,
+
+    #[error("segment ID space exhausted: u64::MAX segments have been allocated")]
+    SegmentIdExhausted,
 }

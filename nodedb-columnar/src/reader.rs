@@ -19,6 +19,7 @@ use crate::predicate::ScanPredicate;
 
 /// Decoded column data from a segment scan.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DecodedColumn {
     Int64 {
         values: Vec<i64>,

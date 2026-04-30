@@ -22,14 +22,14 @@ pub struct MutationEngine {
     pub(super) memtable: ColumnarMemtable,
     pub(super) pk_index: PkIndex,
     /// Per-segment delete bitmaps. Key = segment_id.
-    pub(super) delete_bitmaps: HashMap<u32, DeleteBitmap>,
+    pub(super) delete_bitmaps: HashMap<u64, DeleteBitmap>,
     /// PK column indices in the schema.
     pub(super) pk_col_indices: Vec<usize>,
     /// Counter for assigning segment IDs.
-    pub(super) next_segment_id: u32,
+    pub(super) next_segment_id: u64,
     /// Current "memtable segment ID" — a virtual segment ID for rows
     /// that are still in the memtable (not yet flushed).
-    pub(super) memtable_segment_id: u32,
+    pub(super) memtable_segment_id: u64,
     /// Row counter within the current memtable (resets on flush).
     pub(super) memtable_row_counter: u32,
     /// Per-row surrogate identities, parallel to the memtable rows.
@@ -41,6 +41,7 @@ pub struct MutationEngine {
 }
 
 /// Result of a mutation operation, including the WAL record to persist.
+#[derive(Debug)]
 pub struct MutationResult {
     /// WAL record(s) to persist before the mutation is considered durable.
     pub wal_records: Vec<ColumnarWalRecord>,
@@ -98,7 +99,7 @@ impl MutationEngine {
     }
 
     /// Access a segment's delete bitmap.
-    pub fn delete_bitmap(&self, segment_id: u32) -> Option<&DeleteBitmap> {
+    pub fn delete_bitmap(&self, segment_id: u64) -> Option<&DeleteBitmap> {
         self.delete_bitmaps.get(&segment_id)
     }
 
@@ -106,12 +107,12 @@ impl MutationEngine {
     /// on first access so callers can `mark_deleted_batch` unconditionally.
     /// Used by temporal-purge paths that tombstone superseded row positions
     /// without going through the single-row `insert` / `delete` paths.
-    pub fn delete_bitmap_mut(&mut self, segment_id: u32) -> &mut DeleteBitmap {
+    pub fn delete_bitmap_mut(&mut self, segment_id: u64) -> &mut DeleteBitmap {
         self.delete_bitmaps.entry(segment_id).or_default()
     }
 
     /// The virtual segment id used for rows still in the memtable.
-    pub fn memtable_segment_id(&self) -> u32 {
+    pub fn memtable_segment_id(&self) -> u64 {
         self.memtable_segment_id
     }
 
@@ -121,7 +122,7 @@ impl MutationEngine {
     }
 
     /// Access all delete bitmaps.
-    pub fn delete_bitmaps(&self) -> &HashMap<u32, DeleteBitmap> {
+    pub fn delete_bitmaps(&self) -> &HashMap<u64, DeleteBitmap> {
         &self.delete_bitmaps
     }
 
@@ -203,12 +204,12 @@ impl MutationEngine {
     /// The segment ID that will be assigned to the next flushed segment.
     ///
     /// Use this to obtain the ID to pass to `on_memtable_flushed`.
-    pub fn next_segment_id(&self) -> u32 {
+    pub fn next_segment_id(&self) -> u64 {
         self.next_segment_id
     }
 
     /// Whether a segment should be compacted based on its delete ratio.
-    pub fn should_compact(&self, segment_id: u32, total_rows: u64) -> bool {
+    pub fn should_compact(&self, segment_id: u64, total_rows: u64) -> bool {
         self.delete_bitmaps
             .get(&segment_id)
             .is_some_and(|bm| bm.should_compact(total_rows, 0.2))
@@ -237,5 +238,30 @@ impl MutationEngine {
             let pk_values: Vec<&Value> = self.pk_col_indices.iter().map(|&i| &values[i]).collect();
             Ok(crate::pk_index::encode_composite_pk(&pk_values))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nodedb_types::columnar::{ColumnDef, ColumnType, ColumnarSchema};
+
+    use super::*;
+
+    fn minimal_schema() -> ColumnarSchema {
+        ColumnarSchema {
+            columns: vec![ColumnDef::required("id", ColumnType::Int64).with_primary_key()],
+            version: 1,
+        }
+    }
+
+    #[test]
+    fn segment_id_allocator_returns_err_at_u64_max() {
+        let mut engine = MutationEngine::new("test".to_string(), minimal_schema());
+        engine.next_segment_id = u64::MAX;
+        let result = engine.on_memtable_flushed(u64::MAX - 1);
+        assert!(
+            matches!(result, Err(ColumnarError::SegmentIdExhausted)),
+            "expected SegmentIdExhausted, got: {result:?}"
+        );
     }
 }

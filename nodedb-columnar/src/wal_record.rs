@@ -13,6 +13,7 @@ use zerompk::{FromMessagePack, ToMessagePack};
 
 /// A WAL record for a columnar collection operation.
 #[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
+#[non_exhaustive]
 pub enum ColumnarWalRecord {
     /// A row was inserted into the memtable.
     ///
@@ -33,7 +34,7 @@ pub enum ColumnarWalRecord {
     /// delete bitmap.
     DeleteRows {
         collection: String,
-        segment_id: u32,
+        segment_id: u64,
         row_indices: Vec<u32>,
     },
 
@@ -46,8 +47,8 @@ pub enum ColumnarWalRecord {
     ///   writing; discard and treat old segments as authoritative.
     CompactionCommit {
         collection: String,
-        old_segment_ids: Vec<u32>,
-        new_segment_ids: Vec<u32>,
+        old_segment_ids: Vec<u64>,
+        new_segment_ids: Vec<u64>,
     },
 
     /// The memtable was flushed to a new segment.
@@ -57,7 +58,7 @@ pub enum ColumnarWalRecord {
     /// the memtable via InsertRow records.
     MemtableFlushed {
         collection: String,
-        segment_id: u32,
+        segment_id: u64,
         row_count: u64,
     },
 }

@@ -190,22 +190,18 @@ impl ColumnarMemtable {
         }
 
         self.columns.push(col);
-        self.schema.columns.push(ColumnDef {
-            name,
-            column_type,
-            nullable,
-            default: None,
-            primary_key: false,
-            modifiers: Vec::new(),
-            generated_expr: None,
-            generated_deps: Vec::new(),
-            added_at_version: 1,
-        });
+        let col_def = if nullable {
+            ColumnDef::nullable(name, column_type)
+        } else {
+            ColumnDef::required(name, column_type)
+        };
+        self.schema.columns.push(col_def);
     }
 }
 
 /// Borrowed value for zero-copy ingest into the columnar memtable.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum IngestValue<'a> {
     Null,
     Int64(i64),

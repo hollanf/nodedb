@@ -12,6 +12,7 @@ use crate::format::{BlockStats, BloomFilter};
 
 /// The value side of a scan predicate.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum PredicateValue {
     /// A numeric threshold (f64 for float columns, or integral f64 for i64 columns
     /// whose value fits within ±2^53 exactly).
@@ -39,6 +40,7 @@ pub struct ScanPredicate {
 
 /// Comparison operator for scan predicates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PredicateOp {
     /// `column > value`
     Gt,

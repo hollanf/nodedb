@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use crate::error::ColumnarError;
 use crate::pk_index::RowLocation;
 use crate::wal_record::ColumnarWalRecord;
 
@@ -11,8 +12,12 @@ impl MutationEngine {
     /// Notify the engine that the memtable was flushed to a new segment.
     ///
     /// Updates the PK index to remap memtable entries to the new segment.
-    /// Returns the WAL record for the flush event.
-    pub fn on_memtable_flushed(&mut self, new_segment_id: u32) -> MutationResult {
+    /// Returns the WAL record for the flush event, or `SegmentIdExhausted`
+    /// if the u64 segment ID counter has wrapped past its maximum.
+    pub fn on_memtable_flushed(
+        &mut self,
+        new_segment_id: u64,
+    ) -> Result<MutationResult, ColumnarError> {
         let row_count = self.memtable_row_counter;
 
         // Remap PK index entries from virtual memtable segment to real segment.
@@ -24,9 +29,15 @@ impl MutationEngine {
                 })
             });
 
+        // Advance the segment ID counter with overflow protection.
+        let next = self
+            .next_segment_id
+            .checked_add(1)
+            .ok_or(ColumnarError::SegmentIdExhausted)?;
+
         // Reset memtable tracking.
         self.memtable_segment_id = self.next_segment_id;
-        self.next_segment_id += 1;
+        self.next_segment_id = next;
         self.memtable_row_counter = 0;
         self.memtable_surrogates.clear();
 
@@ -36,9 +47,9 @@ impl MutationEngine {
             row_count: row_count as u64,
         };
 
-        MutationResult {
+        Ok(MutationResult {
             wal_records: vec![wal],
-        }
+        })
     }
 
     /// Notify the engine that compaction completed.
@@ -46,9 +57,9 @@ impl MutationEngine {
     /// Remaps PK index entries and removes old delete bitmaps.
     pub fn on_compaction_complete(
         &mut self,
-        old_segment_ids: &[u32],
-        new_segment_id: u32,
-        row_mapping: &HashMap<(u32, u32), u32>,
+        old_segment_ids: &[u64],
+        new_segment_id: u64,
+        row_mapping: &HashMap<(u64, u32), u32>,
     ) -> MutationResult {
         // Remap PK index for each old segment.
         for &old_seg in old_segment_ids {

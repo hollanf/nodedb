@@ -21,7 +21,7 @@ use crate::error::ColumnarError;
 )]
 pub struct RowLocation {
     /// Segment identifier (index in the segment list, or a unique segment ID).
-    pub segment_id: u32,
+    pub segment_id: u64,
     /// Row index within the segment (0-based).
     pub row_index: u32,
 }
@@ -94,7 +94,7 @@ impl PkIndex {
     /// the entry (row was deleted during compaction) or `Some(new_location)`.
     pub fn remap_segment(
         &mut self,
-        old_segment_id: u32,
+        old_segment_id: u64,
         remap_fn: impl Fn(u32) -> Option<RowLocation>,
     ) {
         let keys_to_remap: Vec<Vec<u8>> = self
@@ -119,7 +119,7 @@ impl PkIndex {
     /// (in order). `segment_id` is the new segment's ID.
     pub fn bulk_insert(
         &mut self,
-        segment_id: u32,
+        segment_id: u64,
         pk_bytes_list: &[Vec<u8>],
     ) -> Result<(), ColumnarError> {
         for (row_index, pk_bytes) in pk_bytes_list.iter().enumerate() {
@@ -133,7 +133,7 @@ impl PkIndex {
     }
 
     /// Remove all entries pointing to a given segment (used when dropping a segment).
-    pub fn remove_segment(&mut self, segment_id: u32) {
+    pub fn remove_segment(&mut self, segment_id: u64) {
         self.inner.retain(|_, loc| loc.segment_id != segment_id);
     }
 
@@ -334,6 +334,42 @@ mod tests {
                 values[i + 1]
             );
         }
+    }
+
+    #[test]
+    fn pk_index_roundtrip_segment_id_above_u32_max() {
+        let mut idx = PkIndex::new();
+        let pk = encode_pk(&Value::Integer(999));
+        // Use a segment ID that cannot fit in u32.
+        let large_seg_id: u64 = u32::MAX as u64 + 1;
+        let loc = RowLocation {
+            segment_id: large_seg_id,
+            row_index: 7,
+        };
+
+        idx.insert(pk.clone(), loc).expect("insert");
+
+        // Round-trip through serialization.
+        let bytes = idx.to_bytes().expect("serialize");
+        let restored = PkIndex::from_bytes(&bytes).expect("deserialize");
+
+        let got = restored.get(&pk).expect("lookup after roundtrip");
+        assert_eq!(got.segment_id, large_seg_id);
+        assert_eq!(got.row_index, 7);
+
+        // remap_segment must match on the large ID.
+        idx.remap_segment(large_seg_id, |old_row| {
+            Some(RowLocation {
+                segment_id: large_seg_id + 1,
+                row_index: old_row,
+            })
+        });
+        let remapped = idx.get(&pk).expect("lookup after remap");
+        assert_eq!(remapped.segment_id, large_seg_id + 1);
+
+        // remove_segment must remove on the large ID.
+        idx.remove_segment(large_seg_id + 1);
+        assert!(idx.is_empty());
     }
 
     #[test]

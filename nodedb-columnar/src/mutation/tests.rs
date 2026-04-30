@@ -127,7 +127,7 @@ fn memtable_flush_remaps_pk() {
     }
 
     // Simulate flush: memtable becomes segment 1.
-    let result = engine.on_memtable_flushed(1);
+    let result = engine.on_memtable_flushed(1).expect("flush");
     assert_eq!(result.wal_records.len(), 1);
     assert!(matches!(
         &result.wal_records[0],
@@ -276,7 +276,7 @@ fn flush_clears_surrogate_table() {
         )
         .expect("insert");
     assert_eq!(engine.memtable_surrogates().len(), 1);
-    engine.on_memtable_flushed(1);
+    engine.on_memtable_flushed(1).expect("flush");
     assert!(engine.memtable_surrogates().is_empty());
 }
 
@@ -294,7 +294,7 @@ fn should_compact_threshold() {
             ])
             .expect("insert");
     }
-    engine.on_memtable_flushed(1);
+    engine.on_memtable_flushed(1).expect("flush");
 
     // Delete 3 out of 10 rows = 30% > 20% threshold.
     for i in 0..3 {
@@ -302,4 +302,22 @@ fn should_compact_threshold() {
     }
 
     assert!(engine.should_compact(1, 10));
+}
+
+#[test]
+fn segment_id_allocator_returns_err_at_u64_max() {
+    let mut engine = MutationEngine::new("test".into(), test_schema());
+
+    // Force the counter to its maximum value so the next flush overflows.
+    engine.next_segment_id = u64::MAX;
+    engine.memtable_segment_id = u64::MAX;
+
+    // A flush at this point must return SegmentIdExhausted, not silently wrap.
+    let err = engine
+        .on_memtable_flushed(u64::MAX)
+        .expect_err("should be exhausted");
+    assert!(
+        matches!(err, ColumnarError::SegmentIdExhausted),
+        "expected SegmentIdExhausted, got {err:?}"
+    );
 }

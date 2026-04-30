@@ -173,6 +173,11 @@ fn select_codec(col_type: &ColumnType) -> ResolvedColumnCodec {
         ColumnType::Vector(_) => {
             return ResolvedColumnCodec::Lz4;
         }
+        // ColumnType is #[non_exhaustive]; unknown types default to Lz4
+        // general-purpose compression until a dedicated codec is registered.
+        _ => {
+            return ResolvedColumnCodec::Lz4;
+        }
     };
     // detect_codec resolves Auto via the type hint and always returns a
     // concrete codec. Map any unexpected Auto back to a safe default

@@ -16,6 +16,7 @@ use super::IngestValue;
 ///
 /// When `valid` is `Some`, `true` = present, `false` = null.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ColumnData {
     Int64 {
         values: Vec<i64>,
@@ -155,6 +156,13 @@ impl ColumnData {
                 valid,
             },
             ColumnType::Regex => Self::String {
+                data: Vec::new(),
+                offsets: vec![0],
+                valid,
+            },
+            // ColumnType is #[non_exhaustive]; unknown future types are stored
+            // as raw bytes until the memtable learns about them.
+            _ => Self::Bytes {
                 data: Vec::new(),
                 offsets: vec![0],
                 valid,
