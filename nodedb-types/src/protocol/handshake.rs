@@ -1,0 +1,192 @@
+//! Handshake frames and per-operation limits for the native binary protocol.
+
+use serde::{Deserialize, Serialize};
+
+// ─── Protocol Constants ─────────────────────────────────────────────
+
+/// Maximum frame payload size (16 MiB).
+pub const MAX_FRAME_SIZE: u32 = 16 * 1024 * 1024;
+
+/// Length of the frame header (4-byte big-endian u32 payload length).
+pub const FRAME_HEADER_LEN: usize = 4;
+
+/// Default server port for the native protocol.
+pub const DEFAULT_NATIVE_PORT: u16 = 6433;
+
+/// Current native protocol version advertised in `HelloFrame`.
+pub const PROTO_VERSION: u16 = 1;
+
+// ─── Capability Bits ────────────────────────────────────────────────
+
+/// Capability bit: server supports streaming (partial-response chunking).
+pub const CAP_STREAMING: u64 = 1 << 0;
+/// Capability bit: server supports GraphRAG fusion (`GraphRagFusion` opcode).
+pub const CAP_GRAPHRAG: u64 = 1 << 1;
+/// Capability bit: server supports full-text search opcodes.
+pub const CAP_FTS: u64 = 1 << 2;
+/// Capability bit: server supports CRDT sync.
+pub const CAP_CRDT: u64 = 1 << 3;
+/// Capability bit: server supports spatial operations.
+pub const CAP_SPATIAL: u64 = 1 << 4;
+/// Capability bit: server supports timeseries operations.
+pub const CAP_TIMESERIES: u64 = 1 << 5;
+/// Capability bit: server supports columnar scan.
+pub const CAP_COLUMNAR: u64 = 1 << 6;
+
+// ─── Per-Operation Limits ───────────────────────────────────────────
+
+/// Per-operation capability limits negotiated during the connection handshake.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Limits {
+    pub max_vector_dim: Option<u32>,
+    pub max_top_k: Option<u32>,
+    pub max_scan_limit: Option<u32>,
+    pub max_batch_size: Option<u32>,
+    pub max_crdt_delta_bytes: Option<u32>,
+    pub max_query_text_bytes: Option<u32>,
+    pub max_graph_depth: Option<u32>,
+}
+
+// ─── HelloFrame ─────────────────────────────────────────────────────
+
+/// First frame sent by the client after TCP connection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HelloFrame {
+    pub proto_min: u16,
+    pub proto_max: u16,
+    pub capabilities: u64,
+}
+
+/// Magic bytes for `HelloFrame`: b"NDBH".
+pub const HELLO_MAGIC: u32 = 0x4E44_4248;
+
+impl HelloFrame {
+    pub const WIRE_SIZE: usize = 16;
+
+    pub fn encode(&self) -> [u8; Self::WIRE_SIZE] {
+        let mut buf = [0u8; Self::WIRE_SIZE];
+        buf[0..4].copy_from_slice(&HELLO_MAGIC.to_be_bytes());
+        buf[4..6].copy_from_slice(&self.proto_min.to_be_bytes());
+        buf[6..8].copy_from_slice(&self.proto_max.to_be_bytes());
+        buf[8..16].copy_from_slice(&self.capabilities.to_be_bytes());
+        buf
+    }
+
+    pub fn decode(buf: &[u8; Self::WIRE_SIZE]) -> Option<Self> {
+        let magic = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        if magic != HELLO_MAGIC {
+            return None;
+        }
+        let proto_min = u16::from_be_bytes([buf[4], buf[5]]);
+        let proto_max = u16::from_be_bytes([buf[6], buf[7]]);
+        let capabilities = u64::from_be_bytes([
+            buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
+        ]);
+        Some(Self {
+            proto_min,
+            proto_max,
+            capabilities,
+        })
+    }
+}
+
+// ─── HelloAckFrame ──────────────────────────────────────────────────
+
+/// Server's response to a `HelloFrame`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HelloAckFrame {
+    pub proto_version: u16,
+    pub capabilities: u64,
+    pub server_version: String,
+    pub limits: Limits,
+}
+
+/// Magic bytes for `HelloAckFrame`: b"NDBA".
+pub const HELLO_ACK_MAGIC: u32 = 0x4E44_4241;
+
+impl HelloAckFrame {
+    pub fn encode(&self) -> Vec<u8> {
+        let sv = self.server_version.as_bytes();
+        let sv_len = sv.len().min(255) as u8;
+        let mut buf = Vec::with_capacity(15 + sv_len as usize + 1 + 7 * 5);
+        buf.extend_from_slice(&HELLO_ACK_MAGIC.to_be_bytes());
+        buf.extend_from_slice(&self.proto_version.to_be_bytes());
+        buf.extend_from_slice(&self.capabilities.to_be_bytes());
+        buf.push(sv_len);
+        buf.extend_from_slice(&sv[..sv_len as usize]);
+        buf.push(1u8);
+        encode_limit_field(&mut buf, self.limits.max_vector_dim);
+        encode_limit_field(&mut buf, self.limits.max_top_k);
+        encode_limit_field(&mut buf, self.limits.max_scan_limit);
+        encode_limit_field(&mut buf, self.limits.max_batch_size);
+        encode_limit_field(&mut buf, self.limits.max_crdt_delta_bytes);
+        encode_limit_field(&mut buf, self.limits.max_query_text_bytes);
+        encode_limit_field(&mut buf, self.limits.max_graph_depth);
+        buf
+    }
+
+    pub fn decode(data: &[u8]) -> Option<Self> {
+        if data.len() < 15 {
+            return None;
+        }
+        let magic = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+        if magic != HELLO_ACK_MAGIC {
+            return None;
+        }
+        let proto_version = u16::from_be_bytes([data[4], data[5]]);
+        let capabilities = u64::from_be_bytes([
+            data[6], data[7], data[8], data[9], data[10], data[11], data[12], data[13],
+        ]);
+        let sv_len = data[14] as usize;
+        let sv_end = 15 + sv_len;
+        if data.len() < sv_end {
+            return None;
+        }
+        let server_version = String::from_utf8_lossy(&data[15..sv_end]).into_owned();
+        let mut limits = Limits::default();
+        if data.len() > sv_end && data[sv_end] == 1 {
+            let mut pos = sv_end + 1;
+            limits.max_vector_dim = decode_limit_field(data, &mut pos);
+            limits.max_top_k = decode_limit_field(data, &mut pos);
+            limits.max_scan_limit = decode_limit_field(data, &mut pos);
+            limits.max_batch_size = decode_limit_field(data, &mut pos);
+            limits.max_crdt_delta_bytes = decode_limit_field(data, &mut pos);
+            limits.max_query_text_bytes = decode_limit_field(data, &mut pos);
+            limits.max_graph_depth = decode_limit_field(data, &mut pos);
+        }
+        Some(Self {
+            proto_version,
+            capabilities,
+            server_version,
+            limits,
+        })
+    }
+}
+
+fn encode_limit_field(buf: &mut Vec<u8>, val: Option<u32>) {
+    match val {
+        Some(v) => {
+            buf.push(1u8);
+            buf.extend_from_slice(&v.to_be_bytes());
+        }
+        None => {
+            buf.push(0u8);
+            buf.extend_from_slice(&0u32.to_be_bytes());
+        }
+    }
+}
+
+fn decode_limit_field(data: &[u8], pos: &mut usize) -> Option<u32> {
+    if *pos + 5 > data.len() {
+        return None;
+    }
+    let present = data[*pos];
+    let value = u32::from_be_bytes([
+        data[*pos + 1],
+        data[*pos + 2],
+        data[*pos + 3],
+        data[*pos + 4],
+    ]);
+    *pos += 5;
+    if present == 1 { Some(value) } else { None }
+}
