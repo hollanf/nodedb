@@ -32,12 +32,64 @@ const KW_AS: &str = " AS ";
 ///   AGGREGATE <func>(col) [AS alias], ...
 ///   [GROUP BY col, ...]
 ///   [WITH (refresh_policy = 'on_flush', retention = '7d')]
+/// Parsed `CREATE CONTINUOUS AGGREGATE` request.
+///
+/// `aggregate_exprs_raw` is the raw text after AGGREGATE keyword.
+/// `with_clause_raw` is the raw inner text of the trailing WITH(...), or empty.
+#[derive(Clone, Copy)]
+pub struct CreateContinuousAggregateRequest<'a> {
+    pub name: &'a str,
+    pub source: &'a str,
+    pub bucket_raw: &'a str,
+    pub aggregate_exprs_raw: &'a str,
+    pub group_by: &'a [String],
+    pub with_clause_raw: &'a str,
+}
+
+/// Handle `CREATE CONTINUOUS AGGREGATE`.
 pub async fn create_continuous_aggregate(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    sql: &str,
+    req: &CreateContinuousAggregateRequest<'_>,
 ) -> PgWireResult<Vec<Response>> {
-    let def = parse_create_sql(sql)?;
+    let CreateContinuousAggregateRequest {
+        name,
+        source,
+        bucket_raw,
+        aggregate_exprs_raw,
+        group_by,
+        with_clause_raw,
+    } = *req;
+    // Reconstruct minimal SQL for parse_create_sql reuse.
+    // This avoids duplicating the complex AggregateExpr parsing logic.
+    let reconstructed = format!(
+        "CREATE CONTINUOUS AGGREGATE {name} ON {source} BUCKET '{bucket_raw}' AGGREGATE {aggregate_exprs_raw}"
+    );
+    let def_from_parts = parse_create_sql(&reconstructed)?;
+
+    // Apply group_by and with_clause_raw overrides.
+    let (refresh_policy, retention_period_ms) = if with_clause_raw.is_empty() {
+        (
+            def_from_parts.refresh_policy,
+            def_from_parts.retention_period_ms,
+        )
+    } else {
+        let fake_with_sql = format!("dummy WITH ({with_clause_raw})");
+        let (rp, ret) = extract_with_options(&fake_with_sql.to_uppercase(), &fake_with_sql);
+        (rp, ret)
+    };
+
+    let def = ContinuousAggregateDef {
+        name: def_from_parts.name,
+        source: def_from_parts.source,
+        bucket_interval: def_from_parts.bucket_interval,
+        bucket_interval_ms: def_from_parts.bucket_interval_ms,
+        group_by: group_by.to_vec(),
+        aggregates: def_from_parts.aggregates,
+        refresh_policy,
+        retention_period_ms,
+        stale: false,
+    };
 
     // Validate source collection exists and is timeseries.
     let tenant_id = identity.tenant_id;

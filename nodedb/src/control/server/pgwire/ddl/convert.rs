@@ -44,7 +44,7 @@ pub async fn convert_collection(
 
     // Build columns before dispatch — needed for both Data Plane and catalog.
     let columns: Option<Vec<nodedb_types::columnar::ColumnDef>> = match target_type.as_str() {
-        "strict" | "kv" => {
+        "document_strict" | "kv" => {
             let cols = if let Some(cols) = explicit_columns {
                 cols
             } else if !coll.type_guards.is_empty() {
@@ -86,8 +86,8 @@ pub async fn convert_collection(
 
     // Update catalog collection type.
     let new_type = match target_type.as_str() {
-        "document" => nodedb_types::CollectionType::document(),
-        "strict" | "kv" => {
+        "document_schemaless" => nodedb_types::CollectionType::document(),
+        "document_strict" | "kv" => {
             let columns = columns.unwrap(); // safe: validated above
             let schema = nodedb_types::columnar::StrictSchema {
                 columns,
@@ -111,9 +111,9 @@ pub async fn convert_collection(
 
     coll.collection_type = new_type;
 
-    // CONVERT TO strict: if collection had typeguards, carry over CHECK constraints
+    // CONVERT TO document_strict: if collection had typeguards, carry over CHECK constraints
     // and drop typeguard definitions (strict schema subsumes type checking).
-    if target_type == "strict" && !coll.type_guards.is_empty() {
+    if target_type == "document_strict" && !coll.type_guards.is_empty() {
         for guard in &coll.type_guards {
             if let Some(ref check_expr) = guard.check_expr {
                 // Avoid duplicate names.
@@ -188,8 +188,8 @@ fn parse_convert_sql(
         .to_string();
 
     match target_type.as_str() {
-        "document" => Ok((collection, "document".into(), None)),
-        "strict" | "kv" => {
+        "document_schemaless" => Ok((collection, "document_schemaless".into(), None)),
+        "document_strict" | "kv" => {
             if after_to.contains('(') {
                 let cols = parse_column_defs(after_to)?;
                 Ok((collection, target_type, Some(cols)))
@@ -197,9 +197,23 @@ fn parse_convert_sql(
                 Ok((collection, target_type, None))
             }
         }
+        "document" | "doc" => Err(sqlstate_error(
+            "42601",
+            "deprecated target type 'document'; use 'document_schemaless'",
+        )),
+        "strict" => Err(sqlstate_error(
+            "42601",
+            "deprecated target type 'strict'; use 'document_strict'",
+        )),
+        "key_value" | "keyvalue" => {
+            Err(sqlstate_error("42601", "deprecated target type; use 'kv'"))
+        }
         other => Err(sqlstate_error(
             "42601",
-            &format!("unsupported target type: {other} (expected document, strict, kv)"),
+            &format!(
+                "unsupported target type: '{other}' \
+                 (expected document_schemaless, document_strict, kv)"
+            ),
         )),
     }
 }
@@ -267,7 +281,11 @@ fn sql_type_to_column_type(sql_type: &str) -> nodedb_types::columnar::ColumnType
     use nodedb_types::columnar::ColumnType;
     match sql_type {
         "INT" | "INTEGER" | "INT8" | "BIGINT" | "INT4" | "INT2" | "SMALLINT" => ColumnType::Int64,
-        "FLOAT" | "FLOAT8" | "DOUBLE" | "REAL" | "NUMERIC" | "DECIMAL" => ColumnType::Float64,
+        "FLOAT" | "FLOAT8" | "DOUBLE" | "REAL" => ColumnType::Float64,
+        "NUMERIC" | "DECIMAL" => ColumnType::Decimal {
+            precision: 38,
+            scale: 10,
+        },
         "BOOL" | "BOOLEAN" => ColumnType::Bool,
         "TIMESTAMP" | "TIMESTAMPTZ" => ColumnType::Timestamp,
         "BLOB" | "BYTEA" | "BINARY" => ColumnType::Bytes,
@@ -335,7 +353,10 @@ fn typeguard_type_to_column_type(type_expr: &str) -> nodedb_types::columnar::Col
         "BOOL" | "BOOLEAN" => ColumnType::Bool,
         "BYTES" | "BYTEA" | "BLOB" => ColumnType::Bytes,
         "TIMESTAMP" | "TIMESTAMPTZ" => ColumnType::Timestamp,
-        "DECIMAL" | "NUMERIC" => ColumnType::Decimal,
+        "DECIMAL" | "NUMERIC" => ColumnType::Decimal {
+            precision: 38,
+            scale: 10,
+        },
         "UUID" => ColumnType::Uuid,
         "GEOMETRY" => ColumnType::Geometry,
         "JSON" | "JSONB" | "OBJECT" => ColumnType::Json,
@@ -348,20 +369,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_convert_to_document() {
+    fn parse_convert_to_document_schemaless() {
         let (coll, target, cols) =
-            parse_convert_sql("CONVERT COLLECTION users TO document").unwrap();
+            parse_convert_sql("CONVERT COLLECTION users TO document_schemaless").unwrap();
         assert_eq!(coll, "users");
-        assert_eq!(target, "document");
+        assert_eq!(target, "document_schemaless");
         assert!(cols.is_none());
     }
 
     #[test]
-    fn parse_convert_to_strict() {
-        let sql = "CONVERT COLLECTION users TO strict (name VARCHAR, age INT, active BOOLEAN)";
+    fn parse_convert_deprecated_document_rejected() {
+        assert!(parse_convert_sql("CONVERT COLLECTION users TO document").is_err());
+    }
+
+    #[test]
+    fn parse_convert_to_document_strict() {
+        let sql =
+            "CONVERT COLLECTION users TO document_strict (name VARCHAR, age INT, active BOOLEAN)";
         let (coll, target, cols) = parse_convert_sql(sql).unwrap();
         assert_eq!(coll, "users");
-        assert_eq!(target, "strict");
+        assert_eq!(target, "document_strict");
 
         let cols = cols.unwrap();
         assert_eq!(cols.len(), 3);
@@ -383,6 +410,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_convert_deprecated_strict_rejected() {
+        let sql = "CONVERT COLLECTION users TO strict (name VARCHAR)";
+        assert!(parse_convert_sql(sql).is_err());
+    }
+
+    #[test]
     fn parse_convert_to_kv() {
         let sql = "CONVERT COLLECTION cache TO kv (key VARCHAR, value BLOB)";
         let (coll, target, cols) = parse_convert_sql(sql).unwrap();
@@ -393,7 +426,7 @@ mod tests {
 
     #[test]
     fn parse_convert_not_null_constraint() {
-        let sql = "CONVERT COLLECTION users TO strict (id INT NOT NULL, name VARCHAR)";
+        let sql = "CONVERT COLLECTION users TO document_strict (id INT NOT NULL, name VARCHAR)";
         let (_, _, cols) = parse_convert_sql(sql).unwrap();
         let cols = cols.unwrap();
         assert!(!cols[0].nullable);

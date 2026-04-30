@@ -17,36 +17,22 @@ use super::super::super::types::{require_admin, sqlstate_error};
 pub fn alter_alert(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    sql: &str,
+    name: &str,
+    action: &str,
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "alter alerts")?;
 
-    let upper = sql.to_uppercase();
     let tenant_id = identity.tenant_id.as_u32();
-
-    // Extract name: "ALTER ALERT <name> ..."
-    let prefix = "ALTER ALERT ";
-    if !upper.starts_with(prefix) {
-        return Err(sqlstate_error("42601", "expected ALTER ALERT"));
-    }
-    let rest = &sql[prefix.len()..];
-    let name = rest
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| sqlstate_error("42601", "missing alert name"))?
-        .to_lowercase();
 
     let mut def = state
         .alert_registry
-        .get(tenant_id, &name)
+        .get(tenant_id, name)
         .ok_or_else(|| sqlstate_error("42704", &format!("alert '{name}' does not exist")))?;
 
-    if upper.contains(" ENABLE") && !upper.contains("DISABLE") {
-        def.enabled = true;
-    } else if upper.contains(" DISABLE") {
-        def.enabled = false;
-    } else {
-        return Err(sqlstate_error("42601", "expected ENABLE or DISABLE"));
+    match action {
+        "ENABLE" => def.enabled = true,
+        "DISABLE" => def.enabled = false,
+        _ => return Err(sqlstate_error("42601", "expected ENABLE or DISABLE")),
     }
 
     let catalog = state

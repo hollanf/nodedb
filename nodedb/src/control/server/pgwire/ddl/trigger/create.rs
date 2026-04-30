@@ -3,21 +3,35 @@
 use pgwire::api::results::{Response, Tag};
 use pgwire::error::PgWireResult;
 
+use crate::control::security::catalog::trigger_types::{
+    TriggerEvents, TriggerExecutionMode, TriggerGranularity, TriggerSecurity, TriggerTiming,
+};
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 
 use super::super::super::types::{require_admin, sqlstate_error};
-use super::parse::parse_create_trigger;
 
-/// Handle `CREATE [OR REPLACE] TRIGGER ...`
+/// Handle `CREATE [OR REPLACE] TRIGGER ...` from typed AST fields.
+#[allow(clippy::too_many_arguments)]
 pub fn create_trigger(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    sql: &str,
+    or_replace: bool,
+    execution_mode: &str,
+    name: &str,
+    timing: &str,
+    events_insert: bool,
+    events_update: bool,
+    events_delete: bool,
+    collection: &str,
+    granularity: &str,
+    when_condition: Option<&str>,
+    priority: i32,
+    security: &str,
+    body_sql: &str,
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "create triggers")?;
 
-    let parsed = parse_create_trigger(sql)?;
     let tenant_id = identity.tenant_id.as_u32();
 
     let catalog = state
@@ -27,49 +41,33 @@ pub fn create_trigger(
         .ok_or_else(|| sqlstate_error("XX000", "system catalog not available"))?;
 
     // Check for existing trigger.
-    if !parsed.or_replace
-        && let Ok(Some(_)) = catalog.get_trigger(tenant_id, &parsed.name)
-    {
+    if !or_replace && let Ok(Some(_)) = catalog.get_trigger(tenant_id, name) {
         return Err(sqlstate_error(
             "42710",
-            &format!("trigger '{}' already exists", parsed.name),
+            &format!("trigger '{name}' already exists"),
         ));
     }
 
     // Validate the trigger body parses as procedural SQL.
-    crate::control::planner::procedural::parse_block(&parsed.body_sql)
+    crate::control::planner::procedural::parse_block(body_sql)
         .map_err(|e| sqlstate_error("42601", &format!("trigger body parse error: {e}")))?;
 
-    // Cross-shard validation for SYNC mode.
-    // SYNC triggers require source and target on the same vShard because they
-    // execute in the same logical transaction — cross-shard ACID is not possible.
-    use crate::control::security::catalog::trigger_types::TriggerExecutionMode;
-    if parsed.execution_mode == TriggerExecutionMode::Sync {
-        // Check if the trigger body references a different collection by inspecting
-        // vShard routing. The source collection is the trigger's ON collection.
-        // For a conservative check, we compare source vShard against the trigger
-        // body's first INSERT/UPDATE/DELETE target — but parsing the body's target
-        // is complex. Instead, we note the restriction and rely on runtime errors
-        // if a SYNC trigger dispatches cross-shard DML.
-        //
-        // The explicit rejection at DDL time is for the common case: if the user
-        // specifies SYNC on a trigger that references a different collection in
-        // its body, the runtime will fail the transaction with a clear error.
+    let execution_mode_enum = parse_execution_mode(execution_mode);
+    let timing_enum = parse_timing(timing);
+    let granularity_enum = parse_granularity(granularity);
+    let security_enum = parse_security(security);
+
+    if execution_mode_enum == TriggerExecutionMode::Sync {
         tracing::info!(
-            trigger = %parsed.name,
-            collection = %parsed.collection,
+            trigger = %name,
+            collection = %collection,
             "SYNC trigger created — trigger body DML must target same vShard"
         );
     }
-
-    // Warn for cross-shard ASYNC triggers (informational only — they work, but
-    // side effects are eventually consistent).
-    if parsed.execution_mode == TriggerExecutionMode::Async {
-        // This is informational — ASYNC triggers always work, but the user should
-        // know that cross-shard side effects are eventually consistent.
+    if execution_mode_enum == TriggerExecutionMode::Async {
         tracing::debug!(
-            trigger = %parsed.name,
-            collection = %parsed.collection,
+            trigger = %name,
+            collection = %collection,
             "ASYNC trigger: side effects are eventually consistent"
         );
     }
@@ -79,22 +77,27 @@ pub fn create_trigger(
         .map_err(|_| sqlstate_error("XX000", "system clock before UNIX epoch"))?
         .as_secs();
 
-    let batch_mode =
-        crate::control::trigger::batch::classify::classify_trigger_body(&parsed.body_sql);
+    let batch_mode = crate::control::trigger::batch::classify::classify_trigger_body(body_sql);
+
+    let events = TriggerEvents {
+        on_insert: events_insert,
+        on_update: events_update,
+        on_delete: events_delete,
+    };
 
     let stored = crate::control::security::catalog::trigger_types::StoredTrigger {
         tenant_id,
-        name: parsed.name.clone(),
-        collection: parsed.collection,
-        timing: parsed.timing,
-        events: parsed.events,
-        granularity: parsed.granularity,
-        when_condition: parsed.when_condition,
-        body_sql: parsed.body_sql,
-        priority: parsed.priority,
+        name: name.to_string(),
+        collection: collection.to_string(),
+        timing: timing_enum,
+        events,
+        granularity: granularity_enum,
+        when_condition: when_condition.map(|s| s.to_string()),
+        body_sql: body_sql.to_string(),
+        priority,
         enabled: true,
-        execution_mode: parsed.execution_mode,
-        security: parsed.security,
+        execution_mode: execution_mode_enum,
+        security: security_enum,
         batch_mode,
         owner: identity.username.clone(),
         created_at: now,
@@ -102,15 +105,10 @@ pub fn create_trigger(
         modification_hlc: nodedb_types::Hlc::ZERO,
     };
 
-    // Propose through the metadata raft group. On every node the
-    // applier decodes `CatalogEntry::PutTrigger`, writes the record
-    // to local redb, and calls `trigger_registry.register` so the
-    // trigger fires on every node's DML paths immediately.
     let entry = crate::control::catalog_entry::CatalogEntry::PutTrigger(Box::new(stored.clone()));
     let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
         .map_err(|e| sqlstate_error("XX000", &format!("metadata propose: {e}")))?;
     if log_index == 0 {
-        // Single-node fallback: write directly and register.
         catalog
             .put_trigger(&stored)
             .map_err(|e| sqlstate_error("XX000", &format!("catalog write: {e}")))?;
@@ -131,4 +129,36 @@ pub fn create_trigger(
     );
 
     Ok(vec![Response::Execution(Tag::new("CREATE TRIGGER"))])
+}
+
+fn parse_execution_mode(s: &str) -> TriggerExecutionMode {
+    match s.to_uppercase().as_str() {
+        "SYNC" => TriggerExecutionMode::Sync,
+        "DEFERRED" => TriggerExecutionMode::Deferred,
+        _ => TriggerExecutionMode::Async,
+    }
+}
+
+fn parse_timing(s: &str) -> TriggerTiming {
+    match s.to_uppercase().as_str() {
+        "BEFORE" => TriggerTiming::Before,
+        "INSTEAD OF" => TriggerTiming::InsteadOf,
+        _ => TriggerTiming::After,
+    }
+}
+
+fn parse_granularity(s: &str) -> TriggerGranularity {
+    if s.to_uppercase() == "STATEMENT" {
+        TriggerGranularity::Statement
+    } else {
+        TriggerGranularity::Row
+    }
+}
+
+fn parse_security(s: &str) -> TriggerSecurity {
+    if s.to_uppercase() == "DEFINER" {
+        TriggerSecurity::Definer
+    } else {
+        TriggerSecurity::Invoker
+    }
 }

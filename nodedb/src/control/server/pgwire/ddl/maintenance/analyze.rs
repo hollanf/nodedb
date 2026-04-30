@@ -10,6 +10,7 @@ use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
+use crate::types::TraceId;
 
 /// Handle `ANALYZE collection [(col1, col2)]`.
 ///
@@ -79,7 +80,7 @@ pub async fn handle_analyze(
                     task.tenant_id,
                     task.vshard_id,
                     task.plan,
-                    0,
+                    TraceId::ZERO,
                 )
                 .await;
                 if let Ok(resp) = resp

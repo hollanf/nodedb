@@ -8,106 +8,40 @@ use crate::types::TenantId;
 
 use super::super::types::{parse_role, require_admin, sqlstate_error};
 
-/// Parse a single-quoted string from split parts starting at `start`.
-/// Handles passwords like 'hello world' spanning multiple whitespace-split parts.
-pub(crate) fn extract_quoted_string(parts: &[&str], start: usize) -> Option<String> {
-    if start >= parts.len() {
-        return None;
-    }
-
-    let first = parts[start];
-    if !first.starts_with('\'') {
-        return None;
-    }
-
-    if first.ends_with('\'') && first.len() > 1 {
-        return Some(first[1..first.len() - 1].to_string());
-    }
-
-    let mut result = first[1..].to_string();
-    for &part in &parts[start + 1..] {
-        result.push(' ');
-        if let Some(stripped) = part.strip_suffix('\'') {
-            result.push_str(stripped);
-            return Some(result);
-        }
-        result.push_str(part);
-    }
-
-    None
-}
-
-/// Find the index of the first part after a quoted string starting at `start`.
-pub(crate) fn next_after_quoted(parts: &[&str], start: usize) -> usize {
-    if start >= parts.len() {
-        return parts.len();
-    }
-
-    let first = parts[start];
-    if !first.starts_with('\'') {
-        return start + 1;
-    }
-
-    if first.ends_with('\'') && first.len() > 1 {
-        return start + 1;
-    }
-
-    for (i, part) in parts[start + 1..].iter().enumerate() {
-        if part.ends_with('\'') {
-            return start + 1 + i + 1;
-        }
-    }
-    parts.len()
-}
-
 /// CREATE USER <name> WITH PASSWORD '<password>' [ROLE <role>] [TENANT <id>]
 pub fn create_user(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    username: &str,
+    password: &str,
+    role_name: Option<&str>,
+    tenant_id_override: Option<u32>,
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "create users")?;
 
-    if parts.len() < 6 {
+    if username.is_empty() {
         return Err(sqlstate_error(
             "42601",
             "syntax: CREATE USER <name> WITH PASSWORD '<password>' [ROLE <role>] [TENANT <id>]",
         ));
     }
 
-    let username = parts[2];
-    if !parts[3].eq_ignore_ascii_case("WITH") || !parts[4].eq_ignore_ascii_case("PASSWORD") {
+    if password.is_empty() {
         return Err(sqlstate_error(
             "42601",
-            "expected WITH PASSWORD after username",
+            "password must be a single-quoted string",
         ));
     }
 
-    let password = extract_quoted_string(parts, 5)
-        .ok_or_else(|| sqlstate_error("42601", "password must be a single-quoted string"))?;
-
-    let mut role = Role::ReadWrite;
-    let mut tenant_id = identity.tenant_id;
-    let mut i = next_after_quoted(parts, 5);
-    while i < parts.len() {
-        match parts[i].to_uppercase().as_str() {
-            "ROLE" if i + 1 < parts.len() => {
-                role = parse_role(parts[i + 1]);
-                i += 2;
-            }
-            "TENANT" if i + 1 < parts.len() => {
-                if !identity.is_superuser {
-                    return Err(sqlstate_error("42501", "only superuser can assign tenants"));
-                }
-                let tid: u32 = parts[i + 1]
-                    .parse()
-                    .map_err(|_| sqlstate_error("42601", "TENANT must be a numeric ID"))?;
-                tenant_id = TenantId::new(tid);
-                i += 2;
-            }
-            _ => i += 1,
+    let role = role_name.map(parse_role).unwrap_or(Role::ReadWrite);
+    let tenant_id = if let Some(tid) = tenant_id_override {
+        if !identity.is_superuser {
+            return Err(sqlstate_error("42501", "only superuser can assign tenants"));
         }
-    }
+        TenantId::new(tid)
+    } else {
+        identity.tenant_id
+    };
 
     // Build the full `StoredUser` locally (hash + salt + user_id).
     // Followers cannot reproduce the random salt, so this step
@@ -115,7 +49,7 @@ pub fn create_user(
     // then replicated verbatim.
     let stored = state
         .credentials
-        .prepare_user(username, &password, tenant_id, vec![role])
+        .prepare_user(username, password, tenant_id, vec![role])
         .map_err(|e| sqlstate_error("42710", &e.to_string()))?;
 
     let entry = crate::control::catalog_entry::CatalogEntry::PutUser(Box::new(stored.clone()));
@@ -173,16 +107,16 @@ pub fn create_user(
 pub fn alter_user(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    username: &str,
+    action: &str,
+    value: &str,
 ) -> PgWireResult<Vec<Response>> {
-    if parts.len() < 5 {
+    if username.is_empty() {
         return Err(sqlstate_error(
             "42601",
             "syntax: ALTER USER <name> SET PASSWORD '<password>' | ALTER USER <name> SET ROLE <role>",
         ));
     }
-
-    let username = parts[2];
 
     // Users can change their own password; admin required for anything else.
     let is_self = username == identity.username;
@@ -193,15 +127,16 @@ pub fn alter_user(
         ));
     }
 
-    if !parts[3].eq_ignore_ascii_case("SET") {
-        return Err(sqlstate_error("42601", "expected SET after username"));
-    }
-
-    match parts[4].to_uppercase().as_str() {
+    match action.to_uppercase().as_str() {
         "PASSWORD" => {
-            let password = extract_quoted_string(parts, 5).ok_or_else(|| {
-                sqlstate_error("42601", "password must be a single-quoted string")
-            })?;
+            let password = if value.is_empty() {
+                return Err(sqlstate_error(
+                    "42601",
+                    "password must be a single-quoted string",
+                ));
+            } else {
+                value
+            };
 
             // Build the updated `StoredUser` locally (re-hashes
             // with a fresh salt on the leader — followers can't
@@ -210,7 +145,7 @@ pub fn alter_user(
             // the in-memory cache.
             let stored = state
                 .credentials
-                .prepare_user_update(username, Some(&password), None)
+                .prepare_user_update(username, Some(password), None)
                 .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
             let entry =
                 crate::control::catalog_entry::CatalogEntry::PutUser(Box::new(stored.clone()));
@@ -240,11 +175,11 @@ pub fn alter_user(
             }
             require_admin(identity, "change roles")?;
 
-            if parts.len() < 6 {
+            if value.is_empty() {
                 return Err(sqlstate_error("42601", "expected role name after SET ROLE"));
             }
 
-            let role: Role = parse_role(parts[5]);
+            let role: Role = parse_role(value);
 
             let stored = state
                 .credentials

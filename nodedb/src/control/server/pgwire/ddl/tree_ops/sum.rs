@@ -17,7 +17,7 @@ use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::server::dispatch_utils;
 use crate::control::server::pgwire::types::{sqlstate_error, text_field};
 use crate::control::state::SharedState;
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 use super::parse::{extract_function_args, extract_number_after, json_to_decimal};
 
@@ -126,9 +126,14 @@ pub async fn tree_sum(
                     system_as_of_ms: None,
                     valid_at_ms: None,
                 });
-            if let Ok(resp) =
-                dispatch_utils::dispatch_to_data_plane(state, tenant_id, coll_vshard, get_plan, 0)
-                    .await
+            if let Ok(resp) = dispatch_utils::dispatch_to_data_plane(
+                state,
+                tenant_id,
+                coll_vshard,
+                get_plan,
+                TraceId::ZERO,
+            )
+            .await
             {
                 let doc_json =
                     crate::data::executor::response_codec::decode_payload_to_json(&resp.payload);

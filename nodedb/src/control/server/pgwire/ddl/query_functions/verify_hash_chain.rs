@@ -14,7 +14,7 @@ use crate::bridge::envelope::PhysicalPlan;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::server::dispatch_utils;
 use crate::control::state::SharedState;
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 use super::super::super::types::{sqlstate_error, text_field};
 use super::helpers::extract_function_args;
@@ -56,9 +56,10 @@ pub async fn verify_hash_chain(
         prefilter: None,
     });
 
-    let scan_resp = dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard, scan_plan, 0)
-        .await
-        .map_err(|e| sqlstate_error("XX000", &format!("scan failed: {e}")))?;
+    let scan_resp =
+        dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard, scan_plan, TraceId::ZERO)
+            .await
+            .map_err(|e| sqlstate_error("XX000", &format!("scan failed: {e}")))?;
 
     let payload_json =
         crate::data::executor::response_codec::decode_payload_to_json(&scan_resp.payload);

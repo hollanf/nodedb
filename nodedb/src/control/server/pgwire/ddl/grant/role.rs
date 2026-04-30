@@ -53,18 +53,12 @@ fn propose_user_with_roles(
 pub fn grant_role(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    role_name: &str,
+    username: &str,
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "grant roles")?;
 
-    if parts.len() < 5 {
-        return Err(sqlstate_error(
-            "42601",
-            "syntax: GRANT ROLE <role> TO <user>",
-        ));
-    }
-
-    let role = parse_role(parts[2]);
+    let role = parse_role(role_name);
 
     if matches!(role, Role::Superuser) && !identity.is_superuser {
         return Err(sqlstate_error(
@@ -72,11 +66,6 @@ pub fn grant_role(
             "only superuser can grant superuser role",
         ));
     }
-
-    if !parts[3].eq_ignore_ascii_case("TO") {
-        return Err(sqlstate_error("42601", "expected TO after role name"));
-    }
-    let username = parts[4];
 
     let mut roles = current_roles(state, username)?;
     if !roles.contains(&role) {
@@ -97,23 +86,12 @@ pub fn grant_role(
 pub fn revoke_role(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    role_name: &str,
+    username: &str,
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "revoke roles")?;
 
-    if parts.len() < 5 {
-        return Err(sqlstate_error(
-            "42601",
-            "syntax: REVOKE ROLE <role> FROM <user>",
-        ));
-    }
-
-    let role = parse_role(parts[2]);
-
-    if !parts[3].eq_ignore_ascii_case("FROM") {
-        return Err(sqlstate_error("42601", "expected FROM after role name"));
-    }
-    let username = parts[4];
+    let role = parse_role(role_name);
 
     if username == identity.username && matches!(role, Role::Superuser) {
         return Err(sqlstate_error(

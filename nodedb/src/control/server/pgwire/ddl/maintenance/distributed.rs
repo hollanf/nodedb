@@ -8,7 +8,7 @@ use crate::bridge::envelope::{PhysicalPlan, Priority, Request};
 use crate::bridge::physical_plan::MetaOp;
 use crate::control::state::SharedState;
 use crate::event::EventSource;
-use crate::types::{ReadConsistency, RequestId, TenantId, VShardId};
+use crate::types::{ReadConsistency, RequestId, TenantId, TraceId, VShardId};
 
 /// Dispatch a maintenance operation (COMPACT/REINDEX) to all Data Plane cores.
 ///
@@ -22,7 +22,7 @@ pub fn dispatch_maintenance_to_all_cores(state: &SharedState, tenant_id: TenantI
         plan: PhysicalPlan::Meta(op),
         deadline: std::time::Instant::now() + std::time::Duration::from_secs(300),
         priority: Priority::Background,
-        trace_id: 0,
+        trace_id: TraceId::generate(),
         consistency: ReadConsistency::Strong,
         idempotency_key: None,
         event_source: EventSource::User,

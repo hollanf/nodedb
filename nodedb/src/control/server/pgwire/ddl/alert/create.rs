@@ -5,43 +5,83 @@ use pgwire::error::PgWireResult;
 
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
-use crate::event::alert::types::AlertDef;
+use crate::event::alert::types::{AlertCondition, AlertDef, CompareOp, NotifyTarget};
 
 use super::super::super::types::{require_admin, sqlstate_error};
 use super::ALERT_RULES_CRDT_COLLECTION;
-use super::parse::parse_create_alert;
 
+/// Parsed `CREATE ALERT` request — fields extracted by the nodedb-sql parser.
+///
+/// `condition_raw` is the raw condition text (e.g. `"AVG(temperature) > 90.0"`).
+/// `notify_targets_raw` is the raw NOTIFY section text.
+#[derive(Clone, Copy)]
+pub struct CreateAlertRequest<'a> {
+    pub name: &'a str,
+    pub collection: &'a str,
+    pub where_filter: Option<&'a str>,
+    pub condition_raw: &'a str,
+    pub group_by: &'a [String],
+    pub window_raw: &'a str,
+    pub fire_after: u32,
+    pub recover_after: u32,
+    pub severity: &'a str,
+    pub notify_targets_raw: &'a str,
+}
+
+/// Handle `CREATE ALERT`. Converts raw strings to `AlertCondition` and `Vec<NotifyTarget>`.
 pub fn create_alert(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    sql: &str,
+    req: &CreateAlertRequest<'_>,
 ) -> PgWireResult<Vec<Response>> {
+    let CreateAlertRequest {
+        name,
+        collection,
+        where_filter,
+        condition_raw,
+        group_by,
+        window_raw,
+        fire_after,
+        recover_after,
+        severity,
+        notify_targets_raw,
+    } = *req;
     require_admin(identity, "create alerts")?;
 
-    let parsed = parse_create_alert(sql)?;
     let tenant_id = identity.tenant_id.as_u32();
 
     // Validate collection exists.
     if let Some(catalog) = state.credentials.catalog()
         && catalog
-            .get_collection(tenant_id, &parsed.collection)
+            .get_collection(tenant_id, collection)
             .ok()
             .flatten()
             .is_none()
     {
         return Err(sqlstate_error(
             "42P01",
-            &format!("collection '{}' does not exist", parsed.collection),
+            &format!("collection '{collection}' does not exist"),
         ));
     }
 
     // Check for duplicate alert name.
-    if state.alert_registry.get(tenant_id, &parsed.name).is_some() {
+    if state.alert_registry.get(tenant_id, name).is_some() {
         return Err(sqlstate_error(
             "42710",
-            &format!("alert '{}' already exists", parsed.name),
+            &format!("alert '{name}' already exists"),
         ));
     }
+
+    // Parse condition from raw string.
+    let condition = parse_condition_raw(condition_raw)?;
+
+    // Parse WINDOW duration.
+    let window_ms = nodedb_types::kv_parsing::parse_interval_to_ms(window_raw)
+        .map_err(|e| sqlstate_error("42601", &format!("invalid window duration: {e}")))?
+        as u64;
+
+    // Parse NOTIFY targets.
+    let notify_targets = parse_notify_targets_raw(notify_targets_raw)?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -50,16 +90,16 @@ pub fn create_alert(
 
     let def = AlertDef {
         tenant_id,
-        name: parsed.name.clone(),
-        collection: parsed.collection.clone(),
-        where_filter: parsed.where_filter,
-        condition: parsed.condition,
-        group_by: parsed.group_by,
-        window_ms: parsed.window_ms,
-        fire_after: parsed.fire_after,
-        recover_after: parsed.recover_after,
-        severity: parsed.severity,
-        notify_targets: parsed.notify_targets,
+        name: name.to_string(),
+        collection: collection.to_string(),
+        where_filter: where_filter.map(|s| s.to_string()),
+        condition,
+        group_by: group_by.to_vec(),
+        window_ms,
+        fire_after,
+        recover_after,
+        severity: severity.to_string(),
+        notify_targets,
         enabled: true,
         owner: identity.username.clone(),
         created_at: now,
@@ -92,21 +132,138 @@ pub fn create_alert(
         state.crdt_sync_delivery.enqueue(tenant_id, delta);
     }
 
-    // Register in memory.
     state.alert_registry.register(def);
 
     state.audit_record(
         crate::control::security::audit::AuditEvent::AdminAction,
         Some(identity.tenant_id),
         &identity.username,
-        &format!("CREATE ALERT {}", parsed.name),
+        &format!("CREATE ALERT {name}"),
     );
 
-    tracing::info!(
-        name = parsed.name,
-        collection = parsed.collection,
-        "alert rule created"
-    );
+    tracing::info!(name, collection, "alert rule created");
 
     Ok(vec![Response::Execution(Tag::new("CREATE ALERT"))])
+}
+
+/// Parse `agg_func(column) op threshold` from raw condition string.
+fn parse_condition_raw(raw: &str) -> PgWireResult<AlertCondition> {
+    let s = raw.trim();
+    let open = s
+        .find('(')
+        .ok_or_else(|| sqlstate_error("42601", "expected agg_func(column) in CONDITION"))?;
+    let close = s
+        .find(')')
+        .ok_or_else(|| sqlstate_error("42601", "missing ')' in CONDITION"))?;
+
+    let agg_func = s[..open].trim().to_lowercase();
+    let column = s[open + 1..close].trim().to_lowercase();
+    let remainder = s[close + 1..].trim();
+
+    let (op_str, rest) = if remainder.starts_with(">=")
+        || remainder.starts_with("<=")
+        || remainder.starts_with("!=")
+        || remainder.starts_with("<>")
+    {
+        (&remainder[..2], remainder[2..].trim())
+    } else if remainder.starts_with('>') || remainder.starts_with('<') || remainder.starts_with('=')
+    {
+        (&remainder[..1], remainder[1..].trim())
+    } else {
+        return Err(sqlstate_error(
+            "42601",
+            &format!("expected comparison operator in CONDITION: {remainder}"),
+        ));
+    };
+
+    let op = CompareOp::parse(op_str)
+        .ok_or_else(|| sqlstate_error("42601", &format!("unknown operator: {op_str}")))?;
+
+    let threshold: f64 = rest
+        .parse()
+        .map_err(|_| sqlstate_error("42601", &format!("expected numeric threshold: {rest}")))?;
+
+    Ok(AlertCondition {
+        agg_func,
+        column,
+        op,
+        threshold,
+    })
+}
+
+/// Parse NOTIFY targets from raw NOTIFY section text.
+fn parse_notify_targets_raw(raw: &str) -> PgWireResult<Vec<NotifyTarget>> {
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut targets = Vec::new();
+    for part in split_top_level_commas(raw) {
+        let part = part.trim().trim_end_matches(';').trim();
+        if part.is_empty() {
+            continue;
+        }
+        let upper_part = part.to_uppercase();
+        if upper_part.starts_with("TOPIC ") {
+            let name = extract_inner_quoted(part, 6)?;
+            targets.push(NotifyTarget::Topic { name });
+        } else if upper_part.starts_with("WEBHOOK ") {
+            let url = extract_inner_quoted(part, 8)?;
+            targets.push(NotifyTarget::Webhook { url });
+        } else if upper_part.starts_with("INSERT INTO ") {
+            let (table, columns) = parse_insert_target(&part[12..])?;
+            targets.push(NotifyTarget::InsertInto { table, columns });
+        }
+    }
+    Ok(targets)
+}
+
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut results = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                results.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < s.len() {
+        results.push(&s[start..]);
+    }
+    results
+}
+
+fn extract_inner_quoted(s: &str, offset: usize) -> PgWireResult<String> {
+    let after = s[offset..].trim_start();
+    let start = after
+        .find('\'')
+        .ok_or_else(|| sqlstate_error("42601", "expected quoted value"))?;
+    let end = after[start + 1..]
+        .find('\'')
+        .ok_or_else(|| sqlstate_error("42601", "missing closing quote"))?;
+    Ok(after[start + 1..start + 1 + end].to_string())
+}
+
+fn parse_insert_target(s: &str) -> PgWireResult<(String, Vec<String>)> {
+    let s = s.trim();
+    if let Some(paren_start) = s.find('(') {
+        let table = s[..paren_start].trim().to_lowercase();
+        let paren_end = s
+            .rfind(')')
+            .ok_or_else(|| sqlstate_error("42601", "missing ')' in INSERT INTO target"))?;
+        let cols: Vec<String> = s[paren_start + 1..paren_end]
+            .split(',')
+            .map(|c| c.trim().to_lowercase())
+            .filter(|c| !c.is_empty())
+            .collect();
+        Ok((table, cols))
+    } else {
+        let table = s.split_whitespace().next().unwrap_or(s).to_lowercase();
+        Ok((table, Vec::new()))
+    }
 }

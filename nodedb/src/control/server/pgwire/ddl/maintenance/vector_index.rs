@@ -15,6 +15,7 @@ use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::VectorOp;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
+use crate::types::TraceId;
 
 use super::super::super::types::{sqlstate_error, text_field};
 
@@ -39,7 +40,11 @@ pub async fn handle_show_vector_index(
     });
 
     let resp = crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard, plan, 0,
+        state,
+        tenant_id,
+        vshard,
+        plan,
+        TraceId::ZERO,
     )
     .await
     .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
@@ -119,7 +124,11 @@ pub async fn handle_alter_vector_index_seal(
     });
 
     crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard, plan, 0,
+        state,
+        tenant_id,
+        vshard,
+        plan,
+        TraceId::ZERO,
     )
     .await
     .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
@@ -143,7 +152,11 @@ pub async fn handle_alter_vector_index_compact(
     });
 
     crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard, plan, 0,
+        state,
+        tenant_id,
+        vshard,
+        plan,
+        TraceId::ZERO,
     )
     .await
     .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
@@ -294,7 +307,11 @@ pub async fn handle_alter_vector_index_set(
             ivf_nprobe,
         });
         crate::control::server::dispatch_utils::dispatch_to_data_plane(
-            state, tenant_id, vshard, set_plan, 0,
+            state,
+            tenant_id,
+            vshard,
+            set_plan,
+            TraceId::ZERO,
         )
         .await
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
@@ -310,7 +327,11 @@ pub async fn handle_alter_vector_index_set(
         });
 
         crate::control::server::dispatch_utils::dispatch_to_data_plane(
-            state, tenant_id, vshard, plan, 0,
+            state,
+            tenant_id,
+            vshard,
+            plan,
+            TraceId::ZERO,
         )
         .await
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;

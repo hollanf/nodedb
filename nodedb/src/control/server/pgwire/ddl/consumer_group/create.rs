@@ -11,24 +11,20 @@ use crate::event::cdc::consumer_group::ConsumerGroupDef;
 
 use super::super::super::types::{require_admin, sqlstate_error};
 
-/// Handle `CREATE CONSUMER GROUP <name> ON <stream>`
+/// Handle `CREATE CONSUMER GROUP <name> ON <stream>`.
+///
+/// `group_name` and `stream_name` come from the typed
+/// [`NodedbStatement::CreateConsumerGroup`] variant.
 pub fn create_consumer_group(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    group_name: &str,
+    stream_name: &str,
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "create consumer groups")?;
 
-    // parts: ["CREATE", "CONSUMER", "GROUP", "<name>", "ON", "<stream>"]
-    if parts.len() < 6 || !parts[4].eq_ignore_ascii_case("ON") {
-        return Err(sqlstate_error(
-            "42601",
-            "expected CREATE CONSUMER GROUP <name> ON <stream>",
-        ));
-    }
-
-    let group_name = parts[3].to_lowercase();
-    let stream_name = parts[5].to_lowercase();
+    let group_name = group_name.to_lowercase();
+    let stream_name = stream_name.to_lowercase();
     let tenant_id = identity.tenant_id.as_u32();
 
     // Verify the stream or topic exists.

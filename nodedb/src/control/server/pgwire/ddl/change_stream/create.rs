@@ -19,23 +19,25 @@ use crate::event::webhook::WebhookConfig;
 use super::super::super::types::{require_admin, sqlstate_error};
 
 /// Handle `CREATE CHANGE STREAM <name> ON <collection> [WITH (...)]`
+///
+/// `with_clause_raw` is the raw text inside the outer `WITH (...)` parens, or empty.
 pub fn create_change_stream(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    sql: &str,
+    name: &str,
+    collection: &str,
+    with_clause_raw: &str,
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "create change streams")?;
 
-    // Reject new streams when Event Plane memory budget is exceeded.
     if state.event_plane_budget.should_reject_new_streams() {
         return Err(sqlstate_error(
-            "53000", // insufficient_resources
+            "53000",
             "Event Plane memory budget exceeded — cannot create new change streams. \
              Existing streams continue with reduced retention.",
         ));
     }
 
-    let parsed = parse_create_change_stream(sql)?;
     let tenant_id = identity.tenant_id.as_u32();
 
     let catalog = state
@@ -44,13 +46,80 @@ pub fn create_change_stream(
         .as_ref()
         .ok_or_else(|| sqlstate_error("XX000", "system catalog not available"))?;
 
-    // Check for existing stream.
-    if let Ok(Some(_)) = catalog.get_change_stream(tenant_id, &parsed.name) {
+    if let Ok(Some(_)) = catalog.get_change_stream(tenant_id, name) {
         return Err(sqlstate_error(
             "42710",
-            &format!("change stream '{}' already exists", parsed.name),
+            &format!("change stream '{name}' already exists"),
         ));
     }
+
+    // Parse WITH clause options.
+    let kv_pairs: Vec<(String, String)> = if with_clause_raw.is_empty() {
+        Vec::new()
+    } else {
+        extract_key_value_pairs(with_clause_raw)
+    };
+
+    let mut op_filter = OpFilter::all();
+    let mut format = StreamFormat::Json;
+    let mut compaction = CompactionConfig::default();
+    let mut webhook = WebhookConfig::default();
+    let mut late_data = LateDataPolicy::default();
+
+    for (key, val) in &kv_pairs {
+        match key.as_str() {
+            "FORMAT" => {
+                if let Some(f) = StreamFormat::from_str_opt(val) {
+                    format = f;
+                }
+            }
+            "INCLUDE" => {
+                op_filter = OpFilter {
+                    insert: false,
+                    update: false,
+                    delete: false,
+                };
+                for op in val.split(',') {
+                    match op.trim().to_uppercase().as_str() {
+                        "INSERT" => op_filter.insert = true,
+                        "UPDATE" => op_filter.update = true,
+                        "DELETE" => op_filter.delete = true,
+                        _ => {}
+                    }
+                }
+            }
+            "COMPACTION" if val.eq_ignore_ascii_case("key") => {
+                compaction.enabled = true;
+            }
+            "KEY" if !val.is_empty() => {
+                compaction.key_field = val.clone();
+                compaction.enabled = true;
+            }
+            "URL" if !val.is_empty() => {
+                webhook.url = val.clone();
+            }
+            "RETRY" => {
+                webhook.max_retries = val.parse().unwrap_or(3);
+            }
+            "TIMEOUT" => {
+                let secs = val
+                    .strip_suffix('s')
+                    .or(Some(val))
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(5);
+                webhook.timeout_secs = secs;
+            }
+            "LATE_DATA" => {
+                if let Some(policy) = LateDataPolicy::from_str_opt(val) {
+                    late_data = policy;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let kafka =
+        crate::event::kafka::KafkaDeliveryConfig::from_with_params(&kv_pairs).unwrap_or_default();
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -59,30 +128,23 @@ pub fn create_change_stream(
 
     let def = ChangeStreamDef {
         tenant_id,
-        name: parsed.name.clone(),
-        collection: parsed.collection,
-        op_filter: parsed.op_filter,
-        format: parsed.format,
+        name: name.to_string(),
+        collection: collection.to_string(),
+        op_filter,
+        format,
         retention: RetentionConfig::default(),
-        compaction: parsed.compaction,
-        webhook: parsed.webhook,
-        late_data: parsed.late_data,
-        kafka: parsed.kafka,
+        compaction,
+        webhook,
+        late_data,
+        kafka,
         owner: identity.username.clone(),
         created_at: now,
     };
 
-    // Extract configs before moving def into registry.
     let has_webhook = def.webhook.is_configured();
     let webhook_config = def.webhook.clone();
     let kafka_config = def.kafka.clone();
-    let stream_name_owned = parsed.name.clone();
 
-    // Replicate through the metadata raft group. Every node's
-    // applier writes the record to local redb and registers it in
-    // the in-memory `stream_registry` so the Event Plane starts
-    // routing matching WriteEvents into this stream's buffer on
-    // every node immediately.
     let entry = crate::control::catalog_entry::CatalogEntry::PutChangeStream(Box::new(def.clone()));
     let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
         .map_err(|e| sqlstate_error("XX000", &format!("metadata propose: {e}")))?;
@@ -93,50 +155,28 @@ pub fn create_change_stream(
         state.stream_registry.register(def.clone());
     }
 
-    // Start webhook delivery task if configured.
     if has_webhook {
         state
             .webhook_manager
-            .start_task(tenant_id, &stream_name_owned, webhook_config);
+            .start_task(tenant_id, name, webhook_config);
     }
-
-    // Start Kafka producer task if configured.
     if kafka_config.enabled {
-        state
-            .kafka_manager
-            .start(tenant_id, &stream_name_owned, kafka_config);
+        state.kafka_manager.start(tenant_id, name, kafka_config);
     }
 
     state.audit_record(
         crate::control::security::audit::AuditEvent::AdminAction,
         Some(identity.tenant_id),
         &identity.username,
-        &format!(
-            "CREATE CHANGE STREAM {} ON {}",
-            parsed.name, parsed.collection_raw
-        ),
+        &format!("CREATE CHANGE STREAM {name} ON {collection}"),
     );
 
     Ok(vec![Response::Execution(Tag::new("CREATE CHANGE STREAM"))])
 }
 
-struct ParsedCreateChangeStream {
-    name: String,
-    collection: String,
-    collection_raw: String,
-    op_filter: OpFilter,
-    format: StreamFormat,
-    compaction: CompactionConfig,
-    webhook: WebhookConfig,
-    late_data: LateDataPolicy,
-    kafka: crate::event::kafka::KafkaDeliveryConfig,
-}
-
 /// Extract all `KEY = VALUE` pairs from a WITH clause inner string.
-/// Returns `(KEY_UPPER, value_string)` tuples. Handles quoted values.
 fn extract_key_value_pairs(inner: &str) -> Vec<(String, String)> {
     let mut result = Vec::new();
-    // Split on commas that are NOT inside quotes.
     let mut pairs = Vec::new();
     let mut current = String::new();
     let mut in_quote = false;
@@ -156,9 +196,8 @@ fn extract_key_value_pairs(inner: &str) -> Vec<(String, String)> {
     if !current.is_empty() {
         pairs.push(current);
     }
-
     for pair in pairs {
-        let pair = pair.trim();
+        let pair = pair.trim().to_string();
         if let Some((key, value)) = pair.split_once('=') {
             let key = key.trim().to_uppercase();
             let value = value
@@ -170,170 +209,4 @@ fn extract_key_value_pairs(inner: &str) -> Vec<(String, String)> {
         }
     }
     result
-}
-
-fn parse_create_change_stream(sql: &str) -> PgWireResult<ParsedCreateChangeStream> {
-    let trimmed = sql.trim().trim_end_matches(';').trim();
-    let upper = trimmed.to_uppercase();
-
-    let prefix = "CREATE CHANGE STREAM ";
-    if !upper.starts_with(prefix) {
-        return Err(sqlstate_error("42601", "expected CREATE CHANGE STREAM"));
-    }
-    let rest = &trimmed[prefix.len()..];
-
-    let tokens: Vec<&str> = rest.split_whitespace().collect();
-    if tokens.len() < 3 {
-        return Err(sqlstate_error(
-            "42601",
-            "expected CREATE CHANGE STREAM <name> ON <collection>",
-        ));
-    }
-
-    let name = tokens[0].to_lowercase();
-
-    if !tokens[1].eq_ignore_ascii_case("ON") {
-        return Err(sqlstate_error("42601", "expected ON after stream name"));
-    }
-
-    let collection_raw = tokens[2].to_string();
-    let collection = if collection_raw == "*" {
-        "*".to_string()
-    } else {
-        collection_raw.to_lowercase()
-    };
-
-    // Parse optional WITH clause.
-    let mut op_filter = OpFilter::all();
-    let mut format = StreamFormat::Json;
-    let mut compaction = CompactionConfig::default();
-    let mut webhook = WebhookConfig::default();
-    let mut late_data = LateDataPolicy::default();
-
-    let mut kv_pairs: Option<Vec<(String, String)>> = None;
-    if let Some(with_pos) = upper.find("WITH") {
-        let with_section = trimmed[with_pos + 4..].trim();
-        let inner = with_section
-            .strip_prefix('(')
-            .and_then(|s| s.split_once(')'))
-            .map(|(i, _)| i)
-            .unwrap_or(with_section);
-
-        let pairs = extract_key_value_pairs(inner);
-        for (key, val) in &pairs {
-            match key.as_str() {
-                "FORMAT" => {
-                    if let Some(f) = StreamFormat::from_str_opt(val) {
-                        format = f;
-                    }
-                }
-                "INCLUDE" => {
-                    op_filter = OpFilter {
-                        insert: false,
-                        update: false,
-                        delete: false,
-                    };
-                    for op in val.split(',') {
-                        match op.trim().to_uppercase().as_str() {
-                            "INSERT" => op_filter.insert = true,
-                            "UPDATE" => op_filter.update = true,
-                            "DELETE" => op_filter.delete = true,
-                            _ => {}
-                        }
-                    }
-                }
-                "COMPACTION" if val.eq_ignore_ascii_case("key") => {
-                    compaction.enabled = true;
-                }
-                "KEY" if !val.is_empty() => {
-                    compaction.key_field = val.clone();
-                    compaction.enabled = true;
-                }
-                "DELIVERY" if val.eq_ignore_ascii_case("webhook") => {
-                    // Webhook delivery mode — URL must also be specified.
-                }
-                "URL" if !val.is_empty() => {
-                    webhook.url = val.clone();
-                }
-                "RETRY" => {
-                    webhook.max_retries = val.parse().unwrap_or(3);
-                }
-                "TIMEOUT" => {
-                    let secs = val
-                        .strip_suffix('s')
-                        .or(Some(val))
-                        .and_then(|s| s.parse::<u64>().ok())
-                        .unwrap_or(5);
-                    webhook.timeout_secs = secs;
-                }
-                "LATE_DATA" => {
-                    if let Some(policy) = LateDataPolicy::from_str_opt(val) {
-                        late_data = policy;
-                    }
-                }
-                _ => {}
-            }
-        }
-        kv_pairs = Some(pairs);
-    }
-
-    // Parse Kafka delivery config from WITH clause.
-    let kafka = kv_pairs
-        .as_ref()
-        .and_then(|pairs| crate::event::kafka::KafkaDeliveryConfig::from_with_params(pairs))
-        .unwrap_or_default();
-
-    Ok(ParsedCreateChangeStream {
-        name,
-        collection,
-        collection_raw,
-        op_filter,
-        format,
-        compaction,
-        webhook,
-        late_data,
-        kafka,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_basic() {
-        let parsed =
-            parse_create_change_stream("CREATE CHANGE STREAM orders_stream ON orders").unwrap();
-        assert_eq!(parsed.name, "orders_stream");
-        assert_eq!(parsed.collection, "orders");
-        assert!(parsed.op_filter.insert);
-        assert!(parsed.op_filter.update);
-        assert!(parsed.op_filter.delete);
-    }
-
-    #[test]
-    fn parse_wildcard() {
-        let parsed = parse_create_change_stream("CREATE CHANGE STREAM all_changes ON *").unwrap();
-        assert_eq!(parsed.collection, "*");
-    }
-
-    #[test]
-    fn parse_with_format() {
-        let parsed = parse_create_change_stream(
-            "CREATE CHANGE STREAM s ON orders WITH (FORMAT = 'msgpack')",
-        )
-        .unwrap();
-        assert_eq!(parsed.format, StreamFormat::Msgpack);
-    }
-
-    #[test]
-    fn parse_with_include_filter() {
-        let parsed = parse_create_change_stream(
-            "CREATE CHANGE STREAM s ON orders WITH (INCLUDE = 'INSERT,DELETE')",
-        )
-        .unwrap();
-        assert!(parsed.op_filter.insert);
-        assert!(!parsed.op_filter.update);
-        assert!(parsed.op_filter.delete);
-    }
 }

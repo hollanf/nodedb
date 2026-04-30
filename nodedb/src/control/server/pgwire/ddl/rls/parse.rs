@@ -1,93 +1,36 @@
-//! `CREATE RLS POLICY` argument parser.
+//! RLS predicate compilation helpers.
 //!
-//! Responsible only for turning the split `parts: &[&str]` token
-//! stream into a validated `ParsedRlsCreate`. No side effects, no
-//! store access. Shared by `create_rls_policy` and tests.
+//! SQL-text parsing for `CREATE RLS POLICY` is done by the `nodedb-sql`
+//! AST layer (`nodedb-sql/src/ddl_ast/parse/rls.rs`). This module is
+//! responsible only for the predicate compilation step — turning the
+//! raw predicate text into a `ScanFilter` blob or a rich `RlsPredicate`
+//! — and for parsing the `ON DENY` clause.
 
 use pgwire::error::PgWireResult;
 
 use crate::control::security::deny::{self, DenyMode};
-use crate::control::security::predicate::{PolicyMode, RlsPredicate};
+use crate::control::security::predicate::RlsPredicate;
 use crate::control::security::predicate_parser::{parse_predicate, validate_auth_refs};
-use crate::control::security::rls::PolicyType;
 
 use super::super::super::types::sqlstate_error;
 
-/// Fully validated arguments to `create_rls_policy`. No defaults
-/// or post-processing remaining — every field is the literal value
-/// that will land in the `StoredRlsPolicy` record.
-pub struct ParsedRlsCreate {
-    pub name: String,
-    pub collection: String,
-    pub tenant_id: u32,
-    pub policy_type: PolicyType,
-    pub policy_type_label: String,
+/// Result of compiling an RLS predicate string.
+pub struct CompiledPredicate {
+    /// Serialised `ScanFilter` bytes (empty when `compiled_predicate` is set).
     pub predicate: Vec<u8>,
+    /// Rich compiled predicate (when the expression uses `$auth.*` or set ops).
     pub compiled_predicate: Option<RlsPredicate>,
-    pub mode: PolicyMode,
-    pub is_restrictive: bool,
+    /// Deny-mode derived from the `ON DENY` clause.
     pub on_deny: DenyMode,
 }
 
-pub fn parse_create_rls_policy(
-    parts: &[&str],
-    default_tenant_id: u32,
-) -> PgWireResult<ParsedRlsCreate> {
-    // CREATE RLS POLICY <name> ON <collection> FOR <type> USING (<predicate>)
-    if parts.len() < 9 {
-        return Err(sqlstate_error(
-            "42601",
-            "syntax: CREATE RLS POLICY <name> ON <collection> FOR <read|write|all> USING (<predicate>)",
-        ));
-    }
-
-    let name = parts[3].to_string();
-    let collection = parts[5].to_string();
-    let policy_type_label = parts[7].to_uppercase();
-    let policy_type = match policy_type_label.as_str() {
-        "READ" => PolicyType::Read,
-        "WRITE" => PolicyType::Write,
-        "ALL" => PolicyType::All,
-        other => {
-            return Err(sqlstate_error(
-                "42601",
-                &format!("invalid policy type: {other}. Expected READ, WRITE, or ALL"),
-            ));
-        }
-    };
-
-    let using_idx = parts
-        .iter()
-        .position(|p: &&str| p.to_uppercase() == "USING")
-        .ok_or_else(|| sqlstate_error("42601", "missing USING clause"))?;
-
-    let pred_end = parts[using_idx + 1..]
-        .iter()
-        .position(|p: &&str| {
-            let upper = p.to_uppercase();
-            upper == "RESTRICTIVE" || upper == "TENANT" || upper == "ON"
-        })
-        .map(|i| using_idx + 1 + i)
-        .unwrap_or(parts.len());
-
-    let predicate_str = strip_outer_parens(&parts[using_idx + 1..pred_end].join(" "));
-
-    let is_restrictive = parts[pred_end..]
-        .iter()
-        .any(|p: &&str| p.to_uppercase() == "RESTRICTIVE");
-    let mode = if is_restrictive {
-        PolicyMode::Restrictive
-    } else {
-        PolicyMode::Permissive
-    };
-
-    let tenant_id = parts
-        .iter()
-        .position(|p: &&str| p.to_uppercase() == "TENANT")
-        .and_then(|i| parts.get(i + 1))
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(default_tenant_id);
-
+/// Compile a predicate string and optional `ON DENY` raw clause into a
+/// `CompiledPredicate`. Called by the `create_rls_policy` handler after
+/// the typed AST fields have been validated.
+pub fn compile_rls_predicate(
+    predicate_str: &str,
+    on_deny_raw: Option<&str>,
+) -> PgWireResult<CompiledPredicate> {
     let has_rich_syntax = predicate_str.contains("$auth")
         || predicate_str.to_uppercase().contains("CONTAINS")
         || predicate_str.to_uppercase().contains("INTERSECTS")
@@ -96,7 +39,7 @@ pub fn parse_create_rls_policy(
         || predicate_str.to_uppercase().contains("NOT ");
 
     let (predicate, compiled_predicate) = if has_rich_syntax {
-        let compiled = parse_predicate(&predicate_str)
+        let compiled = parse_predicate(predicate_str)
             .map_err(|e| sqlstate_error("42601", &format!("predicate parse error: {e}")))?;
         validate_auth_refs(&compiled).map_err(|e| sqlstate_error("42601", &e))?;
         (Vec::new(), Some(compiled))
@@ -126,42 +69,30 @@ pub fn parse_create_rls_policy(
         (predicate, None)
     };
 
-    let on_deny = {
-        let deny_parts: Vec<&str> = parts[pred_end..]
-            .iter()
-            .copied()
-            .skip_while(|p: &&str| p.to_uppercase() != "ON")
-            .skip(1)
-            .take_while(|p: &&str| {
-                let u = p.to_uppercase();
-                u != "RESTRICTIVE" && u != "TENANT"
-            })
-            .collect();
-
-        if deny_parts.first().map(|s: &&str| s.to_uppercase()) == Some("DENY".into()) {
-            deny::parse_on_deny(&deny_parts[1..]).map_err(|e| sqlstate_error("42601", &e))?
+    let on_deny = if let Some(deny_text) = on_deny_raw {
+        let deny_parts: Vec<&str> = deny_text.split_whitespace().collect();
+        // Strip leading DENY token if present.
+        let slice = if deny_parts
+            .first()
+            .map(|s| s.eq_ignore_ascii_case("DENY"))
+            .unwrap_or(false)
+        {
+            &deny_parts[1..]
         } else {
-            DenyMode::default()
-        }
+            &deny_parts[..]
+        };
+        deny::parse_on_deny(slice).map_err(|e| sqlstate_error("42601", &e))?
+    } else {
+        DenyMode::default()
     };
 
-    Ok(ParsedRlsCreate {
-        name,
-        collection,
-        tenant_id,
-        policy_type,
-        policy_type_label,
+    Ok(CompiledPredicate {
         predicate,
         compiled_predicate,
-        mode,
-        is_restrictive,
         on_deny,
     })
 }
 
-/// Strip at most one matched pair of outer single quotes.
-///
-/// `"'hello'"` → `"hello"`, `"no_quotes"` → `"no_quotes"`.
 fn strip_single_quotes(s: &str) -> String {
     let trimmed = s.trim();
     if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
@@ -169,37 +100,4 @@ fn strip_single_quotes(s: &str) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-/// Strip at most one matched pair of outer parentheses. Unlike
-/// `trim_matches('(' | ')')`, this preserves balanced inner parens.
-///
-/// `"((x > 0) AND (y = 1))"` → `"(x > 0) AND (y = 1)"`
-/// `"(x > 0)"` → `"x > 0"`
-/// `"x > 0"` → `"x > 0"` (no outer parens)
-fn strip_outer_parens(s: &str) -> String {
-    let trimmed = s.trim();
-    if trimmed.starts_with('(') && trimmed.ends_with(')') {
-        // Verify the outer parens are actually matched (not two separate groups).
-        let inner = &trimmed[1..trimmed.len() - 1];
-        let mut depth = 0i32;
-        let mut balanced = true;
-        for ch in inner.chars() {
-            match ch {
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth < 0 {
-                        balanced = false;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        if balanced && depth == 0 {
-            return inner.trim().to_string();
-        }
-    }
-    trimmed.to_string()
 }

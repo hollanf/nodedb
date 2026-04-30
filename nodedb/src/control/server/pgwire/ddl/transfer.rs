@@ -20,7 +20,7 @@ use pgwire::error::PgWireResult;
 use crate::bridge::physical_plan::{KvOp, PhysicalPlan};
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 /// Handle `SELECT TRANSFER(collection, source_key, dest_key, field, amount)`
 pub async fn transfer(
@@ -65,7 +65,11 @@ pub async fn transfer(
     });
 
     match crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard, plan, 0,
+        state,
+        tenant_id,
+        vshard,
+        plan,
+        TraceId::ZERO,
     )
     .await
     {
@@ -126,7 +130,11 @@ pub async fn transfer_item(
     });
 
     match crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard_src, plan, 0,
+        state,
+        tenant_id,
+        vshard_src,
+        plan,
+        TraceId::ZERO,
     )
     .await
     {

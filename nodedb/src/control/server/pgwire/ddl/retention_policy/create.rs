@@ -22,14 +22,29 @@ use super::super::super::types::{require_admin, sqlstate_error};
 use super::RETENTION_POLICIES_CRDT_COLLECTION;
 use super::parse::parse_create_retention_policy;
 
+/// Handle `CREATE RETENTION POLICY` from typed AST fields extracted by nodedb-sql parser.
+///
+/// `body_raw` is the raw text between the outer parentheses.
+/// `eval_interval_raw` is the optional EVAL_INTERVAL string from the WITH clause.
 pub async fn create_retention_policy(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    sql: &str,
+    name: &str,
+    collection: &str,
+    body_raw: &str,
+    eval_interval_raw: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "create retention policies")?;
 
-    let parsed = parse_create_retention_policy(sql)?;
+    // Reconstruct minimal SQL for the existing complex parser.
+    let reconstructed = if let Some(eval) = eval_interval_raw {
+        format!(
+            "CREATE RETENTION POLICY {name} ON {collection} ({body_raw}) WITH (EVAL_INTERVAL = '{eval}')"
+        )
+    } else {
+        format!("CREATE RETENTION POLICY {name} ON {collection} ({body_raw})")
+    };
+    let parsed = parse_create_retention_policy(&reconstructed)?;
     let tenant_id = identity.tenant_id.as_u32();
 
     // Validate collection exists and is timeseries.

@@ -67,47 +67,24 @@ fn propose_revoke(
 }
 
 /// `GRANT <perm> ON <collection|FUNCTION name> TO <grantee>`
+///
+/// Called with typed fields from the AST router.
 pub fn grant_permission(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    perm_str: &str,
+    target_type: &str,
+    target_name: &str,
+    grantee: &str,
 ) -> PgWireResult<Vec<Response>> {
-    if parts.len() < 6 {
-        return Err(sqlstate_error(
-            "42601",
-            "syntax: GRANT <perm> ON <collection|FUNCTION name> TO <grantee>",
-        ));
-    }
-
-    let perm_str = parts[1];
-    if !parts[2].eq_ignore_ascii_case("ON") {
-        return Err(sqlstate_error("42601", "expected ON after permission"));
-    }
-
-    let (target, object_desc) = if parts[3].eq_ignore_ascii_case("FUNCTION") {
-        if parts.len() < 7 {
-            return Err(sqlstate_error(
-                "42601",
-                "syntax: GRANT <perm> ON FUNCTION <name> TO <grantee>",
-            ));
-        }
-        let func_name = parts[4].to_lowercase();
-        let target = function_target(identity.tenant_id, &func_name);
-        (target, format!("function '{func_name}'"))
+    let (target, object_desc) = if target_type.eq_ignore_ascii_case("FUNCTION") {
+        let func_name = target_name.to_lowercase();
+        let t = function_target(identity.tenant_id, &func_name);
+        (t, format!("function '{func_name}'"))
     } else {
-        let collection = parts[3];
-        let target = format!("collection:{}:{collection}", identity.tenant_id.as_u32());
-        (target, format!("collection '{collection}'"))
+        let t = format!("collection:{}:{target_name}", identity.tenant_id.as_u32());
+        (t, format!("collection '{target_name}'"))
     };
-
-    let to_idx = parts
-        .iter()
-        .position(|p: &&str| p.eq_ignore_ascii_case("TO"))
-        .ok_or_else(|| sqlstate_error("42601", "expected TO <grantee>"))?;
-    if to_idx + 1 >= parts.len() {
-        return Err(sqlstate_error("42601", "expected grantee after TO"));
-    }
-    let grantee = parts[to_idx + 1];
 
     require_admin(identity, "grant permissions")?;
 
@@ -140,47 +117,24 @@ pub fn grant_permission(
 }
 
 /// `REVOKE <perm> ON <collection|FUNCTION name> FROM <grantee>`
+///
+/// Called with typed fields from the AST router.
 pub fn revoke_permission(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    perm_str: &str,
+    target_type: &str,
+    target_name: &str,
+    grantee: &str,
 ) -> PgWireResult<Vec<Response>> {
-    if parts.len() < 6 {
-        return Err(sqlstate_error(
-            "42601",
-            "syntax: REVOKE <perm> ON <collection|FUNCTION name> FROM <grantee>",
-        ));
-    }
-
-    let perm_str = parts[1];
-    if !parts[2].eq_ignore_ascii_case("ON") {
-        return Err(sqlstate_error("42601", "expected ON after permission"));
-    }
-
-    let (target, object_desc) = if parts[3].eq_ignore_ascii_case("FUNCTION") {
-        if parts.len() < 7 {
-            return Err(sqlstate_error(
-                "42601",
-                "syntax: REVOKE <perm> ON FUNCTION <name> FROM <grantee>",
-            ));
-        }
-        let func_name = parts[4].to_lowercase();
-        let target = function_target(identity.tenant_id, &func_name);
-        (target, format!("function '{func_name}'"))
+    let (target, object_desc) = if target_type.eq_ignore_ascii_case("FUNCTION") {
+        let func_name = target_name.to_lowercase();
+        let t = function_target(identity.tenant_id, &func_name);
+        (t, format!("function '{func_name}'"))
     } else {
-        let collection = parts[3];
-        let target = format!("collection:{}:{collection}", identity.tenant_id.as_u32());
-        (target, format!("collection '{collection}'"))
+        let t = format!("collection:{}:{target_name}", identity.tenant_id.as_u32());
+        (t, format!("collection '{target_name}'"))
     };
-
-    let from_idx = parts
-        .iter()
-        .position(|p: &&str| p.eq_ignore_ascii_case("FROM"))
-        .ok_or_else(|| sqlstate_error("42601", "expected FROM <grantee>"))?;
-    if from_idx + 1 >= parts.len() {
-        return Err(sqlstate_error("42601", "expected grantee after FROM"));
-    }
-    let grantee = parts[from_idx + 1];
 
     require_admin(identity, "revoke permissions")?;
 

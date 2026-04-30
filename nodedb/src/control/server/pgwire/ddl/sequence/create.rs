@@ -3,18 +3,81 @@
 use pgwire::api::results::{Response, Tag};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 
+use crate::control::security::catalog::sequence_types::StoredSequence;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 
-use super::parse::parse_create_sequence;
-
+/// Handle `CREATE [IF NOT EXISTS] SEQUENCE <name> [options…]`.
+///
+/// All option fields are pre-parsed by the `nodedb-sql` AST layer.
+/// `format_template_raw` and `reset_period_raw` are finalised here
+/// because those parsers live in the `nodedb` crate (not `nodedb-sql`).
+#[allow(clippy::too_many_arguments)]
 pub fn create_sequence(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    sql: &str,
+    name: &str,
+    start: Option<i64>,
+    increment: Option<i64>,
+    min_value: Option<i64>,
+    max_value: Option<i64>,
+    cycle: bool,
+    cache: Option<i64>,
+    format_template_raw: Option<&str>,
+    reset_period_raw: Option<&str>,
+    gap_free: bool,
+    _scope: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
     let tenant_id = identity.tenant_id.as_u32();
-    let mut def = parse_create_sequence(sql, tenant_id, &identity.username)?;
+
+    let mut def = StoredSequence::new(tenant_id, name.to_string(), identity.username.clone());
+
+    if let Some(s) = start {
+        def.start_value = s;
+    }
+    if let Some(inc) = increment {
+        def.increment = inc;
+    }
+    if let Some(min) = min_value {
+        def.min_value = min;
+    }
+    if let Some(max) = max_value {
+        def.max_value = max;
+    }
+    def.cycle = cycle;
+    if let Some(c) = cache {
+        def.cache_size = c;
+    }
+    if let Some(fmt) = format_template_raw {
+        let tokens = crate::control::sequence::format::parse_format_template(fmt).map_err(|e| {
+            PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "42601".to_owned(),
+                format!("invalid FORMAT: {e}"),
+            )))
+        })?;
+        def.format_template = Some(tokens);
+    }
+    if let Some(reset) = reset_period_raw {
+        def.reset_scope =
+            crate::control::sequence::format::ResetScope::parse(reset).map_err(|e| {
+                PgWireError::UserError(Box::new(ErrorInfo::new(
+                    "ERROR".to_owned(),
+                    "42601".to_owned(),
+                    e.to_string(),
+                )))
+            })?;
+    }
+    def.gap_free = gap_free;
+
+    // Apply defaults for descending sequences.
+    if def.increment < 0 && def.min_value == 1 && def.max_value == i64::MAX {
+        def.max_value = -1;
+        def.min_value = i64::MIN;
+        if def.start_value == 1 {
+            def.start_value = -1;
+        }
+    }
 
     def.created_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -37,11 +100,6 @@ pub fn create_sequence(
         ))));
     }
 
-    // Propose through the metadata raft group. On every node the
-    // applier decodes `CatalogEntry::PutSequence`, writes the
-    // record to local `SystemCatalog` redb, and syncs the
-    // in-memory `sequence_registry` so `NEXTVAL` / `CURRVAL` on
-    // followers see the replicated definition immediately.
     let entry = crate::control::catalog_entry::CatalogEntry::PutSequence(Box::new(def.clone()));
     let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
         .map_err(|e| {
@@ -52,7 +110,6 @@ pub fn create_sequence(
             )))
         })?;
     if log_index == 0 {
-        // Single-node / no-cluster fallback: write directly.
         if let Some(catalog) = state.credentials.catalog() {
             catalog.put_sequence(&def).map_err(|e| {
                 PgWireError::UserError(Box::new(ErrorInfo::new(

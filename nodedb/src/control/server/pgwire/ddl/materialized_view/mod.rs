@@ -4,11 +4,9 @@
 //! - [`drop`]   — `DROP MATERIALIZED VIEW [IF EXISTS]` (propose through raft)
 //! - [`refresh`] — `REFRESH MATERIALIZED VIEW` (Data Plane dispatch)
 //! - [`show`]   — `SHOW MATERIALIZED VIEWS [FOR <source>]`
-//! - [`parse`]  — CREATE statement parser + WITH clause helpers
 
 pub mod create;
 pub mod drop;
-pub mod parse;
 pub mod refresh;
 pub mod show;
 

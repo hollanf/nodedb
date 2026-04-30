@@ -13,6 +13,7 @@ use crate::control::server::dispatch_utils;
 use crate::control::server::pgwire::types::{sqlstate_error, text_field};
 use crate::control::state::SharedState;
 use crate::data::executor::response_codec;
+use crate::types::TraceId;
 
 const MAX_ITERATIONS_CAP: usize = 1_000;
 const MAX_SAMPLE_CAP: usize = 1_000_000;
@@ -72,7 +73,7 @@ pub async fn algo(
     let tenant_id = identity.tenant_id;
     let plan = PhysicalPlan::Graph(GraphOp::Algo { algorithm, params });
 
-    match dispatch_utils::broadcast_to_all_cores(state, tenant_id, plan, 0).await {
+    match dispatch_utils::broadcast_to_all_cores(state, tenant_id, plan, TraceId::ZERO).await {
         Ok(resp) => algo_payload_to_query_response(&resp.payload, algorithm),
         Err(e) => Err(sqlstate_error("XX000", &e.to_string())),
     }

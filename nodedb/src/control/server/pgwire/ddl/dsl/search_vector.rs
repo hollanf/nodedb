@@ -12,6 +12,7 @@ use crate::bridge::physical_plan::VectorOp;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::server::pgwire::types::{sqlstate_error, text_field};
 use crate::control::state::SharedState;
+use nodedb_types::vector_distance::DistanceMetric;
 
 /// SEARCH <collection> USING VECTOR(ARRAY[...], <k>)
 /// SEARCH <collection> USING VECTOR(ARRAY[...], <k>) WITH FILTER <field> <op> <value>
@@ -88,6 +89,7 @@ pub async fn search_vector(
         query_vector: query_vector.clone(),
         top_k,
         ef_search: 0,
+        metric: DistanceMetric::L2,
         filter_bitmap: None,
         field_name,
         rls_filters: Vec::new(),

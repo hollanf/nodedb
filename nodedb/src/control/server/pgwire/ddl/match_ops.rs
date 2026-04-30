@@ -13,6 +13,7 @@ use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::server::dispatch_utils;
 use crate::control::state::SharedState;
 use crate::data::executor::response_codec;
+use crate::types::TraceId;
 
 use super::super::types::{sqlstate_error, text_field};
 
@@ -53,7 +54,7 @@ pub async fn match_query(
     });
 
     // Broadcast to all cores.
-    match dispatch_utils::broadcast_to_all_cores(state, tenant_id, plan, 0).await {
+    match dispatch_utils::broadcast_to_all_cores(state, tenant_id, plan, TraceId::ZERO).await {
         Ok(resp) => match_payload_to_response(&resp.payload, &column_names),
         Err(e) => Err(sqlstate_error("XX000", &e.to_string())),
     }

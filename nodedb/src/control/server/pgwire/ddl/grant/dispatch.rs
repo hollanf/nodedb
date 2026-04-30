@@ -27,10 +27,33 @@ pub fn handle_grant(
     }
 
     if parts[1].eq_ignore_ascii_case("ROLE") {
-        return grant_role(state, identity, parts);
+        if parts.len() < 5 {
+            return Err(sqlstate_error(
+                "42601",
+                "syntax: GRANT ROLE <role> TO <user>",
+            ));
+        }
+        return grant_role(state, identity, parts[2], parts[4]);
     }
 
-    grant_permission(state, identity, parts)
+    // GRANT <perm> ON [FUNCTION] <name> TO <grantee>
+    let perm_str = parts[1];
+    let (target_type, target_name) = if parts
+        .get(3)
+        .map(|s| s.eq_ignore_ascii_case("FUNCTION"))
+        .unwrap_or(false)
+    {
+        ("FUNCTION", parts.get(4).copied().unwrap_or(""))
+    } else {
+        ("COLLECTION", parts.get(3).copied().unwrap_or(""))
+    };
+    let grantee = parts
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case("TO"))
+        .and_then(|i| parts.get(i + 1))
+        .copied()
+        .unwrap_or("");
+    grant_permission(state, identity, perm_str, target_type, target_name, grantee)
 }
 
 /// `REVOKE ROLE <role> FROM <user>` or
@@ -48,8 +71,31 @@ pub fn handle_revoke(
     }
 
     if parts[1].eq_ignore_ascii_case("ROLE") {
-        return revoke_role(state, identity, parts);
+        if parts.len() < 5 {
+            return Err(sqlstate_error(
+                "42601",
+                "syntax: REVOKE ROLE <role> FROM <user>",
+            ));
+        }
+        return revoke_role(state, identity, parts[2], parts[4]);
     }
 
-    revoke_permission(state, identity, parts)
+    // REVOKE <perm> ON [FUNCTION] <name> FROM <grantee>
+    let perm_str = parts[1];
+    let (target_type, target_name) = if parts
+        .get(3)
+        .map(|s| s.eq_ignore_ascii_case("FUNCTION"))
+        .unwrap_or(false)
+    {
+        ("FUNCTION", parts.get(4).copied().unwrap_or(""))
+    } else {
+        ("COLLECTION", parts.get(3).copied().unwrap_or(""))
+    };
+    let grantee = parts
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case("FROM"))
+        .and_then(|i| parts.get(i + 1))
+        .copied()
+        .unwrap_or("");
+    revoke_permission(state, identity, perm_str, target_type, target_name, grantee)
 }

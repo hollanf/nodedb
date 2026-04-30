@@ -14,28 +14,16 @@ use super::super::types::sqlstate_error;
 /// Transfer ownership of a collection. Requires:
 /// - Current owner, OR
 /// - Superuser / tenant_admin
+///
+/// All fields arrive pre-parsed:
+/// - `collection`: collection name.
+/// - `new_owner`: new owner username.
 pub fn alter_collection_owner(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    collection: &str,
+    new_owner: &str,
 ) -> PgWireResult<Vec<Response>> {
-    // ALTER COLLECTION <name> OWNER TO <user>
-    if parts.len() < 6 {
-        return Err(sqlstate_error(
-            "42601",
-            "syntax: ALTER COLLECTION <name> OWNER TO <user>",
-        ));
-    }
-
-    let collection = parts[2];
-    if !parts[3].eq_ignore_ascii_case("OWNER") || !parts[4].eq_ignore_ascii_case("TO") {
-        return Err(sqlstate_error(
-            "42601",
-            "expected OWNER TO after collection name",
-        ));
-    }
-    let new_owner = parts[5];
-
     // Check authorization: current owner or admin.
     let current_owner = state
         .permissions

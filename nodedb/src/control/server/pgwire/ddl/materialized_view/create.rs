@@ -9,15 +9,20 @@ use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 
 use super::super::super::types::sqlstate_error;
-use super::parse::parse_create_mv;
 
 /// `CREATE MATERIALIZED VIEW <name> ON <source> AS SELECT ... [WITH (...)]`
 pub async fn create_materialized_view(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    sql: &str,
+    name: &str,
+    source: &str,
+    query_sql: &str,
+    refresh_mode: &str,
 ) -> PgWireResult<Vec<Response>> {
-    let (name, source, query_sql, refresh_mode) = parse_create_mv(sql)?;
+    let name = name.to_string();
+    let source = source.to_string();
+    let query_sql = query_sql.to_string();
+    let refresh_mode = refresh_mode.to_string();
 
     let tenant_id = identity.tenant_id;
 

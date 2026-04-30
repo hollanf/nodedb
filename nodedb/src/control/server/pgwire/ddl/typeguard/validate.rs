@@ -13,6 +13,7 @@ use pgwire::error::PgWireResult;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::server::pgwire::types::text_field;
 use crate::control::state::SharedState;
+use crate::types::TraceId;
 
 /// Handle `VALIDATE TYPEGUARD ON <collection>`.
 ///
@@ -70,7 +71,7 @@ pub async fn validate_typeguard(
             tenant_id,
             task.vshard_id,
             task.plan,
-            0,
+            TraceId::ZERO,
         )
         .await
         .map_err(|e| super::parse::err("XX000", &format!("scan dispatch failed: {e}")))?;

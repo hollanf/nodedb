@@ -38,7 +38,7 @@ use crate::control::server::broadcast::broadcast_to_all_cores;
 use crate::control::server::dispatch_utils;
 use crate::control::server::pgwire::types::{sqlstate_error, text_field};
 use crate::control::state::SharedState;
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 use super::parse::parse_edge_columns;
 
@@ -97,7 +97,7 @@ pub async fn create_graph_index(
         valid_at_ms: None,
         prefilter: None,
     });
-    let scan_resp = broadcast_to_all_cores(state, tenant_id, scan_plan, 0)
+    let scan_resp = broadcast_to_all_cores(state, tenant_id, scan_plan, TraceId::ZERO)
         .await
         .map_err(|e| sqlstate_error("XX000", &format!("scan failed: {e}")))?;
 
@@ -195,7 +195,9 @@ pub async fn create_graph_index(
             )
             .await;
         }
-        match dispatch_utils::dispatch_to_data_plane(state, tenant_id, shard, plan, 0).await {
+        match dispatch_utils::dispatch_to_data_plane(state, tenant_id, shard, plan, TraceId::ZERO)
+            .await
+        {
             Ok(_) => committed_shards.push((shard, edges)),
             Err(e) => {
                 return surface_failure(
@@ -251,7 +253,14 @@ async fn surface_failure(
         async move {
             (
                 shard,
-                dispatch_utils::dispatch_to_data_plane(state, tenant_id, shard, plan, 0).await,
+                dispatch_utils::dispatch_to_data_plane(
+                    state,
+                    tenant_id,
+                    shard,
+                    plan,
+                    TraceId::ZERO,
+                )
+                .await,
             )
         }
     });

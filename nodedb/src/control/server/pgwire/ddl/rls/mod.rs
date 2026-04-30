@@ -29,6 +29,6 @@ pub mod drop;
 pub mod parse;
 pub mod show;
 
-pub use create::create_rls_policy;
+pub use create::{CreateRlsPolicyRequest, create_rls_policy};
 pub use drop::drop_rls_policy;
 pub use show::show_rls_policies;

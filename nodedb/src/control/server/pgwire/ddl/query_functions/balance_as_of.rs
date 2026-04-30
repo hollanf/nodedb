@@ -10,7 +10,7 @@ use crate::bridge::envelope::PhysicalPlan;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::server::dispatch_utils;
 use crate::control::state::SharedState;
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 use super::super::super::types::sqlstate_error;
 use super::helpers::{
@@ -56,9 +56,10 @@ pub async fn balance_as_of(
         valid_at_ms: None,
     });
 
-    let get_resp = dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard, get_plan, 0)
-        .await
-        .map_err(|e| sqlstate_error("XX000", &format!("point get failed: {e}")))?;
+    let get_resp =
+        dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard, get_plan, TraceId::ZERO)
+            .await
+            .map_err(|e| sqlstate_error("XX000", &format!("point get failed: {e}")))?;
 
     let doc_json = crate::data::executor::response_codec::decode_payload_to_json(&get_resp.payload);
     let doc: serde_json::Value = sonic_rs::from_str(&doc_json).unwrap_or(serde_json::Value::Null);
@@ -102,10 +103,15 @@ pub async fn balance_as_of(
         prefilter: None,
     });
 
-    let source_resp =
-        dispatch_utils::dispatch_to_data_plane(state, tenant_id, source_vshard, source_scan, 0)
-            .await
-            .map_err(|e| sqlstate_error("XX000", &format!("source scan failed: {e}")))?;
+    let source_resp = dispatch_utils::dispatch_to_data_plane(
+        state,
+        tenant_id,
+        source_vshard,
+        source_scan,
+        TraceId::ZERO,
+    )
+    .await
+    .map_err(|e| sqlstate_error("XX000", &format!("source scan failed: {e}")))?;
 
     let source_json =
         crate::data::executor::response_codec::decode_payload_to_json(&source_resp.payload);

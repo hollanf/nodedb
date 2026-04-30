@@ -135,11 +135,14 @@ fn sql_value_to_ndb_value(v: nodedb_sql::types::SqlValue) -> nodedb_types::Value
         SqlValue::Bool(b) => nodedb_types::Value::Bool(b),
         SqlValue::Int(i) => nodedb_types::Value::Integer(i),
         SqlValue::Float(f) => nodedb_types::Value::Float(f),
+        SqlValue::Decimal(d) => nodedb_types::Value::Decimal(d),
         SqlValue::String(s) => nodedb_types::Value::String(s),
         SqlValue::Bytes(b) => nodedb_types::Value::Bytes(b),
         SqlValue::Array(a) => {
             nodedb_types::Value::Array(a.into_iter().map(sql_value_to_ndb_value).collect())
         }
+        SqlValue::Timestamp(dt) => nodedb_types::Value::NaiveDateTime(dt),
+        SqlValue::Timestamptz(dt) => nodedb_types::Value::DateTime(dt),
     }
 }
 

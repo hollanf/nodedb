@@ -15,33 +15,26 @@ use crate::control::state::SharedState;
 
 use super::super::super::types::{require_admin, sqlstate_error};
 
+/// Handle `ALTER RETENTION POLICY <name> ENABLE | DISABLE | SET <key> = <value>`.
+///
+/// `name`, `action`, `set_key`, and `set_value` come from the typed
+/// [`NodedbStatement::AlterRetentionPolicy`] variant.
 pub fn alter_retention_policy(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    sql: &str,
+    name: &str,
+    action: &str,
+    set_key: Option<&str>,
+    set_value: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "alter retention policies")?;
 
-    let trimmed = sql.trim().trim_end_matches(';').trim();
-    let upper = trimmed.to_uppercase();
     let tenant_id = identity.tenant_id.as_u32();
-
-    // Extract name: "ALTER RETENTION POLICY <name> ..."
-    let prefix = "ALTER RETENTION POLICY ";
-    if !upper.starts_with(prefix) {
-        return Err(sqlstate_error("42601", "expected ALTER RETENTION POLICY"));
-    }
-    let after_prefix = &trimmed[prefix.len()..];
-    let name = after_prefix
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| sqlstate_error("42601", "missing policy name"))?
-        .to_lowercase();
 
     // Load existing policy.
     let mut def = state
         .retention_policy_registry
-        .get(tenant_id, &name)
+        .get(tenant_id, name)
         .ok_or_else(|| {
             sqlstate_error(
                 "42704",
@@ -49,24 +42,32 @@ pub fn alter_retention_policy(
             )
         })?;
 
-    // Parse the action.
-    if upper.contains(" ENABLE") && !upper.contains("DISABLE") {
-        def.enabled = true;
-    } else if upper.contains(" DISABLE") {
-        def.enabled = false;
-    } else if upper.contains("AUTO_TIER") {
-        let val = extract_set_value(&upper, "AUTO_TIER")?;
-        def.auto_tier = val.eq_ignore_ascii_case("TRUE");
-    } else if upper.contains("EVAL_INTERVAL") {
-        let val_str = extract_set_quoted_value(trimmed, "EVAL_INTERVAL")?;
-        let ms = nodedb_types::kv_parsing::parse_interval_to_ms(&val_str)
-            .map_err(|e| sqlstate_error("42601", &format!("invalid interval: {e}")))?;
-        def.eval_interval_ms = ms;
-    } else {
-        return Err(sqlstate_error(
-            "42601",
-            "expected ENABLE, DISABLE, SET AUTO_TIER, or SET EVAL_INTERVAL",
-        ));
+    match action {
+        "ENABLE" => def.enabled = true,
+        "DISABLE" => def.enabled = false,
+        "SET" => {
+            let key = set_key.unwrap_or("");
+            let val = set_value.unwrap_or("");
+            match key {
+                "AUTO_TIER" => {
+                    def.auto_tier = val.eq_ignore_ascii_case("TRUE");
+                }
+                "EVAL_INTERVAL" => {
+                    let ms = nodedb_types::kv_parsing::parse_interval_to_ms(val)
+                        .map_err(|e| sqlstate_error("42601", &format!("invalid interval: {e}")))?;
+                    def.eval_interval_ms = ms;
+                }
+                _ => {
+                    return Err(sqlstate_error(
+                        "42601",
+                        "ALTER RETENTION POLICY SET supports: AUTO_TIER, EVAL_INTERVAL",
+                    ));
+                }
+            }
+        }
+        _ => {
+            return Err(sqlstate_error("42601", "expected ENABLE, DISABLE, or SET"));
+        }
     }
 
     // Persist updated policy.
@@ -93,56 +94,4 @@ pub fn alter_retention_policy(
     Ok(vec![Response::Execution(Tag::new(
         "ALTER RETENTION POLICY",
     ))])
-}
-
-/// Extract value from `SET KEY = VALUE` (unquoted).
-fn extract_set_value(upper: &str, key: &str) -> PgWireResult<String> {
-    let pos = upper
-        .find(key)
-        .ok_or_else(|| sqlstate_error("42601", &format!("expected {key}")))?;
-    let after = upper[pos + key.len()..].trim_start();
-    let after = after.strip_prefix('=').unwrap_or(after).trim_start();
-    let val = after
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| sqlstate_error("42601", &format!("missing value for {key}")))?;
-    Ok(val.to_string())
-}
-
-/// Extract value from `SET KEY = 'quoted_value'` (uses original case SQL).
-fn extract_set_quoted_value(sql: &str, key: &str) -> PgWireResult<String> {
-    let upper = sql.to_uppercase();
-    let pos = upper
-        .find(key)
-        .ok_or_else(|| sqlstate_error("42601", &format!("expected {key}")))?;
-    let after = &sql[pos + key.len()..];
-    let after = after
-        .trim_start()
-        .strip_prefix('=')
-        .unwrap_or(after)
-        .trim_start();
-    let start = after
-        .find('\'')
-        .ok_or_else(|| sqlstate_error("42601", "expected quoted value"))?;
-    let end = after[start + 1..]
-        .find('\'')
-        .ok_or_else(|| sqlstate_error("42601", "missing closing quote"))?;
-    Ok(after[start + 1..start + 1 + end].to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extract_set_value_basic() {
-        let val = extract_set_value("SET AUTO_TIER = TRUE", "AUTO_TIER").unwrap();
-        assert_eq!(val, "TRUE");
-    }
-
-    #[test]
-    fn extract_set_quoted_value_basic() {
-        let val = extract_set_quoted_value("SET EVAL_INTERVAL = '30m'", "EVAL_INTERVAL").unwrap();
-        assert_eq!(val, "30m");
-    }
 }

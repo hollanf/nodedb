@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::bridge::envelope::{PhysicalPlan, Priority, Request, Status};
 use crate::control::state::SharedState;
-use crate::types::{ReadConsistency, TenantId, VShardId};
+use crate::types::{ReadConsistency, TenantId, TraceId, VShardId};
 
 /// Send `plan` to the Data Plane and await the response.
 ///
@@ -53,7 +53,7 @@ pub async fn dispatch_async_with_source(
         plan,
         deadline: Instant::now() + timeout,
         priority: Priority::Normal,
-        trace_id: 0,
+        trace_id: TraceId::generate(),
         consistency: ReadConsistency::Strong,
         idempotency_key: None,
         event_source,

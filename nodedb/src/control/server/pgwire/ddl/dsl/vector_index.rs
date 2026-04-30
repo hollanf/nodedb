@@ -13,6 +13,7 @@ use crate::bridge::physical_plan::VectorOp;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::server::pgwire::types::sqlstate_error;
 use crate::control::state::SharedState;
+use crate::types::TraceId;
 
 use super::helpers::{find_param_str, find_param_usize};
 
@@ -85,7 +86,7 @@ pub async fn create_vector_index(
         tenant_id,
         vshard,
         set_params_plan,
-        0,
+        TraceId::ZERO,
     )
     .await;
 

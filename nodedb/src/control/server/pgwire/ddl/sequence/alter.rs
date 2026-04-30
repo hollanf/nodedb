@@ -6,19 +6,20 @@ use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 
+/// Handle `ALTER SEQUENCE <name> RESTART [WITH <value>] | FORMAT '<template>'`.
+///
+/// `name`, `action`, and `with_value` come from the typed
+/// [`NodedbStatement::AlterSequence`] variant.
 pub fn alter_sequence(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    sql: &str,
+    name: &str,
+    action: &str,
+    with_value: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
     let tenant_id = identity.tenant_id.as_u32();
 
-    let upper = sql.to_uppercase();
-    let parts: Vec<&str> = sql.split_whitespace().collect();
-
-    let name = parts.get(2).unwrap_or(&"").to_lowercase();
-
-    if !state.sequence_registry.exists(tenant_id, &name) {
+    if !state.sequence_registry.exists(tenant_id, name) {
         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
             "ERROR".to_owned(),
             "42P01".to_owned(),
@@ -26,37 +27,26 @@ pub fn alter_sequence(
         ))));
     }
 
-    if upper.contains("RESTART") {
-        return alter_restart(state, tenant_id, &name, &upper, &parts);
+    match action.to_uppercase().as_str() {
+        "RESTART" => alter_restart(state, tenant_id, name, with_value),
+        "FORMAT" => alter_format(state, tenant_id, name, with_value),
+        _ => Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+            "ERROR".to_owned(),
+            "42601".to_owned(),
+            "ALTER SEQUENCE supports: RESTART [WITH value], FORMAT 'template'".to_owned(),
+        )))),
     }
-
-    if upper.contains("FORMAT") {
-        return alter_format(state, tenant_id, &name, &parts);
-    }
-
-    Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-        "ERROR".to_owned(),
-        "42601".to_owned(),
-        "ALTER SEQUENCE supports: RESTART [WITH value], FORMAT 'template'".to_owned(),
-    ))))
 }
 
+/// `ALTER SEQUENCE <name> RESTART [WITH <value>]`
 fn alter_restart(
     state: &SharedState,
     tenant_id: u32,
     name: &str,
-    upper: &str,
-    parts: &[&str],
+    with_value: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
-    let restart_value = if upper.contains(" WITH ") {
-        let with_idx = parts
-            .iter()
-            .position(|p| p.eq_ignore_ascii_case("WITH"))
-            .unwrap_or(parts.len());
-        parts
-            .get(with_idx + 1)
-            .and_then(|v| v.parse::<i64>().ok())
-            .unwrap_or(1)
+    let restart_value = if let Some(v) = with_value.and_then(|s| s.parse::<i64>().ok()) {
+        v
     } else {
         state
             .sequence_registry
@@ -115,17 +105,14 @@ fn alter_restart(
     Ok(vec![Response::Execution(Tag::new("ALTER SEQUENCE"))])
 }
 
+/// `ALTER SEQUENCE <name> FORMAT '<template>'`
 fn alter_format(
     state: &SharedState,
     tenant_id: u32,
     name: &str,
-    parts: &[&str],
+    with_value: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
-    let format_idx = parts
-        .iter()
-        .position(|p| p.eq_ignore_ascii_case("FORMAT"))
-        .unwrap_or(parts.len());
-    let Some(raw) = parts.get(format_idx + 1) else {
+    let Some(raw) = with_value else {
         return Ok(vec![Response::Execution(Tag::new("ALTER SEQUENCE"))]);
     };
     let raw = raw.trim_matches('\'').trim_matches('"');

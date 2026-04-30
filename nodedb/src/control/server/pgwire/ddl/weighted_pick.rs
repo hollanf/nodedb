@@ -22,7 +22,7 @@ use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 use crate::engine::random::alias::AliasTable;
 use crate::engine::random::csprng::SeedableRng;
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 /// Handle `SELECT * FROM WEIGHTED_PICK('collection', weight => 'col', count => N, ...)`
 pub async fn weighted_pick(
@@ -166,7 +166,7 @@ pub async fn weighted_pick(
                     tenant_id,
                     VShardId::from_collection("_system_random_audit"),
                     audit_plan,
-                    0,
+                    TraceId::ZERO,
                 )
                 .await
                 {
@@ -219,7 +219,11 @@ async fn scan_all_entries(
     });
 
     let resp = crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard, plan, 0,
+        state,
+        tenant_id,
+        vshard,
+        plan,
+        TraceId::ZERO,
     )
     .await
     .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;

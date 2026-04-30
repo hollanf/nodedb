@@ -1,6 +1,5 @@
 pub mod create;
 pub mod drop;
-mod parse;
 pub mod show;
 
 pub use create::create_trigger;

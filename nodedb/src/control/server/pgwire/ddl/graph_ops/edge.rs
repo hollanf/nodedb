@@ -16,7 +16,7 @@ use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::server::dispatch_utils;
 use crate::control::server::pgwire::types::sqlstate_error;
 use crate::control::state::SharedState;
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 /// Maximum byte length for an edge label string. Keeps a single `TYPE`
 /// clause from bloating the CSR label table and the msgpack wire payload.
@@ -98,7 +98,9 @@ pub async fn insert_edge(
     dispatch_utils::wal_append_if_write(&state.wal, tenant_id, vshard_id, &plan)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
 
-    match dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard_id, plan, 0).await {
+    match dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard_id, plan, TraceId::ZERO)
+        .await
+    {
         Ok(_) => Ok(vec![Response::Execution(Tag::new("INSERT EDGE"))]),
         Err(e) => Err(sqlstate_error("XX000", &e.to_string())),
     }
@@ -139,7 +141,9 @@ pub async fn delete_edge(
     dispatch_utils::wal_append_if_write(&state.wal, tenant_id, vshard_id, &plan)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
 
-    match dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard_id, plan, 0).await {
+    match dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard_id, plan, TraceId::ZERO)
+        .await
+    {
         Ok(_) => Ok(vec![Response::Execution(Tag::new("DELETE EDGE"))]),
         Err(e) => Err(sqlstate_error("XX000", &e.to_string())),
     }
@@ -179,7 +183,9 @@ pub async fn set_node_labels(
     dispatch_utils::wal_append_if_write(&state.wal, tenant_id, vshard_id, &plan)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
 
-    match dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard_id, plan, 0).await {
+    match dispatch_utils::dispatch_to_data_plane(state, tenant_id, vshard_id, plan, TraceId::ZERO)
+        .await
+    {
         Ok(_) => {
             let tag = if remove { "UNLABEL" } else { "LABEL" };
             Ok(vec![Response::Execution(Tag::new(tag))])

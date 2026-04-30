@@ -21,7 +21,7 @@ use crate::bridge::envelope::{PhysicalPlan, Status};
 use crate::bridge::physical_plan::KvOp;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
-use crate::types::VShardId;
+use crate::types::{TraceId, VShardId};
 
 /// Internal collection used for rate gate counters.
 const RATE_COLLECTION: &str = "_system_rate_gates";
@@ -73,7 +73,11 @@ pub async fn rate_check(
             key: rate_key.as_bytes().to_vec(),
         });
         match crate::control::server::dispatch_utils::dispatch_to_data_plane(
-            state, tenant_id, vshard, check, 0,
+            state,
+            tenant_id,
+            vshard,
+            check,
+            TraceId::ZERO,
         )
         .await
         {
@@ -97,7 +101,11 @@ pub async fn rate_check(
     });
 
     match crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard, plan, 0,
+        state,
+        tenant_id,
+        vshard,
+        plan,
+        TraceId::ZERO,
     )
     .await
     {
@@ -168,7 +176,11 @@ pub async fn rate_remaining(
     });
 
     let current = match crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard, plan, 0,
+        state,
+        tenant_id,
+        vshard,
+        plan,
+        TraceId::ZERO,
     )
     .await
     {
@@ -222,7 +234,11 @@ pub async fn rate_reset(
     });
 
     match crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard, plan, 0,
+        state,
+        tenant_id,
+        vshard,
+        plan,
+        TraceId::ZERO,
     )
     .await
     {
@@ -253,7 +269,11 @@ async fn read_ttl_ms(
     });
 
     match crate::control::server::dispatch_utils::dispatch_to_data_plane(
-        state, tenant_id, vshard, plan, 0,
+        state,
+        tenant_id,
+        vshard,
+        plan,
+        TraceId::ZERO,
     )
     .await
     {

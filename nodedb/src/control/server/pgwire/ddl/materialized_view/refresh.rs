@@ -21,6 +21,7 @@ use pgwire::error::PgWireResult;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 use crate::data::executor::response_codec::decode_payload_to_json;
+use crate::types::TraceId;
 
 use super::super::super::types::sqlstate_error;
 
@@ -114,7 +115,7 @@ async fn execute_select(
             tenant_id,
             task.vshard_id,
             task.plan,
-            0,
+            TraceId::ZERO,
         )
         .await
         .map_err(|e| sqlstate_error("XX000", &format!("dispatch: {e}")))?;
@@ -232,7 +233,7 @@ async fn dispatch_sql(
             tenant_id,
             task.vshard_id,
             task.plan,
-            0,
+            TraceId::ZERO,
         )
         .await
         .map_err(|e| sqlstate_error("08006", &format!("dispatch: {e}")))?;

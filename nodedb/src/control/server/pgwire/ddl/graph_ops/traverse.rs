@@ -13,6 +13,7 @@ use crate::control::server::pgwire::types::sqlstate_error;
 use crate::control::state::SharedState;
 use crate::engine::graph::edge_store::Direction;
 use crate::engine::graph::traversal_options::MAX_GRAPH_TRAVERSAL_DEPTH;
+use crate::types::TraceId;
 
 use super::response::payload_to_query_response;
 
@@ -79,7 +80,7 @@ pub async fn neighbors(
         rls_filters: Vec::new(),
     });
 
-    match dispatch_utils::broadcast_to_all_cores(state, tenant_id, plan, 0).await {
+    match dispatch_utils::broadcast_to_all_cores(state, tenant_id, plan, TraceId::ZERO).await {
         Ok(resp) => payload_to_query_response(&resp.payload),
         Err(e) => Err(sqlstate_error("XX000", &e.to_string())),
     }

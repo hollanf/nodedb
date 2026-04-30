@@ -177,7 +177,9 @@ pub fn show_raft_group(
 pub fn alter_raft_group(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    group_id_str: &str,
+    action: &str,
+    node_id_str: &str,
 ) -> PgWireResult<Vec<Response>> {
     if !identity.is_superuser {
         return Err(sqlstate_error(
@@ -186,22 +188,14 @@ pub fn alter_raft_group(
         ));
     }
 
-    // ALTER RAFT GROUP <id> ADD|REMOVE NODE <node_id>
-    if parts.len() < 7 {
-        return Err(sqlstate_error(
-            "42601",
-            "syntax: ALTER RAFT GROUP <group_id> ADD|REMOVE NODE <node_id>",
-        ));
-    }
-
-    let group_id: u64 = parts[3]
+    let group_id: u64 = group_id_str
         .parse()
-        .map_err(|_| sqlstate_error("42601", &format!("invalid group_id: '{}'", parts[3])))?;
+        .map_err(|_| sqlstate_error("42601", &format!("invalid group_id: '{group_id_str}'")))?;
 
-    let action = parts[4].to_uppercase();
-    let node_id: u64 = parts[6]
+    let action = action.to_uppercase();
+    let node_id: u64 = node_id_str
         .parse()
-        .map_err(|_| sqlstate_error("42601", &format!("invalid node_id: '{}'", parts[6])))?;
+        .map_err(|_| sqlstate_error("42601", &format!("invalid node_id: '{node_id_str}'")))?;
 
     let change_type = match action.as_str() {
         "ADD" => nodedb_cluster::ConfChangeType::AddNode,

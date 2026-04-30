@@ -64,30 +64,24 @@ pub fn drop_trigger(
     Ok(vec![Response::Execution(Tag::new("DROP TRIGGER"))])
 }
 
-/// Handle `ALTER TRIGGER <name> ENABLE|DISABLE|OWNER TO <new_owner>`
+/// Handle `ALTER TRIGGER <name> ENABLE|DISABLE|OWNER TO <new_owner>`.
+///
+/// `name` and `action` come from the typed [`NodedbStatement::AlterTrigger`]
+/// variant. `new_owner` is `Some` when `action == "OWNER"`.
 pub fn alter_trigger(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    name: &str,
+    action: &str,
+    new_owner: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
     require_admin(identity, "alter triggers")?;
 
-    if parts.len() < 4 {
-        return Err(sqlstate_error(
-            "42601",
-            "syntax: ALTER TRIGGER <name> ENABLE|DISABLE|OWNER TO <user>",
-        ));
-    }
-
-    let name = parts[2].to_lowercase();
-    let action = parts[3].to_uppercase();
-
-    // ALTER TRIGGER <name> OWNER TO <new_owner>
     if action == "OWNER" {
-        return alter_trigger_owner(state, identity, parts, &name);
+        return alter_trigger_owner(state, identity, name, new_owner);
     }
 
-    let enabled = match action.as_str() {
+    let enabled = match action {
         "ENABLE" => true,
         "DISABLE" => false,
         _ => {
@@ -106,7 +100,7 @@ pub fn alter_trigger(
         .ok_or_else(|| sqlstate_error("XX000", "system catalog not available"))?;
 
     let mut trigger = catalog
-        .get_trigger(tenant_id, &name)
+        .get_trigger(tenant_id, name)
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?
         .ok_or_else(|| sqlstate_error("42704", &format!("trigger '{name}' does not exist")))?;
 
@@ -116,9 +110,7 @@ pub fn alter_trigger(
         .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
 
     // Update in-memory registry.
-    state
-        .trigger_registry
-        .set_enabled(tenant_id, &name, enabled);
+    state.trigger_registry.set_enabled(tenant_id, name, enabled);
 
     state.audit_record(
         crate::control::security::audit::AuditEvent::AdminAction,
@@ -134,17 +126,15 @@ pub fn alter_trigger(
 fn alter_trigger_owner(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
     name: &str,
+    new_owner: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
-    // ALTER TRIGGER <name> OWNER TO <new_owner>
-    if parts.len() < 6 || !parts[4].eq_ignore_ascii_case("TO") {
-        return Err(sqlstate_error(
-            "42601",
-            "syntax: ALTER TRIGGER <name> OWNER TO <new_owner>",
-        ));
-    }
-    let new_owner = parts[5].trim_end_matches(';').to_string();
+    let new_owner = new_owner
+        .ok_or_else(|| {
+            sqlstate_error("42601", "syntax: ALTER TRIGGER <name> OWNER TO <new_owner>")
+        })?
+        .trim_end_matches(';')
+        .to_string();
 
     let tenant_id = identity.tenant_id.as_u32();
     let catalog = state
