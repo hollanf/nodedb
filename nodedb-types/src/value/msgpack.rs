@@ -4,6 +4,7 @@
 //! Format: [variant_tag: u8, ...payload fields] as a msgpack array.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::core::Value;
 use crate::array_cell::ArrayCell;
@@ -119,6 +120,11 @@ impl zerompk::ToMessagePack for Value {
                 writer.write_u8(19)?;
                 dt.write(writer)
             }
+            Value::Vector(v) => {
+                writer.write_array_len(2)?;
+                writer.write_u8(20)?;
+                writer.write_binary(bytemuck::cast_slice(v.as_ref()))
+            }
         }
     }
 }
@@ -175,6 +181,24 @@ impl<'a> zerompk::FromMessagePack<'a> for Value {
             }
             18 => Ok(Value::NdArrayCell(ArrayCell::read(reader)?)),
             19 => Ok(Value::NaiveDateTime(NdbDateTime::read(reader)?)),
+            20 => {
+                let cow = reader.read_binary()?;
+                if cow.len() % 4 != 0 {
+                    return Err(zerompk::Error::BufferTooSmall);
+                }
+                // Deserialize each f32 from its 4-byte little-endian
+                // representation. This is safe for any alignment and matches
+                // the byte order produced by bytemuck::cast_slice on the
+                // encode side (native endian = little-endian on x86/ARM).
+                let floats: Arc<[f32]> = cow
+                    .chunks_exact(4)
+                    .map(|chunk| {
+                        let arr = [chunk[0], chunk[1], chunk[2], chunk[3]];
+                        f32::from_ne_bytes(arr)
+                    })
+                    .collect();
+                Ok(Value::Vector(floats))
+            }
             _ => Err(zerompk::Error::InvalidMarker(tag)),
         }
     }

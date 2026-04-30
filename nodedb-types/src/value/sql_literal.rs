@@ -36,6 +36,10 @@ impl Value {
             Value::Decimal(d) => d.to_string(),
             Value::Geometry(g) => format!("'{}'", serde_json::to_string(g).unwrap_or_default()),
             Value::Range { .. } | Value::Record { .. } => "NULL".into(),
+            Value::Vector(v) => {
+                let elements: Vec<String> = v.iter().map(|f| f.to_string()).collect();
+                format!("ARRAY[{}]", elements.join(", "))
+            }
             Value::NdArrayCell(cell) => {
                 let coords: Vec<String> = cell.coords.iter().map(|v| v.to_sql_literal()).collect();
                 let attrs: Vec<String> = cell.attrs.iter().map(|v| v.to_sql_literal()).collect();

@@ -4,6 +4,8 @@
 //! booleans, binary blobs (embeddings), arrays, and nested objects.
 
 use std::collections::HashMap;
+use std::fmt;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,11 +16,38 @@ use crate::geometry::Geometry;
 /// A dynamic value that can represent any field type in a document
 /// or any parameter in a SQL query.
 ///
-/// Serialized with `#[serde(untagged)]` so that JSON output uses plain
-/// JSON types (`"string"`, `1`, `true`, `null`, `[…]`, `{…}`) rather than
-/// the externally-tagged form (`{"String":"…"}`, `{"Integer":1}`, etc.).
-/// MessagePack (de)serialization is handled by custom `ToMessagePack` /
-/// `FromMessagePack` impls and is unaffected by this attribute.
+/// # Serialization policy
+///
+/// **JSON (`#[serde(untagged)]`) — API-boundary format, documented lossy.**
+/// JSON output uses plain JSON types (`"string"`, `1`, `true`, `null`,
+/// `[…]`, `{…}`) so that HTTP/pgwire clients see idiomatic JSON without
+/// tagged wrappers. This is intentional but lossy for six variants:
+///
+/// | Variant        | JSON representation | Round-trip loss |
+/// |----------------|---------------------|-----------------|
+/// | `Uuid(s)`      | `"<s>"`             | decoded as `String` |
+/// | `Ulid(s)`      | `"<s>"`             | decoded as `String` |
+/// | `Regex(s)`     | `"<s>"`             | decoded as `String` |
+/// | `Range {…}`    | `null`              | decoded as `Null` |
+/// | `Record {…}`   | `null`              | decoded as `Null` |
+/// | `NdArrayCell`  | `{"coords":[…], "attrs":[…]}` | decoded as `Object` without type discriminator |
+/// | `Vector(v)`    | `[f32, …]` (JSON number array) | decoded as `Array<Float>` |
+///
+/// **Round-trip through JSON is NOT preserved for these six variants.**
+/// JSON is permitted only at the HTTP/pgwire API boundary
+/// (`decode_payload_to_json()` in the Control Plane); it must never be
+/// used for Data Plane storage, WAL records, or cross-plane messages.
+///
+/// **zerompk MessagePack (hand-rolled `ToMessagePack`/`FromMessagePack`
+/// in `value/msgpack.rs`) — internal transport format, lossless.**
+/// Every variant round-trips through MessagePack without loss. All
+/// internal paths (Data Plane, SPSC bridge, WAL payloads) MUST use
+/// zerompk. JSON is forbidden in these contexts (CLAUDE.md rule #12).
+///
+/// `#[non_exhaustive]` — new value kinds will be added in future releases
+/// (e.g. `Vector`, typed collections). This attribute enforces Rust API
+/// hygiene only; the concrete serialization contract is described above.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(untagged)]
 pub enum Value {
@@ -76,6 +105,13 @@ pub enum Value {
     /// One N-dimensional array cell (coords + attrs). Used by the array
     /// engine to carry a single cell across the SQL / wire boundary.
     NdArrayCell(ArrayCell),
+    /// Dense f32 embedding vector (e.g. HNSW, neural embeddings).
+    ///
+    /// Stored as a reference-counted slice to allow cheap cloning without
+    /// copying the underlying floats. Serialized as raw bytes
+    /// (`bytemuck::cast_slice`) with zerompk tag 20; JSON serializes as a
+    /// plain number array (lossy — decodes as `Array<Float>`, not `Vector`).
+    Vector(Arc<[f32]>),
 }
 
 impl Value {
@@ -228,6 +264,7 @@ impl Value {
             Value::Range { .. } => "range",
             Value::Record { .. } => "record",
             Value::NdArrayCell(_) => "ndarray_cell",
+            Value::Vector(_) => "vector",
         }
     }
 
@@ -276,6 +313,19 @@ impl Value {
     pub fn as_array_iter(&self) -> Option<impl Iterator<Item = &Value>> {
         match self {
             Value::Array(arr) | Value::Set(arr) => Some(arr.iter()),
+            _ => None,
+        }
+    }
+
+    /// Construct a `Value::Vector` from any slice of f32 values.
+    pub fn vector(floats: impl Into<Arc<[f32]>>) -> Self {
+        Value::Vector(floats.into())
+    }
+
+    /// Try to extract as an f32 embedding slice.
+    pub fn as_vector(&self) -> Option<&[f32]> {
+        match self {
+            Value::Vector(v) => Some(v),
             _ => None,
         }
     }
@@ -343,6 +393,97 @@ impl From<Geometry> for Value {
     }
 }
 
+impl From<Vec<f32>> for Value {
+    fn from(v: Vec<f32>) -> Self {
+        Value::Vector(v.into())
+    }
+}
+
+impl From<Arc<[f32]>> for Value {
+    fn from(v: Arc<[f32]>) -> Self {
+        Value::Vector(v)
+    }
+}
+
+impl From<&[f32]> for Value {
+    fn from(v: &[f32]) -> Self {
+        Value::Vector(v.into())
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Vector(v) => {
+                write!(f, "vector(")?;
+                let show = v.len().min(8);
+                for (i, elem) in v[..show].iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{elem}")?;
+                }
+                if v.len() > 8 {
+                    write!(f, ", … ({} total)", v.len())?;
+                }
+                write!(f, ")")
+            }
+            Value::Null => write!(f, "null"),
+            Value::Bool(b) => write!(f, "{b}"),
+            Value::Integer(i) => write!(f, "{i}"),
+            Value::Float(fl) => write!(f, "{fl}"),
+            Value::String(s) | Value::Uuid(s) | Value::Ulid(s) | Value::Regex(s) => {
+                write!(f, "{s}")
+            }
+            Value::Bytes(b) => write!(f, "<bytes:{}>", b.len()),
+            Value::Array(arr) | Value::Set(arr) => {
+                write!(f, "[")?;
+                for (i, v) in arr.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{v}")?;
+                }
+                write!(f, "]")
+            }
+            Value::Object(map) => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in map.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{k}: {v}")?;
+                }
+                write!(f, "}}")
+            }
+            Value::DateTime(dt) | Value::NaiveDateTime(dt) => write!(f, "{dt}"),
+            Value::Duration(d) => write!(f, "{d}"),
+            Value::Decimal(d) => write!(f, "{d}"),
+            Value::Geometry(g) => write!(f, "{g:?}"),
+            Value::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                if let Some(s) = start {
+                    write!(f, "{s}")?;
+                }
+                if *inclusive {
+                    write!(f, "..=")?;
+                } else {
+                    write!(f, "..")?;
+                }
+                if let Some(e) = end {
+                    write!(f, "{e}")?;
+                }
+                Ok(())
+            }
+            Value::Record { table, id } => write!(f, "{table}:{id}"),
+            Value::NdArrayCell(cell) => write!(f, "<ndarray_cell coords={}>", cell.coords.len()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,6 +492,67 @@ mod tests {
     fn naive_datetime_roundtrip_msgpack() {
         let dt = NdbDateTime::from_micros(1_700_000_000_000_000);
         let v = Value::NaiveDateTime(dt);
+        let bytes = zerompk::to_msgpack_vec(&v).expect("encode");
+        let decoded: Value = zerompk::from_msgpack(&bytes).expect("decode");
+        assert_eq!(decoded, v);
+    }
+
+    // ── zerompk lossless roundtrips for the six JSON-lossy variants ───────
+
+    #[test]
+    fn uuid_roundtrip_msgpack() {
+        let v = Value::Uuid("550e8400-e29b-41d4-a716-446655440000".into());
+        let bytes = zerompk::to_msgpack_vec(&v).expect("encode");
+        let decoded: Value = zerompk::from_msgpack(&bytes).expect("decode");
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn ulid_roundtrip_msgpack() {
+        let v = Value::Ulid("01ARZ3NDEKTSV4RRFFQ69G5FAV".into());
+        let bytes = zerompk::to_msgpack_vec(&v).expect("encode");
+        let decoded: Value = zerompk::from_msgpack(&bytes).expect("decode");
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn regex_roundtrip_msgpack() {
+        let v = Value::Regex(r"^\d+$".into());
+        let bytes = zerompk::to_msgpack_vec(&v).expect("encode");
+        let decoded: Value = zerompk::from_msgpack(&bytes).expect("decode");
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn range_roundtrip_msgpack() {
+        let v = Value::Range {
+            start: Some(Box::new(Value::Integer(1))),
+            end: Some(Box::new(Value::Integer(10))),
+            inclusive: false,
+        };
+        let bytes = zerompk::to_msgpack_vec(&v).expect("encode");
+        let decoded: Value = zerompk::from_msgpack(&bytes).expect("decode");
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn record_roundtrip_msgpack() {
+        let v = Value::Record {
+            table: "users".into(),
+            id: "abc123".into(),
+        };
+        let bytes = zerompk::to_msgpack_vec(&v).expect("encode");
+        let decoded: Value = zerompk::from_msgpack(&bytes).expect("decode");
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn ndarray_cell_roundtrip_msgpack() {
+        use crate::array_cell::ArrayCell;
+        let v = Value::NdArrayCell(ArrayCell {
+            coords: vec![Value::Integer(1), Value::Integer(2)],
+            attrs: vec![Value::Float(3.5), Value::String("label".into())],
+        });
         let bytes = zerompk::to_msgpack_vec(&v).expect("encode");
         let decoded: Value = zerompk::from_msgpack(&bytes).expect("decode");
         assert_eq!(decoded, v);
@@ -379,6 +581,98 @@ mod tests {
 
         let f: Value = 2.78f64.into();
         assert_eq!(f.as_f64(), Some(2.78));
+    }
+
+    // ── Value::Vector tests ───────────────────────────────────────────────
+
+    #[test]
+    fn vector_roundtrip_msgpack_empty() {
+        let v = Value::Vector(Arc::from([] as [f32; 0]));
+        let bytes = zerompk::to_msgpack_vec(&v).expect("encode");
+        let decoded: Value = zerompk::from_msgpack(&bytes).expect("decode");
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn vector_roundtrip_msgpack_four_elements() {
+        let v: Value = vec![1.0f32, 2.0, 3.0, 4.0].into();
+        let bytes = zerompk::to_msgpack_vec(&v).expect("encode");
+        let decoded: Value = zerompk::from_msgpack(&bytes).expect("decode");
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn vector_roundtrip_msgpack_large() {
+        let floats: Vec<f32> = (0..1025).map(|i| i as f32 * 0.1).collect();
+        let v: Value = floats.into();
+        let bytes = zerompk::to_msgpack_vec(&v).expect("encode");
+        let decoded: Value = zerompk::from_msgpack(&bytes).expect("decode");
+        assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn vector_bad_byte_len_rejected() {
+        // Manually craft a msgpack payload with 3 bytes (not divisible by 4).
+        // We encode a Bytes value with 3 bytes then patch the tag to 20.
+        // Easiest: encode tag=20 + a binary of length 3.
+        use std::io::Write;
+        // fixarray of length 2, tag = 20, bin8 of length 3
+        let mut buf = vec![0x92u8, 20, 0xc4, 3];
+        buf.write_all(&[0xAAu8, 0xBB, 0xCC]).unwrap();
+        let result: zerompk::Result<Value> = zerompk::from_msgpack(&buf);
+        assert!(
+            result.is_err(),
+            "3-byte payload (not divisible by 4) must be rejected"
+        );
+    }
+
+    #[test]
+    fn vector_json_forward_is_number_array() {
+        let v: Value = vec![1.0f32, 2.0, 3.0].into();
+        let json = serde_json::Value::from(v);
+        assert!(json.is_array(), "Vector must serialize as JSON array");
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+        assert!(arr[0].is_number());
+    }
+
+    #[test]
+    fn vector_json_reverse_stays_array_of_float() {
+        // A JSON number array decodes to Value::Array<Float>, not Value::Vector.
+        let json = serde_json::json!([1.0, 2.0, 3.0]);
+        let v = Value::from(json);
+        assert!(
+            matches!(v, Value::Array(_)),
+            "JSON number array round-trips as Array, not Vector"
+        );
+    }
+
+    #[test]
+    fn vector_display_truncates_after_8() {
+        let floats: Vec<f32> = (0..10).map(|i| i as f32).collect();
+        let v: Value = floats.into();
+        let s = v.to_string();
+        assert!(s.contains("10 total"), "display must show total count: {s}");
+        // Should not show the 9th element (8.0) untruncated after the ellipsis.
+        assert!(s.contains("…"), "display must contain ellipsis: {s}");
+    }
+
+    #[test]
+    fn vector_from_conversions() {
+        let vec_val: Value = vec![1.0f32, 2.0].into();
+        assert!(matches!(vec_val, Value::Vector(_)));
+
+        let arc: Arc<[f32]> = Arc::from([3.0f32, 4.0]);
+        let arc_val: Value = arc.into();
+        assert!(matches!(arc_val, Value::Vector(_)));
+
+        let slice: &[f32] = &[5.0f32, 6.0];
+        let slice_val: Value = slice.into();
+        assert!(matches!(slice_val, Value::Vector(_)));
+
+        // constructor helper
+        let helper = Value::vector(vec![7.0f32]);
+        assert_eq!(helper.as_vector(), Some([7.0f32].as_slice()));
     }
 
     #[test]
