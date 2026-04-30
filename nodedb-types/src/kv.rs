@@ -158,7 +158,10 @@ mod tests {
         assert!(!is_valid_kv_key_type(&ColumnType::Bool));
         assert!(!is_valid_kv_key_type(&ColumnType::Geometry));
         assert!(!is_valid_kv_key_type(&ColumnType::Vector(128)));
-        assert!(!is_valid_kv_key_type(&ColumnType::Decimal));
+        assert!(!is_valid_kv_key_type(&ColumnType::Decimal {
+            precision: 18,
+            scale: 4
+        }));
     }
 
     #[test]

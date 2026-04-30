@@ -43,8 +43,10 @@ pub enum Value {
     Uuid(String),
     /// ULID (26-char Crockford Base32).
     Ulid(String),
-    /// UTC timestamp with microsecond precision.
+    /// UTC timestamp with microsecond precision (timezone-aware).
     DateTime(NdbDateTime),
+    /// Naive (local/no-timezone) timestamp with microsecond precision.
+    NaiveDateTime(NdbDateTime),
     /// Duration with microsecond precision (signed).
     Duration(NdbDuration),
     /// Arbitrary-precision decimal (financial calculations, exact arithmetic).
@@ -139,10 +141,18 @@ impl Value {
         }
     }
 
-    /// Try to extract as DateTime.
+    /// Try to extract as DateTime (timezone-aware).
     pub fn as_datetime(&self) -> Option<&NdbDateTime> {
         match self {
             Value::DateTime(dt) => Some(dt),
+            _ => None,
+        }
+    }
+
+    /// Try to extract as NaiveDateTime (no timezone).
+    pub fn as_naive_datetime(&self) -> Option<&NdbDateTime> {
+        match self {
+            Value::NaiveDateTime(dt) => Some(dt),
             _ => None,
         }
     }
@@ -209,6 +219,7 @@ impl Value {
             Value::Uuid(_) => "uuid",
             Value::Ulid(_) => "ulid",
             Value::DateTime(_) => "datetime",
+            Value::NaiveDateTime(_) => "naive_datetime",
             Value::Duration(_) => "duration",
             Value::Decimal(_) => "decimal",
             Value::Geometry(_) => "geometry",
@@ -335,6 +346,15 @@ impl From<Geometry> for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn naive_datetime_roundtrip_msgpack() {
+        let dt = NdbDateTime::from_micros(1_700_000_000_000_000);
+        let v = Value::NaiveDateTime(dt);
+        let bytes = zerompk::to_msgpack_vec(&v).expect("encode");
+        let decoded: Value = zerompk::from_msgpack(&bytes).expect("decode");
+        assert_eq!(decoded, v);
+    }
 
     #[test]
     fn value_type_checks() {

@@ -34,6 +34,7 @@ pub mod sync;
 pub mod temporal;
 pub mod text_search;
 pub mod timeseries;
+pub mod trace;
 pub mod typeguard;
 pub mod value;
 pub mod vector_ann;
@@ -44,7 +45,7 @@ pub mod vector_model;
 pub use approx::{CountMinSketch, HyperLogLog, SpaceSaving, TDigest};
 pub use array_cell::ArrayCell;
 pub use bbox::{BoundingBox, geometry_bbox};
-pub use collection::CollectionType;
+pub use collection::{CollectionType, CollectionTypeParseError};
 pub use collection_config::{PayloadAtom, PayloadIndexKind, PrimaryEngine, VectorPrimaryConfig};
 pub use columnar::{
     ColumnDef, ColumnType, ColumnarProfile, ColumnarSchema, DocumentMode, SchemaError, StrictSchema,
@@ -80,6 +81,7 @@ pub use temporal::{
     OPEN_UPPER, OrdinalClock, ValidTimePredicate, lsn_to_ms, ms_to_ordinal_upper, ordinal_to_ms,
 };
 pub use text_search::{Bm25Params, QueryMode, TextSearchParams};
+pub use trace::{SpanId, TraceId};
 pub use typeguard::TypeGuardFieldDef;
 pub use value::Value;
 pub use vector_ann::{VectorAnnOptions, VectorQuantization};

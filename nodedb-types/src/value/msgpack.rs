@@ -114,6 +114,11 @@ impl zerompk::ToMessagePack for Value {
                 writer.write_u8(18)?;
                 cell.write(writer)
             }
+            Value::NaiveDateTime(dt) => {
+                writer.write_array_len(2)?;
+                writer.write_u8(19)?;
+                dt.write(writer)
+            }
         }
     }
 }
@@ -169,6 +174,7 @@ impl<'a> zerompk::FromMessagePack<'a> for Value {
                 Ok(Value::Record { table, id })
             }
             18 => Ok(Value::NdArrayCell(ArrayCell::read(reader)?)),
+            19 => Ok(Value::NaiveDateTime(NdbDateTime::read(reader)?)),
             _ => Err(zerompk::Error::InvalidMarker(tag)),
         }
     }

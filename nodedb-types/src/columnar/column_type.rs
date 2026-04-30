@@ -11,6 +11,7 @@ use crate::value::Value;
 #[derive(
     Debug,
     Clone,
+    Copy,
     PartialEq,
     Eq,
     Hash,
@@ -26,13 +27,23 @@ pub enum ColumnType {
     String,
     Bool,
     Bytes,
+    /// Naive (no-timezone) timestamp with microsecond precision. OID 1114.
     Timestamp,
+    /// UTC (timezone-aware) timestamp with microsecond precision. OID 1184.
+    Timestamptz,
     /// System-assigned timestamp (bitemporal `system_from_ms`). Same 8-byte
     /// layout as `Timestamp`, but tagged distinctly so the planner and DDL
     /// layer can reject user-supplied values — the column is populated by the
     /// engine from HLC at commit.
     SystemTimestamp,
-    Decimal,
+    /// Arbitrary-precision decimal with explicit precision and scale.
+    ///
+    /// `precision`: total significant digits, 1–38. `scale`: digits after the
+    /// decimal point, 0–precision. Default when unspecified: `{38, 10}`.
+    Decimal {
+        precision: u8,
+        scale: u8,
+    },
     Geometry,
     /// Fixed-dimension float32 vector.
     Vector(u32),
@@ -63,10 +74,11 @@ impl ColumnType {
             Self::Int64
             | Self::Float64
             | Self::Timestamp
+            | Self::Timestamptz
             | Self::SystemTimestamp
             | Self::Duration => Some(8),
             Self::Bool => Some(1),
-            Self::Decimal | Self::Uuid | Self::Ulid => Some(16),
+            Self::Decimal { .. } | Self::Uuid | Self::Ulid => Some(16),
             Self::Vector(dim) => Some(*dim as usize * 4),
             Self::String
             | Self::Bytes
@@ -108,8 +120,9 @@ impl ColumnType {
             Self::Int64 => 20,
             Self::Float64 => 701,
             Self::String => 25,
-            Self::Timestamp | Self::SystemTimestamp => 1184,
-            Self::Decimal => 1700,
+            Self::Timestamp | Self::SystemTimestamp => 1114,
+            Self::Timestamptz => 1184,
+            Self::Decimal { .. } => 1700,
             Self::Uuid | Self::Ulid => 2950,
             Self::Json => 3802,
             Self::Duration => 1186,
@@ -138,6 +151,10 @@ impl ColumnType {
                 | (Self::Bytes, Value::Bytes(_))
                 | (
                     Self::Timestamp,
+                    Value::NaiveDateTime(_) | Value::Integer(_) | Value::String(_)
+                )
+                | (
+                    Self::Timestamptz,
                     Value::DateTime(_) | Value::Integer(_) | Value::String(_)
                 )
                 | (
@@ -145,7 +162,7 @@ impl ColumnType {
                     Value::DateTime(_) | Value::Integer(_)
                 )
                 | (
-                    Self::Decimal,
+                    Self::Decimal { .. },
                     Value::Decimal(_) | Value::String(_) | Value::Float(_) | Value::Integer(_)
                 )
                 | (Self::Geometry, Value::Geometry(_) | Value::String(_))
@@ -176,8 +193,9 @@ impl fmt::Display for ColumnType {
             Self::Bool => f.write_str("BOOL"),
             Self::Bytes => f.write_str("BYTES"),
             Self::Timestamp => f.write_str("TIMESTAMP"),
+            Self::Timestamptz => f.write_str("TIMESTAMPTZ"),
             Self::SystemTimestamp => f.write_str("SYSTEM_TIMESTAMP"),
-            Self::Decimal => f.write_str("DECIMAL"),
+            Self::Decimal { precision, scale } => write!(f, "DECIMAL({precision},{scale})"),
             Self::Geometry => f.write_str("GEOMETRY"),
             Self::Vector(dim) => write!(f, "VECTOR({dim})"),
             Self::Uuid => f.write_str("UUID"),
@@ -198,6 +216,49 @@ impl FromStr for ColumnType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let upper = s.trim().to_uppercase();
+
+        // NUMERIC(p,s) / DECIMAL(p,s) special case.
+        if upper.starts_with("NUMERIC") || upper.starts_with("DECIMAL") {
+            let base = if upper.starts_with("NUMERIC") {
+                "NUMERIC"
+            } else {
+                "DECIMAL"
+            };
+            let rest = upper[base.len()..].trim();
+            if rest.is_empty() {
+                // Bare NUMERIC / DECIMAL → defaults.
+                return Ok(Self::Decimal {
+                    precision: 38,
+                    scale: 10,
+                });
+            }
+            if rest.starts_with('(') && rest.ends_with(')') {
+                let inner = &rest[1..rest.len() - 1];
+                let parts: Vec<&str> = inner.splitn(2, ',').collect();
+                let precision: u8 = parts[0]
+                    .trim()
+                    .parse()
+                    .map_err(|_| ColumnTypeParseError::InvalidDecimalParams(rest.to_string()))?;
+                let scale: u8 = parts
+                    .get(1)
+                    .map(|p| p.trim())
+                    .unwrap_or("0")
+                    .parse()
+                    .map_err(|_| ColumnTypeParseError::InvalidDecimalParams(rest.to_string()))?;
+                if precision == 0 || precision > 38 {
+                    return Err(ColumnTypeParseError::InvalidDecimalParams(format!(
+                        "precision {precision} out of range 1-38"
+                    )));
+                }
+                if scale > precision {
+                    return Err(ColumnTypeParseError::InvalidDecimalParams(format!(
+                        "scale {scale} must be <= precision {precision}"
+                    )));
+                }
+                return Ok(Self::Decimal { precision, scale });
+            }
+            return Err(ColumnTypeParseError::InvalidDecimalParams(rest.to_string()));
+        }
 
         // VECTOR(N) special case.
         if upper.starts_with("VECTOR") {
@@ -225,9 +286,9 @@ impl FromStr for ColumnType {
             "TEXT" | "STRING" | "VARCHAR" => Ok(Self::String),
             "BOOL" | "BOOLEAN" => Ok(Self::Bool),
             "BYTES" | "BYTEA" | "BLOB" => Ok(Self::Bytes),
-            "TIMESTAMP" | "TIMESTAMPTZ" => Ok(Self::Timestamp),
+            "TIMESTAMP" => Ok(Self::Timestamp),
+            "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => Ok(Self::Timestamptz),
             "SYSTEM_TIMESTAMP" | "SYSTEMTIMESTAMP" => Ok(Self::SystemTimestamp),
-            "DECIMAL" | "NUMERIC" => Ok(Self::Decimal),
             "GEOMETRY" => Ok(Self::Geometry),
             "UUID" => Ok(Self::Uuid),
             "JSON" | "JSONB" => Ok(Self::Json),
@@ -253,6 +314,10 @@ pub enum ColumnTypeParseError {
     UseTimestamp,
     #[error("invalid VECTOR dimension: '{0}' (must be a positive integer)")]
     InvalidVectorDim(String),
+    #[error(
+        "invalid DECIMAL/NUMERIC params: '{0}' (expected DECIMAL(precision, scale) with precision 1-38 and scale <= precision)"
+    )]
+    InvalidDecimalParams(String),
 }
 
 /// Column-level modifiers that designate special engine roles.
@@ -391,6 +456,10 @@ impl fmt::Display for ColumnDef {
 mod tests {
     use super::*;
 
+    fn nodedb_types_datetime_epoch() -> crate::datetime::NdbDateTime {
+        crate::datetime::NdbDateTime::from_micros(0)
+    }
+
     #[test]
     fn to_pg_oid_stable() {
         // Every variant must have a stable, non-zero OID.
@@ -399,10 +468,18 @@ mod tests {
         assert_eq!(ColumnType::Int64.to_pg_oid(), 20);
         assert_eq!(ColumnType::String.to_pg_oid(), 25);
         assert_eq!(ColumnType::Float64.to_pg_oid(), 701);
-        assert_eq!(ColumnType::Timestamp.to_pg_oid(), 1184);
-        assert_eq!(ColumnType::SystemTimestamp.to_pg_oid(), 1184);
+        assert_eq!(ColumnType::Timestamp.to_pg_oid(), 1114);
+        assert_eq!(ColumnType::Timestamptz.to_pg_oid(), 1184);
+        assert_eq!(ColumnType::SystemTimestamp.to_pg_oid(), 1114);
         assert_eq!(ColumnType::Duration.to_pg_oid(), 1186);
-        assert_eq!(ColumnType::Decimal.to_pg_oid(), 1700);
+        assert_eq!(
+            ColumnType::Decimal {
+                precision: 38,
+                scale: 10
+            }
+            .to_pg_oid(),
+            1700
+        );
         assert_eq!(ColumnType::Uuid.to_pg_oid(), 2950);
         assert_eq!(ColumnType::Ulid.to_pg_oid(), 2950);
         assert_eq!(ColumnType::Json.to_pg_oid(), 3802);
@@ -449,6 +526,14 @@ mod tests {
             ColumnType::Timestamp
         );
         assert_eq!(
+            "TIMESTAMPTZ".parse::<ColumnType>().unwrap(),
+            ColumnType::Timestamptz
+        );
+        assert_eq!(
+            "TIMESTAMP WITH TIME ZONE".parse::<ColumnType>().unwrap(),
+            ColumnType::Timestamptz
+        );
+        assert_eq!(
             "GEOMETRY".parse::<ColumnType>().unwrap(),
             ColumnType::Geometry
         );
@@ -470,12 +555,89 @@ mod tests {
             ColumnType::Int64,
             ColumnType::Float64,
             ColumnType::String,
+            ColumnType::Timestamp,
+            ColumnType::Timestamptz,
             ColumnType::Vector(768),
+            ColumnType::Decimal {
+                precision: 10,
+                scale: 2,
+            },
+            ColumnType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
         ] {
             let s = ct.to_string();
             let parsed: ColumnType = s.parse().unwrap();
             assert_eq!(parsed, ct);
         }
+    }
+
+    #[test]
+    fn decimal_parse_with_params() {
+        assert_eq!(
+            "NUMERIC(10,2)".parse::<ColumnType>().unwrap(),
+            ColumnType::Decimal {
+                precision: 10,
+                scale: 2
+            }
+        );
+        assert_eq!(
+            "DECIMAL(38,10)".parse::<ColumnType>().unwrap(),
+            ColumnType::Decimal {
+                precision: 38,
+                scale: 10
+            }
+        );
+        // Bare forms → defaults.
+        assert_eq!(
+            "NUMERIC".parse::<ColumnType>().unwrap(),
+            ColumnType::Decimal {
+                precision: 38,
+                scale: 10
+            }
+        );
+        assert_eq!(
+            "DECIMAL".parse::<ColumnType>().unwrap(),
+            ColumnType::Decimal {
+                precision: 38,
+                scale: 10
+            }
+        );
+    }
+
+    #[test]
+    fn decimal_parse_invalid() {
+        // scale > precision.
+        assert!("DECIMAL(5,6)".parse::<ColumnType>().is_err());
+        // precision 0.
+        assert!("DECIMAL(0,0)".parse::<ColumnType>().is_err());
+        // precision > 38.
+        assert!("DECIMAL(39,0)".parse::<ColumnType>().is_err());
+    }
+
+    #[test]
+    fn decimal_fixed_size() {
+        assert_eq!(
+            ColumnType::Decimal {
+                precision: 10,
+                scale: 2
+            }
+            .fixed_size(),
+            Some(16)
+        );
+    }
+
+    #[test]
+    fn decimal_to_pg_oid_is_1700() {
+        assert_eq!(
+            ColumnType::Decimal {
+                precision: 10,
+                scale: 2
+            }
+            .to_pg_oid(),
+            1700
+        );
     }
 
     #[test]
@@ -489,7 +651,21 @@ mod tests {
         assert!(
             ColumnType::Uuid.accepts(&Value::Uuid("550e8400-e29b-41d4-a716-446655440000".into()))
         );
-        assert!(ColumnType::Decimal.accepts(&Value::Decimal(rust_decimal::Decimal::ZERO)));
+        assert!(
+            ColumnType::Decimal {
+                precision: 38,
+                scale: 10
+            }
+            .accepts(&Value::Decimal(rust_decimal::Decimal::ZERO))
+        );
+
+        // Timestamp accepts NaiveDateTime; Timestamptz accepts DateTime.
+        let naive = Value::NaiveDateTime(nodedb_types_datetime_epoch());
+        let tz = Value::DateTime(nodedb_types_datetime_epoch());
+        assert!(ColumnType::Timestamp.accepts(&naive));
+        assert!(!ColumnType::Timestamp.accepts(&tz));
+        assert!(ColumnType::Timestamptz.accepts(&tz));
+        assert!(!ColumnType::Timestamptz.accepts(&naive));
 
         // Null accepted for any type.
         assert!(ColumnType::Int64.accepts(&Value::Null));
@@ -504,11 +680,26 @@ mod tests {
         // SQL input coercion: strings for Timestamp, Uuid, Geometry, Decimal.
         assert!(ColumnType::Timestamp.accepts(&Value::String("2024-01-01".into())));
         assert!(ColumnType::Timestamp.accepts(&Value::Integer(1_700_000_000)));
+        // Timestamptz accepts DateTime (TZ-aware).
+        assert!(ColumnType::Timestamptz.accepts(&Value::String("2024-01-01T00:00:00Z".into())));
+        assert!(ColumnType::Timestamptz.accepts(&Value::Integer(1_700_000_000)));
         assert!(ColumnType::Uuid.accepts(&Value::String(
             "550e8400-e29b-41d4-a716-446655440000".into()
         )));
-        assert!(ColumnType::Decimal.accepts(&Value::String("99.95".into())));
-        assert!(ColumnType::Decimal.accepts(&Value::Float(99.95)));
+        assert!(
+            ColumnType::Decimal {
+                precision: 10,
+                scale: 2
+            }
+            .accepts(&Value::String("99.95".into()))
+        );
+        assert!(
+            ColumnType::Decimal {
+                precision: 10,
+                scale: 2
+            }
+            .accepts(&Value::Float(99.95))
+        );
         assert!(ColumnType::Geometry.accepts(&Value::String("POINT(0 0)".into())));
     }
 

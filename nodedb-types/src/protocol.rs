@@ -664,7 +664,7 @@ pub struct TextFields {
     /// Distance metric name ("cosine", "euclidean", "dot").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metric: Option<String>,
-    /// Index type ("hnsw", "ivfpq", "flat").
+    /// Index type ("hnsw", "hnsw_pq", "ivf_pq").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index_type: Option<String>,
 }

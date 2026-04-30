@@ -58,7 +58,9 @@ fn write_native_value(buf: &mut Vec<u8>, value: &crate::Value) {
                 write_native_value(buf, v);
             }
         }
-        crate::Value::DateTime(dt) => write_native_str(buf, &dt.to_string()),
+        crate::Value::DateTime(dt) | crate::Value::NaiveDateTime(dt) => {
+            write_native_str(buf, &dt.to_string())
+        }
         crate::Value::Duration(d) => write_native_str(buf, &d.to_string()),
         crate::Value::Decimal(d) => write_native_str(buf, &d.to_string()),
         crate::Value::Geometry(g) => {

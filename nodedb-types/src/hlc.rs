@@ -79,6 +79,9 @@ impl HlcClock {
     pub fn now(&self) -> Hlc {
         let wall = wall_now_ns();
         let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        // Clamp wall to at least st.wall_ns so the HLC never regresses on
+        // clock skew or NTP adjustments (T4-15).
+        let wall = wall.max(st.wall_ns);
         let next = if wall > st.wall_ns {
             Hlc::new(wall, 0)
         } else {

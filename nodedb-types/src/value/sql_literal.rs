@@ -31,7 +31,7 @@ impl Value {
                 .unwrap_or_default();
                 format!("'{}'", json_str.replace('\'', "''"))
             }
-            Value::DateTime(dt) => format!("'{dt}'"),
+            Value::DateTime(dt) | Value::NaiveDateTime(dt) => format!("'{dt}'"),
             Value::Duration(d) => format!("'{d}'"),
             Value::Decimal(d) => d.to_string(),
             Value::Geometry(g) => format!("'{}'", serde_json::to_string(g).unwrap_or_default()),

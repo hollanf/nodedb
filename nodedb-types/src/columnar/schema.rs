@@ -342,7 +342,13 @@ mod tests {
         let schema = StrictSchema::new(vec![
             ColumnDef::required("id", ColumnType::Int64).with_primary_key(),
             ColumnDef::nullable("name", ColumnType::String),
-            ColumnDef::nullable("balance", ColumnType::Decimal),
+            ColumnDef::nullable(
+                "balance",
+                ColumnType::Decimal {
+                    precision: 18,
+                    scale: 4,
+                },
+            ),
         ])
         .unwrap();
         assert_eq!(schema.len(), 3);
@@ -356,7 +362,13 @@ mod tests {
         let schema = StrictSchema::new(vec![
             ColumnDef::required("id", ColumnType::Int64).with_primary_key(),
             ColumnDef::nullable("name", ColumnType::String),
-            ColumnDef::nullable("balance", ColumnType::Decimal),
+            ColumnDef::nullable(
+                "balance",
+                ColumnType::Decimal {
+                    precision: 18,
+                    scale: 4,
+                },
+            ),
             ColumnDef::nullable("bio", ColumnType::String),
         ])
         .unwrap();

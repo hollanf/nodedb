@@ -135,11 +135,11 @@ impl CollectionType {
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Document(DocumentMode::Schemaless) => "document",
-            Self::Document(DocumentMode::Strict(_)) => "strict",
+            Self::Document(DocumentMode::Schemaless) => "document_schemaless",
+            Self::Document(DocumentMode::Strict(_)) => "document_strict",
             Self::Columnar(ColumnarProfile::Plain) => "columnar",
             Self::Columnar(ColumnarProfile::Timeseries { .. }) => "timeseries",
-            Self::Columnar(ColumnarProfile::Spatial { .. }) => "columnar:spatial",
+            Self::Columnar(ColumnarProfile::Spatial { .. }) => "spatial",
             Self::KeyValue(_) => "kv",
         }
     }
@@ -175,13 +175,32 @@ impl std::fmt::Display for CollectionType {
     }
 }
 
+/// Error returned by [`CollectionType`]'s [`std::str::FromStr`] impl when
+/// an unrecognised or deprecated engine name is supplied.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CollectionTypeParseError {
+    /// The input string is not a recognised canonical engine name.
+    #[error(
+        "unknown collection type '{input}': valid names are \
+         document_schemaless, document_strict, columnar, timeseries, spatial, kv"
+    )]
+    Unknown { input: String },
+    /// The input string is a deprecated alias; the canonical name is provided.
+    #[error("deprecated collection type '{input}': use '{canonical}' instead")]
+    Deprecated {
+        input: String,
+        canonical: &'static str,
+    },
+}
+
 impl std::str::FromStr for CollectionType {
-    type Err = String;
+    type Err = CollectionTypeParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "document" | "doc" => Ok(Self::document()),
-            "strict" => Ok(Self::Document(DocumentMode::Strict(
+        let lower = s.to_lowercase();
+        match lower.as_str() {
+            "document_schemaless" => Ok(Self::document()),
+            "document_strict" => Ok(Self::Document(DocumentMode::Strict(
                 // Placeholder — real schema comes from DDL parsing, not FromStr.
                 // FromStr only resolves the storage mode; schema is attached separately.
                 StrictSchema {
@@ -192,8 +211,9 @@ impl std::str::FromStr for CollectionType {
                 },
             ))),
             "columnar" => Ok(Self::columnar()),
-            "timeseries" | "ts" => Ok(Self::timeseries("time", "1h")),
-            "kv" | "key_value" | "keyvalue" => Ok(Self::KeyValue(KvConfig {
+            "timeseries" => Ok(Self::timeseries("time", "1h")),
+            "spatial" => Ok(Self::spatial("geom")),
+            "kv" => Ok(Self::KeyValue(KvConfig {
                 // Placeholder — real schema comes from DDL parsing, not FromStr.
                 schema: StrictSchema {
                     columns: vec![],
@@ -205,7 +225,28 @@ impl std::str::FromStr for CollectionType {
                 capacity_hint: 0,
                 inline_threshold: KV_DEFAULT_INLINE_THRESHOLD,
             })),
-            other => Err(format!("unknown collection type: '{other}'")),
+            // Deprecated aliases — rejected with a canonical hint.
+            "document" | "doc" => Err(CollectionTypeParseError::Deprecated {
+                input: lower,
+                canonical: "document_schemaless",
+            }),
+            "strict" => Err(CollectionTypeParseError::Deprecated {
+                input: lower,
+                canonical: "document_strict",
+            }),
+            "ts" => Err(CollectionTypeParseError::Deprecated {
+                input: lower,
+                canonical: "timeseries",
+            }),
+            "columnar:spatial" => Err(CollectionTypeParseError::Deprecated {
+                input: lower,
+                canonical: "spatial",
+            }),
+            "key_value" | "keyvalue" => Err(CollectionTypeParseError::Deprecated {
+                input: lower,
+                canonical: "kv",
+            }),
+            _ => Err(CollectionTypeParseError::Unknown { input: lower }),
         }
     }
 }
@@ -336,23 +377,46 @@ mod tests {
 
     #[test]
     fn display() {
-        assert_eq!(CollectionType::document().to_string(), "document");
+        assert_eq!(
+            CollectionType::document().to_string(),
+            "document_schemaless"
+        );
+        let schema_strict = StrictSchema::new(vec![
+            ColumnDef::required("k", ColumnType::String).with_primary_key(),
+        ])
+        .unwrap();
+        assert_eq!(
+            CollectionType::strict(schema_strict).to_string(),
+            "document_strict"
+        );
         assert_eq!(CollectionType::columnar().to_string(), "columnar");
         assert_eq!(
             CollectionType::timeseries("time", "1h").to_string(),
             "timeseries"
         );
+        assert_eq!(CollectionType::spatial("geom").to_string(), "spatial");
 
-        let schema = StrictSchema::new(vec![
+        let schema_kv = StrictSchema::new(vec![
             ColumnDef::required("k", ColumnType::String).with_primary_key(),
         ])
         .unwrap();
-        assert_eq!(CollectionType::kv(schema).to_string(), "kv");
+        assert_eq!(CollectionType::kv(schema_kv).to_string(), "kv");
     }
 
     #[test]
-    fn from_str() {
-        assert!("document".parse::<CollectionType>().unwrap().is_document());
+    fn from_str_canonical_accepted() {
+        assert!(
+            "document_schemaless"
+                .parse::<CollectionType>()
+                .unwrap()
+                .is_document()
+        );
+        assert!(
+            "document_strict"
+                .parse::<CollectionType>()
+                .unwrap()
+                .is_document()
+        );
         assert!(
             "columnar"
                 .parse::<CollectionType>()
@@ -365,11 +429,36 @@ mod tests {
                 .unwrap()
                 .is_timeseries()
         );
-        assert!("ts".parse::<CollectionType>().unwrap().is_timeseries());
+        assert!("spatial".parse::<CollectionType>().unwrap().is_spatial());
         assert!("kv".parse::<CollectionType>().unwrap().is_kv());
-        assert!("key_value".parse::<CollectionType>().unwrap().is_kv());
-        assert!("keyvalue".parse::<CollectionType>().unwrap().is_kv());
-        assert!("unknown".parse::<CollectionType>().is_err());
+    }
+
+    #[test]
+    fn from_str_deprecated_rejected() {
+        for deprecated in &[
+            "document",
+            "doc",
+            "strict",
+            "ts",
+            "columnar:spatial",
+            "key_value",
+            "keyvalue",
+        ] {
+            let result = deprecated.parse::<CollectionType>();
+            assert!(
+                matches!(result, Err(CollectionTypeParseError::Deprecated { .. })),
+                "expected Deprecated error for '{deprecated}', got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn from_str_unknown_rejected() {
+        let result = "unknown".parse::<CollectionType>();
+        assert!(
+            matches!(result, Err(CollectionTypeParseError::Unknown { .. })),
+            "expected Unknown error, got {result:?}"
+        );
     }
 
     #[test]
