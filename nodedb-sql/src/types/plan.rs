@@ -1,7 +1,15 @@
-//! SqlPlan intermediate representation types.
-//!
-//! These types represent the output of the nodedb-sql planner. Both Origin
-//! (server) and Lite (embedded) map these to their own execution model.
+//! SqlPlan intermediate representation and supporting types.
+
+use crate::fts_types::FtsQuery;
+use crate::temporal::TemporalScope;
+use crate::types_array;
+use crate::types_expr::{SqlExpr, SqlPayloadAtom, SqlValue};
+pub use nodedb_types::vector_distance::DistanceMetric;
+
+use super::filter::Filter;
+use super::query::{
+    AggregateExpr, EngineType, JoinType, Projection, SortKey, SpatialPredicate, WindowSpec,
+};
 
 /// Cross-engine prefilter for `SqlPlan::VectorSearch`: the array slice
 /// runs first, its matching cells' surrogates form a bitmap that gates
@@ -11,7 +19,7 @@ pub struct NdArrayPrefilter {
     /// Array name (resolved against the catalog).
     pub array_name: String,
     /// Slice predicate (per-dim ranges).
-    pub slice: crate::types_array::ArraySliceAst,
+    pub slice: types_array::ArraySliceAst,
 }
 
 /// Knobs the vector planner exposes via SQL.
@@ -125,7 +133,7 @@ pub enum SqlPlan {
         window_functions: Vec<WindowSpec>,
         /// Bitemporal qualifier extracted from `FOR SYSTEM_TIME` /
         /// `FOR VALID_TIME`. Default when the scan is current-state.
-        temporal: crate::temporal::TemporalScope,
+        temporal: TemporalScope,
     },
     PointGet {
         collection: String,
@@ -164,7 +172,7 @@ pub enum SqlPlan {
         case_insensitive: bool,
         /// Bitemporal qualifier — mirrors `Scan::temporal`. Document
         /// engines must honor it at the Ceiling stage.
-        temporal: crate::temporal::TemporalScope,
+        temporal: TemporalScope,
     },
     RangeScan {
         collection: String,
@@ -281,7 +289,7 @@ pub enum SqlPlan {
         /// Bitemporal system-time / valid-time scope. Only non-default
         /// on collections created `WITH BITEMPORAL`; `TimeseriesRules::plan_scan`
         /// rejects temporal scopes otherwise.
-        temporal: crate::temporal::TemporalScope,
+        temporal: TemporalScope,
     },
     TimeseriesIngest {
         collection: String,
@@ -295,6 +303,9 @@ pub enum SqlPlan {
         query_vector: Vec<f32>,
         top_k: usize,
         ef_search: usize,
+        /// Distance metric requested by the query operator (`<->`, `<=>`, `<#>`).
+        /// Overrides the collection-default metric at search time.
+        metric: DistanceMetric,
         filters: Vec<Filter>,
         /// Optional cross-engine prefilter: when set, the ND-array slice
         /// runs first and its output cells' surrogates form a bitmap that
@@ -329,9 +340,12 @@ pub enum SqlPlan {
     },
     TextSearch {
         collection: String,
-        query: String,
+        /// Structured FTS query.  Use `FtsQuery::Plain { text, fuzzy }` for
+        /// simple keyword search.  `FtsQuery::And/Or/Prefix` are supported;
+        /// `FtsQuery::Phrase` and `FtsQuery::Not` are represented but rejected
+        /// by the executor with `Unsupported`.
+        query: FtsQuery,
         top_k: usize,
-        fuzzy: bool,
         filters: Vec<Filter>,
     },
     HybridSearch {
@@ -397,11 +411,11 @@ pub enum SqlPlan {
     /// `nodedb_array::ArraySchema` and persists the catalog row.
     CreateArray {
         name: String,
-        dims: Vec<crate::types_array::ArrayDimAst>,
-        attrs: Vec<crate::types_array::ArrayAttrAst>,
+        dims: Vec<types_array::ArrayDimAst>,
+        attrs: Vec<types_array::ArrayAttrAst>,
         tile_extents: Vec<i64>,
-        cell_order: crate::types_array::ArrayCellOrderAst,
-        tile_order: crate::types_array::ArrayTileOrderAst,
+        cell_order: types_array::ArrayCellOrderAst,
+        tile_order: types_array::ArrayTileOrderAst,
         /// Hilbert-prefix bits for vShard routing (1–16, default 8).
         prefix_bits: u8,
         /// Audit-retention horizon in milliseconds. `None` = non-bitemporal.
@@ -429,17 +443,17 @@ pub enum SqlPlan {
     /// `INSERT INTO ARRAY <name> COORDS (...) VALUES (...) [, ...]`.
     InsertArray {
         name: String,
-        rows: Vec<crate::types_array::ArrayInsertRow>,
+        rows: Vec<types_array::ArrayInsertRow>,
     },
     /// `DELETE FROM ARRAY <name> WHERE COORDS IN ((...), (...))`.
     DeleteArray {
         name: String,
-        coords: Vec<Vec<crate::types_array::ArrayCoordLiteral>>,
+        coords: Vec<Vec<types_array::ArrayCoordLiteral>>,
     },
     /// `SELECT * FROM NDARRAY_SLICE(name, {dim:[lo,hi],..}, [attrs], limit)`.
     NdArraySlice {
         name: String,
-        slice: crate::types_array::ArraySliceAst,
+        slice: types_array::ArraySliceAst,
         /// Attribute names. Empty = all attrs.
         attr_projection: Vec<String>,
         /// 0 = unlimited.
@@ -447,7 +461,7 @@ pub enum SqlPlan {
         /// Bitemporal qualifier. When both axes are `None` / `Any`, the Data
         /// Plane returns the live (current) state — the default fast path.
         /// Populated from `AS OF SYSTEM TIME` / `AS OF VALID TIME` clauses.
-        temporal: crate::temporal::TemporalScope,
+        temporal: TemporalScope,
     },
     /// `SELECT * FROM NDARRAY_PROJECT(name, [attrs])`.
     NdArrayProject {
@@ -459,19 +473,19 @@ pub enum SqlPlan {
     NdArrayAgg {
         name: String,
         attr: String,
-        reducer: crate::types_array::ArrayReducerAst,
+        reducer: types_array::ArrayReducerAst,
         /// `None` = scalar fold; `Some(name)` = group by that dim.
         group_by_dim: Option<String>,
         /// Bitemporal qualifier. When both axes are `None` / `Any`, the Data
         /// Plane aggregates against the live (current) state — the default
         /// fast path. Populated from `AS OF SYSTEM TIME` / `AS OF VALID TIME`.
-        temporal: crate::temporal::TemporalScope,
+        temporal: TemporalScope,
     },
     /// `SELECT * FROM NDARRAY_ELEMENTWISE(left, right, op, attr)`.
     NdArrayElementwise {
         left: String,
         right: String,
-        op: crate::types_array::ArrayBinaryOpAst,
+        op: types_array::ArrayBinaryOpAst,
         attr: String,
     },
     /// `SELECT NDARRAY_FLUSH(name)` — returns one row `{result: BOOL}`.
@@ -534,222 +548,4 @@ pub enum KvInsertIntent {
     /// `UPSERT` / `INSERT ... ON CONFLICT (key) DO UPDATE` / RESP `SET`:
     /// duplicate key overwrites. Also the shape used by the RESP SET path.
     Put,
-}
-
-/// Database engine type for a collection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EngineType {
-    DocumentSchemaless,
-    DocumentStrict,
-    KeyValue,
-    Columnar,
-    Timeseries,
-    Spatial,
-    /// ND sparse array engine — `CREATE ARRAY ...`. Routes through
-    /// `ArrayRules` for SQL-level validation, but most table-shaped
-    /// operations are unsupported on this engine (DML happens via
-    /// dedicated `INSERT INTO ARRAY` / `DELETE FROM ARRAY` syntax).
-    Array,
-}
-
-/// SQL join type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JoinType {
-    Inner,
-    Left,
-    Right,
-    Full,
-    Semi,
-    Anti,
-    Cross,
-}
-
-impl JoinType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Inner => "inner",
-            Self::Left => "left",
-            Self::Right => "right",
-            Self::Full => "full",
-            Self::Semi => "semi",
-            Self::Anti => "anti",
-            Self::Cross => "cross",
-        }
-    }
-}
-
-/// Spatial predicate types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpatialPredicate {
-    DWithin,
-    Contains,
-    Intersects,
-    Within,
-}
-
-/// A filter predicate.
-#[derive(Debug, Clone)]
-pub struct Filter {
-    pub expr: FilterExpr,
-}
-
-/// Filter expression tree.
-#[derive(Debug, Clone)]
-pub enum FilterExpr {
-    Comparison {
-        field: String,
-        op: CompareOp,
-        value: SqlValue,
-    },
-    Like {
-        field: String,
-        pattern: String,
-    },
-    InList {
-        field: String,
-        values: Vec<SqlValue>,
-    },
-    Between {
-        field: String,
-        low: SqlValue,
-        high: SqlValue,
-    },
-    IsNull {
-        field: String,
-    },
-    IsNotNull {
-        field: String,
-    },
-    And(Vec<Filter>),
-    Or(Vec<Filter>),
-    Not(Box<Filter>),
-    /// Raw expression filter (for complex predicates that don't fit simple patterns).
-    Expr(SqlExpr),
-}
-
-/// Comparison operators.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompareOp {
-    Eq,
-    Ne,
-    Gt,
-    Ge,
-    Lt,
-    Le,
-}
-
-/// Projection item in SELECT.
-#[derive(Debug, Clone)]
-pub enum Projection {
-    /// Simple column reference: `SELECT name`
-    Column(String),
-    /// All columns: `SELECT *`
-    Star,
-    /// Qualified star: `SELECT t.*`
-    QualifiedStar(String),
-    /// Computed expression: `SELECT price * qty AS total`
-    Computed { expr: SqlExpr, alias: String },
-}
-
-/// Sort key for ORDER BY.
-#[derive(Debug, Clone)]
-pub struct SortKey {
-    pub expr: SqlExpr,
-    pub ascending: bool,
-    pub nulls_first: bool,
-}
-
-/// Aggregate expression: `COUNT(*)`, `SUM(amount)`, etc.
-#[derive(Debug, Clone)]
-pub struct AggregateExpr {
-    pub function: String,
-    pub args: Vec<SqlExpr>,
-    pub alias: String,
-    pub distinct: bool,
-}
-
-/// Window function specification.
-#[derive(Debug, Clone)]
-pub struct WindowSpec {
-    pub function: String,
-    pub args: Vec<SqlExpr>,
-    pub partition_by: Vec<SqlExpr>,
-    pub order_by: Vec<SortKey>,
-    pub alias: String,
-}
-
-// ── SQL value / expression / operator types ──
-// Extracted to `crate::types_expr` so this file stays under the 500-line limit.
-// Re-exported so downstream `use crate::types::*` continues to resolve these
-// symbols without change.
-pub use crate::types_expr::{BinaryOp, SqlDataType, SqlExpr, SqlPayloadAtom, SqlValue, UnaryOp};
-
-// ── Catalog trait ──
-// The `SqlCatalog` trait itself and its error type live in
-// `crate::catalog` to keep this file under the 500-line limit.
-// Re-exported here so downstream modules that `use crate::types::*`
-// keep resolving `SqlCatalog` without changing their imports.
-pub use crate::catalog::{ArrayCatalogView, SqlCatalog, SqlCatalogError};
-
-/// Metadata about a collection for query planning.
-#[derive(Debug, Clone)]
-pub struct CollectionInfo {
-    pub name: String,
-    pub engine: EngineType,
-    pub columns: Vec<ColumnInfo>,
-    pub primary_key: Option<String>,
-    pub has_auto_tier: bool,
-    /// Secondary indexes available for planner rewrites. Populated by the
-    /// catalog adapter from `StoredCollection.indexes`. `Building` entries
-    /// are included so the planner can see them but MUST be skipped when
-    /// choosing an index lookup — only `Ready` indexes back query rewrites.
-    pub indexes: Vec<IndexSpec>,
-    /// When `true`, this collection stores every write as an immutable
-    /// version keyed by `system_from_ms`. Enables `FOR SYSTEM_TIME AS OF`
-    /// and `FOR VALID_TIME` queries. Only meaningful for document engines
-    /// today; other engines ignore this flag.
-    pub bitemporal: bool,
-    /// Primary engine hint from the catalog.
-    pub primary: nodedb_types::PrimaryEngine,
-    /// Vector-primary configuration. `Some` only when
-    /// `primary == PrimaryEngine::Vector`.
-    pub vector_primary: Option<nodedb_types::VectorPrimaryConfig>,
-}
-
-/// Secondary index metadata surfaced to the SQL planner.
-#[derive(Debug, Clone)]
-pub struct IndexSpec {
-    pub name: String,
-    /// Canonical field path (`$.email`, `$.user.name`, or plain column name
-    /// for strict documents — the catalog layer stores them uniformly).
-    pub field: String,
-    pub unique: bool,
-    pub case_insensitive: bool,
-    /// Build state. Only `Ready` indexes drive query rewrites.
-    pub state: IndexState,
-    /// Partial-index predicate as raw SQL text (`WHERE <expr>` body
-    /// without the keyword), or `None` for full indexes. The planner
-    /// uses this to reject rewrites whose WHERE clause doesn't entail
-    /// the predicate — matching against such a partial index would
-    /// omit rows the index didn't cover.
-    pub predicate: Option<String>,
-}
-
-/// Planner-facing index state. Mirrors the catalog variant but lives here
-/// so the SQL crate doesn't depend on `nodedb` internals.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IndexState {
-    Building,
-    Ready,
-}
-
-/// Metadata about a single column.
-#[derive(Debug, Clone)]
-pub struct ColumnInfo {
-    pub name: String,
-    pub data_type: SqlDataType,
-    pub nullable: bool,
-    pub is_primary_key: bool,
-    /// Default value expression (e.g. "UUID_V7", "ULID", "NANOID(10)", "0", "'active'").
-    pub default: Option<String>,
 }

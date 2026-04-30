@@ -1,10 +1,14 @@
 //! Convert sqlparser AST expressions to our SqlExpr IR.
 
-use sqlparser::ast::{self, Expr, UnaryOperator, Value};
+use sqlparser::ast::{self, Expr, Value};
 
 use crate::error::{Result, SqlError};
-use crate::parser::normalize::normalize_ident;
+use crate::parser::normalize::{SCHEMA_QUALIFIED_MSG, normalize_ident};
 use crate::types::*;
+
+use super::binary_ops::{convert_binary_op, convert_unary_op};
+use super::functions::convert_function_depth;
+use super::value::{convert_value, parse_interval_to_micros};
 
 /// Maximum AST nesting depth accepted by `convert_expr`.
 /// Exceeding this limit returns `Err` instead of overflowing the stack.
@@ -17,7 +21,7 @@ pub fn convert_expr(expr: &Expr) -> Result<SqlExpr> {
 
 /// Internal recursive helper that carries a depth counter to enforce
 /// `MAX_CONVERT_DEPTH` and prevent stack overflow on malformed ASTs.
-fn convert_expr_depth(expr: &Expr, depth: &mut usize) -> Result<SqlExpr> {
+pub(super) fn convert_expr_depth(expr: &Expr, depth: &mut usize) -> Result<SqlExpr> {
     *depth += 1;
     if *depth > MAX_CONVERT_DEPTH {
         return Err(SqlError::Unsupported {
@@ -35,16 +39,64 @@ fn convert_expr_inner(expr: &Expr, depth: &mut usize) -> Result<SqlExpr> {
             table: None,
             name: normalize_ident(ident),
         }),
+        Expr::CompoundIdentifier(parts) if parts.len() >= 3 => {
+            let qualified: String = parts
+                .iter()
+                .map(normalize_ident)
+                .collect::<Vec<_>>()
+                .join(".");
+            Err(SqlError::Unsupported {
+                detail: format!(
+                    "schema-qualified column reference '{qualified}': {SCHEMA_QUALIFIED_MSG}"
+                ),
+            })
+        }
         Expr::CompoundIdentifier(parts) if parts.len() == 2 => Ok(SqlExpr::Column {
             table: Some(normalize_ident(&parts[0])),
             name: normalize_ident(&parts[1]),
         }),
         Expr::Value(val) => Ok(SqlExpr::Literal(convert_value(&val.value)?)),
-        Expr::BinaryOp { left, op, right } => Ok(SqlExpr::BinaryOp {
-            left: Box::new(convert_expr_depth(left, depth)?),
-            op: convert_binary_op(op)?,
-            right: Box::new(convert_expr_depth(right, depth)?),
-        }),
+        Expr::BinaryOp { left, op, right } => {
+            // JSON and FTS operators are lowered to function calls before the
+            // generic binary-op path so they are never passed to
+            // convert_binary_op.
+            use ast::BinaryOperator;
+            let json_fn: Option<&str> = match op {
+                BinaryOperator::Arrow => Some("pg_json_get"),
+                BinaryOperator::LongArrow => Some("pg_json_get_text"),
+                BinaryOperator::HashArrow => Some("pg_json_path_get"),
+                BinaryOperator::HashLongArrow => Some("pg_json_path_get_text"),
+                BinaryOperator::AtArrow => Some("pg_json_contains"),
+                BinaryOperator::ArrowAt => Some("pg_json_contained_by"),
+                BinaryOperator::Question => Some("pg_json_has_key"),
+                BinaryOperator::QuestionAnd => Some("pg_json_has_all_keys"),
+                BinaryOperator::QuestionPipe => Some("pg_json_has_any_key"),
+                _ => None,
+            };
+            if let Some(name) = json_fn {
+                return Ok(SqlExpr::Function {
+                    name: name.into(),
+                    args: vec![
+                        convert_expr_depth(left, depth)?,
+                        convert_expr_depth(right, depth)?,
+                    ],
+                    distinct: false,
+                });
+            }
+            // `col @@ query` → pg_fts_match(col, query)
+            if matches!(op, BinaryOperator::AtAt) {
+                let col_expr = convert_expr_depth(left, depth)?;
+                let query_expr = convert_expr_depth(right, depth)?;
+                return Ok(crate::functions::fts_ops::pg_fts_funcs::lower_pg_fts_match(
+                    col_expr, query_expr,
+                ));
+            }
+            Ok(SqlExpr::BinaryOp {
+                left: Box::new(convert_expr_depth(left, depth)?),
+                op: convert_binary_op(op)?,
+                right: Box::new(convert_expr_depth(right, depth)?),
+            })
+        }
         Expr::UnaryOp { op, expr } => Ok(SqlExpr::UnaryOp {
             op: convert_unary_op(op)?,
             expr: Box::new(convert_expr_depth(expr, depth)?),
@@ -91,6 +143,7 @@ fn convert_expr_inner(expr: &Expr, depth: &mut usize) -> Result<SqlExpr> {
             expr: Box::new(convert_expr_depth(expr, depth)?),
             pattern: Box::new(convert_expr_depth(pattern, depth)?),
             negated: *negated,
+            case_insensitive: false,
         }),
         Expr::ILike {
             expr,
@@ -101,6 +154,7 @@ fn convert_expr_inner(expr: &Expr, depth: &mut usize) -> Result<SqlExpr> {
             expr: Box::new(convert_expr_depth(expr, depth)?),
             pattern: Box::new(convert_expr_depth(pattern, depth)?),
             negated: *negated,
+            case_insensitive: true,
         }),
         Expr::Case {
             operand,
@@ -129,12 +183,71 @@ fn convert_expr_inner(expr: &Expr, depth: &mut usize) -> Result<SqlExpr> {
                     .transpose()?,
             })
         }
+        Expr::TypedString(ts) => {
+            // TIMESTAMP '...' and TIMESTAMPTZ '...' typed string literals.
+            let type_str = format!("{}", ts.data_type).to_ascii_uppercase();
+            let raw = match &ts.value.value {
+                Value::SingleQuotedString(s) => s.clone(),
+                other => {
+                    return Err(SqlError::Unsupported {
+                        detail: format!("typed string value: {other}"),
+                    });
+                }
+            };
+            match type_str.as_str() {
+                "TIMESTAMP" => {
+                    let dt =
+                        nodedb_types::NdbDateTime::parse(&raw).ok_or_else(|| SqlError::Parse {
+                            detail: format!("cannot parse TIMESTAMP literal: '{raw}'"),
+                        })?;
+                    return Ok(SqlExpr::Literal(SqlValue::Timestamp(dt)));
+                }
+                "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => {
+                    let dt =
+                        nodedb_types::NdbDateTime::parse(&raw).ok_or_else(|| SqlError::Parse {
+                            detail: format!("cannot parse TIMESTAMPTZ literal: '{raw}'"),
+                        })?;
+                    return Ok(SqlExpr::Literal(SqlValue::Timestamptz(dt)));
+                }
+                _ => {}
+            }
+            // Fall through: return as a generic literal string.
+            Ok(SqlExpr::Literal(SqlValue::String(raw)))
+        }
         Expr::Cast {
             expr, data_type, ..
-        } => Ok(SqlExpr::Cast {
-            expr: Box::new(convert_expr_depth(expr, depth)?),
-            to_type: format!("{data_type}"),
-        }),
+        } => {
+            // `::tsvector` and `::tsquery` casts are PG surface notation; the
+            // inner expression is the actual text value.  Elide the cast and
+            // return the inner expression directly — no runtime type change is
+            // needed since we operate on plain strings internally.
+            let type_str = format!("{data_type}").to_ascii_lowercase();
+            if type_str == "tsvector" || type_str == "tsquery" {
+                return convert_expr_depth(expr, depth);
+            }
+            // `'...'::TIMESTAMP` and `'...'::TIMESTAMPTZ` — promote string literals
+            // to typed SqlValue when the inner expression is a string literal.
+            let upper = type_str.to_uppercase();
+            if (upper == "TIMESTAMP"
+                || upper == "TIMESTAMPTZ"
+                || upper == "TIMESTAMP WITH TIME ZONE")
+                && let Expr::Value(v) = expr.as_ref()
+                && let Value::SingleQuotedString(s) = &v.value
+            {
+                let dt = nodedb_types::NdbDateTime::parse(s).ok_or_else(|| SqlError::Parse {
+                    detail: format!("cannot parse timestamp cast: '{s}'"),
+                })?;
+                return Ok(SqlExpr::Literal(if upper == "TIMESTAMP" {
+                    SqlValue::Timestamp(dt)
+                } else {
+                    SqlValue::Timestamptz(dt)
+                }));
+            }
+            Ok(SqlExpr::Cast {
+                expr: Box::new(convert_expr_depth(expr, depth)?),
+                to_type: format!("{data_type}"),
+            })
+        }
         Expr::Array(ast::Array { elem, .. }) => {
             let elems = elem
                 .iter()
@@ -185,7 +298,7 @@ fn convert_expr_inner(expr: &Expr, depth: &mut usize) -> Result<SqlExpr> {
             // The interval value is typically a string literal.
             let interval_str = match interval.value.as_ref() {
                 Expr::Value(v) => match &v.value {
-                    Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) => s.clone(),
+                    Value::SingleQuotedString(s) => s.clone(),
                     Value::Number(n, _) => {
                         // INTERVAL 5 HOUR → combine number with leading_field.
                         if let Some(ref field) = interval.leading_field {
@@ -225,173 +338,5 @@ fn convert_expr_inner(expr: &Expr, depth: &mut usize) -> Result<SqlExpr> {
         _ => Err(SqlError::Unsupported {
             detail: format!("expression: {expr}"),
         }),
-    }
-}
-
-/// Parse an interval string to microseconds.
-///
-/// Delegates to `nodedb_types::kv_parsing::parse_interval_to_ms` (ms → μs)
-/// and `NdbDuration::parse` for compound shorthand forms.
-fn parse_interval_to_micros(s: &str) -> Option<i64> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-
-    // Try NdbDuration::parse first (handles compound "1h30m", "500ms", "2d").
-    if let Some(dur) = nodedb_types::NdbDuration::parse(s) {
-        return Some(dur.micros);
-    }
-
-    // Delegate to shared interval parser (handles all forms including compound).
-    if let Ok(ms) = nodedb_types::kv_parsing::parse_interval_to_ms(s) {
-        return Some(ms as i64 * 1000); // ms → μs
-    }
-
-    None
-}
-
-/// Convert a sqlparser `Value` to our `SqlValue`.
-pub fn convert_value(val: &Value) -> Result<SqlValue> {
-    match val {
-        Value::Number(n, _) => {
-            if let Ok(i) = n.parse::<i64>() {
-                Ok(SqlValue::Int(i))
-            } else if let Ok(f) = n.parse::<f64>() {
-                Ok(SqlValue::Float(f))
-            } else {
-                Ok(SqlValue::String(n.clone()))
-            }
-        }
-        Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) => {
-            Ok(SqlValue::String(s.clone()))
-        }
-        Value::Boolean(b) => Ok(SqlValue::Bool(*b)),
-        Value::Null => Ok(SqlValue::Null),
-        _ => Err(SqlError::Unsupported {
-            detail: format!("value literal: {val}"),
-        }),
-    }
-}
-
-fn convert_function_depth(func: &ast::Function, depth: &mut usize) -> Result<SqlExpr> {
-    let name = func
-        .name
-        .0
-        .iter()
-        .map(|p| match p {
-            ast::ObjectNamePart::Identifier(ident) => normalize_ident(ident),
-            _ => String::new(),
-        })
-        .collect::<Vec<_>>()
-        .join(".");
-
-    let args = match &func.args {
-        ast::FunctionArguments::None => Vec::new(),
-        ast::FunctionArguments::Subquery(_) => {
-            return Err(SqlError::Unsupported {
-                detail: "subquery in function args".into(),
-            });
-        }
-        ast::FunctionArguments::List(arg_list) => arg_list
-            .args
-            .iter()
-            .filter_map(|a| match a {
-                ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(e)) => {
-                    Some(convert_expr_depth(e, depth))
-                }
-                ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Wildcard) => {
-                    Some(Ok(SqlExpr::Wildcard))
-                }
-                ast::FunctionArg::Named {
-                    arg: ast::FunctionArgExpr::Expr(e),
-                    ..
-                } => Some(convert_expr_depth(e, depth)),
-                _ => None,
-            })
-            .collect::<Result<Vec<_>>>()?,
-    };
-
-    let distinct = match &func.args {
-        ast::FunctionArguments::List(arg_list) => {
-            matches!(
-                arg_list.duplicate_treatment,
-                Some(ast::DuplicateTreatment::Distinct)
-            )
-        }
-        _ => false,
-    };
-
-    Ok(SqlExpr::Function {
-        name,
-        args,
-        distinct,
-    })
-}
-
-fn convert_binary_op(op: &ast::BinaryOperator) -> Result<BinaryOp> {
-    match op {
-        ast::BinaryOperator::Plus => Ok(BinaryOp::Add),
-        ast::BinaryOperator::Minus => Ok(BinaryOp::Sub),
-        ast::BinaryOperator::Multiply => Ok(BinaryOp::Mul),
-        ast::BinaryOperator::Divide => Ok(BinaryOp::Div),
-        ast::BinaryOperator::Modulo => Ok(BinaryOp::Mod),
-        ast::BinaryOperator::Eq => Ok(BinaryOp::Eq),
-        ast::BinaryOperator::NotEq => Ok(BinaryOp::Ne),
-        ast::BinaryOperator::Gt => Ok(BinaryOp::Gt),
-        ast::BinaryOperator::GtEq => Ok(BinaryOp::Ge),
-        ast::BinaryOperator::Lt => Ok(BinaryOp::Lt),
-        ast::BinaryOperator::LtEq => Ok(BinaryOp::Le),
-        ast::BinaryOperator::And => Ok(BinaryOp::And),
-        ast::BinaryOperator::Or => Ok(BinaryOp::Or),
-        ast::BinaryOperator::StringConcat => Ok(BinaryOp::Concat),
-        _ => Err(SqlError::Unsupported {
-            detail: format!("binary operator: {op}"),
-        }),
-    }
-}
-
-fn convert_unary_op(op: &UnaryOperator) -> Result<UnaryOp> {
-    match op {
-        UnaryOperator::Minus => Ok(UnaryOp::Neg),
-        UnaryOperator::Not => Ok(UnaryOp::Not),
-        _ => Err(SqlError::Unsupported {
-            detail: format!("unary operator: {op}"),
-        }),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_interval_sql_word_forms() {
-        assert_eq!(parse_interval_to_micros("1 hour"), Some(3_600_000_000));
-        assert_eq!(parse_interval_to_micros("5 days"), Some(5 * 86_400_000_000));
-        assert_eq!(
-            parse_interval_to_micros("30 minutes"),
-            Some(30 * 60_000_000)
-        );
-        assert_eq!(
-            parse_interval_to_micros("2 hours 30 minutes"),
-            Some(9_000_000_000)
-        );
-        assert_eq!(parse_interval_to_micros("1 week"), Some(604_800_000_000));
-        assert_eq!(parse_interval_to_micros("100 milliseconds"), Some(100_000));
-    }
-
-    #[test]
-    fn parse_interval_shorthand() {
-        assert_eq!(parse_interval_to_micros("1h"), Some(3_600_000_000));
-        assert_eq!(parse_interval_to_micros("30m"), Some(30 * 60_000_000));
-        assert_eq!(parse_interval_to_micros("1h30m"), Some(5_400_000_000));
-        assert_eq!(parse_interval_to_micros("500ms"), Some(500_000));
-    }
-
-    #[test]
-    fn parse_interval_invalid() {
-        assert_eq!(parse_interval_to_micros(""), None);
-        assert_eq!(parse_interval_to_micros("abc"), None);
     }
 }

@@ -4,6 +4,8 @@
 //! Re-exported from `types` so downstream `use crate::types::*` continues
 //! to resolve these symbols without change.
 
+use nodedb_types::datetime::NdbDateTime;
+
 use crate::types::SqlPlan;
 
 /// SQL value literal.
@@ -11,11 +13,17 @@ use crate::types::SqlPlan;
 pub enum SqlValue {
     Int(i64),
     Float(f64),
+    /// Arbitrary-precision decimal (exact arithmetic, no float rounding).
+    Decimal(rust_decimal::Decimal),
     String(String),
     Bool(bool),
     Null,
     Bytes(Vec<u8>),
     Array(Vec<SqlValue>),
+    /// Typed naive timestamp literal: `TIMESTAMP '...'` or `'...'::TIMESTAMP`.
+    Timestamp(NdbDateTime),
+    /// Typed timezone-aware timestamp literal: `TIMESTAMPTZ '...'` or `'...'::TIMESTAMPTZ`.
+    Timestamptz(NdbDateTime),
 }
 
 /// SQL-side payload-bitmap predicate atom. Mirrors `nodedb_types::PayloadAtom`
@@ -83,11 +91,13 @@ pub enum SqlExpr {
         high: Box<SqlExpr>,
         negated: bool,
     },
-    /// `expr LIKE pattern`
+    /// `expr LIKE pattern` / `expr ILIKE pattern`
     Like {
         expr: Box<SqlExpr>,
         pattern: Box<SqlExpr>,
         negated: bool,
+        /// `true` for ILIKE (case-insensitive match), `false` for LIKE.
+        case_insensitive: bool,
     },
     /// Array literal: `ARRAY[1.0, 2.0, 3.0]`
     ArrayLiteral(Vec<SqlExpr>),
@@ -131,7 +141,10 @@ pub enum SqlDataType {
     String,
     Bool,
     Bytes,
+    /// Naive (no-timezone) timestamp.
     Timestamp,
+    /// Timezone-aware timestamp.
+    Timestamptz,
     Decimal,
     Uuid,
     Vector(usize),
