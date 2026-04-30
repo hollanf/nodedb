@@ -34,6 +34,21 @@ pub enum CrdtError {
     /// Delta signature verification failed.
     #[error("delta signature invalid for user {user_id}: {detail}")]
     InvalidSignature { user_id: u64, detail: String },
+
+    /// Replay attack detected: seq_no already seen for this (user_id, device_id).
+    ///
+    /// The submitted `seq_no` is not strictly greater than the last accepted
+    /// sequence number, indicating a replayed or out-of-order delta.
+    #[error(
+        "replay detected for user {user_id} device {device_id}: \
+         seq_no {seq_no} <= last_seen {last_seen}"
+    )]
+    ReplayDetected {
+        user_id: u64,
+        device_id: u64,
+        seq_no: u64,
+        last_seen: u64,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, CrdtError>;

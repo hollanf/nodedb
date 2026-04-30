@@ -32,7 +32,16 @@ impl Validator {
 
     /// Validate and apply declarative policy resolution.
     ///
-    /// This is the modern API. It uses validate_with_policy internally.
+    /// ## Replay protection
+    ///
+    /// When `auth.delta_signature` is non-zero, the following steps execute
+    /// in this order to prevent replay attacks at minimum cost:
+    ///
+    /// 1. **Cheap seq_no check** — `seq_no > last_seen[(user_id, device_id)]`.
+    ///    Fails fast before any HMAC computation.
+    /// 2. **HMAC verification** — constant-time comparison prevents timing attacks.
+    /// 3. **Atomic seq update** — `last_seen` advances only on success.
+    ///
     /// For accepted changes, returns Ok(()).
     /// For violations, applies policy and:
     /// - If AutoResolved: returns Ok(())
@@ -60,11 +69,32 @@ impl Validator {
             }
         }
 
-        // Verify delta signature if present (non-zero).
+        // Replay protection + signature verification (signed path only).
+        //
+        // The unsigned path (all-zeros signature) bypasses replay protection.
+        // Old clients that send device_id=0 / seq_no=0 with a non-zero
+        // signature will be rejected by the seq_no check (0 is never > 0).
         if auth.delta_signature != [0u8; 32]
             && let Some(ref verifier) = self.delta_verifier
         {
-            verifier.verify(auth.user_id, &delta_bytes, &auth.delta_signature)?;
+            // Step 1: cheap seq_no check before any HMAC computation.
+            verifier
+                .registry()
+                .check_seq(auth.user_id, auth.device_id, auth.seq_no)?;
+
+            // Step 2: constant-time HMAC verification.
+            verifier.verify(
+                auth.user_id,
+                auth.device_id,
+                auth.seq_no,
+                &delta_bytes,
+                &auth.delta_signature,
+            )?;
+
+            // Step 3: advance last_seen atomically on success.
+            verifier
+                .registry()
+                .commit_seq(auth.user_id, auth.device_id, auth.seq_no)?;
         }
 
         let hlc_timestamp = std::time::SystemTime::now()
