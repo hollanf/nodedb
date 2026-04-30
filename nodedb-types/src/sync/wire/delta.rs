@@ -85,7 +85,7 @@ pub struct DeltaRejectMsg {
 )]
 pub struct CollectionPurgedMsg {
     /// Numeric tenant ID the collection belonged to.
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     /// Collection name.
     pub name: String,
     /// Origin WAL LSN at which the hard-delete was committed.

@@ -28,6 +28,7 @@ pub struct ResyncRequestMsg {
 #[derive(
     Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum ResyncReason {
     /// Detected missing mutation IDs in the delta stream.
     SequenceGap {

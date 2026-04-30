@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
     zerompk::FromMessagePack,
 )]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum ArrayRejectReason {
     /// The op was encoded with a schema version newer than Origin knows about.
     SchemaTooNew = 1,

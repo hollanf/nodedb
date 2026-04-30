@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
     rkyv::Serialize,
     rkyv::Deserialize,
 )]
+#[non_exhaustive]
 pub enum ViolationType {
     /// RLS write policy rejected the delta.
     RlsPolicyViolation { policy_name: String },

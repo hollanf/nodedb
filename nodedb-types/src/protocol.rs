@@ -14,6 +14,11 @@ use crate::value::Value;
 /// Encoded as a single `u8` in both the MessagePack frame and JSON frame
 /// (e.g. `{"op":3}` for `Status`). The `#[serde(try_from = "u8", into = "u8")]`
 /// attribute makes JSON encoding consistent with the numeric opcode values.
+///
+/// `#[non_exhaustive]` — new operation codes may be added as engines grow.
+/// Wire-side unknown-op handling is covered by `Unknown(u8)` (T2-05);
+/// this attribute adds Rust API hygiene.
+#[non_exhaustive]
 #[repr(u8)]
 #[derive(
     Debug,
@@ -292,6 +297,10 @@ impl TryFrom<u8> for OpCode {
 // ─── Response Status ────────────────────────────────────────────────
 
 /// Status code in response frames.
+///
+/// `#[non_exhaustive]` — additional status codes (e.g. `Throttled`, `Redirect`)
+/// may be added as the protocol evolves.
+#[non_exhaustive]
 #[repr(u8)]
 #[derive(
     Debug,
@@ -321,6 +330,7 @@ pub enum ResponseStatus {
     Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
 )]
 #[serde(tag = "method", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AuthMethod {
     Trust {
         #[serde(default = "default_username")]
@@ -345,7 +355,7 @@ fn default_username() -> String {
 )]
 pub struct AuthResponse {
     pub username: String,
-    pub tenant_id: u32,
+    pub tenant_id: u64,
 }
 
 // ─── Request Frame ──────────────────────────────────────────────────
@@ -398,6 +408,7 @@ impl<'a> zerompk::FromMessagePack<'a> for NativeRequest {
     Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
 )]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum RequestFields {
     /// Auth, SQL, DDL, Explain, Set, Show, Reset, Begin, Commit, Rollback,
     /// CopyFrom, Ping — all use a subset of these text fields.
@@ -1036,7 +1047,7 @@ impl NativeResponse {
     }
 
     /// Create an auth success response.
-    pub fn auth_ok(seq: u64, username: String, tenant_id: u32) -> Self {
+    pub fn auth_ok(seq: u64, username: String, tenant_id: u64) -> Self {
         Self {
             seq,
             status: ResponseStatus::Ok,

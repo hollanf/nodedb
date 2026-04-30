@@ -101,6 +101,7 @@ impl ArrayCoordRange {
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum ShapeType {
     /// Document shape: all documents in a collection matching a predicate.
     ///

@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
     zerompk::ToMessagePack,
     zerompk::FromMessagePack,
 )]
+#[non_exhaustive]
 pub enum CompensationHint {
     /// UNIQUE constraint violated — another device wrote the same value first.
     UniqueViolation {

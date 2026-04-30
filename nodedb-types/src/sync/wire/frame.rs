@@ -3,6 +3,7 @@
 /// Sync message type identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum SyncMessageType {
     Handshake = 0x01,
     HandshakeAck = 0x02,
@@ -104,6 +105,10 @@ impl SyncMessageType {
 ///
 /// Layout: `[msg_type: 1B][length: 4B LE][body: N bytes]`
 /// Total header: 5 bytes.
+///
+/// `#[non_exhaustive]` — additional header fields (e.g. compression flag,
+/// session token) may be added without breaking downstream consumers.
+#[non_exhaustive]
 #[derive(Clone)]
 pub struct SyncFrame {
     pub msg_type: SyncMessageType,
