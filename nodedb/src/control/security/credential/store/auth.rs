@@ -3,9 +3,9 @@
 
 use super::super::super::identity::{AuthMethod, AuthenticatedIdentity};
 use super::super::super::time::now_secs;
-use super::super::hash::{hash_password_argon2, verify_argon2};
+use super::super::hash::{VerifyOutcome, hash_password_argon2, verify_argon2_with_rehash};
 use super::super::record::UserRecord;
-use super::core::{CredentialStore, read_lock};
+use super::core::{CredentialStore, read_lock, write_lock};
 
 /// Result of a `get_scram_credentials` call, carrying an optional warning
 /// string when the login is allowed but the password has entered the grace period.
@@ -86,6 +86,11 @@ impl CredentialStore {
     /// (same policy as `get_scram_credentials`) so that all auth paths
     /// honour the expiry policy.
     ///
+    /// On a successful match, transparently rehashes the stored password if
+    /// the stored Argon2 parameters are strictly weaker than the configured
+    /// ones.  Write-back failure is non-fatal (logged as a warning).  If the
+    /// stored PHC string is unparseable the login is denied.
+    ///
     /// Returns `(verified, warning)` where `warning` is non-empty when
     /// the login is permitted but the password is in grace period or
     /// `must_change_password` is set.
@@ -97,20 +102,24 @@ impl CredentialStore {
         let users = match read_lock(&self.users) {
             Ok(u) => u,
             Err(_) => {
-                let _ = hash_password_argon2(password);
+                // Timing oracle mitigation: run a dummy hash even on lock failure.
+                let _ = hash_password_argon2(password, &self.argon2_config);
                 return (false, None);
             }
         };
         let record = match users.get(username).filter(|u| u.is_active) {
             Some(r) => r,
             None => {
-                let _ = hash_password_argon2(password);
+                // Timing oracle mitigation: run a dummy hash for unknown users.
+                let _ = hash_password_argon2(password, &self.argon2_config);
                 return (false, None);
             }
         };
 
-        // Constant-time hash check always runs to prevent timing oracle.
-        let hash_ok = verify_argon2(&record.password_hash, password);
+        // Constant-time verify + rehash decision; runs before policy checks so
+        // the timing profile is the same for expired and valid accounts.
+        let stored_hash = record.password_hash.clone();
+        let outcome = verify_argon2_with_rehash(&stored_hash, password, &self.argon2_config);
 
         let now = now_secs();
         let grace_secs = self.password_expiry_grace_days as u64 * 86400;
@@ -130,12 +139,80 @@ impl CredentialStore {
             return (false, None);
         }
 
-        if !hash_ok {
-            return (false, None);
+        // Evaluate verify outcome.
+        let rehash_hash = match outcome {
+            VerifyOutcome::Ok { rehash } => rehash,
+            VerifyOutcome::WrongPassword => return (false, None),
+            // Unparseable stored PHC is a data integrity error — deny login.
+            VerifyOutcome::BadStoredHash => {
+                tracing::error!(
+                    username,
+                    "stored password hash is not a valid PHC string; login denied"
+                );
+                return (false, None);
+            }
+        };
+
+        // Drop read lock before acquiring write lock for rehash write-back.
+        drop(users);
+
+        // Perform write-back if a rehash was computed.
+        if let Some(new_hash) = rehash_hash {
+            self.apply_rehash(username, new_hash);
         }
 
-        // Login allowed — compute warning.
-        let warning = if record.must_change_password {
+        // Re-acquire read lock to compute the warning (record reference was dropped).
+        let warning = self.compute_login_warning(username, now, grace_secs);
+
+        (true, warning)
+    }
+
+    /// Write the new password hash back to the in-memory store and catalog.
+    ///
+    /// Failure is non-fatal: a warning is logged and login continues.
+    fn apply_rehash(&self, username: &str, new_hash: String) {
+        let mut users = match write_lock(&self.users) {
+            Ok(u) => u,
+            Err(e) => {
+                tracing::warn!(
+                    username,
+                    error = %e,
+                    "rehash write-back: could not acquire write lock; skipping"
+                );
+                return;
+            }
+        };
+        let record = match users.get_mut(username) {
+            Some(r) => r,
+            None => {
+                tracing::warn!(
+                    username,
+                    "rehash write-back: user vanished between read and write; skipping"
+                );
+                return;
+            }
+        };
+        record.password_hash = new_hash;
+        if let Err(e) = self.persist_user(record) {
+            tracing::warn!(
+                username,
+                error = %e,
+                "rehash write-back: catalog persist failed; in-memory hash updated, \
+                 catalog will be reconciled on next password change"
+            );
+        } else {
+            tracing::debug!(username, "password hash upgraded to current Argon2 params");
+        }
+    }
+
+    /// Compute the login warning string (grace period / must_change_password).
+    /// Re-reads the record under read lock; if the lock or user is unavailable,
+    /// returns `None` (warning loss is acceptable compared to failing the login).
+    fn compute_login_warning(&self, username: &str, now: u64, grace_secs: u64) -> Option<String> {
+        let users = read_lock(&self.users).ok()?;
+        let record = users.get(username)?;
+
+        if record.must_change_password {
             Some("password change required: please change your password".to_string())
         } else if record.password_expires_at > 0
             && now >= record.password_expires_at
@@ -149,9 +226,7 @@ impl CredentialStore {
             ))
         } else {
             None
-        };
-
-        (true, warning)
+        }
     }
 
     /// Verify a cleartext password. Convenience wrapper; ignores warning.

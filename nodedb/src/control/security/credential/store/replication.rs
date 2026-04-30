@@ -56,7 +56,7 @@ impl CredentialStore {
 
         let salt = generate_scram_salt();
         let scram_salted_password = compute_scram_salted_password(password, &salt);
-        let password_hash = hash_password_argon2(password)?;
+        let password_hash = hash_password_argon2(password, &self.argon2_config)?;
         let user_id = self.alloc_user_id()?;
         let is_superuser = roles.contains(&Role::Superuser);
         let now = now_secs();
@@ -108,7 +108,7 @@ impl CredentialStore {
             let salt = generate_scram_salt();
             stored.scram_salted_password = compute_scram_salted_password(pw, &salt);
             stored.scram_salt = salt;
-            stored.password_hash = hash_password_argon2(pw)?;
+            stored.password_hash = hash_password_argon2(pw, &self.argon2_config)?;
             stored.password_expires_at = self.compute_expiry();
             stored.must_change_password = false;
             stored.password_changed_at = now_secs();

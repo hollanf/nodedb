@@ -84,6 +84,7 @@ base64 = "0.22"
 getrandom = { version = "0.3", features = ["std"] }
 aes-gcm = "0.10"
 argon2 = "0.5"
+zeroize = { version = "1", features = ["derive"] }
 aws-sdk-kms = { version = "1", default-features = false, features = ["rustls"] }
 aws-config = { version = "1", default-features = false, features = ["rustls", "rt-tokio"] }
 

@@ -4244,6 +4244,7 @@ dependencies = [
  "unicode-normalization",
  "wasmtime",
  "x509-parser 0.16.0",
+ "zeroize",
  "zerompk",
  "zstd",
 ]
@@ -4508,8 +4509,10 @@ dependencies = [
 name = "nodedb-types"
 version = "0.0.6"
 dependencies = [
+ "aes-gcm",
  "bytemuck",
  "crc32c",
+ "getrandom 0.3.4",
  "nanoid",
  "nodedb-codec",
  "rand 0.9.4",
@@ -4518,6 +4521,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sonic-rs",
  "thiserror 2.0.18",
  "toml",
@@ -4570,6 +4574,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]

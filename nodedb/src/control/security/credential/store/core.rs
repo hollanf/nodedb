@@ -15,6 +15,8 @@ use crate::types::TenantId;
 use super::super::super::catalog::SystemCatalog;
 use super::super::super::identity::Role;
 use super::super::super::time::now_secs;
+use crate::config::auth::Argon2Config;
+
 use super::super::hash::{
     compute_scram_salted_password, generate_scram_salt, hash_password_argon2,
 };
@@ -44,6 +46,8 @@ pub struct CredentialStore {
     /// Grace period in days after expiry during which login is still allowed
     /// but a warning is emitted. 0 = hard cutoff (no grace).
     pub(in crate::control::security::credential) password_expiry_grace_days: u32,
+    /// Argon2id hashing parameters from server config.
+    pub(in crate::control::security::credential) argon2_config: Argon2Config,
 }
 
 impl Default for CredentialStore {
@@ -86,6 +90,7 @@ impl CredentialStore {
             lockout_duration: std::time::Duration::from_secs(300),
             password_expiry_secs: 0,
             password_expiry_grace_days: 0,
+            argon2_config: Argon2Config::default(),
         }
     }
 
@@ -119,6 +124,7 @@ impl CredentialStore {
             lockout_duration: std::time::Duration::from_secs(300),
             password_expiry_secs: 0,
             password_expiry_grace_days: 0,
+            argon2_config: Argon2Config::default(),
         })
     }
 
@@ -169,7 +175,7 @@ impl CredentialStore {
     pub fn bootstrap_superuser(&self, username: &str, password: &str) -> crate::Result<()> {
         let salt = generate_scram_salt();
         let scram_salted_password = compute_scram_salted_password(password, &salt);
-        let password_hash = hash_password_argon2(password)?;
+        let password_hash = hash_password_argon2(password, &self.argon2_config)?;
 
         let mut users = write_lock(&self.users)?;
 

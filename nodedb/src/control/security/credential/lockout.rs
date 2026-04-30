@@ -2,6 +2,7 @@
 
 use std::time::Instant;
 
+use crate::config::auth::Argon2Config;
 use crate::types::TenantId;
 
 use super::store::{CredentialStore, read_lock, write_lock};
@@ -43,6 +44,12 @@ impl CredentialStore {
             0
         };
         self.password_expiry_grace_days = password_expiry_grace_days;
+    }
+
+    /// Set the Argon2id hashing parameters from server config.
+    /// Called after construction alongside `set_lockout_policy_with_grace`.
+    pub fn set_argon2_config(&mut self, cfg: Argon2Config) {
+        self.argon2_config = cfg;
     }
 
     /// Check if a user is currently locked out.

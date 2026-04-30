@@ -117,8 +117,7 @@ mod tests {
         let h = hash_entry(&entry);
         // Pinned hash. Updating this string requires explicit reasoning — encoding changes break audit chain compatibility.
         assert_eq!(
-            h,
-            "0394994e7dda6e6ea99b47a9d6a73b305056ed8d34d5573286b2e42b158a7985",
+            h, "0394994e7dda6e6ea99b47a9d6a73b305056ed8d34d5573286b2e42b158a7985",
             "canonical hash changed — audit chain encoding must not drift"
         );
     }
@@ -134,8 +133,7 @@ mod tests {
         let h = hash_entry(&entry);
         // Pinned hash. Updating this string requires explicit reasoning — encoding changes break audit chain compatibility.
         assert_eq!(
-            h,
-            "a7eac81c35ed115b7345ad6ac9e1ccbfb78d46c5af9b4647ebe6d2560d4a00c2",
+            h, "a7eac81c35ed115b7345ad6ac9e1ccbfb78d46c5af9b4647ebe6d2560d4a00c2",
             "canonical hash for AuditCheckpoint (discriminant 25) must not drift"
         );
     }

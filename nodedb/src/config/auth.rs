@@ -1,5 +1,62 @@
 use serde::{Deserialize, Serialize};
 
+// ── OWASP Argon2id 2024+ minimum recommended parameters ──────────────────────
+// https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+// m=19456 KiB / t=2 / p=1 is the stated OWASP minimum for Argon2id.
+// NodeDB ships with those minimums as defaults. Operators may increase them;
+// decreasing below these values is their responsibility.
+
+fn default_argon2_memory_kib() -> u32 {
+    19_456
+}
+fn default_argon2_time_cost() -> u32 {
+    2
+}
+fn default_argon2_parallelism() -> u32 {
+    1
+}
+fn default_argon2_output_len() -> usize {
+    32
+}
+
+/// Argon2id hashing parameters.
+///
+/// Defaults follow OWASP Argon2id 2024+ guidance (m=19456 KiB / t=2 / p=1).
+///
+/// **Upgrade rule**: on successful login, the stored hash is transparently
+/// rehashed if *any* stored parameter is strictly weaker than the configured
+/// one. If the stored hash is *stronger* (operator tuned the dial down), the
+/// hash is left unchanged — no silent downgrade.
+///
+/// **Existing config files**: all fields have serde defaults so existing files
+/// that omit `[auth.argon2]` continue to load and use the OWASP defaults.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Argon2Config {
+    /// Memory cost in KiB. OWASP minimum: 19456 (19 MiB).
+    #[serde(default = "default_argon2_memory_kib")]
+    pub memory_kib: u32,
+    /// Number of iterations (time cost). OWASP minimum: 2.
+    #[serde(default = "default_argon2_time_cost")]
+    pub time_cost: u32,
+    /// Degree of parallelism (lanes). OWASP minimum: 1.
+    #[serde(default = "default_argon2_parallelism")]
+    pub parallelism: u32,
+    /// Output length in bytes. 32 bytes = 256-bit key material.
+    #[serde(default = "default_argon2_output_len")]
+    pub output_len: usize,
+}
+
+impl Default for Argon2Config {
+    fn default() -> Self {
+        Self {
+            memory_kib: default_argon2_memory_kib(),
+            time_cost: default_argon2_time_cost(),
+            parallelism: default_argon2_parallelism(),
+            output_len: default_argon2_output_len(),
+        }
+    }
+}
+
 /// Authentication mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -275,6 +332,11 @@ pub struct AuthConfig {
     #[serde(default)]
     pub audit_max_entries: u64,
 
+    /// Argon2id hashing parameters used for new hashes and rehash decisions.
+    /// Existing config files that omit this section use the OWASP defaults.
+    #[serde(default)]
+    pub argon2: Argon2Config,
+
     /// JWT authentication configuration (JWKS providers, algorithms, etc.).
     /// If not present, JWT auth is disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -398,6 +460,7 @@ impl Default for AuthConfig {
             password_expiry_grace_days: 0,
             audit_retention_days: 0,
             audit_max_entries: 0,
+            argon2: Argon2Config::default(),
             jwt: None,
             rate_limit: None,
             metering: None,

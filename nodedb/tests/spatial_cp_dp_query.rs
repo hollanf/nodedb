@@ -49,6 +49,13 @@ async fn spatial_sql_query_returns_correct_row() {
         .await
         .unwrap();
 
-    assert_eq!(rows.len(), 1, "expected exactly one row within 5 km of Times Square");
-    assert!(rows[0].contains("Times Square"), "returned row should be Times Square");
+    assert_eq!(
+        rows.len(),
+        1,
+        "expected exactly one row within 5 km of Times Square"
+    );
+    assert!(
+        rows[0].contains("Times Square"),
+        "returned row should be Times Square"
+    );
 }
