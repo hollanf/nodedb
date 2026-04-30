@@ -7,14 +7,14 @@
 //!   │ magic       : 4 bytes  = b"NDBB"                            │
 //!   │ version     : u8       = 1                                  │
 //!   │ _reserved   : 3 bytes  = 0                                  │
-//!   │ tenant_id   : u32                                           │
+//!   │ tenant_id   : u64      (widened from u32 at format v1)      │
 //!   │ src_vshards : u16   (source cluster's VSHARD_COUNT)         │
-//!   │ _reserved   : 2 bytes  = 0                                  │
+//!   │ _reserved   : 6 bytes  = 0                                  │
 //!   │ hash_seed   : u64   (source cluster's hash seed, 0 today)   │
 //!   │ watermark   : u64   (snapshot LSN; 0 if not captured)       │
 //!   │ section_cnt : u16                                           │
 //!   │ _reserved   : 6 bytes  = 0                                  │
-//!   │ header_crc  : u32   (crc32c over the preceding 40 bytes)    │
+//!   │ header_crc  : u32   (crc32c over the preceding 48 bytes)    │
 //!   └─────────────────────────────────────────────────────────────┘
 //!   ┌─ SECTION × section_cnt ─────────────────────────────────────┐
 //!   │ origin_node : u64                                           │
@@ -37,8 +37,11 @@ use thiserror::Error;
 pub const MAGIC: &[u8; 4] = b"NDBB";
 pub const VERSION: u8 = 1;
 
-/// Header is fixed-size — 44 bytes (40 framed + 4 crc).
-pub const HEADER_LEN: usize = 44;
+/// Header is fixed-size — 52 bytes (48 framed + 4 crc).
+///
+/// The header grew by 8 bytes when `tenant_id` was widened from u32 to u64
+/// (format v1, pre-launch format break).
+pub const HEADER_LEN: usize = 52;
 /// Per-section framing overhead: origin(8) + len(4) + crc(4).
 pub const SECTION_OVERHEAD: usize = 16;
 /// Trailing crc.
@@ -82,6 +85,7 @@ pub struct SourceTombstoneEntry {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EnvelopeError {
     #[error("invalid backup format")]
     BadMagic,
@@ -96,7 +100,7 @@ pub enum EnvelopeError {
     #[error("backup truncated")]
     Truncated,
     #[error("backup tenant mismatch: expected {expected}, got {actual}")]
-    TenantMismatch { expected: u32, actual: u32 },
+    TenantMismatch { expected: u64, actual: u64 },
     #[error("backup exceeds size cap of {cap} bytes")]
     OverSizeTotal { cap: u64 },
     #[error("backup section exceeds size cap of {cap} bytes")]
@@ -108,7 +112,7 @@ pub enum EnvelopeError {
 /// Header metadata captured at backup time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnvelopeMeta {
-    pub tenant_id: u32,
+    pub tenant_id: u64,
     pub source_vshard_count: u16,
     pub hash_seed: u64,
     pub snapshot_watermark: u64,
@@ -194,18 +198,18 @@ impl EnvelopeWriter {
 
 fn write_header(out: &mut Vec<u8>, meta: &EnvelopeMeta, section_count: u16) {
     let start = out.len();
-    out.extend_from_slice(MAGIC);
-    out.push(VERSION);
-    out.extend_from_slice(&[0u8; 3]);
-    out.extend_from_slice(&meta.tenant_id.to_le_bytes());
-    out.extend_from_slice(&meta.source_vshard_count.to_le_bytes());
-    out.extend_from_slice(&[0u8; 2]);
-    out.extend_from_slice(&meta.hash_seed.to_le_bytes());
-    out.extend_from_slice(&meta.snapshot_watermark.to_le_bytes());
-    out.extend_from_slice(&section_count.to_le_bytes());
-    out.extend_from_slice(&[0u8; 6]);
+    out.extend_from_slice(MAGIC); // [0..4]
+    out.push(VERSION); // [4]
+    out.extend_from_slice(&[0u8; 3]); // [5..8]  _reserved
+    out.extend_from_slice(&meta.tenant_id.to_le_bytes()); // [8..16] tenant_id (u64)
+    out.extend_from_slice(&meta.source_vshard_count.to_le_bytes()); // [16..18]
+    out.extend_from_slice(&[0u8; 6]); // [18..24] _reserved
+    out.extend_from_slice(&meta.hash_seed.to_le_bytes()); // [24..32]
+    out.extend_from_slice(&meta.snapshot_watermark.to_le_bytes()); // [32..40]
+    out.extend_from_slice(&section_count.to_le_bytes()); // [40..42]
+    out.extend_from_slice(&[0u8; 6]); // [42..48] _reserved
     let header_crc = crc32c::crc32c(&out[start..]);
-    out.extend_from_slice(&header_crc.to_le_bytes());
+    out.extend_from_slice(&header_crc.to_le_bytes()); // [48..52]
 }
 
 fn write_section(out: &mut Vec<u8>, section: &Section) {
@@ -234,19 +238,19 @@ pub fn parse(bytes: &[u8], max_total: u64) -> Result<Envelope, EnvelopeError> {
     if version != VERSION {
         return Err(EnvelopeError::UnsupportedVersion(version));
     }
-    let claimed_header_crc = u32::from_le_bytes(read4(&header_bytes[40..44]));
-    let actual_header_crc = crc32c::crc32c(&header_bytes[..40]);
+    let claimed_header_crc = u32::from_le_bytes(read4(&header_bytes[48..52]));
+    let actual_header_crc = crc32c::crc32c(&header_bytes[..48]);
     if claimed_header_crc != actual_header_crc {
         return Err(EnvelopeError::HeaderCrcMismatch);
     }
 
     let meta = EnvelopeMeta {
-        tenant_id: u32::from_le_bytes(read4(&header_bytes[8..12])),
-        source_vshard_count: u16::from_le_bytes(read2(&header_bytes[12..14])),
-        hash_seed: u64::from_le_bytes(read8(&header_bytes[16..24])),
-        snapshot_watermark: u64::from_le_bytes(read8(&header_bytes[24..32])),
+        tenant_id: u64::from_le_bytes(read8(&header_bytes[8..16])),
+        source_vshard_count: u16::from_le_bytes(read2(&header_bytes[16..18])),
+        hash_seed: u64::from_le_bytes(read8(&header_bytes[24..32])),
+        snapshot_watermark: u64::from_le_bytes(read8(&header_bytes[32..40])),
     };
-    let section_count = u16::from_le_bytes(read2(&header_bytes[32..34]));
+    let section_count = u16::from_le_bytes(read2(&header_bytes[40..42]));
 
     // Trailer position: tail 4 bytes.
     let trailer_start = bytes.len() - TRAILER_LEN;
@@ -305,7 +309,7 @@ mod tests {
 
     fn meta() -> EnvelopeMeta {
         EnvelopeMeta {
-            tenant_id: 42,
+            tenant_id: 42_u64,
             source_vshard_count: 1024,
             hash_seed: 0,
             snapshot_watermark: 12345,
@@ -368,9 +372,27 @@ mod tests {
     }
 
     #[test]
+    fn u64_tenant_id_roundtrips() {
+        // Verify that a tenant_id that exceeds u32::MAX survives encode→parse.
+        let large_meta = EnvelopeMeta {
+            tenant_id: u32::MAX as u64 + 1,
+            source_vshard_count: 512,
+            hash_seed: 0xDEAD_BEEF_CAFE_1234,
+            snapshot_watermark: 9_999_999_999,
+        };
+        let mut w = EnvelopeWriter::new(large_meta);
+        w.push_section(42, b"payload".to_vec()).unwrap();
+        let bytes = w.finalize();
+        let env = parse(&bytes, DEFAULT_MAX_TOTAL_BYTES).unwrap();
+        assert_eq!(env.meta, large_meta);
+        assert_eq!(env.sections.len(), 1);
+        assert_eq!(env.sections[0].body, b"payload");
+    }
+
+    #[test]
     fn rejects_header_crc_corruption() {
         let mut bytes = EnvelopeWriter::new(meta()).finalize();
-        bytes[8] ^= 0xFF; // mutate tenant_id, leave header crc stale
+        bytes[8] ^= 0xFF; // mutate first byte of tenant_id (u64 at [8..16]), leave header crc stale
         assert_eq!(
             parse(&bytes, DEFAULT_MAX_TOTAL_BYTES),
             Err(EnvelopeError::HeaderCrcMismatch)
