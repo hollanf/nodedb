@@ -33,6 +33,7 @@ pub mod reader;
 pub mod record;
 pub mod recovery;
 pub mod replay;
+pub mod secure_mem;
 pub mod segment;
 pub mod segmented;
 pub mod temporal_purge;
@@ -52,6 +53,7 @@ pub use preamble::{
 pub use record::{RecordHeader, RecordType, WalRecord};
 pub use recovery::{RecoveryInfo, recover};
 pub use replay::{TombstoneSet, extract_tombstones};
+pub use secure_mem::SecureKey;
 pub use segmented::{SegmentedWal, SegmentedWalConfig};
 pub use temporal_purge::{TemporalPurgeEngine, TemporalPurgePayload};
 pub use tombstone::{CollectionTombstonePayload, MAX_COLLECTION_NAME_LEN};

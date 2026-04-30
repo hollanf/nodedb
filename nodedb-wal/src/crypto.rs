@@ -19,6 +19,7 @@ use aes_gcm::aead::{Aead, KeyInit};
 
 use crate::error::{Result, WalError};
 use crate::record::HEADER_SIZE;
+use crate::secure_mem;
 
 /// AES-256-GCM key with a random per-lifetime epoch for nonce disambiguation.
 ///
@@ -47,9 +48,14 @@ impl WalEncryptionKey {
         getrandom::fill(&mut epoch).map_err(|e| WalError::EncryptionError {
             detail: format!("getrandom failed while generating epoch: {e}"),
         })?;
+        // mlock key_bytes so they are not swapped to disk. Best-effort: if the
+        // OS refuses (e.g. RLIMIT_MEMLOCK exceeded in a container) we log and
+        // continue rather than aborting startup.
+        let mut key_bytes = *key;
+        secure_mem::mlock_key_bytes(key_bytes.as_mut_ptr(), 32);
         Ok(Self {
             cipher: Aes256Gcm::new(key.into()),
-            key_bytes: *key,
+            key_bytes,
             epoch,
         })
     }
