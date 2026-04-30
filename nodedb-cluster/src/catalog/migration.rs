@@ -82,6 +82,23 @@ pub(super) fn migrate_if_needed(db: &redb::Database) -> Result<()> {
             // v1 → v2: write default ClusterSettings when the key is absent.
             info!("migrating catalog v1 → v2: writing default cluster_settings");
             migrate_v1_to_v2(db)?;
+            // Fall through to v2 → v3 in a chained call rather than
+            // duplicating the stamp. We call migrate_if_needed recursively
+            // once, which will now see v2 and apply the next arm.
+            write_format_version(db, 2)?;
+            migrate_if_needed(db)
+        }
+        Some(2) => {
+            // v2 → v3: `Hlc::logical` widened from u32 to u64 (T4-11).
+            // No on-disk data transformation is needed: MessagePack
+            // integers decode by value, so existing logical counters
+            // (which fit in u32) deserialise correctly as u64. The
+            // migration only advances the format version so that old
+            // binaries (which compiled `logical: u32`) refuse to open
+            // a v3 catalog and cannot silently truncate the field.
+            info!(
+                "migrating catalog v2 → v3: Hlc::logical widened to u64 (no data rewrite needed)"
+            );
             write_format_version(db, CATALOG_FORMAT_VERSION)?;
             Ok(())
         }
@@ -233,11 +250,40 @@ mod tests {
     }
 
     #[test]
-    fn v1_to_v2_migration_is_idempotent() {
+    fn v1_to_current_migration_is_idempotent() {
         let (_dir, db) = temp_db();
         write_format_version(&db, 1).unwrap();
         migrate_if_needed(&db).unwrap();
-        // Running again must be a no-op (v2 fast path).
+        // Running again must be a no-op (current-version fast path).
+        migrate_if_needed(&db).unwrap();
+        assert_eq!(
+            read_format_version(&db).unwrap(),
+            Some(CATALOG_FORMAT_VERSION)
+        );
+    }
+
+    #[test]
+    fn v2_catalog_migrates_to_v3() {
+        let (_dir, db) = temp_db();
+        // Stamp v2 explicitly (simulates a catalog written by the pre-T4-11 binary).
+        write_format_version(&db, 2).unwrap();
+
+        // Migration must succeed.
+        migrate_if_needed(&db).unwrap();
+
+        // Format version must be bumped to the current value (3).
+        assert_eq!(
+            read_format_version(&db).unwrap(),
+            Some(CATALOG_FORMAT_VERSION)
+        );
+    }
+
+    #[test]
+    fn v2_to_v3_migration_is_idempotent() {
+        let (_dir, db) = temp_db();
+        write_format_version(&db, 2).unwrap();
+        migrate_if_needed(&db).unwrap();
+        // Running again must be a no-op.
         migrate_if_needed(&db).unwrap();
         assert_eq!(
             read_format_version(&db).unwrap(),
