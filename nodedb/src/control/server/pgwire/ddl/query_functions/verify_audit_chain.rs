@@ -12,6 +12,7 @@ use futures::stream;
 use pgwire::api::results::{DataRowEncoder, QueryResponse, Response};
 use pgwire::error::PgWireResult;
 
+use crate::control::security::audit::entry::hash_entry;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 
@@ -69,7 +70,7 @@ pub async fn verify_audit_chain(
                 };
 
             if entry.seq < from_seq {
-                prev_hash = compute_audit_hash(&entry);
+                prev_hash = hash_entry(&entry);
                 continue;
             }
             if entry.seq > to_seq {
@@ -82,7 +83,7 @@ pub async fn verify_audit_chain(
                 break;
             }
 
-            prev_hash = compute_audit_hash(&entry);
+            prev_hash = hash_entry(&entry);
             checked += 1;
         }
     } else {
@@ -97,7 +98,7 @@ pub async fn verify_audit_chain(
         };
         for entry in log.all() {
             if entry.seq < from_seq {
-                prev_hash = compute_audit_hash(entry);
+                prev_hash = hash_entry(entry);
                 continue;
             }
             if entry.seq > to_seq {
@@ -110,7 +111,7 @@ pub async fn verify_audit_chain(
                 break;
             }
 
-            prev_hash = compute_audit_hash(entry);
+            prev_hash = hash_entry(entry);
             checked += 1;
         }
     }
@@ -133,20 +134,4 @@ pub async fn verify_audit_chain(
         schema,
         stream::iter(vec![Ok(encoder.take_row())]),
     ))])
-}
-
-/// Compute SHA-256 hash of an audit entry (same algorithm as audit.rs::hash_entry).
-fn compute_audit_hash(entry: &crate::control::security::audit::AuditEntry) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(entry.prev_hash.as_bytes());
-    hasher.update(entry.seq.to_le_bytes());
-    hasher.update(entry.timestamp_us.to_le_bytes());
-    hasher.update(format!("{:?}", entry.event).as_bytes());
-    hasher.update(entry.auth_user_id.as_bytes());
-    hasher.update(entry.auth_user_name.as_bytes());
-    hasher.update(entry.session_id.as_bytes());
-    hasher.update(entry.source.as_bytes());
-    hasher.update(entry.detail.as_bytes());
-    format!("{:x}", hasher.finalize())
 }

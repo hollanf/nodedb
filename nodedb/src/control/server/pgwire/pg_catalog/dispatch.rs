@@ -6,6 +6,7 @@ use pgwire::error::PgWireResult;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 
+use super::audit_log::audit_log;
 use super::dropped_collections::dropped_collections;
 use super::l2_cleanup_queue::l2_cleanup_queue;
 use super::tables;
@@ -29,6 +30,7 @@ pub async fn try_pg_catalog(
         "pg_attribute" => tables::pg_attribute(state, identity),
         "pg_index" => tables::pg_index(),
         "pg_authid" => tables::pg_authid(state, identity),
+        "_system.audit_log" => audit_log(state, identity, upper),
         "_system.dropped_collections" => dropped_collections(state, identity).await,
         "_system.l2_cleanup_queue" => l2_cleanup_queue(state, identity),
         _ => return None,
@@ -89,6 +91,15 @@ pub fn pg_catalog_schema(table: &str) -> Option<Vec<pgwire::api::results::FieldI
             bool_field("rolsuper"),
             bool_field("rolcanlogin"),
         ],
+        "_system.audit_log" => vec![
+            int8_field("seq"),
+            int8_field("timestamp_us"),
+            text_field("event"),
+            int8_field("tenant_id"),
+            text_field("source"),
+            text_field("detail"),
+            text_field("prev_hash"),
+        ],
         "_system.dropped_collections" => vec![
             int8_field("tenant_id"),
             text_field("name"),
@@ -119,6 +130,9 @@ pub fn extract_pg_catalog_table(upper: &str) -> Option<&'static str> {
     // NodeDB-native `_system.*` views: match the full qualified form
     // (no bare alias — `dropped_collections` alone is ambiguous and
     // could shadow a user-created collection).
+    if upper.contains("_SYSTEM.AUDIT_LOG") {
+        return Some("_system.audit_log");
+    }
     if upper.contains("_SYSTEM.DROPPED_COLLECTIONS") {
         return Some("_system.dropped_collections");
     }

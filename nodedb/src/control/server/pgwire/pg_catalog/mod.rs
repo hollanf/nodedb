@@ -13,6 +13,7 @@
 //! The result always returns ALL rows with a fixed column schema —
 //! clients that send `WHERE` clauses filter client-side.
 
+pub mod audit_log;
 pub mod dispatch;
 pub mod dropped_collections;
 pub mod l2_cleanup_queue;
