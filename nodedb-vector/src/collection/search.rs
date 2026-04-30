@@ -197,6 +197,147 @@ impl VectorCollection {
         all
     }
 
+    /// Search across all segments using an explicit metric override.
+    ///
+    /// For sealed segments with quantized codecs, the metric override is applied
+    /// during candidate reranking. Growing and building segments apply it exactly
+    /// via brute-force. The HNSW graph structure was built with the collection
+    /// metric; using a different metric affects the scoring but not graph traversal.
+    pub fn search_with_metric(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        ef: usize,
+        metric: DistanceMetric,
+    ) -> Vec<SearchResult> {
+        // Codec-dispatch fast path: codec dispatch does not yet support per-query
+        // metric override — fall through to the non-codec path which does.
+        // When a codec index is active, we search only the growing/building
+        // segments with the override and add codec results with collection metric
+        // (approximate cross-metric search for the codec-indexed segments).
+        if let Some(ref dispatch) = self.codec_dispatch {
+            let mut all: Vec<SearchResult> = Vec::new();
+            let codec_results = dispatch.search(query, top_k, ef);
+            for r in codec_results {
+                all.push(SearchResult {
+                    id: r.id,
+                    distance: r.distance,
+                });
+            }
+            for mut r in self.growing.search_with_metric(query, top_k, metric) {
+                r.id += self.growing_base_id;
+                all.push(r);
+            }
+            for seg in &self.building {
+                for mut r in seg.flat.search_with_metric(query, top_k, metric) {
+                    r.id += seg.base_id;
+                    all.push(r);
+                }
+            }
+            all.sort_by(|a, b| {
+                a.distance
+                    .partial_cmp(&b.distance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            all.truncate(top_k);
+            return all;
+        }
+
+        let mut all: Vec<SearchResult> = Vec::new();
+
+        for mut r in self.growing.search_with_metric(query, top_k, metric) {
+            r.id += self.growing_base_id;
+            all.push(r);
+        }
+
+        for seg in &self.sealed {
+            let results = if seg.pq.is_some() || seg.sq8.is_some() {
+                quantized_search(seg, query, top_k, ef, metric)
+            } else {
+                seg.index.search(query, top_k, ef)
+            };
+            for mut r in results {
+                r.id += seg.base_id;
+                all.push(r);
+            }
+        }
+
+        for seg in &self.building {
+            for mut r in seg.flat.search_with_metric(query, top_k, metric) {
+                r.id += seg.base_id;
+                all.push(r);
+            }
+        }
+
+        all.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all.truncate(top_k);
+        all
+    }
+
+    /// Search with a pre-filter bitmap (byte-array format) and explicit metric override.
+    pub fn search_with_bitmap_bytes_and_metric(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        ef: usize,
+        bitmap: &[u8],
+        metric: DistanceMetric,
+    ) -> Vec<SearchResult> {
+        let mut all: Vec<SearchResult> = Vec::new();
+
+        let growing_results = self.growing.search_filtered_offset_with_metric(
+            query,
+            top_k,
+            bitmap,
+            self.growing_base_id,
+            metric,
+        );
+        for mut r in growing_results {
+            r.id += self.growing_base_id;
+            all.push(r);
+        }
+
+        for seg in &self.sealed {
+            let results =
+                seg.index
+                    .search_with_bitmap_bytes_offset(query, top_k, ef, bitmap, seg.base_id);
+            for mut r in results {
+                // Rerank with the requested metric using the stored FP32 vector.
+                if let Some(v) = seg.index.get_vector(r.id.wrapping_sub(seg.base_id)) {
+                    r.distance = crate::distance::distance(query, v, metric);
+                }
+                r.id += seg.base_id;
+                all.push(r);
+            }
+        }
+
+        for seg in &self.building {
+            let results = seg.flat.search_filtered_offset_with_metric(
+                query,
+                top_k,
+                bitmap,
+                seg.base_id,
+                metric,
+            );
+            for mut r in results {
+                r.id += seg.base_id;
+                all.push(r);
+            }
+        }
+
+        all.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all.truncate(top_k);
+        all
+    }
+
     /// Search with a pre-filter bitmap (byte-array format).
     pub fn search_with_bitmap_bytes(
         &self,

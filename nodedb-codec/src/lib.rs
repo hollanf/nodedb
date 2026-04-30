@@ -430,6 +430,40 @@ impl ColumnStatistics {
 mod tests {
     use super::*;
 
+    /// Frozen canonical codec name surface. Locks the lowercase, snake_case
+    /// forms before any user DDL exposes them. Adding a codec means appending
+    /// here and to `as_str()`; renaming any existing entry is a wire break.
+    #[test]
+    fn canonical_codec_names_frozen() {
+        let canonical: &[(ColumnCodec, &str)] = &[
+            (ColumnCodec::Auto, "auto"),
+            (ColumnCodec::AlpFastLanesLz4, "alp_fastlanes_lz4"),
+            (ColumnCodec::AlpRdLz4, "alp_rd_lz4"),
+            (ColumnCodec::PcodecLz4, "pcodec_lz4"),
+            (ColumnCodec::DeltaFastLanesLz4, "delta_fastlanes_lz4"),
+            (ColumnCodec::FastLanesLz4, "fastlanes_lz4"),
+            (ColumnCodec::FsstLz4, "fsst_lz4"),
+            (ColumnCodec::AlpFastLanesRans, "alp_fastlanes_rans"),
+            (ColumnCodec::DeltaFastLanesRans, "delta_fastlanes_rans"),
+            (ColumnCodec::FsstRans, "fsst_rans"),
+            (ColumnCodec::Gorilla, "gorilla"),
+            (ColumnCodec::DoubleDelta, "double_delta"),
+            (ColumnCodec::Delta, "delta"),
+            (ColumnCodec::Lz4, "lz4"),
+            (ColumnCodec::Zstd, "zstd"),
+            (ColumnCodec::Raw, "raw"),
+        ];
+        for (codec, expected) in canonical {
+            assert_eq!(codec.as_str(), *expected, "codec name drift: {codec:?}");
+            assert!(
+                expected
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "codec name '{expected}' is not lowercase snake_case"
+            );
+        }
+    }
+
     // ── T1-05 ResolvedColumnCodec tests ────────────────────────────────────────
 
     /// Discriminants of ResolvedColumnCodec must exactly match those of the

@@ -69,7 +69,9 @@ impl PayloadKey {
             Value::String(s) => Some(PayloadKey::String(s.clone())),
             Value::Bytes(b) => Some(PayloadKey::Bytes(b.clone())),
             Value::Uuid(s) | Value::Ulid(s) | Value::Regex(s) => Some(PayloadKey::Uuid(s.clone())),
-            Value::DateTime(dt) => Some(PayloadKey::DateTime(format!("{dt:?}"))),
+            Value::DateTime(dt) | Value::NaiveDateTime(dt) => {
+                Some(PayloadKey::DateTime(format!("{dt:?}")))
+            }
             Value::Decimal(d) => Some(PayloadKey::String(d.to_string())),
             // Complex values that cannot be equality-indexed.
             Value::Array(_)

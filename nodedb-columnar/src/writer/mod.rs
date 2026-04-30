@@ -136,8 +136,10 @@ pub fn select_codec_for_profile(col_type: &ColumnType, profile_tag: u8) -> Resol
     if profile_tag == PROFILE_TIMESERIES && matches!(col_type, ColumnType::Float64) {
         return ResolvedColumnCodec::Gorilla;
     }
-    // Timeseries profile: delta-of-delta for timestamps.
-    if profile_tag == PROFILE_TIMESERIES && matches!(col_type, ColumnType::Timestamp) {
+    // Timeseries profile: delta-of-delta for timestamps (both naive and tz-aware).
+    if profile_tag == PROFILE_TIMESERIES
+        && matches!(col_type, ColumnType::Timestamp | ColumnType::Timestamptz)
+    {
         return ResolvedColumnCodec::DeltaFastLanesLz4;
     }
     select_codec(col_type)
@@ -151,11 +153,13 @@ fn select_codec(col_type: &ColumnType) -> ResolvedColumnCodec {
     let hint = match col_type {
         ColumnType::Int64 => ColumnTypeHint::Int64,
         ColumnType::Float64 => ColumnTypeHint::Float64,
-        ColumnType::Timestamp | ColumnType::SystemTimestamp => ColumnTypeHint::Timestamp,
+        ColumnType::Timestamp | ColumnType::Timestamptz | ColumnType::SystemTimestamp => {
+            ColumnTypeHint::Timestamp
+        }
         ColumnType::String | ColumnType::Geometry | ColumnType::Regex => ColumnTypeHint::String,
         ColumnType::Bool
         | ColumnType::Bytes
-        | ColumnType::Decimal
+        | ColumnType::Decimal { .. }
         | ColumnType::Uuid
         | ColumnType::Ulid
         | ColumnType::Json

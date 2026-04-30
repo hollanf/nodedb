@@ -99,7 +99,7 @@ impl TupleDecoder {
 
         let offset = self.fixed_offsets[col_idx].ok_or(StrictError::TypeMismatch {
             column: self.schema.columns[col_idx].name.clone(),
-            expected: self.schema.columns[col_idx].column_type.clone(),
+            expected: self.schema.columns[col_idx].column_type,
         })?;
 
         let size = self.schema.columns[col_idx]
@@ -107,7 +107,7 @@ impl TupleDecoder {
             .fixed_size()
             .ok_or(StrictError::TypeMismatch {
                 column: self.schema.columns[col_idx].name.clone(),
-                expected: self.schema.columns[col_idx].column_type.clone(),
+                expected: self.schema.columns[col_idx].column_type,
             })?;
         let start = self.header_size + offset;
         let end = start + size;
@@ -139,7 +139,7 @@ impl TupleDecoder {
 
         let var_idx = self.var_table_index[col_idx].ok_or(StrictError::TypeMismatch {
             column: self.schema.columns[col_idx].name.clone(),
-            expected: self.schema.columns[col_idx].column_type.clone(),
+            expected: self.schema.columns[col_idx].column_type,
         })?;
 
         let table_start = self.header_size + self.fixed_section_size;
@@ -197,7 +197,7 @@ impl TupleDecoder {
                 .extract_fixed_raw(tuple, col_idx)?
                 .ok_or(StrictError::TypeMismatch {
                     column: col.name.clone(),
-                    expected: col.column_type.clone(),
+                    expected: col.column_type,
                 })?;
             Ok(decode_fixed_value(&col.column_type, raw))
         } else {
@@ -205,7 +205,7 @@ impl TupleDecoder {
                 self.extract_variable_raw(tuple, col_idx)?
                     .ok_or(StrictError::TypeMismatch {
                         column: col.name.clone(),
-                        expected: col.column_type.clone(),
+                        expected: col.column_type,
                     })?;
             Ok(decode_variable_value(&col.column_type, raw))
         }
@@ -379,9 +379,15 @@ fn decode_fixed_value(col_type: &ColumnType, raw: &[u8]) -> Value {
             let micros = i64::from_le_bytes([
                 raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
             ]);
+            Value::NaiveDateTime(NdbDateTime::from_micros(micros))
+        }
+        ColumnType::Timestamptz => {
+            let micros = i64::from_le_bytes([
+                raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+            ]);
             Value::DateTime(NdbDateTime::from_micros(micros))
         }
-        ColumnType::Decimal => {
+        ColumnType::Decimal { .. } => {
             let mut bytes = [0u8; 16];
             bytes.copy_from_slice(&raw[..16]);
             Value::Decimal(rust_decimal::Decimal::deserialize(bytes))
@@ -448,7 +454,13 @@ mod tests {
             ColumnDef::required("id", ColumnType::Int64).with_primary_key(),
             ColumnDef::required("name", ColumnType::String),
             ColumnDef::nullable("email", ColumnType::String),
-            ColumnDef::required("balance", ColumnType::Decimal),
+            ColumnDef::required(
+                "balance",
+                ColumnType::Decimal {
+                    precision: 18,
+                    scale: 4,
+                },
+            ),
             ColumnDef::nullable("active", ColumnType::Bool),
         ])
         .unwrap()
@@ -727,7 +739,14 @@ mod tests {
             ColumnDef::required("b", ColumnType::Bool),
             ColumnDef::required("raw", ColumnType::Bytes),
             ColumnDef::required("ts", ColumnType::Timestamp),
-            ColumnDef::required("dec", ColumnType::Decimal),
+            ColumnDef::required("tstz", ColumnType::Timestamptz),
+            ColumnDef::required(
+                "dec",
+                ColumnType::Decimal {
+                    precision: 18,
+                    scale: 4,
+                },
+            ),
             ColumnDef::required("uid", ColumnType::Uuid),
             ColumnDef::required("vec", ColumnType::Vector(2)),
         ])
@@ -742,7 +761,8 @@ mod tests {
             Value::String("test string".into()),
             Value::Bool(false),
             Value::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]),
-            Value::DateTime(NdbDateTime::from_micros(1_000_000)),
+            Value::NaiveDateTime(NdbDateTime::from_micros(1_000_000)),
+            Value::DateTime(NdbDateTime::from_micros(2_000_000)),
             Value::Decimal(rust_decimal::Decimal::new(314159, 5)),
             Value::Uuid(uuid_str.into()),
             Value::Array(vec![Value::Float(1.5), Value::Float(2.5)]),
@@ -758,15 +778,19 @@ mod tests {
         assert_eq!(decoded[4], Value::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]));
         assert_eq!(
             decoded[5],
-            Value::DateTime(NdbDateTime::from_micros(1_000_000))
+            Value::NaiveDateTime(NdbDateTime::from_micros(1_000_000))
         );
         assert_eq!(
             decoded[6],
+            Value::DateTime(NdbDateTime::from_micros(2_000_000))
+        );
+        assert_eq!(
+            decoded[7],
             Value::Decimal(rust_decimal::Decimal::new(314159, 5))
         );
-        assert_eq!(decoded[7], Value::Uuid(uuid_str.into()));
+        assert_eq!(decoded[8], Value::Uuid(uuid_str.into()));
         // Vector goes through f64→f32→f64 roundtrip, check approximate.
-        if let Value::Array(ref arr) = decoded[8] {
+        if let Value::Array(ref arr) = decoded[9] {
             assert_eq!(arr.len(), 2);
             if let Value::Float(v) = arr[0] {
                 assert!((v - 1.5).abs() < 0.001);

@@ -103,11 +103,13 @@ impl ColumnData {
                 values: Vec::new(),
                 valid,
             },
-            ColumnType::Timestamp | ColumnType::SystemTimestamp => Self::Timestamp {
-                values: Vec::new(),
-                valid,
-            },
-            ColumnType::Decimal => Self::Decimal {
+            ColumnType::Timestamp | ColumnType::Timestamptz | ColumnType::SystemTimestamp => {
+                Self::Timestamp {
+                    values: Vec::new(),
+                    valid,
+                }
+            }
+            ColumnType::Decimal { .. } => Self::Decimal {
                 values: Vec::new(),
                 valid,
             },
@@ -357,7 +359,8 @@ impl ColumnData {
                 values.push(*v);
                 Self::push_valid(valid, true);
             }
-            (Self::Timestamp { values, valid }, Value::DateTime(dt)) => {
+            (Self::Timestamp { values, valid }, Value::DateTime(dt))
+            | (Self::Timestamp { values, valid }, Value::NaiveDateTime(dt)) => {
                 values.push(dt.micros);
                 Self::push_valid(valid, true);
             }

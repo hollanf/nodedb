@@ -101,7 +101,7 @@ impl TupleEncoder {
             if !col.column_type.accepts(val) {
                 return Err(StrictError::TypeMismatch {
                     column: col.name.clone(),
-                    expected: col.column_type.clone(),
+                    expected: col.column_type,
                 });
             }
 
@@ -205,8 +205,8 @@ fn encode_fixed(dst: &mut [u8], col_type: &ColumnType, value: &Value) {
         (ColumnType::Bool, Value::Bool(v)) => {
             dst[0] = *v as u8;
         }
-        // Timestamp: native DateTime + Integer (micros) + String (ISO 8601 parse).
-        (ColumnType::Timestamp, Value::DateTime(dt)) => {
+        // Timestamp (naive): NaiveDateTime + Integer (micros) + String (ISO 8601 parse).
+        (ColumnType::Timestamp, Value::NaiveDateTime(dt)) => {
             dst[..8].copy_from_slice(&dt.micros.to_le_bytes());
         }
         (ColumnType::Timestamp, Value::Integer(micros)) => {
@@ -218,19 +218,32 @@ fn encode_fixed(dst: &mut [u8], col_type: &ColumnType, value: &Value) {
                 .unwrap_or(0);
             dst[..8].copy_from_slice(&micros.to_le_bytes());
         }
+        // Timestamptz (TZ-aware): DateTime + Integer (micros) + String (ISO 8601 parse).
+        (ColumnType::Timestamptz, Value::DateTime(dt)) => {
+            dst[..8].copy_from_slice(&dt.micros.to_le_bytes());
+        }
+        (ColumnType::Timestamptz, Value::Integer(micros)) => {
+            dst[..8].copy_from_slice(&micros.to_le_bytes());
+        }
+        (ColumnType::Timestamptz, Value::String(s)) => {
+            let micros = nodedb_types::NdbDateTime::parse(s)
+                .map(|dt| dt.micros)
+                .unwrap_or(0);
+            dst[..8].copy_from_slice(&micros.to_le_bytes());
+        }
         // Decimal: native Decimal + String/Float/Integer coercion.
-        (ColumnType::Decimal, Value::Decimal(d)) => {
+        (ColumnType::Decimal { .. }, Value::Decimal(d)) => {
             dst[..16].copy_from_slice(&d.serialize());
         }
-        (ColumnType::Decimal, Value::String(s)) => {
+        (ColumnType::Decimal { .. }, Value::String(s)) => {
             let d: rust_decimal::Decimal = s.parse().unwrap_or_default();
             dst[..16].copy_from_slice(&d.serialize());
         }
-        (ColumnType::Decimal, Value::Float(f)) => {
+        (ColumnType::Decimal { .. }, Value::Float(f)) => {
             let d = rust_decimal::Decimal::try_from(*f).unwrap_or_default();
             dst[..16].copy_from_slice(&d.serialize());
         }
-        (ColumnType::Decimal, Value::Integer(i)) => {
+        (ColumnType::Decimal { .. }, Value::Integer(i)) => {
             let d = rust_decimal::Decimal::from(*i);
             dst[..16].copy_from_slice(&d.serialize());
         }
@@ -314,7 +327,13 @@ mod tests {
             ColumnDef::required("id", ColumnType::Int64).with_primary_key(),
             ColumnDef::required("name", ColumnType::String),
             ColumnDef::nullable("email", ColumnType::String),
-            ColumnDef::required("balance", ColumnType::Decimal),
+            ColumnDef::required(
+                "balance",
+                ColumnType::Decimal {
+                    precision: 18,
+                    scale: 4,
+                },
+            ),
             ColumnDef::nullable("active", ColumnType::Bool),
         ])
         .unwrap()
@@ -428,6 +447,18 @@ mod tests {
     fn encode_timestamp() {
         let schema =
             StrictSchema::new(vec![ColumnDef::required("ts", ColumnType::Timestamp)]).unwrap();
+        let encoder = TupleEncoder::new(&schema);
+
+        let dt = NdbDateTime::from_micros(1_700_000_000_000_000);
+        let tuple = encoder.encode(&[Value::NaiveDateTime(dt)]).unwrap();
+        let micros = i64::from_le_bytes(tuple[5..13].try_into().unwrap());
+        assert_eq!(micros, 1_700_000_000_000_000);
+    }
+
+    #[test]
+    fn encode_timestamptz() {
+        let schema =
+            StrictSchema::new(vec![ColumnDef::required("ts", ColumnType::Timestamptz)]).unwrap();
         let encoder = TupleEncoder::new(&schema);
 
         let dt = NdbDateTime::from_micros(1_700_000_000_000_000);

@@ -19,7 +19,7 @@ impl IndexType {
         match s.to_lowercase().as_str() {
             "hnsw" | "" => Some(Self::Hnsw),
             "hnsw_pq" => Some(Self::HnswPq),
-            "ivf_pq" | "ivfpq" => Some(Self::IvfPq),
+            "ivf_pq" => Some(Self::IvfPq),
             _ => None,
         }
     }
@@ -83,7 +83,7 @@ mod tests {
         assert_eq!(IndexType::parse(""), Some(IndexType::Hnsw));
         assert_eq!(IndexType::parse("hnsw_pq"), Some(IndexType::HnswPq));
         assert_eq!(IndexType::parse("ivf_pq"), Some(IndexType::IvfPq));
-        assert_eq!(IndexType::parse("ivfpq"), Some(IndexType::IvfPq));
+        assert_eq!(IndexType::parse("ivfpq"), None);
         assert_eq!(IndexType::parse("unknown"), None);
     }
 

@@ -29,7 +29,14 @@ pub(super) fn extract_row_value(
             if !valid[row_idx] {
                 Value::Null
             } else {
-                Value::Integer(values[row_idx]) // Timestamp stored as micros.
+                let micros = values[row_idx];
+                let dt = nodedb_types::datetime::NdbDateTime::from_micros(micros);
+                match col_type {
+                    nodedb_types::columnar::ColumnType::Timestamptz
+                    | nodedb_types::columnar::ColumnType::SystemTimestamp => Value::DateTime(dt),
+                    // Timestamp (naive) and anything else that maps to i64 storage.
+                    _ => Value::NaiveDateTime(dt),
+                }
             }
         }
         DecodedColumn::Bool { values, valid } => {

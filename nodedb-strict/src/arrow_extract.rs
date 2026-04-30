@@ -46,7 +46,7 @@ pub fn extract_column_to_arrow(
         ColumnType::Int64 => extract_int64(decoder, tuples, col_idx, n),
         ColumnType::Float64 => extract_float64(decoder, tuples, col_idx, n),
         ColumnType::Bool => extract_bool(decoder, tuples, col_idx, n),
-        ColumnType::Timestamp | ColumnType::SystemTimestamp => {
+        ColumnType::Timestamp | ColumnType::Timestamptz | ColumnType::SystemTimestamp => {
             extract_timestamp(decoder, tuples, col_idx, n)
         }
         ColumnType::String => extract_string(decoder, tuples, col_idx, n),
@@ -57,7 +57,7 @@ pub fn extract_column_to_arrow(
         | ColumnType::Set
         | ColumnType::Range
         | ColumnType::Record => extract_binary(decoder, tuples, col_idx, n),
-        ColumnType::Decimal => extract_decimal_as_string(decoder, tuples, col_idx, n),
+        ColumnType::Decimal { .. } => extract_decimal_as_string(decoder, tuples, col_idx, n),
         ColumnType::Uuid => extract_uuid(decoder, tuples, col_idx, n),
         ColumnType::Ulid => extract_uuid(decoder, tuples, col_idx, n), // same 16-byte layout
         ColumnType::Duration => extract_int64(decoder, tuples, col_idx, n), // i64 microseconds

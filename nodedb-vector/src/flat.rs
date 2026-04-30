@@ -67,6 +67,50 @@ impl FlatIndex {
         }
     }
 
+    /// Brute-force k-NN search with an explicit distance metric override.
+    /// Overrides the `self.metric` configured at collection creation time.
+    pub fn search_with_metric(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        metric: DistanceMetric,
+    ) -> Vec<SearchResult> {
+        assert_eq!(query.len(), self.dim);
+        let n = self.len();
+        if n == 0 || top_k == 0 {
+            return Vec::new();
+        }
+
+        let mut candidates: Vec<SearchResult> = Vec::with_capacity(n.min(top_k * 2));
+        for i in 0..n {
+            if self.deleted[i] {
+                continue;
+            }
+            let start = i * self.dim;
+            let vec_slice = &self.data[start..start + self.dim];
+            let dist = distance(query, vec_slice, metric);
+            candidates.push(SearchResult {
+                id: i as u32,
+                distance: dist,
+            });
+        }
+
+        if candidates.len() > top_k {
+            candidates.select_nth_unstable_by(top_k, |a, b| {
+                a.distance
+                    .partial_cmp(&b.distance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            candidates.truncate(top_k);
+        }
+        candidates.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        candidates
+    }
+
     /// Brute-force k-NN search. Exact results — no approximation.
     pub fn search(&self, query: &[f32], top_k: usize) -> Vec<SearchResult> {
         assert_eq!(query.len(), self.dim);
@@ -108,6 +152,59 @@ impl FlatIndex {
     /// Search with a pre-filter bitmap (byte-array format).
     pub fn search_filtered(&self, query: &[f32], top_k: usize, bitmap: &[u8]) -> Vec<SearchResult> {
         self.search_filtered_offset(query, top_k, bitmap, 0)
+    }
+
+    /// Filtered search with an explicit metric override.
+    pub fn search_filtered_offset_with_metric(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        bitmap: &[u8],
+        id_offset: u32,
+        metric: DistanceMetric,
+    ) -> Vec<SearchResult> {
+        assert_eq!(query.len(), self.dim);
+        let n = self.len();
+        if n == 0 || top_k == 0 {
+            return Vec::new();
+        }
+
+        let parsed = RoaringBitmap::deserialize_from(bitmap).ok();
+
+        let mut candidates: Vec<SearchResult> = Vec::with_capacity(top_k * 2);
+        for i in 0..n {
+            if self.deleted[i] {
+                continue;
+            }
+            if let Some(ref bm) = parsed {
+                let global = (i as u32).saturating_add(id_offset);
+                if !bm.contains(global) {
+                    continue;
+                }
+            }
+            let start = i * self.dim;
+            let vec_slice = &self.data[start..start + self.dim];
+            let dist = distance(query, vec_slice, metric);
+            candidates.push(SearchResult {
+                id: i as u32,
+                distance: dist,
+            });
+        }
+
+        if candidates.len() > top_k {
+            candidates.select_nth_unstable_by(top_k, |a, b| {
+                a.distance
+                    .partial_cmp(&b.distance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            candidates.truncate(top_k);
+        }
+        candidates.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        candidates
     }
 
     /// Search with a pre-filter bitmap applying a global id offset.
