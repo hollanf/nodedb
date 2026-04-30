@@ -47,7 +47,10 @@ impl NodeDbPgHandler {
         intent: CopyIntent,
     ) -> PgWireResult<Response> {
         if !identity.is_superuser {
-            return Err(sqlstate(ss::INSUFFICIENT_PRIVILEGE, "permission denied: superuser required"));
+            return Err(sqlstate(
+                ss::INSUFFICIENT_PRIVILEGE,
+                "permission denied: superuser required",
+            ));
         }
 
         match intent {
@@ -108,10 +111,12 @@ impl CopyHandler for NodeDbCopyHandler {
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
         let id = conn_id(&client.socket_addr());
-        let pending = self
-            .restore_state
-            .take(id)
-            .ok_or_else(|| sqlstate(ss::FEATURE_NOT_SUPPORTED, "no restore pending on this connection"))?;
+        let pending = self.restore_state.take(id).ok_or_else(|| {
+            sqlstate(
+                ss::FEATURE_NOT_SUPPORTED,
+                "no restore pending on this connection",
+            )
+        })?;
         let stats = backup::restore_tenant(
             &self.state,
             pending.tenant_id,
@@ -130,7 +135,12 @@ impl CopyHandler for NodeDbCopyHandler {
         client
             .send(PgWireBackendMessage::CommandComplete(tag.into()))
             .await
-            .map_err(|e| sqlstate(ss::INTERNAL_ERROR, &format!("CommandComplete send failed: {e:?}")))?;
+            .map_err(|e| {
+                sqlstate(
+                    ss::INTERNAL_ERROR,
+                    &format!("CommandComplete send failed: {e:?}"),
+                )
+            })?;
         // Leave the COPY-in-progress state so the next Sync from the
         // client gets dispatched normally. pgwire's `process_message`
         // only routes Sync via the `AwaitingSync` arm.

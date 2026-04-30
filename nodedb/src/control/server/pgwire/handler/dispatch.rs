@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crate::bridge::envelope::{Priority, Request, Response};
 use crate::control::planner::physical::PhysicalTask;
-use crate::types::{Lsn, ReadConsistency};
+use crate::types::{Lsn, ReadConsistency, TraceId};
 use sonic_rs;
 
 use super::core::NodeDbPgHandler;
@@ -42,7 +42,7 @@ impl NodeDbPgHandler {
                 &self.state,
                 task.tenant_id,
                 task.plan,
-                0,
+                TraceId::ZERO,
                 "inserted",
             )
             .await;
@@ -61,7 +61,7 @@ impl NodeDbPgHandler {
                 &self.state,
                 task.tenant_id,
                 task.plan,
-                0,
+                TraceId::ZERO,
                 "dropped",
             )
             .await;
@@ -73,7 +73,7 @@ impl NodeDbPgHandler {
                 &self.state,
                 task.tenant_id,
                 task.plan,
-                0,
+                TraceId::ZERO,
             )
             .await;
         }
@@ -133,7 +133,7 @@ impl NodeDbPgHandler {
                     &self.state,
                     task.tenant_id,
                     right_scan,
-                    0,
+                    TraceId::ZERO,
                 )
                 .await?;
 
@@ -197,7 +197,7 @@ impl NodeDbPgHandler {
                     &self.state,
                     task.tenant_id,
                     right_scan,
-                    0,
+                    TraceId::ZERO,
                 )
                 .await?
             };
@@ -238,7 +238,7 @@ impl NodeDbPgHandler {
                 &self.state,
                 task.tenant_id,
                 broadcast_plan,
-                0,
+                TraceId::ZERO,
             )
             .await?;
 
@@ -383,7 +383,7 @@ impl NodeDbPgHandler {
             deadline: Instant::now()
                 + std::time::Duration::from_secs(self.state.tuning.network.default_deadline_secs),
             priority: Priority::Normal,
-            trace_id: 0,
+            trace_id: TraceId::generate(),
             consistency: ReadConsistency::Strong,
             idempotency_key: None,
             event_source: crate::event::EventSource::User,

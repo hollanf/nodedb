@@ -474,6 +474,7 @@ fn sql_data_type_to_pg(dt: &nodedb_sql::SqlDataType) -> Type {
         SqlDataType::Bool => Type::BOOL,
         SqlDataType::Bytes => Type::BYTEA,
         SqlDataType::Timestamp => Type::TIMESTAMP,
+        SqlDataType::Timestamptz => Type::TIMESTAMPTZ,
         SqlDataType::Decimal => Type::NUMERIC,
         SqlDataType::Uuid => Type::TEXT,
         SqlDataType::Vector(_) => Type::BYTEA,

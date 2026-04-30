@@ -83,7 +83,11 @@ impl NodeDbPgHandler {
         // Convert pgwire binary parameters to typed ParamValues for AST/DSL
         // binding. Done once, used by both the DSL path and the planned-SQL
         // path below.
-        let params = convert_portal_params(&portal.parameters, &stmt.param_types)?;
+        let params = convert_portal_params(
+            &portal.parameters,
+            &stmt.param_types,
+            &portal.parameter_format,
+        )?;
 
         // DSL passthroughs (SEARCH, GRAPH, MATCH, UPSERT INTO, etc.) cannot be
         // handled by the planned-SQL path because sqlparser doesn't parse the
@@ -280,15 +284,54 @@ fn decode_first_field_text(data: &bytes::BytesMut) -> Option<&str> {
 }
 
 /// Convert pgwire portal parameters to typed `ParamValue` for AST-level binding.
+///
+/// Uses per-parameter format codes from the pgwire 0.38 `Format` API to determine
+/// whether each parameter was sent in text or binary format.
+///
+/// Binary-format NUMERIC, TIMESTAMP, and TIMESTAMPTZ parameters are explicitly
+/// rejected with SQLSTATE 0A000 — their binary encodings are client-library-specific
+/// structs that would produce corrupt values if decoded naively. Clients must use
+/// text format for these types.
 fn convert_portal_params(
     params: &[Option<Bytes>],
     param_types: &[Option<Type>],
+    param_format: &pgwire::api::portal::Format,
 ) -> PgWireResult<Vec<nodedb_sql::ParamValue>> {
     let mut result = Vec::with_capacity(params.len());
     for (i, param) in params.iter().enumerate() {
+        let pg_type = param_types
+            .get(i)
+            .and_then(|t| t.as_ref())
+            .unwrap_or(&Type::UNKNOWN);
+
         let pv = match param {
             None => nodedb_sql::ParamValue::Null,
             Some(bytes) => {
+                // Reject binary format for types whose binary encoding is
+                // client-library-specific and cannot be decoded portably.
+                if param_format.is_binary(i) {
+                    let type_name = if *pg_type == Type::NUMERIC {
+                        Some("NUMERIC")
+                    } else if *pg_type == Type::TIMESTAMP {
+                        Some("TIMESTAMP")
+                    } else if *pg_type == Type::TIMESTAMPTZ {
+                        Some("TIMESTAMPTZ")
+                    } else {
+                        None
+                    };
+                    if let Some(name) = type_name {
+                        return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                            "ERROR".to_owned(),
+                            "0A000".to_owned(),
+                            format!(
+                                "binary {name} parameter format is not supported for \
+                                 parameter ${n}; use text format",
+                                n = i + 1
+                            ),
+                        ))));
+                    }
+                }
+
                 let text = std::str::from_utf8(bytes).map_err(|_| {
                     PgWireError::UserError(Box::new(ErrorInfo::new(
                         "ERROR".to_owned(),
@@ -296,11 +339,6 @@ fn convert_portal_params(
                         format!("invalid UTF-8 in parameter ${}", i + 1),
                     )))
                 })?;
-
-                let pg_type = param_types
-                    .get(i)
-                    .and_then(|t| t.as_ref())
-                    .unwrap_or(&Type::UNKNOWN);
 
                 pgwire_text_to_param(text, pg_type)
             }
@@ -316,34 +354,38 @@ fn convert_portal_params(
 /// # Type coverage
 ///
 /// Natively decoded: `BOOL`, `INT2`/`INT4`/`INT8`, `FLOAT4`/`FLOAT8`/
-/// `NUMERIC`, `TEXT`/`VARCHAR` (implicit via fall-through), and
-/// `UNKNOWN` (the untyped-driver path).
+/// `NUMERIC`, `TIMESTAMP`, `TIMESTAMPTZ`, `TEXT`/`VARCHAR` (implicit via
+/// fall-through), and `UNKNOWN` (the untyped-driver path).
+///
+/// # TIMESTAMP / TIMESTAMPTZ
+///
+/// Text-format TIMESTAMP and TIMESTAMPTZ parameters are parsed directly to
+/// `ParamValue::Timestamp` / `ParamValue::Timestamptz`. This produces the
+/// correct typed `SqlValue` variant (Timestamp vs Timestamptz) through the
+/// resolver, ensuring the planner and engine see the right column type rather
+/// than a generic string that must be coerced.
+///
+/// If parsing fails the text is passed through as `ParamValue::Text` so the
+/// engine's string-coercion path can attempt a best-effort conversion — the
+/// same as all other text-passthrough types.
 ///
 /// # Fallback policy (catch-all arm)
 ///
-/// Types the bind layer does not yet decode natively — `DATE`,
-/// `TIMESTAMP`, `TIMESTAMPTZ`, `TIME`, `BYTEA`, `UUID`, `JSON`,
-/// `JSONB`, `INTERVAL`, array types, and user-defined types — fall
-/// through to `ParamValue::Text(text)`. This is **deliberate, not
-/// silent**: the pgwire text representation of these types is
-/// well-defined (`DATE` → `YYYY-MM-DD`, `BYTEA` → `\xDEADBEEF` hex,
-/// `JSONB` → the JSON text, etc.), and the AST bind emits it as a
-/// `SingleQuotedString`. Downstream, the planner/engine type-coerces
-/// that text to the column type via the same path used for literal
-/// strings in simple-query SQL — so `INSERT INTO t (d) VALUES ($1)`
-/// with `$1 = '2026-04-19'` behaves the same as
-/// `INSERT INTO t (d) VALUES ('2026-04-19')`.
+/// Types the bind layer does not decode natively — `DATE`, `TIME`, `BYTEA`,
+/// `UUID`, `JSON`, `JSONB`, `INTERVAL`, array types, and user-defined types —
+/// fall through to `ParamValue::Text(text)`. The pgwire text representation of
+/// these types is well-defined and the AST bind emits it as a
+/// `SingleQuotedString`. Downstream, the planner/engine type-coerces the text
+/// via the same path used for literal strings in simple-query SQL.
 ///
 /// Binary-format parameters are handled at a layer above this function
-/// (see `convert_portal_params`); they never reach the catch-all.
-/// Unknown binary formats error explicitly rather than falling through.
+/// (see `convert_portal_params`); they never reach this function.
 ///
 /// # Why not error on unknown types
 ///
-/// Postgres itself accepts text representations of every built-in
-/// type through the extended-query protocol; refusing here would
-/// break drivers that legitimately send dates/UUIDs/etc. as text.
-/// The per-type tests below lock the text contract.
+/// Postgres itself accepts text representations of every built-in type through
+/// the extended-query protocol; refusing here would break drivers that
+/// legitimately send dates/UUIDs/etc. as text.
 fn pgwire_text_to_param(text: &str, pg_type: &Type) -> nodedb_sql::ParamValue {
     match *pg_type {
         Type::BOOL => {
@@ -362,9 +404,32 @@ fn pgwire_text_to_param(text: &str, pg_type: &Type) -> nodedb_sql::ParamValue {
             }
             nodedb_sql::ParamValue::Text(text.to_string())
         }
-        Type::FLOAT4 | Type::FLOAT8 | Type::NUMERIC => {
+        Type::FLOAT4 | Type::FLOAT8 => {
             if let Ok(f) = text.parse::<f64>() {
                 return nodedb_sql::ParamValue::Float64(f);
+            }
+            nodedb_sql::ParamValue::Text(text.to_string())
+        }
+        Type::NUMERIC => {
+            // Parse NUMERIC as exact Decimal, not lossy f64.
+            if let Ok(d) = rust_decimal::Decimal::from_str_exact(text) {
+                return nodedb_sql::ParamValue::Decimal(d);
+            }
+            // If parsing fails, return typed error — do not fall back to Float
+            // since that would silently lose precision.
+            nodedb_sql::ParamValue::Text(text.to_string())
+        }
+        Type::TIMESTAMP => {
+            // Parse ISO 8601 / PostgreSQL timestamp text to a typed NaiveDateTime.
+            if let Some(dt) = nodedb_types::datetime::NdbDateTime::parse(text) {
+                return nodedb_sql::ParamValue::Timestamp(dt);
+            }
+            nodedb_sql::ParamValue::Text(text.to_string())
+        }
+        Type::TIMESTAMPTZ => {
+            // Parse ISO 8601 / PostgreSQL timestamptz text to a typed DateTime (UTC).
+            if let Some(dt) = nodedb_types::datetime::NdbDateTime::parse(text) {
+                return nodedb_sql::ParamValue::Timestamptz(dt);
             }
             nodedb_sql::ParamValue::Text(text.to_string())
         }
@@ -376,13 +441,23 @@ fn pgwire_text_to_param(text: &str, pg_type: &Type) -> nodedb_sql::ParamValue {
 
 #[cfg(test)]
 mod tests {
+    use pgwire::api::portal::Format;
+
     use super::*;
+
+    fn text_format() -> Format {
+        Format::UnifiedText
+    }
+
+    fn binary_format() -> Format {
+        Format::UnifiedBinary
+    }
 
     #[test]
     fn convert_null_param() {
         let params = vec![None];
         let types = vec![Some(Type::INT8)];
-        let result = convert_portal_params(&params, &types).unwrap();
+        let result = convert_portal_params(&params, &types, &text_format()).unwrap();
         assert_eq!(result.len(), 1);
         assert!(matches!(result[0], nodedb_sql::ParamValue::Null));
     }
@@ -395,7 +470,7 @@ mod tests {
             Some(Bytes::from_static(b"true")),
         ];
         let types = vec![Some(Type::INT8), Some(Type::TEXT), Some(Type::BOOL)];
-        let result = convert_portal_params(&params, &types).unwrap();
+        let result = convert_portal_params(&params, &types, &text_format()).unwrap();
         assert!(matches!(result[0], nodedb_sql::ParamValue::Int64(42)));
         assert!(matches!(&result[1], nodedb_sql::ParamValue::Text(s) if s == "hello"));
         assert!(matches!(result[2], nodedb_sql::ParamValue::Bool(true)));
@@ -405,9 +480,87 @@ mod tests {
     fn convert_float_param() {
         let params = vec![Some(Bytes::from_static(b"2.78"))];
         let types = vec![Some(Type::FLOAT8)];
-        let result = convert_portal_params(&params, &types).unwrap();
+        let result = convert_portal_params(&params, &types, &text_format()).unwrap();
         assert!(
             matches!(result[0], nodedb_sql::ParamValue::Float64(f) if (f - 2.78).abs() < f64::EPSILON)
+        );
+    }
+
+    #[test]
+    fn convert_numeric_text_to_decimal() {
+        let params = vec![Some(Bytes::from_static(b"123.45"))];
+        let types = vec![Some(Type::NUMERIC)];
+        let result = convert_portal_params(&params, &types, &text_format()).unwrap();
+        match &result[0] {
+            nodedb_sql::ParamValue::Decimal(d) => {
+                assert_eq!(d.to_string(), "123.45");
+            }
+            other => panic!("expected Decimal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_numeric_binary_returns_error() {
+        // Binary format code + NUMERIC type → explicit rejection.
+        let params = vec![Some(Bytes::from_static(&[0x00, 0x03, 0x00, 0x02]))];
+        let types = vec![Some(Type::NUMERIC)];
+        let err = convert_portal_params(&params, &types, &binary_format()).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("binary NUMERIC") || msg.contains("0A000"),
+            "expected binary-format error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_binary_returns_error() {
+        let params = vec![Some(Bytes::from_static(&[
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]))];
+        let types = vec![Some(Type::TIMESTAMP)];
+        let err = convert_portal_params(&params, &types, &binary_format()).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("binary TIMESTAMP") || msg.contains("0A000"),
+            "expected binary-format error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamptz_binary_returns_error() {
+        let params = vec![Some(Bytes::from_static(&[
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]))];
+        let types = vec![Some(Type::TIMESTAMPTZ)];
+        let err = convert_portal_params(&params, &types, &binary_format()).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("binary TIMESTAMPTZ") || msg.contains("0A000"),
+            "expected binary-format error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn convert_timestamp_text_to_typed() {
+        let params = vec![Some(Bytes::from_static(b"2024-01-01 00:00:00"))];
+        let types = vec![Some(Type::TIMESTAMP)];
+        let result = convert_portal_params(&params, &types, &text_format()).unwrap();
+        assert!(
+            matches!(result[0], nodedb_sql::ParamValue::Timestamp(_)),
+            "expected Timestamp, got {:?}",
+            result[0]
+        );
+    }
+
+    #[test]
+    fn convert_timestamptz_text_to_typed() {
+        let params = vec![Some(Bytes::from_static(b"2024-01-01 00:00:00+00"))];
+        let types = vec![Some(Type::TIMESTAMPTZ)];
+        let result = convert_portal_params(&params, &types, &text_format()).unwrap();
+        assert!(
+            matches!(result[0], nodedb_sql::ParamValue::Timestamptz(_)),
+            "expected Timestamptz, got {:?}",
+            result[0]
         );
     }
 
@@ -416,7 +569,7 @@ mod tests {
         for (input, expected) in [("t", true), ("f", false), ("1", true), ("0", false)] {
             let params = vec![Some(Bytes::from(input))];
             let types = vec![Some(Type::BOOL)];
-            let result = convert_portal_params(&params, &types).unwrap();
+            let result = convert_portal_params(&params, &types, &text_format()).unwrap();
             assert!(matches!(result[0], nodedb_sql::ParamValue::Bool(v) if v == expected));
         }
     }
@@ -431,9 +584,21 @@ mod tests {
     }
 
     #[test]
-    fn passthrough_timestamp_text() {
+    fn timestamp_text_parses_to_typed() {
         let out = pgwire_text_to_param("2026-04-19 12:00:00", &Type::TIMESTAMP);
-        assert!(matches!(&out, nodedb_sql::ParamValue::Text(s) if s == "2026-04-19 12:00:00"));
+        assert!(
+            matches!(out, nodedb_sql::ParamValue::Timestamp(_)),
+            "expected Timestamp variant, got {out:?}"
+        );
+    }
+
+    #[test]
+    fn timestamptz_text_parses_to_typed() {
+        let out = pgwire_text_to_param("2026-04-19 12:00:00+00", &Type::TIMESTAMPTZ);
+        assert!(
+            matches!(out, nodedb_sql::ParamValue::Timestamptz(_)),
+            "expected Timestamptz variant, got {out:?}"
+        );
     }
 
     #[test]

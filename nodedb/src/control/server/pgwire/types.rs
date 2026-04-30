@@ -59,15 +59,11 @@ pub fn error_to_sqlstate(err: &crate::Error) -> (&'static str, &'static str, Str
         crate::Error::RejectedAuthz { .. } => {
             ("ERROR", sqlstate::INSUFFICIENT_PRIVILEGE, err.to_string())
         }
-        crate::Error::MemoryExhausted { .. } => {
-            ("ERROR", sqlstate::OUT_OF_MEMORY, err.to_string())
-        }
+        crate::Error::MemoryExhausted { .. } => ("ERROR", sqlstate::OUT_OF_MEMORY, err.to_string()),
         crate::Error::FanOutExceeded { .. } => {
             ("ERROR", sqlstate::STATEMENT_TOO_COMPLEX, err.to_string())
         }
-        crate::Error::NoLeader { .. } => {
-            ("ERROR", sqlstate::LOCK_NOT_AVAILABLE, err.to_string())
-        }
+        crate::Error::NoLeader { .. } => ("ERROR", sqlstate::LOCK_NOT_AVAILABLE, err.to_string()),
         // DATABASE_DROPPED (57P04) — the closest Postgres canonical code for
         // "try again later, different node". Client libraries that recognise
         // the 57P* family treat this as retryable transient unavailability,
@@ -86,9 +82,11 @@ pub fn error_to_sqlstate(err: &crate::Error) -> (&'static str, &'static str, Str
 /// Map a Data Plane `ErrorCode` to SQLSTATE.
 pub fn error_code_to_sqlstate(code: &ErrorCode) -> (&'static str, &'static str, String) {
     match code {
-        ErrorCode::DeadlineExceeded => {
-            ("ERROR", sqlstate::QUERY_CANCELED, "query cancelled due to deadline".into())
-        }
+        ErrorCode::DeadlineExceeded => (
+            "ERROR",
+            sqlstate::QUERY_CANCELED,
+            "query cancelled due to deadline".into(),
+        ),
         ErrorCode::RejectedConstraint { constraint, detail } => (
             "ERROR",
             sqlstate::UNIQUE_VIOLATION,
@@ -104,18 +102,26 @@ pub fn error_code_to_sqlstate(code: &ErrorCode) -> (&'static str, &'static str, 
             format!("pre-validation rejected: {reason}"),
         ),
         ErrorCode::NotFound => ("ERROR", sqlstate::NO_DATA, "not found".into()),
-        ErrorCode::RejectedAuthz => {
-            ("ERROR", sqlstate::INSUFFICIENT_PRIVILEGE, "authorization denied".into())
-        }
-        ErrorCode::ConflictRetry => {
-            ("ERROR", sqlstate::SERIALIZATION_FAILURE, "write conflict, retry".into())
-        }
-        ErrorCode::FanOutExceeded => {
-            ("ERROR", sqlstate::STATEMENT_TOO_COMPLEX, "fan-out limit exceeded".into())
-        }
-        ErrorCode::ResourcesExhausted => {
-            ("ERROR", sqlstate::OUT_OF_MEMORY, "resources exhausted".into())
-        }
+        ErrorCode::RejectedAuthz => (
+            "ERROR",
+            sqlstate::INSUFFICIENT_PRIVILEGE,
+            "authorization denied".into(),
+        ),
+        ErrorCode::ConflictRetry => (
+            "ERROR",
+            sqlstate::SERIALIZATION_FAILURE,
+            "write conflict, retry".into(),
+        ),
+        ErrorCode::FanOutExceeded => (
+            "ERROR",
+            sqlstate::STATEMENT_TOO_COMPLEX,
+            "fan-out limit exceeded".into(),
+        ),
+        ErrorCode::ResourcesExhausted => (
+            "ERROR",
+            sqlstate::OUT_OF_MEMORY,
+            "resources exhausted".into(),
+        ),
         ErrorCode::RejectedDanglingEdge { missing_node } => (
             "ERROR",
             sqlstate::FOREIGN_KEY_VIOLATION,

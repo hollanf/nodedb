@@ -14,7 +14,7 @@ use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 
 use crate::control::gateway::GatewayErrorMap;
 use crate::control::planner::physical::PhysicalTask;
-use crate::types::{ReadConsistency, TenantId};
+use crate::types::{ReadConsistency, TenantId, TraceId};
 
 use super::super::core::NodeDbPgHandler;
 use super::super::plan::{PlanKind, payload_to_response};
@@ -93,7 +93,7 @@ impl NodeDbPgHandler {
 
         let gw_ctx = crate::control::gateway::core::QueryContext {
             tenant_id,
-            trace_id: 0,
+            trace_id: TraceId::generate(),
         };
 
         let mut responses: Vec<Response> = Vec::with_capacity(tasks.len());

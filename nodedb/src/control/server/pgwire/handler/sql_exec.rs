@@ -10,6 +10,7 @@ use pgwire::api::results::{DataRowEncoder, QueryResponse, Response, Tag};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 
 use crate::control::security::identity::AuthenticatedIdentity;
+use crate::types::TraceId;
 
 use super::super::session::TransactionState;
 use super::super::types::text_field;
@@ -444,7 +445,7 @@ impl NodeDbPgHandler {
                 task.tenant_id,
                 task.vshard_id,
                 task.plan,
-                0,
+                TraceId::ZERO,
             )
             .await
             .map_err(|e| {

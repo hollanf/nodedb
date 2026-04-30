@@ -7,8 +7,71 @@ use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 
 use crate::control::security::identity::AuthenticatedIdentity;
 
-use super::super::types::{error_to_sqlstate, text_field};
+use super::super::types::{error_to_sqlstate, sqlstate_error, text_field};
 use super::core::NodeDbPgHandler;
+
+/// Outcome of classifying a `SET TRANSACTION` / `SET SESSION CHARACTERISTICS` command.
+enum TransactionCmd {
+    /// `READ ONLY` — store access mode, return SET.
+    SetReadOnly,
+    /// `READ WRITE` — store access mode, return SET.
+    SetReadWrite,
+    /// `ISOLATION LEVEL READ COMMITTED` — silent accept (Snapshot Isolation is strictly stronger).
+    AcceptIsolation,
+    /// Any unsupported isolation level or unknown option — reject with SQLSTATE 0A000.
+    RejectIsolation(String),
+}
+
+/// Classify a `SET TRANSACTION` or `SET SESSION CHARACTERISTICS` SQL statement.
+///
+/// `upper` must be `sql.to_uppercase()`. `sql` is the original, used for error messages.
+fn classify_transaction_cmd(upper: &str, sql: &str) -> TransactionCmd {
+    // Isolation-level branch: check before READ ONLY/READ WRITE so that a statement
+    // like "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED" does not accidentally
+    // match the READ-only access-mode branch.
+    if upper.contains("ISOLATION LEVEL") {
+        // READ COMMITTED: silent accept.
+        if upper.contains("READ COMMITTED") {
+            return TransactionCmd::AcceptIsolation;
+        }
+
+        let level = if upper.contains("SERIALIZABLE") {
+            Some("SERIALIZABLE")
+        } else if upper.contains("REPEATABLE READ") {
+            Some("REPEATABLE READ")
+        } else if upper.contains("READ UNCOMMITTED") {
+            Some("READ UNCOMMITTED")
+        } else {
+            None
+        };
+
+        let message = match level {
+            Some(lvl) => format!(
+                "SET TRANSACTION ISOLATION LEVEL {lvl} is not supported; \
+                 NodeDB enforces Snapshot Isolation"
+            ),
+            None => format!(
+                "unsupported SET TRANSACTION option: {}",
+                sql.split_whitespace().skip(2).collect::<Vec<_>>().join(" ")
+            ),
+        };
+        return TransactionCmd::RejectIsolation(message);
+    }
+
+    // Access-mode branch.
+    if upper.contains("READ ONLY") {
+        return TransactionCmd::SetReadOnly;
+    }
+    if upper.contains("READ WRITE") {
+        return TransactionCmd::SetReadWrite;
+    }
+
+    // Unknown option.
+    TransactionCmd::RejectIsolation(format!(
+        "unsupported SET TRANSACTION option: {}",
+        sql.split_whitespace().skip(2).collect::<Vec<_>>().join(" ")
+    ))
+}
 
 impl NodeDbPgHandler {
     /// Handle SET commands: parse, validate, store in session.
@@ -21,28 +84,37 @@ impl NodeDbPgHandler {
         use super::super::session::parse_set_command;
         use pgwire::api::results::Tag;
 
-        // Handle SET TRANSACTION READ ONLY / READ WRITE.
+        // Handle SET TRANSACTION ... and SET SESSION CHARACTERISTICS AS TRANSACTION ...
         let upper = sql.to_uppercase();
         if upper.starts_with("SET TRANSACTION") || upper.starts_with("SET SESSION CHARACTERISTICS")
         {
-            if upper.contains("READ ONLY") {
-                self.sessions.set_parameter(
-                    addr,
-                    "transaction_access_mode".into(),
-                    "read_only".into(),
-                );
-                return Ok(vec![Response::Execution(Tag::new("SET"))]);
+            match classify_transaction_cmd(&upper, sql) {
+                TransactionCmd::SetReadOnly => {
+                    self.sessions.set_parameter(
+                        addr,
+                        "transaction_access_mode".into(),
+                        "read_only".into(),
+                    );
+                    return Ok(vec![Response::Execution(Tag::new("SET"))]);
+                }
+                TransactionCmd::SetReadWrite => {
+                    self.sessions.set_parameter(
+                        addr,
+                        "transaction_access_mode".into(),
+                        "read_write".into(),
+                    );
+                    return Ok(vec![Response::Execution(Tag::new("SET"))]);
+                }
+                TransactionCmd::AcceptIsolation => {
+                    return Ok(vec![Response::Execution(Tag::new("SET"))]);
+                }
+                TransactionCmd::RejectIsolation(message) => {
+                    return Err(sqlstate_error(
+                        nodedb_types::error::sqlstate::FEATURE_NOT_SUPPORTED,
+                        &message,
+                    ));
+                }
             }
-            if upper.contains("READ WRITE") {
-                self.sessions.set_parameter(
-                    addr,
-                    "transaction_access_mode".into(),
-                    "read_write".into(),
-                );
-                return Ok(vec![Response::Execution(Tag::new("SET"))]);
-            }
-            // Other SET TRANSACTION options (ISOLATION LEVEL, etc.) — acknowledge.
-            return Ok(vec![Response::Execution(Tag::new("SET"))]);
         }
 
         let (key, value) = match parse_set_command(sql) {
@@ -282,5 +354,101 @@ impl NodeDbPgHandler {
             schema,
             futures::stream::iter(rows),
         ))])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TransactionCmd, classify_transaction_cmd};
+
+    fn run(sql: &str) -> TransactionCmd {
+        let upper = sql.to_uppercase();
+        classify_transaction_cmd(&upper, sql)
+    }
+
+    fn is_accept(cmd: TransactionCmd) -> bool {
+        matches!(
+            cmd,
+            TransactionCmd::SetReadOnly
+                | TransactionCmd::SetReadWrite
+                | TransactionCmd::AcceptIsolation
+        )
+    }
+
+    fn rejection_code(cmd: TransactionCmd) -> Option<String> {
+        match cmd {
+            TransactionCmd::RejectIsolation(msg) => Some(msg),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn set_transaction_read_only() {
+        assert!(is_accept(run("SET TRANSACTION READ ONLY")));
+        assert!(matches!(
+            run("SET TRANSACTION READ ONLY"),
+            TransactionCmd::SetReadOnly
+        ));
+    }
+
+    #[test]
+    fn set_transaction_read_write() {
+        assert!(matches!(
+            run("SET TRANSACTION READ WRITE"),
+            TransactionCmd::SetReadWrite
+        ));
+    }
+
+    #[test]
+    fn set_transaction_read_committed() {
+        assert!(matches!(
+            run("SET TRANSACTION ISOLATION LEVEL READ COMMITTED"),
+            TransactionCmd::AcceptIsolation
+        ));
+    }
+
+    #[test]
+    fn set_transaction_serializable() {
+        let msg = rejection_code(run("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"))
+            .expect("expected rejection");
+        assert!(
+            msg.contains("SERIALIZABLE"),
+            "message should name the level: {msg}"
+        );
+        assert!(
+            msg.contains("Snapshot Isolation"),
+            "message should mention Snapshot Isolation: {msg}"
+        );
+    }
+
+    #[test]
+    fn set_transaction_repeatable_read() {
+        let msg = rejection_code(run("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+            .expect("expected rejection");
+        assert!(msg.contains("REPEATABLE READ"), "{msg}");
+    }
+
+    #[test]
+    fn set_transaction_read_uncommitted() {
+        let msg = rejection_code(run("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED"))
+            .expect("expected rejection");
+        assert!(msg.contains("READ UNCOMMITTED"), "{msg}");
+    }
+
+    #[test]
+    fn set_session_characteristics_serializable() {
+        let sql = "SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL SERIALIZABLE";
+        let msg = rejection_code(run(sql)).expect("expected rejection");
+        assert!(msg.contains("SERIALIZABLE"), "{msg}");
+    }
+
+    #[test]
+    fn set_transaction_unknown_option() {
+        let msg = rejection_code(run("SET TRANSACTION DEFERRABLE"))
+            .expect("expected rejection for unknown option");
+        assert!(
+            msg.contains("unsupported"),
+            "message should say unsupported: {msg}"
+        );
     }
 }

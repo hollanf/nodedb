@@ -9,8 +9,8 @@
 //! - `tenant_id` — numeric tenant id (as `int8`).
 //! - `name` — collection name.
 //! - `owner` — preserved owner username.
-//! - `engine_type` — storage engine slug (`"document"`, `"strict"`,
-//!   `"columnar"`, `"timeseries"`, `"columnar:spatial"`, `"kv"`),
+//! - `engine_type` — storage engine slug (`"document_schemaless"`, `"document_strict"`,
+//!   `"columnar"`, `"timeseries"`, `"spatial"`, `"kv"`),
 //!   resolved from `StoredCollection.collection_type.as_str()`.
 //! - `deactivated_at_ns` — HLC wall-clock nanoseconds when
 //!   `is_active` flipped to false (from `StoredCollection.modification_hlc`).
@@ -33,6 +33,7 @@ use pgwire::error::PgWireResult;
 use crate::control::security::identity::{AuthenticatedIdentity, Role};
 use crate::control::server::pgwire::types::{int8_field, text_field};
 use crate::control::state::SharedState;
+use crate::types::TraceId;
 
 /// Row generator for `_system.dropped_collections`.
 pub async fn dropped_collections(
@@ -138,7 +139,7 @@ async fn query_collection_size(
         }),
         deadline: std::time::Instant::now() + timeout,
         priority: Priority::Background,
-        trace_id: 0,
+        trace_id: TraceId::generate(),
         consistency: ReadConsistency::Eventual,
         idempotency_key: None,
         event_source: crate::event::EventSource::User,
