@@ -243,6 +243,8 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             password_expires_at: 0,
+            must_change_password: false,
+            password_changed_at: 0,
         };
 
         catalog.put_user(&user).unwrap();
@@ -272,6 +274,8 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             password_expires_at: 0,
+            must_change_password: false,
+            password_changed_at: 0,
         };
 
         catalog.put_user(&user).unwrap();
@@ -318,6 +322,8 @@ mod tests {
                     created_at: 0,
                     updated_at: 0,
                     password_expires_at: 0,
+                    must_change_password: false,
+                    password_changed_at: 0,
                 })
                 .unwrap();
         }

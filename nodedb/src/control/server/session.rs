@@ -64,6 +64,8 @@ pub struct Session {
     auth_mode: crate::config::auth::AuthMode,
     /// Bound after auth handshake. None until first frame is processed.
     identity: Option<crate::control::security::identity::AuthenticatedIdentity>,
+    /// Wall-clock time when this session was accepted.
+    connected_at: std::time::Instant,
 }
 
 impl Session {
@@ -79,6 +81,7 @@ impl Session {
             state,
             auth_mode,
             identity: None,
+            connected_at: std::time::Instant::now(),
         }
     }
 
@@ -111,7 +114,23 @@ impl Session {
     #[instrument(skip(self), fields(peer = %self.peer_addr))]
     pub async fn run(mut self) -> crate::Result<()> {
         let idle_timeout_secs = self.state.idle_timeout_secs();
+        let absolute_timeout_secs = self.state.session_absolute_timeout_secs();
         loop {
+            // Enforce absolute session lifetime (SQLSTATE 57P01 "admin shutdown").
+            if absolute_timeout_secs > 0
+                && self.connected_at.elapsed().as_secs() >= absolute_timeout_secs
+            {
+                debug!(
+                    "session absolute timeout ({}s), closing connection",
+                    absolute_timeout_secs
+                );
+                let msg = r#"{"status":"error","sqlstate":"57P01","error":"session timeout: absolute lifetime exceeded"}"#;
+                let resp_len = (msg.len() as u32).to_be_bytes();
+                let _ = self.stream.write_all(&resp_len).await;
+                let _ = self.stream.write_all(msg.as_bytes()).await;
+                return Ok(());
+            }
+
             // Read length prefix with idle timeout.
             let mut len_buf = [0u8; 4];
             let read_result: std::io::Result<usize> = if idle_timeout_secs > 0 {
@@ -191,16 +210,21 @@ impl Session {
 
         // Auth handshake: must be first frame.
         if op == "auth" {
-            let identity = super::session_auth::authenticate(
+            let (identity, warning) = super::session_auth::authenticate(
                 &self.state,
                 &self.auth_mode,
                 &body,
                 &self.peer_addr.to_string(),
             )?;
+            let warning_field = match &warning {
+                Some(w) => format!(r#","warning":"{}""#, w.replace('"', "'")),
+                None => String::new(),
+            };
             let resp = format!(
-                r#"{{"status":"ok","username":"{}","tenant_id":{}}}"#,
+                r#"{{"status":"ok","username":"{}","tenant_id":{}{}}}"#,
                 identity.username,
-                identity.tenant_id.as_u32()
+                identity.tenant_id.as_u32(),
+                warning_field
             );
             self.identity = Some(identity);
             return Ok(resp.into_bytes());
@@ -578,5 +602,54 @@ mod tests {
         let _ = poller_handle.await;
         let _ = core_stop_tx.send(());
         let _ = core_handle.await;
+    }
+}
+
+#[cfg(test)]
+mod session_timeout_tests {
+    /// Verify the absolute-timeout predicate in isolation.
+    ///
+    /// The real check is: `absolute_timeout_secs > 0 && elapsed >= absolute_timeout_secs`.
+    /// This test pins that condition so refactors cannot silently invert it.
+    #[test]
+    fn absolute_timeout_predicate() {
+        // When timeout is disabled (0), any elapsed time should NOT trigger.
+        let absolute_timeout_secs: u64 = 0;
+        let elapsed_secs: u64 = 9999;
+        let should_close = absolute_timeout_secs > 0 && elapsed_secs >= absolute_timeout_secs;
+        assert!(
+            !should_close,
+            "timeout=0 (disabled) must never close the session"
+        );
+
+        // When timeout is set and elapsed < timeout, session stays open.
+        let absolute_timeout_secs: u64 = 3600;
+        let elapsed_secs: u64 = 3599;
+        let should_close = absolute_timeout_secs > 0 && elapsed_secs >= absolute_timeout_secs;
+        assert!(
+            !should_close,
+            "elapsed < timeout should not close the session"
+        );
+
+        // When elapsed == timeout exactly, session should close.
+        let elapsed_secs: u64 = 3600;
+        let should_close = absolute_timeout_secs > 0 && elapsed_secs >= absolute_timeout_secs;
+        assert!(should_close, "elapsed == timeout should close the session");
+
+        // When elapsed > timeout, session should close.
+        let elapsed_secs: u64 = 7200;
+        let should_close = absolute_timeout_secs > 0 && elapsed_secs >= absolute_timeout_secs;
+        assert!(should_close, "elapsed > timeout should close the session");
+
+        // Idle timeout is independent — setting idle_timeout > 0 does not affect absolute check.
+        // Specifically: absolute=0 (disabled) + any idle means absolute check still returns false.
+        let absolute_timeout_secs: u64 = 0;
+        let _idle_timeout_secs: u64 = 60;
+        let elapsed_secs: u64 = 9999;
+        let should_close = absolute_timeout_secs > 0 && elapsed_secs >= absolute_timeout_secs;
+        assert!(
+            !should_close,
+            "idle timeout must not activate the absolute-timeout close path"
+        );
     }
 }

@@ -1,3 +1,4 @@
+use nodedb_sql::ddl_ast::AlterRoleOp;
 use pgwire::api::results::{Response, Tag};
 use pgwire::error::PgWireResult;
 
@@ -187,5 +188,111 @@ pub fn drop_role(
             "42704",
             &format!("role '{name}' does not exist"),
         ))
+    }
+}
+
+/// Typed dispatch for `ALTER ROLE` — covers GRANT, REVOKE, and SET INHERIT forms.
+///
+/// Called from `router/ast.rs` after the parser produces an `AlterRole` variant.
+/// Reuses `grant_permission` / `revoke_permission` for the permission forms so
+/// all permission mutations go through the same catalog-propose path and emit
+/// `AuditEvent::PrivilegeChange`.
+pub fn alter_role_typed(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+    role_name: &str,
+    sub_op: &AlterRoleOp,
+) -> PgWireResult<Vec<Response>> {
+    require_admin(identity, "alter roles")?;
+
+    // The role must exist before we mutate it.
+    state
+        .roles
+        .get_role(role_name)
+        .ok_or_else(|| sqlstate_error("42704", &format!("role '{role_name}' not found")))?;
+
+    match sub_op {
+        AlterRoleOp::Grant {
+            permission,
+            target_type,
+            target_name,
+        } => {
+            // Delegate to the existing grant handler, using the role name as grantee.
+            super::grant::permission::grant_permission(
+                state,
+                identity,
+                permission,
+                target_type,
+                target_name,
+                role_name,
+            )
+        }
+
+        AlterRoleOp::Revoke {
+            permission,
+            target_type,
+            target_name,
+        } => {
+            // Delegate to the existing revoke handler, using the role name as grantee.
+            super::grant::permission::revoke_permission(
+                state,
+                identity,
+                permission,
+                target_type,
+                target_name,
+                role_name,
+            )
+        }
+
+        AlterRoleOp::SetInherit { parent } => {
+            let parent_is_builtin = matches!(
+                parent.as_str(),
+                "superuser" | "tenant_admin" | "readwrite" | "readonly" | "monitor"
+            );
+            if !parent_is_builtin && state.roles.get_role(parent).is_none() {
+                return Err(sqlstate_error(
+                    "42704",
+                    &format!("parent role '{parent}' does not exist"),
+                ));
+            }
+
+            let old_role = state
+                .roles
+                .get_role(role_name)
+                .ok_or_else(|| sqlstate_error("42704", &format!("role '{role_name}' not found")))?;
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let stored = crate::control::security::catalog::StoredRole {
+                name: role_name.to_string(),
+                tenant_id: old_role.tenant_id.as_u32(),
+                parent: parent.to_string(),
+                created_at: now,
+            };
+
+            let entry =
+                crate::control::catalog_entry::CatalogEntry::PutRole(Box::new(stored.clone()));
+            let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
+                .map_err(|e| sqlstate_error("XX000", &format!("metadata propose: {e}")))?;
+            if log_index == 0
+                && let Some(catalog) = state.credentials.catalog()
+            {
+                catalog
+                    .put_role(&stored)
+                    .map_err(|e| sqlstate_error("XX000", &format!("catalog write: {e}")))?;
+                state.roles.install_replicated_role(&stored);
+            }
+
+            state.audit_record(
+                AuditEvent::PrivilegeChange,
+                Some(identity.tenant_id),
+                &identity.username,
+                &format!("altered role '{role_name}': set inherit '{parent}'"),
+            );
+
+            Ok(vec![Response::Execution(Tag::new("ALTER ROLE"))])
+        }
     }
 }

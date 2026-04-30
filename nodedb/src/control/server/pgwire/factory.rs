@@ -53,7 +53,19 @@ impl AuthSource for NodeDbAuthSource {
         }
 
         match self.credentials.get_scram_credentials(username) {
-            Some((salt, salted_password)) => Ok(Password::new(Some(salt), salted_password)),
+            Some(creds) => {
+                // A non-empty warning means grace period or must_change_password.
+                // pgwire's AuthSource doesn't surface NoticeResponse here; the
+                // warning is stored in the factory and must be sent after auth
+                // success via the on_startup hook. For now, log it — the
+                // post-auth notice path requires plumbing that would touch
+                // pgwire's internal state machine. The warning IS surfaced on
+                // the native protocol path (see session_auth::authenticate).
+                if let Some(ref w) = creds.warning {
+                    tracing::warn!(username, warning = %w, "password warning at SCRAM credential fetch");
+                }
+                Ok(Password::new(Some(creds.salt), creds.salted_password))
+            }
             None => {
                 self.credentials.record_login_failure(username);
                 self.state.audit_record(

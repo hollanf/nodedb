@@ -18,6 +18,7 @@ pub mod impersonation;
 pub mod jit;
 pub mod jwks;
 pub mod jwt;
+pub mod keystore;
 pub mod metering;
 pub mod mtls;
 pub mod observability;

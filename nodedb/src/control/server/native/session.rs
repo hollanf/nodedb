@@ -6,7 +6,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::net::TcpStream;
 use tracing::{debug, instrument};
@@ -39,6 +39,9 @@ pub struct NativeSession {
     format: Option<FrameFormat>,
     query_ctx: QueryContext,
     sessions: SessionStore,
+    /// Wall-clock time when this session was accepted. Used for absolute
+    /// session lifetime enforcement (`session_absolute_timeout_secs`).
+    connected_at: Instant,
 }
 
 impl NativeSession {
@@ -59,6 +62,7 @@ impl NativeSession {
             format: None,
             query_ctx,
             sessions: SessionStore::new(),
+            connected_at: Instant::now(),
         }
     }
 
@@ -86,8 +90,31 @@ impl NativeSession {
     #[instrument(skip(self), fields(peer = %self.peer_addr))]
     pub async fn run(mut self) -> crate::Result<()> {
         let idle_timeout_secs = self.state.idle_timeout_secs();
+        let absolute_timeout_secs = self.state.session_absolute_timeout_secs();
 
         loop {
+            // Enforce absolute session lifetime (SQLSTATE 57P01 "admin shutdown").
+            if absolute_timeout_secs > 0
+                && self.connected_at.elapsed().as_secs() >= absolute_timeout_secs
+            {
+                debug!(
+                    "session absolute timeout ({}s), closing connection",
+                    absolute_timeout_secs
+                );
+                let shutdown_resp = NativeResponse::error(
+                    0,
+                    "57P01",
+                    "session timeout: absolute lifetime exceeded",
+                );
+                if let Ok(bytes) = super::codec::encode_response(
+                    &shutdown_resp,
+                    self.format.unwrap_or(FrameFormat::MessagePack),
+                ) {
+                    let _ = super::codec::write_frame(&mut self.stream, &bytes).await;
+                }
+                return Ok(());
+            }
+
             // Read a frame with idle timeout.
             let payload = if idle_timeout_secs > 0 {
                 match tokio::time::timeout(
@@ -367,12 +394,15 @@ impl NativeSession {
             auth,
             &self.peer_addr.to_string(),
         ) {
-            Ok(identity) => {
-                let resp = NativeResponse::auth_ok(
+            Ok((identity, warning)) => {
+                let mut resp = NativeResponse::auth_ok(
                     seq,
                     identity.username.clone(),
                     identity.tenant_id.as_u32(),
                 );
+                if let Some(w) = warning {
+                    resp.warnings.push(w);
+                }
                 self.auth_context = Some(super::super::session_auth::build_auth_context(&identity));
                 self.identity = Some(identity);
                 resp
@@ -415,6 +445,7 @@ fn chunk_large_response(
         watermark_lsn: response.watermark_lsn,
         error: None,
         auth: None,
+        warnings: Vec::new(),
     };
     let sample_bytes = codec::encode_response(&sample_resp, format)?;
     let sample_count = total_rows.min(100);
@@ -456,6 +487,7 @@ fn chunk_large_response(
                 None
             },
             auth: None,
+            warnings: Vec::new(),
         };
         frames.push(codec::encode_response(&frame_resp, format)?);
     }
@@ -490,6 +522,7 @@ mod tests {
             watermark_lsn: 42,
             error: None,
             auth: None,
+            warnings: Vec::new(),
         };
 
         let frames = chunk_large_response(response, codec::FrameFormat::MessagePack).unwrap();
@@ -521,6 +554,7 @@ mod tests {
             watermark_lsn: 42,
             error: None,
             auth: None,
+            warnings: Vec::new(),
         };
 
         let frames = chunk_large_response(response, codec::FrameFormat::MessagePack).unwrap();
@@ -555,6 +589,7 @@ mod tests {
             watermark_lsn: 99,
             error: None,
             auth: None,
+            warnings: Vec::new(),
         };
 
         let frames = chunk_large_response(response, codec::FrameFormat::MessagePack).unwrap();

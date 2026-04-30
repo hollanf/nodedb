@@ -140,5 +140,6 @@ fn data_plane_response_to_native(seq: u64, resp: &Response) -> NativeResponse {
         watermark_lsn: resp.watermark_lsn.as_u64(),
         error: None,
         auth: None,
+        warnings: Vec::new(),
     }
 }

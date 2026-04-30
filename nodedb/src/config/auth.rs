@@ -245,6 +245,12 @@ pub struct AuthConfig {
     /// Idle session timeout in seconds (0 = no timeout).
     pub idle_timeout_secs: u64,
 
+    /// Absolute session lifetime in seconds (0 = disabled).
+    /// When set, a session is forcibly closed after this many seconds
+    /// regardless of activity (SQLSTATE 57P01). HTTP is stateless — N/A.
+    #[serde(default)]
+    pub session_absolute_timeout_secs: u64,
+
     /// Maximum connections per user (0 = unlimited).
     pub max_connections_per_user: u32,
 
@@ -253,9 +259,21 @@ pub struct AuthConfig {
     /// Expired passwords are rejected at SCRAM auth time.
     pub password_expiry_days: u32,
 
+    /// Grace period after password expiry during which login is still allowed
+    /// but a warning is emitted (0 = hard cutoff, no grace).
+    #[serde(default)]
+    pub password_expiry_grace_days: u32,
+
     /// Audit retention in days (0 = keep forever).
     /// Entries older than this are pruned during periodic flush.
     pub audit_retention_days: u32,
+
+    /// Maximum total audit entries to retain in the catalog (0 = unlimited).
+    /// When the catalog exceeds this count, the oldest entries are pruned
+    /// at flush time. Age-based pruning (`audit_retention_days`) runs first,
+    /// then count-based pruning trims to this ceiling.
+    #[serde(default)]
+    pub audit_max_entries: u64,
 
     /// JWT authentication configuration (JWKS providers, algorithms, etc.).
     /// If not present, JWT auth is disabled.
@@ -374,9 +392,12 @@ impl Default for AuthConfig {
             max_failed_logins: 5,
             lockout_duration_secs: 300,
             idle_timeout_secs: 3600,
+            session_absolute_timeout_secs: 0,
             max_connections_per_user: 0,
             password_expiry_days: 0,
+            password_expiry_grace_days: 0,
             audit_retention_days: 0,
+            audit_max_entries: 0,
             jwt: None,
             rate_limit: None,
             metering: None,

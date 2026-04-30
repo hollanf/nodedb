@@ -30,6 +30,7 @@ pub(crate) fn handle_show(ctx: &DispatchCtx<'_>, seq: u64, key: &str) -> NativeR
         watermark_lsn: 0,
         error: None,
         auth: None,
+        warnings: Vec::new(),
     }
 }
 

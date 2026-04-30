@@ -41,6 +41,9 @@ pub struct CredentialStore {
     pub(in crate::control::security::credential) lockout_duration: std::time::Duration,
     /// Password expiry in seconds (0 = no expiry).
     pub(in crate::control::security::credential) password_expiry_secs: u64,
+    /// Grace period in days after expiry during which login is still allowed
+    /// but a warning is emitted. 0 = hard cutoff (no grace).
+    pub(in crate::control::security::credential) password_expiry_grace_days: u32,
 }
 
 impl Default for CredentialStore {
@@ -82,6 +85,7 @@ impl CredentialStore {
             max_failed_logins: 0,
             lockout_duration: std::time::Duration::from_secs(300),
             password_expiry_secs: 0,
+            password_expiry_grace_days: 0,
         }
     }
 
@@ -114,6 +118,7 @@ impl CredentialStore {
             max_failed_logins: 0,
             lockout_duration: std::time::Duration::from_secs(300),
             password_expiry_secs: 0,
+            password_expiry_grace_days: 0,
         })
     }
 
@@ -176,12 +181,15 @@ impl CredentialStore {
             existing.scram_salted_password = scram_salted_password;
             existing.is_superuser = true;
             existing.is_active = true;
+            existing.must_change_password = false;
+            existing.password_changed_at = now_secs();
             if !existing.roles.contains(&Role::Superuser) {
                 existing.roles.push(Role::Superuser);
             }
             self.persist_user(existing)?;
         } else {
             let user_id = self.alloc_user_id()?;
+            let now = now_secs();
             let mut record = UserRecord {
                 user_id,
                 username: username.to_string(),
@@ -193,9 +201,11 @@ impl CredentialStore {
                 is_superuser: true,
                 is_active: true,
                 is_service_account: false,
-                created_at: now_secs(),
-                updated_at: now_secs(),
+                created_at: now,
+                updated_at: now,
                 password_expires_at: self.compute_expiry(),
+                must_change_password: false,
+                password_changed_at: now,
             };
             self.persist_user(&mut record)?;
             users.insert(username.to_string(), record);

@@ -61,6 +61,7 @@ pub(super) async fn pgwire_result_to_native(
                             watermark_lsn: 0,
                             error: None,
                             auth: None,
+                            warnings: Vec::new(),
                         };
                     }
                     PgResponse::EmptyQuery => {

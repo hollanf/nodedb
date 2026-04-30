@@ -32,12 +32,14 @@ use crate::control::server::pgwire::ddl::continuous_agg::{
 };
 use crate::control::server::pgwire::ddl::grant::permission::{grant_permission, revoke_permission};
 use crate::control::server::pgwire::ddl::grant::role::{grant_role, revoke_role};
+use crate::control::server::pgwire::ddl::inspect::show_permissions;
 use crate::control::server::pgwire::ddl::materialized_view::create_materialized_view;
 use crate::control::server::pgwire::ddl::ownership::alter_collection_owner;
 use crate::control::server::pgwire::ddl::retention_policy::{
     alter_retention_policy, create_retention_policy,
 };
 use crate::control::server::pgwire::ddl::rls::{CreateRlsPolicyRequest, create_rls_policy};
+use crate::control::server::pgwire::ddl::role::alter_role_typed;
 use crate::control::server::pgwire::ddl::schedule::{
     CreateScheduleRequest, alter_schedule, create_schedule,
 };
@@ -493,11 +495,9 @@ pub(super) async fn try_dispatch(
             *tenant_id,
         )),
 
-        NodedbStatement::AlterUser {
-            username,
-            action,
-            value,
-        } => Some(alter_user(state, identity, username, action, value)),
+        NodedbStatement::AlterUser { username, op } => {
+            Some(alter_user(state, identity, username, op))
+        }
 
         // ── Batch 5: T3-14 typed dispatch ────────────────────────
         NodedbStatement::CreateRlsPolicy {
@@ -631,6 +631,20 @@ pub(super) async fn try_dispatch(
 
         NodedbStatement::AlterCollection { name, operation } => {
             Some(dispatch_alter_collection(state, identity, name, operation).await)
+        }
+
+        NodedbStatement::ShowPermissions {
+            on_collection,
+            for_grantee,
+        } => Some(show_permissions(
+            state,
+            identity,
+            on_collection.as_deref(),
+            for_grantee.as_deref(),
+        )),
+
+        NodedbStatement::AlterRole { name, sub_op } => {
+            Some(alter_role_typed(state, identity, name, sub_op))
         }
 
         // All other variants fall through to legacy dispatch.

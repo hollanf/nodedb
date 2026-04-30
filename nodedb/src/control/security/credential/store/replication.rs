@@ -75,6 +75,8 @@ impl CredentialStore {
             created_at: now,
             updated_at: now,
             password_expires_at: self.compute_expiry(),
+            must_change_password: false,
+            password_changed_at: now,
         })
     }
 
@@ -108,11 +110,63 @@ impl CredentialStore {
             stored.scram_salt = salt;
             stored.password_hash = hash_password_argon2(pw)?;
             stored.password_expires_at = self.compute_expiry();
+            stored.must_change_password = false;
+            stored.password_changed_at = now_secs();
         }
         if let Some(roles) = new_roles {
             stored.is_superuser = roles.contains(&Role::Superuser);
             stored.roles = roles.iter().map(|r| r.to_string()).collect();
         }
+        stored.updated_at = now_secs();
+        Ok(stored)
+    }
+
+    /// Build an updated `StoredUser` that sets `must_change_password`.
+    /// Used by `ALTER USER <name> MUST CHANGE PASSWORD`.
+    pub fn prepare_set_must_change_password(
+        &self,
+        username: &str,
+        required: bool,
+    ) -> crate::Result<StoredUser> {
+        let users = read_lock(&self.users)?;
+        let existing = users
+            .get(username)
+            .ok_or_else(|| crate::Error::BadRequest {
+                detail: format!("user '{username}' not found"),
+            })?;
+        if !existing.is_active {
+            return Err(crate::Error::BadRequest {
+                detail: format!("user '{username}' is inactive"),
+            });
+        }
+        let mut stored = existing.to_stored();
+        drop(users);
+        stored.must_change_password = required;
+        stored.updated_at = now_secs();
+        Ok(stored)
+    }
+
+    /// Build an updated `StoredUser` that sets `password_expires_at`.
+    /// Pass `expires_at = 0` for "NEVER EXPIRES".
+    pub fn prepare_set_password_expires_at(
+        &self,
+        username: &str,
+        expires_at: u64,
+    ) -> crate::Result<StoredUser> {
+        let users = read_lock(&self.users)?;
+        let existing = users
+            .get(username)
+            .ok_or_else(|| crate::Error::BadRequest {
+                detail: format!("user '{username}' not found"),
+            })?;
+        if !existing.is_active {
+            return Err(crate::Error::BadRequest {
+                detail: format!("user '{username}' is inactive"),
+            });
+        }
+        let mut stored = existing.to_stored();
+        drop(users);
+        stored.password_expires_at = expires_at;
         stored.updated_at = now_secs();
         Ok(stored)
     }

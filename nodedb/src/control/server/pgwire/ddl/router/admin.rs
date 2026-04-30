@@ -433,11 +433,6 @@ pub(super) async fn dispatch(
             state, identity, parts,
         ));
     }
-    if upper.starts_with("SHOW PERMISSIONS") {
-        return Some(super::super::inspect::show_permissions(
-            state, identity, parts,
-        ));
-    }
     if upper.starts_with("SHOW GRANTS") {
         return Some(super::super::inspect::show_grants(state, identity, parts));
     }

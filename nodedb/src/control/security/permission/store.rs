@@ -10,6 +10,7 @@ use std::sync::RwLock;
 use crate::control::security::catalog::{StoredPermission, SystemCatalog};
 use crate::control::security::identity::Permission;
 use crate::control::security::time::now_secs;
+use crate::types::TenantId;
 
 use super::types::{Grant, format_permission, owner_key, parse_permission};
 
@@ -232,6 +233,29 @@ impl PermissionStore {
             owners.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
+    }
+
+    /// List all grants scoped to the given tenant ID prefix.
+    ///
+    /// Returns every grant whose internal target starts with
+    /// `"collection:{tenant_id}:"`, plus any function-scoped grants
+    /// belonging to the same tenant (`"func:{tenant_id}:"`).
+    pub fn all_grants(&self, tenant_id: TenantId) -> Vec<Grant> {
+        let tid = tenant_id.as_u32();
+        let col_prefix = format!("collection:{tid}:");
+        let func_prefix = format!("function:{tid}:");
+        let grants = match self.grants.read() {
+            Ok(g) => g,
+            Err(p) => {
+                tracing::error!("permission grants lock poisoned — recovering data");
+                p.into_inner()
+            }
+        };
+        grants
+            .iter()
+            .filter(|g| g.target.starts_with(&col_prefix) || g.target.starts_with(&func_prefix))
+            .cloned()
+            .collect()
     }
 
     /// List all grants on a target.

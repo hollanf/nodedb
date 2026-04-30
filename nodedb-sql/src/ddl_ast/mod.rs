@@ -17,4 +17,6 @@ pub mod statement;
 pub use collection_type::build_collection_type;
 pub use graph_parse::{FusionParams, parse_search_using_fusion};
 pub use parse::parse;
-pub use statement::{AlterCollectionOp, GraphDirection, GraphProperties, NodedbStatement};
+pub use statement::{
+    AlterCollectionOp, AlterRoleOp, AlterUserOp, GraphDirection, GraphProperties, NodedbStatement,
+};

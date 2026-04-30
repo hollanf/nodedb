@@ -26,10 +26,14 @@ pub struct UserRecord {
     pub updated_at: u64,
     /// Unix timestamp (seconds) when the password expires. 0 = no expiry.
     pub password_expires_at: u64,
+    /// If true, the user must change their password before logging in.
+    pub must_change_password: bool,
+    /// Unix timestamp (seconds) when the password was last changed.
+    pub password_changed_at: u64,
 }
 
 impl UserRecord {
-    pub(super) fn to_stored(&self) -> StoredUser {
+    pub(in crate::control::security::credential) fn to_stored(&self) -> StoredUser {
         StoredUser {
             user_id: self.user_id,
             username: self.username.clone(),
@@ -44,15 +48,24 @@ impl UserRecord {
             created_at: self.created_at,
             updated_at: self.updated_at,
             password_expires_at: self.password_expires_at,
+            must_change_password: self.must_change_password,
+            password_changed_at: self.password_changed_at,
         }
     }
 
-    pub(super) fn from_stored(s: StoredUser) -> Self {
+    pub(in crate::control::security::credential) fn from_stored(s: StoredUser) -> Self {
         let roles: Vec<Role> = s
             .roles
             .iter()
             .map(|r| r.parse().unwrap_or(Role::ReadOnly))
             .collect();
+        // password_changed_at defaults to created_at for pre-T4-C records
+        // (where the field was absent and zerompk returns 0).
+        let password_changed_at = if s.password_changed_at > 0 {
+            s.password_changed_at
+        } else {
+            s.created_at
+        };
         Self {
             user_id: s.user_id,
             username: s.username,
@@ -66,6 +79,8 @@ impl UserRecord {
             created_at: s.created_at,
             updated_at: s.updated_at,
             password_expires_at: s.password_expires_at,
+            must_change_password: s.must_change_password,
+            password_changed_at,
             roles,
         }
     }

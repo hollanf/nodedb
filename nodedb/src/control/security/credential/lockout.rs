@@ -16,12 +16,24 @@ pub(super) struct LoginAttemptTracker {
 }
 
 impl CredentialStore {
-    /// Configure lockout policy and password expiry. Called after construction.
+    /// Configure lockout policy, password expiry and grace period.
+    /// Called after construction from server config.
     pub fn set_lockout_policy(
         &mut self,
         max_failed: u32,
         lockout_secs: u64,
         password_expiry_days: u32,
+    ) {
+        self.set_lockout_policy_with_grace(max_failed, lockout_secs, password_expiry_days, 0);
+    }
+
+    /// Configure lockout policy with all expiry knobs.
+    pub fn set_lockout_policy_with_grace(
+        &mut self,
+        max_failed: u32,
+        lockout_secs: u64,
+        password_expiry_days: u32,
+        password_expiry_grace_days: u32,
     ) {
         self.max_failed_logins = max_failed;
         self.lockout_duration = std::time::Duration::from_secs(lockout_secs);
@@ -30,6 +42,7 @@ impl CredentialStore {
         } else {
             0
         };
+        self.password_expiry_grace_days = password_expiry_grace_days;
     }
 
     /// Check if a user is currently locked out.

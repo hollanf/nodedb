@@ -201,55 +201,115 @@ pub fn show_grants(
     ))])
 }
 
-/// SHOW PERMISSIONS ON <collection>
+/// `SHOW PERMISSIONS [ON <collection>] [FOR <user|role>]`
 ///
-/// Shows all grants and the owner for a specific collection.
+/// - `SHOW PERMISSIONS` — all grants visible to the caller
+/// - `SHOW PERMISSIONS ON <collection>` — grants on a specific collection plus its owner
+/// - `SHOW PERMISSIONS FOR <grantee>` — direct grants to a specific user or role
+/// - `SHOW PERMISSIONS ON <collection> FOR <grantee>` — intersection of the above
+///
+/// For `FOR <role>` only direct grants are returned; inheritance is not walked
+/// (`EXPLAIN PERMISSION` owns the resolved-privilege view).
 pub fn show_permissions(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    on_collection: Option<&str>,
+    for_grantee: Option<&str>,
 ) -> PgWireResult<Vec<Response>> {
-    // SHOW PERMISSIONS ON <collection>
-    if parts.len() < 4
-        || !parts[1].eq_ignore_ascii_case("PERMISSIONS")
-        || !parts[2].eq_ignore_ascii_case("ON")
+    // Non-admins may only view their own grants.
+    if let Some(grantee) = for_grantee
+        && grantee != identity.username
+        && !identity.is_superuser
+        && !identity.has_role(&crate::control::security::identity::Role::TenantAdmin)
     {
         return Err(sqlstate_error(
-            "42601",
-            "syntax: SHOW PERMISSIONS ON <collection>",
+            "42501",
+            "permission denied: can only view your own permissions, or be superuser/tenant_admin",
         ));
     }
-
-    let collection = parts[3];
-    let target = format!("collection:{}:{collection}", identity.tenant_id.as_u32());
 
     let schema = Arc::new(vec![
         text_field("grantee"),
         text_field("permission"),
+        text_field("target"),
         text_field("type"),
     ]);
 
     let mut rows = Vec::new();
     let mut encoder = DataRowEncoder::new(schema.clone());
 
-    // Show owner.
-    if let Some(owner) = state
-        .permissions
-        .get_owner("collection", identity.tenant_id, collection)
-    {
-        encoder.encode_field(&owner)?;
-        encoder.encode_field(&"ALL (owner)")?;
-        encoder.encode_field(&"ownership")?;
-        rows.push(Ok(encoder.take_row()));
-    }
+    if let Some(collection) = on_collection {
+        let target = format!("collection:{}:{collection}", identity.tenant_id.as_u32());
 
-    // Show explicit grants.
-    let grants = state.permissions.grants_on(&target);
-    for grant in &grants {
-        encoder.encode_field(&grant.grantee)?;
-        encoder.encode_field(&format!("{:?}", grant.permission))?;
-        encoder.encode_field(&"grant")?;
-        rows.push(Ok(encoder.take_row()));
+        // Show owner row (only when collection is specified).
+        if for_grantee.is_none()
+            && let Some(owner) =
+                state
+                    .permissions
+                    .get_owner("collection", identity.tenant_id, collection)
+        {
+            encoder.encode_field(&owner)?;
+            encoder.encode_field(&"ALL (owner)")?;
+            encoder.encode_field(&collection)?;
+            encoder.encode_field(&"ownership")?;
+            rows.push(Ok(encoder.take_row()));
+        }
+
+        // Show explicit grants on this collection.
+        let grants = state.permissions.grants_on(&target);
+        for grant in &grants {
+            if let Some(g) = for_grantee
+                && !grant.grantee.eq_ignore_ascii_case(g)
+            {
+                continue;
+            }
+            encoder.encode_field(&grant.grantee)?;
+            encoder.encode_field(&format!("{:?}", grant.permission))?;
+            encoder.encode_field(&collection)?;
+            encoder.encode_field(&"grant")?;
+            rows.push(Ok(encoder.take_row()));
+        }
+    } else if let Some(grantee) = for_grantee {
+        // All grants for a specific grantee (direct grants only, no inheritance walk).
+        let grants = state.permissions.grants_for(grantee);
+        for grant in &grants {
+            // Extract a human-readable target from the internal target key
+            // (e.g. "collection:1:users" → "users").
+            let display_target = grant
+                .target
+                .rsplit(':')
+                .next()
+                .unwrap_or(&grant.target)
+                .to_string();
+            encoder.encode_field(&grant.grantee)?;
+            encoder.encode_field(&format!("{:?}", grant.permission))?;
+            encoder.encode_field(&display_target)?;
+            encoder.encode_field(&"grant")?;
+            rows.push(Ok(encoder.take_row()));
+        }
+    } else {
+        // SHOW PERMISSIONS with no filter — show all grants for the current tenant.
+        // Non-admins see only their own grants.
+        let all_grants = if identity.is_superuser
+            || identity.has_role(&crate::control::security::identity::Role::TenantAdmin)
+        {
+            state.permissions.all_grants(identity.tenant_id)
+        } else {
+            state.permissions.grants_for(&identity.username)
+        };
+        for grant in &all_grants {
+            let display_target = grant
+                .target
+                .rsplit(':')
+                .next()
+                .unwrap_or(&grant.target)
+                .to_string();
+            encoder.encode_field(&grant.grantee)?;
+            encoder.encode_field(&format!("{:?}", grant.permission))?;
+            encoder.encode_field(&display_target)?;
+            encoder.encode_field(&"grant")?;
+            rows.push(Ok(encoder.take_row()));
+        }
     }
 
     Ok(vec![Response::Query(QueryResponse::new(

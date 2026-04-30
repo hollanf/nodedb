@@ -202,6 +202,7 @@ async fn execute_planned(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeRe
             watermark_lsn: last_lsn,
             error: None,
             auth: None,
+            warnings: Vec::new(),
         }
     }
 }
@@ -334,6 +335,7 @@ fn handle_show_sql(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeResponse
             watermark_lsn: 0,
             error: None,
             auth: None,
+            warnings: Vec::new(),
         };
     }
 
@@ -350,6 +352,7 @@ fn handle_show_sql(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeResponse
         watermark_lsn: 0,
         error: None,
         auth: None,
+        warnings: Vec::new(),
     }
 }
 
@@ -374,6 +377,7 @@ async fn handle_explain(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeRes
             watermark_lsn: 0,
             error: None,
             auth: None,
+            warnings: Vec::new(),
         };
     }
 
@@ -406,6 +410,7 @@ async fn handle_explain(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeRes
                 watermark_lsn: 0,
                 error: None,
                 auth: None,
+                warnings: Vec::new(),
             }
         }
         Err(e) => error_to_native(seq, &e),

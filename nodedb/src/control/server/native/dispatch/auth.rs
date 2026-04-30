@@ -6,12 +6,15 @@ use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
 
 /// Authenticate a native protocol client.
+///
+/// Returns `(identity, warning)` — warning is non-empty when the account
+/// is in a password grace period or `must_change_password` is set.
 pub(crate) fn handle_auth(
     state: &SharedState,
     auth_mode: &crate::config::auth::AuthMode,
     auth: &ProtoAuth,
     peer_addr: &str,
-) -> crate::Result<AuthenticatedIdentity> {
+) -> crate::Result<(AuthenticatedIdentity, Option<String>)> {
     let body = match auth {
         ProtoAuth::Trust { username } => {
             serde_json::json!({ "method": "trust", "username": username })

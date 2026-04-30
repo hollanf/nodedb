@@ -117,13 +117,15 @@ pub fn trust_identity(state: &SharedState, username: &str) -> AuthenticatedIdent
 
 /// Authenticate a native protocol connection from the first JSON frame.
 ///
-/// Returns the authenticated identity on success.
+/// Returns `(identity, warning)` on success. The `warning` string is non-empty
+/// when the account is in password grace period or `must_change_password` is set
+/// — the caller should forward it to the client as a notice/warning.
 pub fn authenticate(
     state: &SharedState,
     auth_mode: &AuthMode,
     body: &serde_json::Value,
     peer_addr: &str,
-) -> crate::Result<AuthenticatedIdentity> {
+) -> crate::Result<(AuthenticatedIdentity, Option<String>)> {
     let method = body["method"].as_str().unwrap_or("trust");
 
     match method {
@@ -152,7 +154,7 @@ pub fn authenticate(
             );
             state.auth_metrics.record_auth_success("trust");
 
-            Ok(identity)
+            Ok((identity, None))
         }
 
         "password" => {
@@ -170,7 +172,10 @@ pub fn authenticate(
             // Check lockout.
             state.credentials.check_lockout(username)?;
 
-            if !state.credentials.verify_password(username, password) {
+            let (verified, pw_warning) = state
+                .credentials
+                .verify_password_with_status(username, password);
+            if !verified {
                 state.credentials.record_login_failure(username);
                 state.audit_record(
                     AuditEvent::AuthFailure,
@@ -202,7 +207,11 @@ pub fn authenticate(
             );
             state.auth_metrics.record_auth_success("password");
 
-            Ok(identity)
+            if let Some(ref w) = pw_warning {
+                tracing::warn!(username, warning = %w, "password warning at native password auth");
+            }
+
+            Ok((identity, pw_warning))
         }
 
         "api_key" => {
@@ -212,19 +221,21 @@ pub fn authenticate(
                     detail: "missing 'token' for api_key auth".into(),
                 })?;
 
-            verify_api_key_identity(state, token, peer_addr, "native").ok_or_else(|| {
-                state.audit_record(
-                    AuditEvent::AuthFailure,
-                    None,
-                    peer_addr,
-                    "native api_key auth failed: invalid token or owner not found",
-                );
-                state.auth_metrics.record_auth_failure("api_key");
-                crate::Error::RejectedAuthz {
-                    tenant_id: TenantId::new(0),
-                    resource: "invalid API key".into(),
-                }
-            })
+            verify_api_key_identity(state, token, peer_addr, "native")
+                .ok_or_else(|| {
+                    state.audit_record(
+                        AuditEvent::AuthFailure,
+                        None,
+                        peer_addr,
+                        "native api_key auth failed: invalid token or owner not found",
+                    );
+                    state.auth_metrics.record_auth_failure("api_key");
+                    crate::Error::RejectedAuthz {
+                        tenant_id: TenantId::new(0),
+                        resource: "invalid API key".into(),
+                    }
+                })
+                .map(|id| (id, None))
         }
 
         other => Err(crate::Error::BadRequest {

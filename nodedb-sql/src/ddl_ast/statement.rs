@@ -441,12 +441,21 @@ pub enum NodedbStatement {
     },
     AlterUser {
         username: String,
-        /// "PASSWORD" or "ROLE"
-        action: String,
-        /// New password (quoted) or role name.
-        value: String,
+        /// Typed sub-operation — one variant per `ALTER USER` form.
+        op: AlterUserOp,
     },
     ShowUsers,
+    /// `ALTER ROLE <name> GRANT/REVOKE/SET` — typed sub-operations.
+    ///
+    /// Folds three ALTER ROLE forms into one variant:
+    /// - `ALTER ROLE <name> GRANT <perm> ON [FUNCTION] <target>`
+    /// - `ALTER ROLE <name> REVOKE <perm> ON [FUNCTION] <target>`
+    /// - `ALTER ROLE <name> SET INHERIT <parent>`
+    AlterRole {
+        /// Role name (original case preserved).
+        name: String,
+        sub_op: AlterRoleOp,
+    },
     GrantRole {
         /// Role name token from the SQL.
         role: String,
@@ -480,7 +489,10 @@ pub enum NodedbStatement {
         grantee: String,
     },
     ShowPermissions {
-        collection: Option<String>,
+        /// Collection name from `ON <collection>` clause, or `None` for all.
+        on_collection: Option<String>,
+        /// Grantee name from `FOR <user|role>` clause, or `None` for all.
+        for_grantee: Option<String>,
     },
     ShowGrants {
         username: Option<String>,
@@ -619,6 +631,63 @@ pub enum AlterCollectionOp {
     /// `ADD COLUMN ... AS MATERIALIZED_SUM ...` — the full raw SQL is
     /// forwarded to `add_materialized_sum` which has its own deep parser.
     AddMaterializedSum { raw_sql: String },
+}
+
+/// Typed sub-operation for `ALTER USER <name> ...`.
+///
+/// Five forms are supported:
+/// - `SET PASSWORD '<pw>'` — change password
+/// - `SET ROLE <role>` — change role
+/// - `MUST CHANGE PASSWORD` — require password change on next login
+/// - `PASSWORD NEVER EXPIRES` — clear expiry date
+/// - `PASSWORD EXPIRES '<iso8601>'` or `PASSWORD EXPIRES IN <N> DAYS` — set expiry
+#[derive(Debug, Clone, PartialEq)]
+pub enum AlterUserOp {
+    /// `SET PASSWORD '<password>'`
+    SetPassword { password: String },
+    /// `SET ROLE <role>`
+    SetRole { role: String },
+    /// `MUST CHANGE PASSWORD`
+    MustChangePassword,
+    /// `PASSWORD NEVER EXPIRES`
+    PasswordNeverExpires,
+    /// `PASSWORD EXPIRES '<iso8601_datetime>'`
+    PasswordExpiresAt { iso8601: String },
+    /// `PASSWORD EXPIRES IN <n> DAYS`
+    PasswordExpiresInDays { days: u32 },
+}
+
+/// Typed sub-operation for `ALTER ROLE <name> ...`.
+///
+/// Three forms are supported:
+/// - `GRANT <perm> ON [FUNCTION] <target>` — grant a permission to the role
+/// - `REVOKE <perm> ON [FUNCTION] <target>` — revoke a permission from the role
+/// - `SET INHERIT <parent>` — update role inheritance (original ALTER ROLE form)
+#[derive(Debug, Clone, PartialEq)]
+pub enum AlterRoleOp {
+    /// `GRANT <perm> ON [FUNCTION] <target>`
+    Grant {
+        /// Permission token, e.g. "READ", "WRITE", "ALL".
+        permission: String,
+        /// "COLLECTION" or "FUNCTION".
+        target_type: String,
+        /// Collection or function name.
+        target_name: String,
+    },
+    /// `REVOKE <perm> ON [FUNCTION] <target>`
+    Revoke {
+        /// Permission token, e.g. "READ", "WRITE", "ALL".
+        permission: String,
+        /// "COLLECTION" or "FUNCTION".
+        target_type: String,
+        /// Collection or function name.
+        target_name: String,
+    },
+    /// `SET INHERIT <parent>`
+    SetInherit {
+        /// Parent role name.
+        parent: String,
+    },
 }
 
 /// Traversal direction for graph DSL variants. Mirrors the engine's

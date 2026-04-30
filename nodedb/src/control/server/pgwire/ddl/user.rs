@@ -1,6 +1,8 @@
 use pgwire::api::results::{Response, Tag};
 use pgwire::error::PgWireResult;
 
+use nodedb_sql::ddl_ast::AlterUserOp;
+
 use crate::control::security::audit::AuditEvent;
 use crate::control::security::identity::{AuthenticatedIdentity, Role};
 use crate::control::state::SharedState;
@@ -102,63 +104,43 @@ pub fn create_user(
     Ok(vec![Response::Execution(Tag::new("CREATE USER"))])
 }
 
-/// ALTER USER <name> SET PASSWORD '<password>'
-/// ALTER USER <name> SET ROLE <role>
+/// ALTER USER <name> ... — typed dispatch for all AlterUserOp forms.
 pub fn alter_user(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
     username: &str,
-    action: &str,
-    value: &str,
+    op: &AlterUserOp,
 ) -> PgWireResult<Vec<Response>> {
     if username.is_empty() {
         return Err(sqlstate_error(
             "42601",
-            "syntax: ALTER USER <name> SET PASSWORD '<password>' | ALTER USER <name> SET ROLE <role>",
+            "syntax: ALTER USER <name> SET PASSWORD '<password>' | SET ROLE <role> | MUST CHANGE PASSWORD | PASSWORD NEVER EXPIRES | PASSWORD EXPIRES ...",
         ));
     }
 
     // Users can change their own password; admin required for anything else.
     let is_self = username == identity.username;
-    if !is_self && !identity.is_superuser && !identity.has_role(&Role::TenantAdmin) {
-        return Err(sqlstate_error(
-            "42501",
-            "permission denied: can only alter your own user, or be superuser/tenant_admin",
-        ));
-    }
+    let can_alter = is_self || identity.is_superuser || identity.has_role(&Role::TenantAdmin);
 
-    match action.to_uppercase().as_str() {
-        "PASSWORD" => {
-            let password = if value.is_empty() {
+    match op {
+        AlterUserOp::SetPassword { password } => {
+            if !can_alter {
+                return Err(sqlstate_error(
+                    "42501",
+                    "permission denied: can only alter your own user, or be superuser/tenant_admin",
+                ));
+            }
+            if password.is_empty() {
                 return Err(sqlstate_error(
                     "42601",
-                    "password must be a single-quoted string",
+                    "password must be a non-empty single-quoted string",
                 ));
-            } else {
-                value
-            };
-
-            // Build the updated `StoredUser` locally (re-hashes
-            // with a fresh salt on the leader — followers can't
-            // reproduce the random salt) and replicate through
-            // raft. Applier on every node writes redb + upserts
-            // the in-memory cache.
+            }
             let stored = state
                 .credentials
-                .prepare_user_update(username, Some(password), None)
+                .prepare_user_update(username, Some(password.as_str()), None)
                 .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
-            let entry =
-                crate::control::catalog_entry::CatalogEntry::PutUser(Box::new(stored.clone()));
-            let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
-                .map_err(|e| sqlstate_error("XX000", &format!("metadata propose: {e}")))?;
-            if log_index == 0 {
-                if let Some(catalog) = state.credentials.catalog() {
-                    catalog
-                        .put_user(&stored)
-                        .map_err(|e| sqlstate_error("XX000", &format!("catalog write: {e}")))?;
-                }
-                state.credentials.install_replicated_user(&stored);
-            }
+            propose_and_install(state, stored)?;
 
             state.audit_record(
                 AuditEvent::PrivilegeChange,
@@ -166,52 +148,208 @@ pub fn alter_user(
                 &identity.username,
                 &format!("changed password for user '{username}'"),
             );
-
             Ok(vec![Response::Execution(Tag::new("ALTER USER"))])
         }
-        "ROLE" => {
+
+        AlterUserOp::SetRole { role } => {
             if is_self && !identity.is_superuser {
                 return Err(sqlstate_error("42501", "cannot change your own role"));
             }
             require_admin(identity, "change roles")?;
-
-            if value.is_empty() {
+            if role.is_empty() {
                 return Err(sqlstate_error("42601", "expected role name after SET ROLE"));
             }
-
-            let role: Role = parse_role(value);
-
+            let parsed_role: Role = parse_role(role);
             let stored = state
                 .credentials
-                .prepare_user_update(username, None, Some(vec![role.clone()]))
+                .prepare_user_update(username, None, Some(vec![parsed_role.clone()]))
                 .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
-            let entry =
-                crate::control::catalog_entry::CatalogEntry::PutUser(Box::new(stored.clone()));
-            let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
-                .map_err(|e| sqlstate_error("XX000", &format!("metadata propose: {e}")))?;
-            if log_index == 0 {
-                if let Some(catalog) = state.credentials.catalog() {
-                    catalog
-                        .put_user(&stored)
-                        .map_err(|e| sqlstate_error("XX000", &format!("catalog write: {e}")))?;
-                }
-                state.credentials.install_replicated_user(&stored);
-            }
+            propose_and_install(state, stored)?;
 
             state.audit_record(
                 AuditEvent::PrivilegeChange,
                 Some(identity.tenant_id),
                 &identity.username,
-                &format!("set role '{role}' for user '{username}'"),
+                &format!("set role '{parsed_role}' for user '{username}'"),
             );
-
             Ok(vec![Response::Execution(Tag::new("ALTER USER"))])
         }
-        other => Err(sqlstate_error(
-            "42601",
-            &format!("unknown ALTER USER property: {other}"),
-        )),
+
+        AlterUserOp::MustChangePassword => {
+            require_admin(identity, "set must_change_password")?;
+            let stored = state
+                .credentials
+                .prepare_set_must_change_password(username, true)
+                .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+            propose_and_install(state, stored)?;
+
+            state.audit_record(
+                AuditEvent::PrivilegeChange,
+                Some(identity.tenant_id),
+                &identity.username,
+                &format!("set must_change_password for user '{username}'"),
+            );
+            Ok(vec![Response::Execution(Tag::new("ALTER USER"))])
+        }
+
+        AlterUserOp::PasswordNeverExpires => {
+            require_admin(identity, "set password expiry")?;
+            let stored = state
+                .credentials
+                .prepare_set_password_expires_at(username, 0)
+                .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+            propose_and_install(state, stored)?;
+
+            state.audit_record(
+                AuditEvent::PrivilegeChange,
+                Some(identity.tenant_id),
+                &identity.username,
+                &format!("set PASSWORD NEVER EXPIRES for user '{username}'"),
+            );
+            Ok(vec![Response::Execution(Tag::new("ALTER USER"))])
+        }
+
+        AlterUserOp::PasswordExpiresAt { iso8601 } => {
+            require_admin(identity, "set password expiry")?;
+            let expires_at = parse_iso8601_to_unix(iso8601).map_err(|e| {
+                sqlstate_error(
+                    "22007",
+                    &format!("invalid ISO-8601 datetime '{iso8601}': {e}"),
+                )
+            })?;
+            let stored = state
+                .credentials
+                .prepare_set_password_expires_at(username, expires_at)
+                .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+            propose_and_install(state, stored)?;
+
+            state.audit_record(
+                AuditEvent::PrivilegeChange,
+                Some(identity.tenant_id),
+                &identity.username,
+                &format!("set PASSWORD EXPIRES '{iso8601}' for user '{username}'"),
+            );
+            Ok(vec![Response::Execution(Tag::new("ALTER USER"))])
+        }
+
+        AlterUserOp::PasswordExpiresInDays { days } => {
+            require_admin(identity, "set password expiry")?;
+            if *days == 0 {
+                return Err(sqlstate_error(
+                    "22003",
+                    "PASSWORD EXPIRES IN requires a positive day count",
+                ));
+            }
+            let expires_at = crate::control::security::time::now_secs() + (*days as u64) * 86400;
+            let stored = state
+                .credentials
+                .prepare_set_password_expires_at(username, expires_at)
+                .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
+            propose_and_install(state, stored)?;
+
+            state.audit_record(
+                AuditEvent::PrivilegeChange,
+                Some(identity.tenant_id),
+                &identity.username,
+                &format!("set PASSWORD EXPIRES IN {days} DAYS for user '{username}'"),
+            );
+            Ok(vec![Response::Execution(Tag::new("ALTER USER"))])
+        }
     }
+}
+
+/// Propose a `StoredUser` via Raft and install it locally on single-node.
+fn propose_and_install(
+    state: &SharedState,
+    stored: crate::control::security::catalog::StoredUser,
+) -> PgWireResult<()> {
+    let entry = crate::control::catalog_entry::CatalogEntry::PutUser(Box::new(stored.clone()));
+    let log_index = crate::control::metadata_proposer::propose_catalog_entry(state, &entry)
+        .map_err(|e| sqlstate_error("XX000", &format!("metadata propose: {e}")))?;
+    if log_index == 0 {
+        if let Some(catalog) = state.credentials.catalog() {
+            catalog
+                .put_user(&stored)
+                .map_err(|e| sqlstate_error("XX000", &format!("catalog write: {e}")))?;
+        }
+        state.credentials.install_replicated_user(&stored);
+    }
+    Ok(())
+}
+
+/// Parse an ISO-8601 datetime string to a Unix timestamp (seconds).
+///
+/// Accepts formats like:
+/// - `2026-12-31T00:00:00Z`
+/// - `2026-12-31T00:00:00+00:00`
+/// - `2026-12-31` (interpreted as midnight UTC)
+fn parse_iso8601_to_unix(s: &str) -> Result<u64, String> {
+    // Parse as RFC 3339 or ISO 8601 date. Manually handle common forms
+    // without pulling in an external datetime crate.
+    let s = s.trim();
+
+    // Date-only: YYYY-MM-DD
+    if s.len() == 10 && s.chars().nth(4) == Some('-') && s.chars().nth(7) == Some('-') {
+        return parse_date_to_unix(s);
+    }
+
+    // Full datetime: YYYY-MM-DDTHH:MM:SSZ or +offset
+    if s.len() >= 19 {
+        let date_part = &s[..10];
+        let ts_secs = parse_date_to_unix(date_part)?;
+        // Parse time part: THH:MM:SS
+        let time_part = &s[11..];
+        let clean = time_part
+            .trim_end_matches('Z')
+            .trim_end_matches(|c: char| c == '+' || c == '-' || c.is_ascii_digit() || c == ':');
+        let hms: Vec<&str> = clean.split(':').collect();
+        let h: u64 = hms.first().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+        let m: u64 = hms.get(1).and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+        let sec: u64 = hms
+            .get(2)
+            .and_then(|s| {
+                let raw = s.trim().trim_end_matches(|c: char| !c.is_ascii_digit());
+                raw.parse().ok()
+            })
+            .unwrap_or(0);
+        return Ok(ts_secs + h * 3600 + m * 60 + sec);
+    }
+
+    Err(format!("unrecognised datetime format: '{s}'"))
+}
+
+/// Parse YYYY-MM-DD to midnight UTC Unix timestamp.
+fn parse_date_to_unix(s: &str) -> Result<u64, String> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 3 {
+        return Err(format!("expected YYYY-MM-DD, got '{s}'"));
+    }
+    let y: i64 = parts[0].parse().map_err(|_| format!("bad year in '{s}'"))?;
+    let mo: u64 = parts[1]
+        .parse()
+        .map_err(|_| format!("bad month in '{s}'"))?;
+    let d: u64 = parts[2].parse().map_err(|_| format!("bad day in '{s}'"))?;
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
+        return Err(format!("date out of range in '{s}'"));
+    }
+    // Simplified Julian Day → Unix: good for dates after 1970-01-01.
+    // Uses the civil calendar formula.
+    let days = days_since_epoch(y, mo, d)?;
+    Ok(days * 86400)
+}
+
+fn days_since_epoch(y: i64, mo: u64, d: u64) -> Result<u64, String> {
+    // JDN formula for Gregorian calendar
+    let a = (14_i64 - mo as i64) / 12;
+    let yr = y + 4800 - a;
+    let m = mo as i64 + 12 * a - 3;
+    let jdn = d as i64 + (153 * m + 2) / 5 + 365 * yr + yr / 4 - yr / 100 + yr / 400 - 32045;
+    // Unix epoch = 1970-01-01 = JDN 2440588
+    let unix_days = jdn - 2_440_588;
+    if unix_days < 0 {
+        return Err(format!("date before Unix epoch: {y}-{mo:02}-{d:02}"));
+    }
+    Ok(unix_days as u64)
 }
 
 /// DROP USER <name>

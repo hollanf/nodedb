@@ -25,6 +25,14 @@ pub struct StoredUser {
     /// Unix timestamp (seconds) when the password expires. 0 = no expiry.
     #[msgpack(default)]
     pub password_expires_at: u64,
+    /// If true, the user must change their password before logging in
+    /// (or during grace period). Cleared on every successful password write.
+    #[msgpack(default)]
+    pub must_change_password: bool,
+    /// Unix timestamp (seconds) when the password was last changed.
+    /// Defaults to `created_at` for users loaded from pre-T4-C records.
+    #[msgpack(default)]
+    pub password_changed_at: u64,
 }
 
 /// Serializable API key record for redb storage.

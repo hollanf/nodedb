@@ -967,6 +967,12 @@ pub struct NativeResponse {
     /// Auth response (if op == Auth and status == Ok).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthResponse>,
+    /// Advisory warnings (e.g. password expiry grace period, must_change_password).
+    /// Empty in the common case; `#[serde(default)]` and `#[msgpack(default)]`
+    /// keep this additive and backward-compatible with older clients.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[msgpack(default)]
+    pub warnings: Vec<String>,
 }
 
 /// Error details in a response.
@@ -992,6 +998,7 @@ impl NativeResponse {
             watermark_lsn: 0,
             error: None,
             auth: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -1006,6 +1013,7 @@ impl NativeResponse {
             watermark_lsn: lsn,
             error: None,
             auth: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -1023,6 +1031,7 @@ impl NativeResponse {
                 message: message.into(),
             }),
             auth: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -1040,6 +1049,7 @@ impl NativeResponse {
                 username,
                 tenant_id,
             }),
+            warnings: Vec::new(),
         }
     }
 
@@ -1054,6 +1064,7 @@ impl NativeResponse {
             watermark_lsn: 0,
             error: None,
             auth: None,
+            warnings: Vec::new(),
         }
     }
 }
