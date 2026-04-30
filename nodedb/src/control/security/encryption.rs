@@ -19,6 +19,9 @@ use std::path::{Path, PathBuf};
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use tracing::info;
+use zeroize::Zeroizing;
+
+use super::keystore::key_file_security::check_key_file;
 
 /// Volume encryption configuration.
 #[derive(Debug, Clone)]
@@ -137,6 +140,8 @@ impl VolumeEncryption {
                     detail: "no master key path configured".into(),
                 })?;
 
+        check_key_file(path)?;
+
         let key_bytes = std::fs::read(path).map_err(|e| crate::Error::Encryption {
             detail: format!("failed to read master key from {}: {e}", path.display()),
         })?;
@@ -147,9 +152,9 @@ impl VolumeEncryption {
             });
         }
 
-        let mut key = [0u8; 32];
+        let mut key = Zeroizing::new([0u8; 32]);
         key.copy_from_slice(&key_bytes[..32]);
-        self.master_key = Some(key);
+        self.master_key = Some(*key);
 
         info!(path = %path.display(), "master encryption key loaded");
         Ok(())
@@ -266,6 +271,8 @@ impl VolumeEncryption {
     /// Each file's DEK is decrypted with the old key and re-encrypted
     /// with the new key, then the header is updated in place.
     pub fn rotate_master_key(&mut self, new_key_path: &Path) -> crate::Result<()> {
+        check_key_file(new_key_path)?;
+
         let new_bytes = std::fs::read(new_key_path).map_err(|e| crate::Error::Encryption {
             detail: format!("failed to read new key: {e}"),
         })?;
@@ -275,11 +282,11 @@ impl VolumeEncryption {
             });
         }
 
-        let mut new_key = [0u8; 32];
+        let mut new_key = Zeroizing::new([0u8; 32]);
         new_key.copy_from_slice(&new_bytes[..32]);
 
         // Store old key temporarily for DEK re-encryption.
-        let _old_key = self.master_key.replace(new_key);
+        let _old_key = self.master_key.replace(*new_key);
 
         info!(
             new_key_path = %new_key_path.display(),
@@ -308,11 +315,13 @@ mod tests {
 
     #[test]
     fn dek_roundtrip() {
+        use std::os::unix::fs::PermissionsExt as _;
         let dir = tempfile::tempdir().unwrap();
         let key_path = dir.path().join("master.key");
         let mut key_data = [0u8; 32];
         getrandom::fill(&mut key_data).unwrap();
         std::fs::write(&key_path, key_data).unwrap();
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
 
         let mut enc = VolumeEncryption::new(VolumeEncryptionConfig {
             master_key_path: Some(key_path),
@@ -338,6 +347,9 @@ mod tests {
         getrandom::fill(&mut k2).unwrap();
         std::fs::write(&key1_path, k1).unwrap();
         std::fs::write(&key2_path, k2).unwrap();
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&key1_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(&key2_path, std::fs::Permissions::from_mode(0o600)).unwrap();
 
         let mut enc = VolumeEncryption::new(VolumeEncryptionConfig {
             master_key_path: Some(key1_path),

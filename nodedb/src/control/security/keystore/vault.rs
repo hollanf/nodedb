@@ -15,15 +15,23 @@
 //!
 //! Key rotation calls `rewrap/{key_name}` with the old ciphertext blob and
 //! persists the new ciphertext blob to disk before returning the new key.
+//!
+//! # Security checks
+//!
+//! Both `token_path` and `ciphertext_blob_path` are passed through
+//! [`check_key_file`] before being read. Symlinks, world/group-readable
+//! files, and files owned by a different UID are rejected.
 
 use std::path::PathBuf;
 
 use base64::Engine as _;
 use tracing::info;
+use zeroize::Zeroizing;
 
 use crate::Result;
 
 use super::KeyProvider;
+use super::key_file_security::check_key_file;
 
 /// Vault transit-engine key provider.
 pub struct VaultKeyProvider {
@@ -54,6 +62,7 @@ impl VaultKeyProvider {
     }
 
     fn read_token(&self) -> Result<String> {
+        check_key_file(&self.token_path)?;
         std::fs::read_to_string(&self.token_path)
             .map(|s| s.trim().to_owned())
             .map_err(|e| crate::Error::Encryption {
@@ -65,6 +74,7 @@ impl VaultKeyProvider {
     }
 
     fn read_ciphertext_blob(&self) -> Result<String> {
+        check_key_file(&self.ciphertext_blob_path)?;
         std::fs::read_to_string(&self.ciphertext_blob_path)
             .map(|s| s.trim().to_owned())
             .map_err(|e| crate::Error::Encryption {
@@ -86,7 +96,7 @@ impl VaultKeyProvider {
         })
     }
 
-    async fn decrypt_with_vault(&self, ciphertext: &str) -> Result<[u8; 32]> {
+    async fn decrypt_with_vault(&self, ciphertext: &str) -> Result<Zeroizing<[u8; 32]>> {
         let token = self.read_token()?;
         let url = format!(
             "{}/v1/{}/decrypt/{}",
@@ -171,7 +181,7 @@ impl VaultKeyProvider {
 
 #[async_trait::async_trait]
 impl KeyProvider for VaultKeyProvider {
-    async fn unwrap_key(&self) -> Result<[u8; 32]> {
+    async fn unwrap_key(&self) -> Result<Zeroizing<[u8; 32]>> {
         let ciphertext = self.read_ciphertext_blob()?;
         let key = self.decrypt_with_vault(&ciphertext).await?;
         info!(
@@ -182,7 +192,7 @@ impl KeyProvider for VaultKeyProvider {
         Ok(key)
     }
 
-    async fn rotate(&self) -> Result<[u8; 32]> {
+    async fn rotate(&self) -> Result<Zeroizing<[u8; 32]>> {
         let old_ciphertext = self.read_ciphertext_blob()?;
 
         // Rewrap with Vault (no plaintext leaves Vault during rewrap).
@@ -200,7 +210,7 @@ impl KeyProvider for VaultKeyProvider {
     }
 }
 
-fn decode_32_byte_b64(b64: &str) -> Result<[u8; 32]> {
+fn decode_32_byte_b64(b64: &str) -> Result<Zeroizing<[u8; 32]>> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(b64)
         .map_err(|e| crate::Error::Encryption {
@@ -214,7 +224,7 @@ fn decode_32_byte_b64(b64: &str) -> Result<[u8; 32]> {
             ),
         });
     }
-    let mut key = [0u8; 32];
+    let mut key = Zeroizing::new([0u8; 32]);
     key.copy_from_slice(&bytes);
     Ok(key)
 }
@@ -223,9 +233,10 @@ fn decode_32_byte_b64(b64: &str) -> Result<[u8; 32]> {
 mod tests {
     use super::*;
 
-    /// Minimal mock HTTP server using `tokio` + manual TCP for tests.
-    /// We avoid pulling in `wiremock`/`httptest` (not in workspace);
-    /// instead use `axum` which IS already a workspace dep.
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
+
+    /// Minimal mock HTTP server using `axum`.
     ///
     /// The mock responds to:
     ///   POST /v1/transit/decrypt/mykey  → 200 with plaintext
@@ -273,7 +284,18 @@ mod tests {
         })
     }
 
+    /// Write a file with secure Unix permissions (0o600) for use in tests.
+    #[cfg(unix)]
+    fn write_secure(path: &std::path::Path, content: &[u8]) {
+        use std::io::Write as _;
+        let mut f = std::fs::File::create(path).unwrap();
+        f.write_all(content).unwrap();
+        drop(f);
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
     #[tokio::test]
+    #[cfg(unix)]
     async fn vault_unwrap_happy_path() {
         let port = 18201u16;
         let _srv = spawn_mock_vault(port);
@@ -282,9 +304,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let token_path = dir.path().join("token");
         let blob_path = dir.path().join("blob");
-        std::fs::write(&token_path, "fake-token").unwrap();
-        // Any ciphertext works — mock ignores it.
-        std::fs::write(&blob_path, "vault:v1:someciphertext==").unwrap();
+        write_secure(&token_path, b"fake-token");
+        write_secure(&blob_path, b"vault:v1:someciphertext==");
 
         let provider = VaultKeyProvider::new(
             format!("http://127.0.0.1:{port}"),
@@ -295,10 +316,11 @@ mod tests {
         );
 
         let key = provider.unwrap_key().await.unwrap();
-        assert_eq!(key, [0x42u8; 32]);
+        assert_eq!(*key, [0x42u8; 32]);
     }
 
     #[tokio::test]
+    #[cfg(unix)]
     async fn vault_auth_error_path() {
         let port = 18202u16;
         let _srv = spawn_mock_vault(port);
@@ -307,8 +329,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let token_path = dir.path().join("token");
         let blob_path = dir.path().join("blob");
-        std::fs::write(&token_path, "bad-token").unwrap();
-        std::fs::write(&blob_path, "vault:v1:cipher==").unwrap();
+        write_secure(&token_path, b"bad-token");
+        write_secure(&blob_path, b"vault:v1:cipher==");
 
         let provider = VaultKeyProvider::new(
             format!("http://127.0.0.1:{port}"),
@@ -327,6 +349,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(unix)]
     async fn vault_rotate_updates_blob() {
         let port = 18203u16;
         let _srv = spawn_mock_vault(port);
@@ -335,8 +358,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let token_path = dir.path().join("token");
         let blob_path = dir.path().join("blob");
-        std::fs::write(&token_path, "fake-token").unwrap();
-        std::fs::write(&blob_path, "vault:v1:original==").unwrap();
+        write_secure(&token_path, b"fake-token");
+        write_secure(&blob_path, b"vault:v1:original==");
 
         let provider = VaultKeyProvider::new(
             format!("http://127.0.0.1:{port}"),
@@ -347,10 +370,41 @@ mod tests {
         );
 
         let key = provider.rotate().await.unwrap();
-        assert_eq!(key, [0x42u8; 32]);
+        assert_eq!(*key, [0x42u8; 32]);
 
         // Blob on disk should have been updated to the new ciphertext.
         let new_blob = std::fs::read_to_string(&blob_path).unwrap();
         assert_eq!(new_blob.trim(), "vault:v1:newwrapped==");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn vault_insecure_token_file_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let token_path = dir.path().join("token");
+        let blob_path = dir.path().join("blob");
+
+        use std::io::Write as _;
+        // Token file with insecure permissions (0o644).
+        let mut f = std::fs::File::create(&token_path).unwrap();
+        f.write_all(b"some-token").unwrap();
+        drop(f);
+        std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_secure(&blob_path, b"vault:v1:cipher==");
+
+        let provider = VaultKeyProvider::new(
+            "http://127.0.0.1:1".into(), // unreachable — error before HTTP
+            token_path,
+            "mykey".into(),
+            "transit".into(),
+            blob_path,
+        );
+
+        let err = provider.unwrap_key().await.unwrap_err();
+        let detail = format!("{err:?}");
+        assert!(
+            detail.contains("insecure") || detail.contains("644"),
+            "expected insecure-permissions error on token file, got: {detail}"
+        );
     }
 }

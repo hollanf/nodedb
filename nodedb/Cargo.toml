@@ -93,6 +93,7 @@ subtle = { workspace = true }
 base64 = { workspace = true }
 getrandom = { workspace = true }
 aes-gcm = { workspace = true }
+zeroize = { workspace = true }
 aws-sdk-kms = { workspace = true }
 aws-config = { workspace = true }
 

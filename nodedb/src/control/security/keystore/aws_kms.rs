@@ -19,16 +19,24 @@
 //!
 //! Key rotation: generate a new random 32-byte DEK, call KMS `Encrypt` to
 //! produce a new ciphertext blob, persist it to disk, then return the new key.
+//!
+//! # Security checks
+//!
+//! `ciphertext_blob_path` is passed through [`check_key_file`] before being
+//! read. Symlinks, world/group-readable files, and files owned by a different
+//! UID are rejected.
 
 use std::path::PathBuf;
 
 use aws_sdk_kms::Client as KmsClient;
 use aws_sdk_kms::primitives::Blob;
 use tracing::info;
+use zeroize::Zeroizing;
 
 use crate::Result;
 
 use super::KeyProvider;
+use super::key_file_security::check_key_file;
 
 /// AWS KMS key provider.
 pub struct AwsKmsProvider {
@@ -57,6 +65,7 @@ impl AwsKmsProvider {
     }
 
     fn read_ciphertext_blob(&self) -> Result<Vec<u8>> {
+        check_key_file(&self.ciphertext_blob_path)?;
         std::fs::read(&self.ciphertext_blob_path).map_err(|e| crate::Error::Encryption {
             detail: format!(
                 "failed to read KMS ciphertext blob from {}: {e}",
@@ -77,7 +86,7 @@ impl AwsKmsProvider {
 
 #[async_trait::async_trait]
 impl KeyProvider for AwsKmsProvider {
-    async fn unwrap_key(&self) -> Result<[u8; 32]> {
+    async fn unwrap_key(&self) -> Result<Zeroizing<[u8; 32]>> {
         let ciphertext = self.read_ciphertext_blob()?;
 
         let resp = self
@@ -105,7 +114,7 @@ impl KeyProvider for AwsKmsProvider {
             });
         }
 
-        let mut key = [0u8; 32];
+        let mut key = Zeroizing::new([0u8; 32]);
         key.copy_from_slice(&bytes);
         info!(
             key_id = %self.key_id,
@@ -114,10 +123,10 @@ impl KeyProvider for AwsKmsProvider {
         Ok(key)
     }
 
-    async fn rotate(&self) -> Result<[u8; 32]> {
+    async fn rotate(&self) -> Result<Zeroizing<[u8; 32]>> {
         // Generate a new random 32-byte DEK.
-        let mut new_dek = [0u8; 32];
-        getrandom::fill(&mut new_dek).map_err(|e| crate::Error::Encryption {
+        let mut new_dek = Zeroizing::new([0u8; 32]);
+        getrandom::fill(new_dek.as_mut()).map_err(|e| crate::Error::Encryption {
             detail: format!("failed to generate new DEK for KMS rotation: {e}"),
         })?;
 
@@ -154,13 +163,13 @@ mod tests {
     // AWS KMS tests use a mock HTTP server since the real SDK requires credentials.
     // We verify the happy path and auth error path by intercepting the AWS
     // endpoint via an HTTP mock that speaks the KMS JSON protocol shape.
-    //
-    // The mock responds to KMS `Decrypt` with a synthetic 32-byte plaintext
-    // and to `Encrypt` with a fake ciphertext blob.
 
     use super::*;
     use axum::{Router, routing::post};
     use base64::Engine as _;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
 
     fn spawn_mock_kms(port: u16, auth_ok: bool) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
@@ -240,7 +249,18 @@ mod tests {
         }
     }
 
+    /// Create a file with secure Unix permissions (0o600).
+    #[cfg(unix)]
+    fn write_secure(path: &std::path::Path, content: &[u8]) {
+        use std::io::Write as _;
+        let mut f = std::fs::File::create(path).unwrap();
+        f.write_all(content).unwrap();
+        drop(f);
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
     #[tokio::test]
+    #[cfg(unix)]
     async fn kms_decrypt_happy_path() {
         let port = 18301u16;
         let _srv = spawn_mock_kms(port, true);
@@ -248,14 +268,15 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let blob_path = dir.path().join("ct.bin");
-        std::fs::write(&blob_path, [0xFFu8; 64]).unwrap();
+        write_secure(&blob_path, &[0xFFu8; 64]);
 
         let provider = make_provider_with_endpoint(port, blob_path).await;
         let key = provider.unwrap_key().await.unwrap();
-        assert_eq!(key, [0x42u8; 32]);
+        assert_eq!(*key, [0x42u8; 32]);
     }
 
     #[tokio::test]
+    #[cfg(unix)]
     async fn kms_auth_error_path() {
         let port = 18302u16;
         let _srv = spawn_mock_kms(port, false);
@@ -263,7 +284,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let blob_path = dir.path().join("ct.bin");
-        std::fs::write(&blob_path, [0xFFu8; 64]).unwrap();
+        write_secure(&blob_path, &[0xFFu8; 64]);
 
         let provider = make_provider_with_endpoint(port, blob_path).await;
         let err = provider.unwrap_key().await.unwrap_err();
@@ -271,6 +292,29 @@ mod tests {
         assert!(
             detail.contains("KMS") || detail.contains("Access") || detail.contains("decrypt"),
             "expected KMS error, got: {detail}"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn kms_insecure_ciphertext_blob_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let blob_path = dir.path().join("ct.bin");
+
+        use std::io::Write as _;
+        // Insecure permissions (0o644).
+        let mut f = std::fs::File::create(&blob_path).unwrap();
+        f.write_all(&[0xFFu8; 64]).unwrap();
+        drop(f);
+        std::fs::set_permissions(&blob_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        // Use a dummy port — the check fires before any network call.
+        let provider = make_provider_with_endpoint(19999, blob_path).await;
+        let err = provider.unwrap_key().await.unwrap_err();
+        let detail = format!("{err:?}");
+        assert!(
+            detail.contains("insecure") || detail.contains("644"),
+            "expected insecure-permissions error, got: {detail}"
         );
     }
 }
