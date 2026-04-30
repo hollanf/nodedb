@@ -556,7 +556,7 @@ mod tests {
             .expect("write")
     }
 
-    // ── T1-05 ResolvedColumnCodec reader tests ─────────────────────────────────
+    // ── ResolvedColumnCodec reader tests ──────────────────────────────────────
 
     /// The `ResolvedColumnCodec` type statically excludes `Auto` (discriminant 0).
     ///

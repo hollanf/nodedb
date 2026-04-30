@@ -53,12 +53,10 @@ pub const DEFAULT_MAX_TOTAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 pub const DEFAULT_MAX_SECTION_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 
 /// Sentinel `origin_node_id` values that mark sections carrying
-/// metadata rather than per-node engine data. The envelope format is
-/// backward-compatible: V1 readers that don't know about these
-/// sentinels still decode the envelope (the bytes just aren't applied
-/// at restore time), but the section CRCs still validate. Restore
-/// handlers recognize the sentinel and route the body to the correct
-/// catalog writer.
+/// metadata rather than per-node engine data. Restore handlers
+/// recognize the sentinel and route the body to the correct
+/// catalog writer. Section CRCs validate independently of whether
+/// the reader acts on the section body.
 pub const SECTION_ORIGIN_CATALOG_ROWS: u64 = 0xFFFF_FFFF_FFFF_FFF0;
 pub const SECTION_ORIGIN_SOURCE_TOMBSTONES: u64 = 0xFFFF_FFFF_FFFF_FFF1;
 

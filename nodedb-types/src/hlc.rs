@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// # Wire format note
 ///
-/// `logical` was widened from `u32` to `u64` (T4-11) to eliminate
+/// `logical` was widened from `u32` to `u64` to eliminate
 /// saturation under high-frequency burst writes. Persisted zerompk
 /// blobs from before this change carry a 32-bit logical counter;
 /// MessagePack integers decode by value (not by declared width), so
@@ -95,7 +95,7 @@ impl HlcClock {
         let wall = wall_now_ns();
         let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
         // Clamp wall to at least st.wall_ns so the HLC never regresses on
-        // clock skew or NTP adjustments (T4-15).
+        // clock skew or NTP adjustments.
         let wall = wall.max(st.wall_ns);
         let next = if wall > st.wall_ns {
             Hlc::new(wall, 0)

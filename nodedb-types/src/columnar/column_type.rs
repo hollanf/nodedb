@@ -10,7 +10,7 @@ use crate::value::Value;
 /// Typed column definition for strict document and columnar collections.
 ///
 /// `#[non_exhaustive]` — this enum grows with each type system expansion
-/// (e.g. T3-07 adds `Decimal { precision, scale }`, T4-10 splits
+/// (e.g. future variants may add `Decimal { precision, scale }` or split
 /// `Timestamp`/`TimestampTz`). External exhaustive `match` arms must handle
 /// future variants via a typed error arm rather than `_ => unreachable!()`.
 #[non_exhaustive]

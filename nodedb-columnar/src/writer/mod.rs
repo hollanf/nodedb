@@ -205,7 +205,7 @@ mod tests {
         .expect("valid")
     }
 
-    // ── T1-05 ResolvedColumnCodec integration tests ────────────────────────────
+    // ── ResolvedColumnCodec integration tests ─────────────────────────────────
 
     /// The writer resolves Auto to a concrete codec before writing.
     /// The resulting footer must not contain codec byte 0 (Auto discriminant).

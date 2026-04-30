@@ -465,7 +465,7 @@ mod tests {
         }
     }
 
-    // ── T1-05 ResolvedColumnCodec tests ────────────────────────────────────────
+    // ── ResolvedColumnCodec tests ──────────────────────────────────────────────
 
     /// Discriminants of ResolvedColumnCodec must exactly match those of the
     /// corresponding ColumnCodec variants so on-disk byte values are unchanged.

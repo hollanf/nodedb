@@ -31,21 +31,18 @@
 /// than `last_seen[(user_id, device_id)]` on the server. The HMAC input
 /// binds the seq_no and device_id so they cannot be altered after signing.
 ///
-/// ## Wire compatibility
+/// ## Required fields
 ///
-/// Both `device_id` and `seq_no` have `#[msgpack(default)]` so that old
-/// clients (pre-T4-D) that don't send these fields will deserialize with
-/// 0/0. Note: seq_no=0 is never accepted (must be > last_seen=0), so old
-/// unsigned deltas will be rejected unless the caller sets delta_signature
-/// to all-zeros (unsigned path, which bypasses the replay check).
+/// All fields, including `device_id` and `seq_no`, must be present in the
+/// serialized form. Missing fields are a hard decode error.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct CrdtAuthContext {
-    /// Authenticated user_id (0 = unauthenticated/legacy).
+    /// Authenticated user_id (0 = unauthenticated).
     pub user_id: u64,
     /// Tenant this operation belongs to.
     pub tenant_id: u64,
     /// Unix timestamp (milliseconds) when this auth session expires.
-    /// 0 = no expiry (trust mode / legacy).
+    /// 0 = no expiry (trust mode).
     /// Agents accumulating deltas offline must re-authenticate before
     /// syncing if their auth context has expired.
     pub auth_expires_at: u64,
@@ -54,13 +51,9 @@ pub struct CrdtAuthContext {
     /// before accepting, and also enforces replay protection.
     pub delta_signature: [u8; 32],
     /// Stable per-device identifier assigned by the server on first bind.
-    /// 0 = legacy / pre-T4-D client that does not participate in replay protection.
-    #[serde(default)]
     pub device_id: u64,
     /// Monotonically increasing per-device sequence number.
     /// Must be strictly greater than last_seen[(user_id, device_id)] on the server.
-    /// 0 = legacy / pre-T4-D client.
-    #[serde(default)]
     pub seq_no: u64,
 }
 

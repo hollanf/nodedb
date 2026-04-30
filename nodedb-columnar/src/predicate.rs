@@ -654,7 +654,7 @@ mod tests {
 
     // ── Bloom filter parameter persistence ─────────────────────────────────
 
-    /// T1-18: bloom parameters (k, m) must survive a BlockStats MessagePack
+    /// Bloom parameters (k, m) must survive a BlockStats MessagePack
     /// roundtrip so that future readers can reconstruct the filter without
     /// relying on compile-time constants.
     #[test]
@@ -693,7 +693,7 @@ mod tests {
         assert!(bloom_may_contain(&persisted, "world"));
     }
 
-    /// T1-18: a filter built with non-default k=7, m=8192 uses those params
+    /// A filter built with non-default k=7, m=8192 uses those params
     /// for bit-position calculations — not the default BLOOM_BITS_DEFAULT/K.
     #[test]
     fn bloom_custom_params_functional() {

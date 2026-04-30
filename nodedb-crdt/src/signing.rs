@@ -343,11 +343,10 @@ mod tests {
         );
     }
 
-    // ── Backward-compat: pre-T4-D context (device_id=0, seq_no=0) ────────────
-    // With device_id=0, seq_no=0: check_seq(0) <= last_seen(0) → ReplayDetected.
-    // This pins the behavior: old unsigned clients are rejected in signed mode.
+    // ── seq_no=0 is rejected ─────────────────────────────────────────────────
+    // With seq_no=0: check_seq(0) <= last_seen(0) → ReplayDetected.
     #[test]
-    fn pre_t4d_context_seq_zero_rejected() {
+    fn seq_zero_rejected() {
         let registry = DeviceRegistry::new();
         // seq_no=0 is never > last_seen=0.
         let err = registry.check_seq(1, 0, 0).unwrap_err();

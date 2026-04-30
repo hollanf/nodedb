@@ -4238,6 +4238,7 @@ dependencies = [
  "tokio-tungstenite",
  "toml",
  "tonic",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "unicode-normalization",
