@@ -15,6 +15,13 @@ use crate::wire::WIRE_VERSION;
 /// Header size in bytes: version(1) + rpc_type(1) + payload_len(4) + crc32c(4).
 pub const HEADER_SIZE: usize = 10;
 
+/// Minimum RPC frame wire version this node will accept on inbound frames.
+///
+/// Senders always stamp `WIRE_VERSION` (the current version). Receivers
+/// accept any version in `[MIN_SUPPORTED_RPC_VERSION..=WIRE_VERSION]`,
+/// honoring the documented N-1 rolling-upgrade promise on `version.rs`.
+pub const MIN_SUPPORTED_RPC_VERSION: u8 = 1;
+
 /// Maximum RPC message payload size (64 MiB). Distinct from WAL's MAX_RPC_PAYLOAD_SIZE.
 ///
 /// Prevents degenerate allocations from corrupt frames.
@@ -48,9 +55,12 @@ pub fn parse_frame(data: &[u8]) -> Result<(u8, &[u8])> {
     }
 
     let version = data[0];
-    if version != WIRE_VERSION as u8 {
-        return Err(ClusterError::Codec {
-            detail: format!("unsupported wire version: {version}, expected {WIRE_VERSION}"),
+    let max_supported = WIRE_VERSION as u8;
+    if !(MIN_SUPPORTED_RPC_VERSION..=max_supported).contains(&version) {
+        return Err(ClusterError::UnsupportedWireVersion {
+            got: version,
+            supported_min: MIN_SUPPORTED_RPC_VERSION,
+            supported_max: max_supported,
         });
     }
 
@@ -101,3 +111,70 @@ pub fn frame_size(header: &[u8; HEADER_SIZE]) -> Result<usize> {
 // rkyv_deserialize and rkyv_serialize are macros in each sub-module because
 // rkyv's generic bounds for Serialize and Deserialize are cumbersome to
 // express generically across all types. Each sub-module calls rkyv directly.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_frame(version: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(HEADER_SIZE + payload.len());
+        let payload_len = payload.len() as u32;
+        let crc = crc32c::crc32c(payload);
+        out.push(version);
+        out.push(0xAB); // arbitrary rpc_type
+        out.extend_from_slice(&payload_len.to_le_bytes());
+        out.extend_from_slice(&crc.to_le_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    #[test]
+    fn parse_frame_accepts_n_minus_one() {
+        // N-1: WIRE_VERSION currently 2, so N-1 = 1, which is the minimum.
+        // If WIRE_VERSION grows, MIN_SUPPORTED_RPC_VERSION grows with it
+        // (or this test stays valid because 1 is still in range).
+        let payload = b"hello";
+        let frame = make_frame(MIN_SUPPORTED_RPC_VERSION, payload);
+        let (rpc_type, body) = parse_frame(&frame).expect("N-1 must be accepted");
+        assert_eq!(rpc_type, 0xAB);
+        assert_eq!(body, payload);
+    }
+
+    #[test]
+    fn parse_frame_accepts_current_version() {
+        let payload = b"world";
+        let frame = make_frame(WIRE_VERSION as u8, payload);
+        let (_t, body) = parse_frame(&frame).expect("current version must be accepted");
+        assert_eq!(body, payload);
+    }
+
+    #[test]
+    fn parse_frame_rejects_n_plus_one() {
+        let payload = b"future";
+        let frame = make_frame((WIRE_VERSION as u8).saturating_add(1), payload);
+        let err = parse_frame(&frame).expect_err("N+1 must be rejected");
+        match err {
+            ClusterError::UnsupportedWireVersion {
+                got,
+                supported_min,
+                supported_max,
+            } => {
+                assert_eq!(got, (WIRE_VERSION as u8).saturating_add(1));
+                assert_eq!(supported_min, MIN_SUPPORTED_RPC_VERSION);
+                assert_eq!(supported_max, WIRE_VERSION as u8);
+            }
+            other => panic!("expected UnsupportedWireVersion, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_frame_rejects_version_zero() {
+        let payload = b"zero";
+        let frame = make_frame(0, payload);
+        let err = parse_frame(&frame).expect_err("version 0 must be rejected");
+        assert!(matches!(
+            err,
+            ClusterError::UnsupportedWireVersion { got: 0, .. }
+        ));
+    }
+}
