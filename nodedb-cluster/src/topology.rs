@@ -3,17 +3,13 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-/// Wire format version carried on every `NodeInfo`. This is the
-/// single source of truth for "what version is this node running"
-/// once the node has registered itself with the cluster — the
-/// in-memory shadow map used by the old `ClusterVersionState` is
-/// gone. See `control::rolling_upgrade::view::ClusterVersionView`
-/// for the consumer.
-///
-/// Must match `nodedb::version::WIRE_FORMAT_VERSION`. The cluster
-/// crate defines the constant so the wire format lives next to
-/// the types it stamps.
-pub const CLUSTER_WIRE_FORMAT_VERSION: u16 = 4;
+/// Wire format version carried on every `NodeInfo`. Re-exported from
+/// `nodedb_types::wire_version`, which is the single source of truth
+/// shared with `nodedb::version` and any other crate that needs to
+/// stamp or interpret the value. See
+/// `control::rolling_upgrade::view::ClusterVersionView` for the
+/// consumer.
+pub use nodedb_types::wire_version::WIRE_FORMAT_VERSION as CLUSTER_WIRE_FORMAT_VERSION;
 
 fn default_spiffe_id() -> Option<String> {
     None

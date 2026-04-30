@@ -216,6 +216,43 @@ impl<A: CommitApplier, P: PlanExecutor> RaftLoop<A, P> {
                     {
                         let _ = self.ready_watch.send(true);
                     }
+
+                    // Detect false→true transitions on metadata-group
+                    // leadership and bump the cluster epoch exactly once
+                    // per acquisition. The fence token rides on every
+                    // outbound RPC after this point (see
+                    // `cluster_epoch.rs`).
+                    if group_id == crate::metadata_group::METADATA_GROUP_ID {
+                        let is_leader = self
+                            .multi_raft
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .group_role_is_leader(group_id);
+                        let was_leader = self
+                            .prev_metadata_leader
+                            .swap(is_leader, std::sync::atomic::Ordering::AcqRel);
+                        if is_leader && !was_leader {
+                            if let Some(catalog) = self.catalog.as_ref() {
+                                match crate::cluster_epoch::bump_local_cluster_epoch(catalog) {
+                                    Ok(new_epoch) => tracing::info!(
+                                        node = self.node_id,
+                                        new_epoch,
+                                        "bumped cluster epoch on metadata-group leadership acquisition"
+                                    ),
+                                    Err(e) => tracing::warn!(
+                                        node = self.node_id,
+                                        error = %e,
+                                        "failed to persist bumped cluster epoch (in-memory value advanced anyway)"
+                                    ),
+                                }
+                            } else {
+                                // No catalog → in-memory only (test path).
+                                let _ = crate::cluster_epoch::observe_peer_cluster_epoch(
+                                    crate::cluster_epoch::current_local_cluster_epoch() + 1,
+                                );
+                            }
+                        }
+                    }
                 }
 
                 // Phase 5: install-snapshot dispatch for lagging peers.

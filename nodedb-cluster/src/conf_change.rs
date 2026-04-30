@@ -6,10 +6,15 @@
 //!
 //! Uses single-server changes (one peer at a time) for simplicity and safety.
 
-/// Prefix byte in log entry data that marks it as a configuration change.
-/// Regular application data never starts with this byte (MessagePack and
-/// rkyv both use different leading bytes).
-pub const CONF_CHANGE_PREFIX: u8 = 0xFF;
+/// Discriminator byte at offset 0 of a Raft log entry that marks it as a
+/// configuration change. Layout: `[kind:1][msgpack(ConfChange)]`.
+///
+/// `0xC1` is the only byte the MessagePack spec lists as "never used" — no
+/// valid msgpack payload can start with it. All current app-data proposals
+/// are msgpack-encoded (MetadataEntry, distributed-applier batches, auth
+/// transitions), so the discriminator is unambiguous. (`0xFF` was incorrect
+/// here: it is msgpack negative fixint -1 and collides with valid scalars.)
+pub const CONF_CHANGE_PREFIX: u8 = 0xC1;
 
 /// Type of configuration change.
 #[derive(
@@ -111,6 +116,27 @@ mod tests {
         assert!(!ConfChange::is_conf_change(b"hello"));
         assert!(!ConfChange::is_conf_change(&[]));
         assert!(ConfChange::from_entry_data(b"hello").is_none());
+    }
+
+    #[test]
+    fn prefix_is_msgpack_never_used_byte() {
+        // 0xC1 is the only byte the MessagePack spec marks "never used".
+        // If anyone changes this constant, they must re-prove non-collision
+        // with every app-data proposal path.
+        assert_eq!(CONF_CHANGE_PREFIX, 0xC1);
+    }
+
+    #[test]
+    fn prefix_does_not_collide_with_msgpack_metadata_entry() {
+        // App data on the metadata group is msgpack(MetadataEntry), which
+        // is a struct — encodes as a fixmap/fixarray (0x80..=0x9f). It
+        // must never start with the conf-change prefix.
+        let cc = ConfChange {
+            change_type: ConfChangeType::AddNode,
+            node_id: 1,
+        };
+        let msgpack_struct = zerompk::to_msgpack_vec(&cc).unwrap();
+        assert_ne!(msgpack_struct.first(), Some(&CONF_CHANGE_PREFIX));
     }
 
     #[test]

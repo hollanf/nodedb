@@ -34,6 +34,9 @@ pub(super) const MIGRATION_STATE_TABLE: TableDefinition<&str, &[u8]> =
 pub(super) const KEY_TOPOLOGY: &str = "topology";
 pub(super) const KEY_ROUTING: &str = "routing";
 pub(super) const KEY_CLUSTER_ID: &str = "cluster_id";
+/// Cluster epoch (u64 LE) — monotonic, leader-bumped, stamped on every
+/// Raft RPC. Persisted so the local high-water mark survives restart.
+pub(super) const KEY_CLUSTER_EPOCH: &str = "cluster_epoch";
 pub(super) const KEY_CA_CERT: &str = "ca_cert";
 /// Metadata key holding the catalog format version (u32 LE).
 ///

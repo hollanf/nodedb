@@ -116,6 +116,12 @@ pub struct RaftLoop<A: CommitApplier, P: PlanExecutor = NoopPlanExecutor> {
     /// renewals, and consistent reads can wait on the apply
     /// watermark of the *specific* group whose proposal they made.
     pub(super) group_watchers: Arc<GroupAppliedWatchers>,
+    /// Tracks whether this node was the metadata-group leader on the
+    /// previous tick. Used to detect false→true edges so the cluster
+    /// epoch (see [`crate::cluster_epoch`]) can be bumped exactly once
+    /// per leadership acquisition. `AtomicBool` because [`super::tick::do_tick`]
+    /// runs against `&self`.
+    pub(super) prev_metadata_leader: std::sync::atomic::AtomicBool,
 }
 
 impl<A: CommitApplier> RaftLoop<A> {
@@ -143,6 +149,7 @@ impl<A: CommitApplier> RaftLoop<A> {
             ready_watch,
             loop_metrics: LoopMetrics::new("raft_tick_loop"),
             group_watchers: Arc::new(GroupAppliedWatchers::new()),
+            prev_metadata_leader: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -165,6 +172,7 @@ impl<A: CommitApplier, P: PlanExecutor> RaftLoop<A, P> {
             ready_watch: self.ready_watch,
             loop_metrics: self.loop_metrics,
             group_watchers: self.group_watchers,
+            prev_metadata_leader: self.prev_metadata_leader,
         }
     }
 
@@ -247,6 +255,15 @@ impl<A: CommitApplier, P: PlanExecutor> RaftLoop<A, P> {
     /// Attach a cluster catalog — used by the join flow to persist the
     /// updated topology + routing after a conf-change commits.
     pub fn with_catalog(mut self, catalog: Arc<ClusterCatalog>) -> Self {
+        // Seed the local cluster-epoch high-water mark from the catalog
+        // on attach, so the value emitted in the very first outbound
+        // RPC reflects whatever the previous incarnation persisted. A
+        // failure to load is treated as a fresh catalog (epoch 0); a
+        // genuine catalog read error would have surfaced from earlier
+        // catalog operations on this same handle.
+        if let Err(e) = crate::cluster_epoch::init_local_cluster_epoch_from_catalog(&catalog) {
+            tracing::warn!(error = %e, "failed to load persisted cluster_epoch; defaulting to 0");
+        }
         self.catalog = Some(catalog);
         self
     }
