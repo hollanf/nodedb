@@ -27,14 +27,29 @@ pub type DurMs = u64;
 /// Return the current wall-clock time as [`WallMs`] (milliseconds since the
 /// Unix epoch, UTC).
 ///
-/// Returns `i64::MAX` on the extremely unlikely event that the system clock
-/// is before the Unix epoch or overflows — callers that care about that edge
-/// case should use `SystemTime::now()` directly.
+/// Returns `0` (Unix epoch) on the extremely unlikely event that the system
+/// clock is before the Unix epoch — a value of 0 is obviously wrong and
+/// easier to detect than `i64::MAX`. Logs the condition once per process via
+/// `tracing::error!` to alert operators.
+///
+/// # TODO(post-launch): funnel direct `SystemTime::now()` callers through this
+/// helper so all inline clock-read sites also get the once-per-process log.
 pub fn current_wall_ms() -> WallMs {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or(i64::MAX)
+        .unwrap_or_else(|_| {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static LOGGED: AtomicBool = AtomicBool::new(false);
+            if !LOGGED.swap(true, Ordering::Relaxed) {
+                tracing::error!(
+                    module = module_path!(),
+                    "system clock is before UNIX_EPOCH; using 0 (epoch) \
+                     — check NTP/RTC configuration"
+                );
+            }
+            0
+        })
 }
 
 #[cfg(test)]

@@ -95,7 +95,18 @@ fn wall_now_ns() -> i64 {
                 ns as i64
             }
         })
-        .unwrap_or(0)
+        .unwrap_or_else(|_| {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static LOGGED: AtomicBool = AtomicBool::new(false);
+            if !LOGGED.swap(true, Ordering::Relaxed) {
+                tracing::error!(
+                    module = module_path!(),
+                    "system clock is before UNIX_EPOCH; using 0 (epoch) \
+                     — check NTP/RTC configuration"
+                );
+            }
+            0
+        })
 }
 
 #[cfg(test)]

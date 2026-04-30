@@ -109,7 +109,13 @@ pub fn verify_token(token_hex: &str, secret: &[u8; 32]) -> Result<(u64, u64), To
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .unwrap_or_else(|_| {
+            tracing::error!(
+                "system clock is before UNIX_EPOCH during token verification; \
+                 using 0 (epoch) — check NTP/RTC configuration"
+            );
+            0
+        });
     if now > expiry {
         return Err(TokenError::Expired);
     }

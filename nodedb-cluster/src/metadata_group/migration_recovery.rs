@@ -78,7 +78,13 @@ pub async fn recover_in_flight_migrations(
 
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
+        .unwrap_or_else(|_| {
+            tracing::error!(
+                "system clock is before UNIX_EPOCH during migration recovery; \
+                 using 0 (epoch) — check NTP/RTC configuration"
+            );
+            std::time::Duration::ZERO
+        })
         .as_millis() as u64;
     let abort_threshold_ms = abort_timeout.as_millis() as u64;
 
