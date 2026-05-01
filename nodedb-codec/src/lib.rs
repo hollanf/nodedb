@@ -94,12 +94,12 @@ pub enum ColumnCodec {
     /// Strings cold: FSST → rANS.
     FsstRans = 9,
 
-    // -- Legacy single-step codecs (small partitions, backward compat) --
-    /// Gorilla XOR encoding — legacy f64 codec.
+    // -- Single-step codecs used by `detect.rs` auto-selection and timeseries column writers --
+    /// Gorilla XOR encoding — f64 codec selected by detect.rs for float columns.
     Gorilla = 10,
-    /// DoubleDelta — legacy timestamp codec.
+    /// DoubleDelta — timestamp codec selected by detect.rs for monotonic timestamp columns.
     DoubleDelta = 11,
-    /// Delta + varint — legacy counter codec.
+    /// Delta + varint — counter codec selected by detect.rs for integer delta columns.
     Delta = 12,
     /// LZ4 block compression — for string/log columns.
     Lz4 = 13,

@@ -65,8 +65,10 @@ fn read_varint(data: &[u8]) -> Option<(u64, usize)> {
 
 /// Tag byte preceding the dict-values block. Selects the encoding format
 /// for the distinct coordinate values stored by the `DimDict`.
-const DICT_TAG_GENERIC: u8 = 0; // legacy: per-value zerompk msgpack
+///
+/// Tag 0 is reserved/forbidden — a stray zero byte is a parse error.
 const DICT_TAG_INT64_FASTLANES: u8 = 1; // homogeneous Int64 dict via fastlanes
+const DICT_TAG_MSGPACK: u8 = 2; // per-value zerompk msgpack (string/mixed CoordValue)
 
 fn try_encode_int64_dict(values: &[CoordValue]) -> Option<Vec<i64>> {
     let mut out = Vec::with_capacity(values.len());
@@ -91,7 +93,7 @@ pub fn encode_coord_axis(dict: &DimDict, out: &mut Vec<u8>) -> ArrayResult<()> {
         out.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
         out.extend_from_slice(&encoded);
     } else {
-        out.push(DICT_TAG_GENERIC);
+        out.push(DICT_TAG_MSGPACK);
         let dict_count = dict.values.len() as u32;
         out.extend_from_slice(&dict_count.to_le_bytes());
         for cv in &dict.values {
@@ -129,7 +131,7 @@ pub fn decode_coord_axis(data: &[u8], pos: &mut usize) -> ArrayResult<DimDict> {
     *pos += 1;
 
     let dict_values: Vec<CoordValue> = match dict_tag {
-        DICT_TAG_GENERIC => {
+        DICT_TAG_MSGPACK => {
             if *pos + 4 > data.len() {
                 return Err(ArrayError::SegmentCorruption {
                     detail: "coord axis: truncated dict count".into(),
@@ -339,5 +341,20 @@ mod tests {
         let out = roundtrip(&d);
         assert_eq!(out.indices, d.indices);
         assert_eq!(out.values, d.values);
+    }
+
+    #[test]
+    fn zero_tag_byte_is_corruption() {
+        // Tag 0 is reserved/forbidden. A payload starting with 0x00 must
+        // be rejected as SegmentCorruption, not silently decoded.
+        let data = [0x00u8; 16];
+        let result = decode_coord_axis(&data, &mut 0);
+        assert!(
+            matches!(
+                result,
+                Err(crate::error::ArrayError::SegmentCorruption { .. })
+            ),
+            "expected SegmentCorruption for tag 0x00, got {result:?}"
+        );
     }
 }

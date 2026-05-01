@@ -101,17 +101,16 @@ pub fn extract_cell_bytes(tile: &SparseTile, coord: &[CoordValue]) -> ArrayResul
 
 /// Dispatch sparse tile decoding by peeking the tag byte.
 ///
-/// - New-format tiles (tag = 0 or 1): delegate to `decode_sparse_tile`.
-/// - Legacy v3 tiles (msgpack map-start byte): fall back to `zerompk::from_msgpack`.
-/// - Unknown bytes: return a corruption error.
+/// - Recognized tag (0 or 1): delegate to `decode_sparse_tile`.
+/// - Empty payload or unrecognized byte: return a corruption error.
 fn read_sparse_tile(payload: &[u8]) -> ArrayResult<SparseTile> {
     match peek_tag(payload) {
-        Some(_) => {
-            // New-format tile (Raw or Structural codec).
-            decode_sparse_tile(payload)
-        }
-        None => zerompk::from_msgpack(payload).map_err(|e| ArrayError::SegmentCorruption {
-            detail: format!("legacy sparse tile decode failed: {e}"),
+        Some(_) => decode_sparse_tile(payload),
+        None => Err(ArrayError::SegmentCorruption {
+            detail: format!(
+                "sparse tile has unrecognized tag byte {:#04x}",
+                payload.first().copied().unwrap_or(0)
+            ),
         }),
     }
 }

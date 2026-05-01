@@ -1,10 +1,8 @@
 // Tag byte identifying the tile codec on the wire. Sits as the very first
-// byte of every new-format tile payload (after BlockFraming unwraps).
+// byte of every tile payload (after BlockFraming unwraps).
 //
-// Legacy v3 segments had no tag — the payload began with a msgpack map
-// header (0x80..=0x8f for fixmap, 0xde for map16, 0xdf for map32).
-// The reader peeks this byte and uses None to signal "fall through to
-// zerompk legacy path".
+// Any byte not recognized as a valid CodecTag is treated as corruption and
+// must be surfaced as a SegmentCorruption error by the caller.
 
 /// One-byte codec tag at the front of a new-format (v4+) tile payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,21 +29,14 @@ impl CodecTag {
     }
 }
 
-/// Peek at the first byte of a tile payload and determine whether it is a
-/// legacy (v3) msgpack tile or a new-format tile.
+/// Peek at the first byte of a tile payload and return the codec tag.
 ///
-/// Returns `None` when the byte is a msgpack map-start (legacy path).
 /// Returns `Some(tag)` for a recognized new-format tag byte.
-/// Returns `None` for any other byte that cannot be decoded as a known tag
-/// (treated as corrupt — callers should surface an error after checking).
+/// Returns `None` for an empty payload or any unrecognized byte (including
+/// former msgpack map-start bytes 0x80–0x8f, 0xde, 0xdf) — callers must
+/// surface a `SegmentCorruption` error.
 pub fn peek_tag(payload: &[u8]) -> Option<CodecTag> {
     let first = *payload.first()?;
-    // msgpack fixmap: 0x80..=0x8f
-    // msgpack map16: 0xde
-    // msgpack map32: 0xdf
-    if matches!(first, 0x80..=0x8f | 0xde | 0xdf) {
-        return None;
-    }
     CodecTag::from_byte(first)
 }
 
@@ -72,20 +63,13 @@ mod tests {
     }
 
     #[test]
-    fn peek_tag_detects_msgpack_fixmap() {
-        // fixmap range: 0x80..=0x8f
+    fn peek_tag_former_msgpack_bytes_return_none() {
+        // Bytes 0x80..=0x8f, 0xde, 0xdf were formerly treated as legacy msgpack
+        // map-start markers. They are now unknown tag bytes and must return None.
         for b in 0x80u8..=0x8fu8 {
             let payload = [b, 0x00];
-            assert_eq!(
-                peek_tag(&payload),
-                None,
-                "fixmap byte {b:#04x} should be None"
-            );
+            assert_eq!(peek_tag(&payload), None, "byte {b:#04x} should be None");
         }
-    }
-
-    #[test]
-    fn peek_tag_detects_msgpack_map16_map32() {
         assert_eq!(peek_tag(&[0xde, 0x00]), None);
         assert_eq!(peek_tag(&[0xdf, 0x00]), None);
     }
