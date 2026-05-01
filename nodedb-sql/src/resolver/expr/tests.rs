@@ -121,6 +121,66 @@ fn double_quoted_string_value_unsupported() {
     );
 }
 
+/// `"col" = 'literal'` — double-quoted identifier on the left, single-quoted
+/// string literal on the right — must lower to `BinaryOp(Column("col"), Eq,
+/// Literal(String("literal")))`.  This is the canonical mixed-quotation form
+/// used in WHERE clauses (e.g. WHERE "userId" = 'alice').
+#[test]
+fn double_quoted_col_eq_single_quoted_literal() {
+    let expr = where_sql_expr(r#"SELECT * FROM t WHERE "col" = 'literal'"#);
+    match expr {
+        SqlExpr::BinaryOp { left, right, .. } => {
+            assert!(
+                matches!(*left, SqlExpr::Column { ref name, .. } if name == "col"),
+                "left should be Column(col), got {left:?}"
+            );
+            assert!(
+                matches!(*right, SqlExpr::Literal(SqlValue::String(ref s)) if s == "literal"),
+                "right should be Literal(String(\"literal\")), got {right:?}"
+            );
+        }
+        other => panic!("expected BinaryOp, got {other:?}"),
+    }
+}
+
+/// `"colA" = "colB"` — both sides are double-quoted identifiers; both must
+/// resolve as column references, not string literals.
+#[test]
+fn double_quoted_col_eq_double_quoted_col() {
+    let expr = where_sql_expr(r#"SELECT * FROM t WHERE "colA" = "colB""#);
+    match expr {
+        SqlExpr::BinaryOp { left, right, .. } => {
+            assert!(
+                matches!(*left, SqlExpr::Column { ref name, .. } if name == "colA"),
+                "left should be Column(colA), got {left:?}"
+            );
+            assert!(
+                matches!(*right, SqlExpr::Column { ref name, .. } if name == "colB"),
+                "right should be Column(colB), got {right:?}"
+            );
+        }
+        other => panic!("expected BinaryOp, got {other:?}"),
+    }
+}
+
+/// A double-quoted identifier in the SELECT list resolves as `SqlExpr::Column`
+/// with the exact case preserved (not lowercased, because it was quoted).
+#[test]
+fn double_quoted_select_col_case_preserved() {
+    let expr = first_select_expr(r#"SELECT "userId" FROM users"#);
+    let sql_expr = convert_expr(&expr).expect("convert_expr should succeed");
+    match sql_expr {
+        SqlExpr::Column { name, table } => {
+            assert_eq!(
+                name, "userId",
+                "case must be preserved for quoted identifier"
+            );
+            assert_eq!(table, None, "no table qualifier expected");
+        }
+        other => panic!("expected Column, got {other:?}"),
+    }
+}
+
 #[test]
 fn parse_interval_sql_word_forms() {
     assert_eq!(parse_interval_to_micros("1 hour"), Some(3_600_000_000));

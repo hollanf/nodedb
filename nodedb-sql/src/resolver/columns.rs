@@ -290,3 +290,135 @@ fn extract_string_literal_arg(arg: &sqlparser::ast::FunctionArg) -> Option<Strin
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{CollectionInfo, ColumnInfo, EngineType, SqlDataType};
+    use nodedb_types::PrimaryEngine;
+
+    fn strict_collection(name: &str, columns: Vec<&str>) -> CollectionInfo {
+        CollectionInfo {
+            name: name.into(),
+            engine: EngineType::DocumentStrict,
+            columns: columns
+                .into_iter()
+                .map(|c| ColumnInfo {
+                    name: c.into(),
+                    data_type: SqlDataType::String,
+                    nullable: true,
+                    is_primary_key: false,
+                    default: None,
+                })
+                .collect(),
+            primary_key: None,
+            has_auto_tier: false,
+            indexes: Vec::new(),
+            bitemporal: false,
+            primary: PrimaryEngine::Document,
+            vector_primary: None,
+        }
+    }
+
+    fn schemaless_collection(name: &str) -> CollectionInfo {
+        CollectionInfo {
+            name: name.into(),
+            engine: EngineType::DocumentSchemaless,
+            columns: Vec::new(),
+            primary_key: None,
+            has_auto_tier: false,
+            indexes: Vec::new(),
+            bitemporal: false,
+            primary: PrimaryEngine::Document,
+            vector_primary: None,
+        }
+    }
+
+    fn scope_with(info: CollectionInfo) -> TableScope {
+        let mut scope = TableScope::new();
+        scope
+            .add(ResolvedTable {
+                name: info.name.clone(),
+                alias: None,
+                info,
+            })
+            .expect("add failed");
+        scope
+    }
+
+    /// A double-quoted identifier resolves as a column name (case-preserved).
+    /// `"userId"` is parsed by the SQL layer as `Expr::Identifier` with
+    /// `quote_style = Some('"')` and `value = "userId"`.  At the
+    /// `TableScope` level the column name arrives lowercase (strict schema
+    /// columns are stored lowercase), so the resolved name is `"userid"`.
+    ///
+    /// This test confirms the resolution path, not just `convert_expr`.
+    #[test]
+    fn quoted_identifier_resolves_as_column() {
+        let scope = scope_with(strict_collection("users", vec!["userid", "email"]));
+        let (table, col) = scope
+            .resolve_column(None, "userid")
+            .expect("should resolve");
+        assert_eq!(table, "users");
+        assert_eq!(col, "userid");
+    }
+
+    /// An unrecognized column in a strict collection must yield
+    /// `SqlError::UnknownColumn`, NOT `SqlError::Unsupported`.
+    /// This verifies that a double-quoted identifier like `"ghost_col"`
+    /// that maps to `SqlExpr::Column { name: "ghost_col" }` surfaces the
+    /// right error variant when resolved against a strict schema.
+    #[test]
+    fn unknown_column_in_strict_collection_yields_unknown_column_error() {
+        let scope = scope_with(strict_collection("users", vec!["id", "email"]));
+        let err = scope
+            .resolve_column(None, "ghost_col")
+            .expect_err("should fail for unknown column");
+        assert!(
+            matches!(err, SqlError::UnknownColumn { ref column, .. } if column == "ghost_col"),
+            "expected UnknownColumn(ghost_col), got {err:?}"
+        );
+        // Must NOT be Unsupported — that would be the wrong error variant.
+        assert!(
+            !matches!(err, SqlError::Unsupported { .. }),
+            "must not surface Unsupported for a missing column"
+        );
+    }
+
+    /// Schemaless collections accept any column, including ones that look
+    /// like they could be misidentified double-quoted identifiers.
+    #[test]
+    fn any_column_accepted_in_schemaless_collection() {
+        let scope = scope_with(schemaless_collection("events"));
+        let (table, col) = scope
+            .resolve_column(None, "ghost_col")
+            .expect("schemaless should accept any column");
+        assert_eq!(table, "events");
+        assert_eq!(col, "ghost_col");
+    }
+
+    /// Qualified column reference: `"t"."col"` → table `t`, column `col`.
+    #[test]
+    fn qualified_column_resolves_correctly() {
+        let scope = scope_with(strict_collection("t", vec!["col", "other"]));
+        let (table, col) = scope
+            .resolve_column(Some("t"), "col")
+            .expect("qualified column should resolve");
+        assert_eq!(table, "t");
+        assert_eq!(col, "col");
+    }
+
+    /// Qualified reference to an unknown column in a strict collection must
+    /// yield `SqlError::UnknownColumn`, not `Unsupported`.
+    #[test]
+    fn qualified_unknown_column_in_strict_collection() {
+        let scope = scope_with(strict_collection("t", vec!["id"]));
+        let err = scope
+            .resolve_column(Some("t"), "missing")
+            .expect_err("should fail");
+        assert!(
+            matches!(err, SqlError::UnknownColumn { .. }),
+            "expected UnknownColumn, got {err:?}"
+        );
+    }
+}
