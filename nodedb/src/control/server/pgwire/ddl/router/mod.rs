@@ -35,9 +35,14 @@ pub async fn dispatch(
     // removed entirely.
     match nodedb_sql::ddl_ast::parse(sql) {
         Some(Err(e)) => {
-            // Reserved-identifier or other parse error — surface immediately.
+            // UnsupportedConstraint → 0A000 (feature_not_supported).
+            // All other parse errors → 42601 (syntax error).
+            let sqlstate = match &e {
+                nodedb_sql::SqlError::UnsupportedConstraint { .. } => "0A000",
+                _ => "42601",
+            };
             return Some(Err(super::super::types::sqlstate_error(
-                "42601",
+                sqlstate,
                 &e.to_string(),
             )));
         }

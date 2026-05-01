@@ -137,6 +137,65 @@ fn parse_temp_table_schema(sql: &str) -> PgWireResult<arrow::datatypes::Schema> 
                 ))));
             }
         };
+
+        // Reject table-level constraint keywords appearing as the "column name" token.
+        // "PRIMARY" here means `PRIMARY KEY (col)` table-level form — not supported for
+        // temp tables either; inline `col TYPE PRIMARY KEY` passes through fine.
+        let col_upper = col_name.to_uppercase();
+        if matches!(
+            col_upper.as_str(),
+            "PRIMARY" | "UNIQUE" | "CHECK" | "FOREIGN" | "REFERENCES" | "CONSTRAINT"
+        ) {
+            return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "0A000".to_owned(),
+                format!(
+                    "unsupported constraint: {col_upper}; \
+                     use NodeDB-native enforcement (indexes, typeguards)"
+                ),
+            ))));
+        }
+
+        // Reject inline constraint keywords appearing after the type token.
+        // "PRIMARY" (inline `col TYPE PRIMARY KEY`) is intentionally allowed through here —
+        // temp tables are DataFusion MemTables and ignore the PK marker, but accepting the
+        // syntax avoids breaking CREATE TEMPORARY TABLE statements that carry it.
+        for tok in tokens.by_ref() {
+            let upper_tok = tok.to_uppercase();
+            match upper_tok.as_str() {
+                "UNIQUE" => {
+                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                        "ERROR".to_owned(),
+                        "0A000".to_owned(),
+                        "unsupported constraint: UNIQUE constraint; \
+                         use a UNIQUE secondary index: \
+                         CREATE INDEX ... ON collection (field) UNIQUE"
+                            .to_owned(),
+                    ))));
+                }
+                "CHECK" => {
+                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                        "ERROR".to_owned(),
+                        "0A000".to_owned(),
+                        "unsupported constraint: CHECK constraint; \
+                         CHECK constraints are unsupported; enforce in application code \
+                         or use a typed function in INSERT"
+                            .to_owned(),
+                    ))));
+                }
+                "FOREIGN" | "REFERENCES" => {
+                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                        "ERROR".to_owned(),
+                        "0A000".to_owned(),
+                        "unsupported constraint: FOREIGN KEY constraint; \
+                         FOREIGN KEY enforcement is unsupported; enforce in application code"
+                            .to_owned(),
+                    ))));
+                }
+                _ => {}
+            }
+        }
+
         let data_type = sql_type_to_arrow(&type_str);
         let nullable = !col_def.to_uppercase().contains("NOT NULL");
         fields.push(Field::new(col_name, data_type, nullable));

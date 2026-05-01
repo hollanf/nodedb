@@ -132,9 +132,7 @@ fn eval_expr(expr: &sqlparser::ast::Expr) -> Option<nodedb_types::Value> {
                     None
                 }
             }
-            Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) => {
-                Some(nodedb_types::Value::String(s.clone()))
-            }
+            Value::SingleQuotedString(s) => Some(nodedb_types::Value::String(s.clone())),
             Value::Boolean(b) => Some(nodedb_types::Value::Bool(*b)),
             Value::Null => Some(nodedb_types::Value::Null),
             _ => None,

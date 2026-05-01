@@ -41,6 +41,13 @@ pub enum SqlError {
     )]
     ReservedIdentifier { name: String, reason: &'static str },
 
+    /// An unsupported SQL constraint was used in a DDL statement.
+    ///
+    /// Rendered as SQLSTATE `0A000` (feature_not_supported). The `feature` field
+    /// names the constraint keyword and `hint` points to the NodeDB equivalent.
+    #[error("unsupported constraint: {feature}; {hint}")]
+    UnsupportedConstraint { feature: String, hint: String },
+
     /// Collection is soft-deleted (within retention window).
     /// Propagated from `SqlCatalogError::CollectionDeactivated`;
     /// the pgwire layer renders this as sqlstate 42P01 with an

@@ -23,8 +23,13 @@ use sqlparser::ast;
 ///
 /// Accepts:
 /// - `Value::Number(n, _)` — the typed-parameter and explicit-literal path.
-/// - `Value::SingleQuotedString(s)` / `DoubleQuotedString(s)` where
-///   `s` parses as `usize` — the UNKNOWN-param bind path.
+/// - `Value::SingleQuotedString(s)` where `s` parses as `usize` — the
+///   UNKNOWN-param bind path (pgwire drivers that send `Type::UNKNOWN`).
+///
+/// `Value::DoubleQuotedString` is NOT accepted: with the PostgreSQL dialect
+/// double-quoted tokens parse as `Expr::Identifier`, never as
+/// `Expr::Value(Value::DoubleQuotedString)`, so that variant is unreachable
+/// in practice and routing it here would silently accept non-numeric text.
 ///
 /// # Bounds
 ///

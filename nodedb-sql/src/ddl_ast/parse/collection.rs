@@ -277,47 +277,167 @@ fn parse_col_token(token: &str) -> Result<Option<(String, String)>, SqlError> {
         Some(s) => s,
     };
 
-    // Skip constraint-only clauses (CONSTRAINT, PRIMARY KEY, UNIQUE, CHECK, ...).
+    // Reject unsupported SQL constraint keywords with typed errors and migration hints.
     let upper_name = raw_name.to_uppercase();
-    if matches!(
-        upper_name.as_str(),
-        "CONSTRAINT" | "PRIMARY" | "UNIQUE" | "CHECK" | "FOREIGN" | "REFERENCES"
-    ) {
-        return Ok(None);
+    match upper_name.as_str() {
+        "PRIMARY" => {
+            // Table-level `PRIMARY KEY (col)` clause: the column name is not present here,
+            // so we cannot wire `is_pk` on a specific column. Reject with a hint to use the
+            // inline form instead, which `parse_column_type_str_full` already handles.
+            return Err(SqlError::UnsupportedConstraint {
+                feature: "PRIMARY KEY".to_string(),
+                hint: "use the inline form on the column instead: \
+                       `<colname> <TYPE> PRIMARY KEY`"
+                    .to_string(),
+            });
+        }
+        "UNIQUE" => {
+            return Err(SqlError::UnsupportedConstraint {
+                feature: "UNIQUE constraint".to_string(),
+                hint: "use a UNIQUE secondary index: \
+                       CREATE INDEX ... ON collection (field) UNIQUE"
+                    .to_string(),
+            });
+        }
+        "CHECK" => {
+            return Err(SqlError::UnsupportedConstraint {
+                feature: "CHECK constraint".to_string(),
+                hint: "CHECK constraints are unsupported; enforce in application code \
+                       or use a typed function in INSERT"
+                    .to_string(),
+            });
+        }
+        "FOREIGN" => {
+            return Err(SqlError::UnsupportedConstraint {
+                feature: "FOREIGN KEY constraint".to_string(),
+                hint: "FOREIGN KEY enforcement is unsupported; \
+                       enforce in application code"
+                    .to_string(),
+            });
+        }
+        "REFERENCES" => {
+            return Err(SqlError::UnsupportedConstraint {
+                feature: "REFERENCES constraint".to_string(),
+                hint: "FOREIGN KEY enforcement is unsupported; \
+                       enforce in application code"
+                    .to_string(),
+            });
+        }
+        "CONSTRAINT" => {
+            // Named constraint: peek at the next token to determine kind.
+            let mut rest = toks.clone();
+            let _constraint_name = rest.next(); // skip the constraint name
+            let kind_tok = rest.next().map(|t| t.to_uppercase()).unwrap_or_default();
+            let (feature, hint) = match kind_tok.as_str() {
+                "PRIMARY" => (
+                    "CONSTRAINT ... PRIMARY KEY".to_string(),
+                    "use the inline form on the column instead: \
+                     `<colname> <TYPE> PRIMARY KEY`"
+                        .to_string(),
+                ),
+                "UNIQUE" => (
+                    "CONSTRAINT ... UNIQUE".to_string(),
+                    "use a UNIQUE secondary index: \
+                     CREATE INDEX ... ON collection (field) UNIQUE"
+                        .to_string(),
+                ),
+                "CHECK" => (
+                    "CONSTRAINT ... CHECK".to_string(),
+                    "CHECK constraints are unsupported; enforce in application code \
+                     or use a typed function in INSERT"
+                        .to_string(),
+                ),
+                "FOREIGN" => (
+                    "CONSTRAINT ... FOREIGN KEY".to_string(),
+                    "FOREIGN KEY enforcement is unsupported; \
+                     enforce in application code"
+                        .to_string(),
+                ),
+                _ => (
+                    format!("CONSTRAINT {}", kind_tok),
+                    "named constraints are unsupported; \
+                     use NodeDB-native enforcement (indexes, typeguards)"
+                        .to_string(),
+                ),
+            };
+            return Err(SqlError::UnsupportedConstraint { feature, hint });
+        }
+        _ => {}
     }
 
     // Validate that the column name is not a reserved identifier.
     let name = check_identifier(raw_name)?;
 
-    // Collect the column definition (bare type + modifiers like PRIMARY KEY, NOT NULL,
+    // Collect the column definition (bare type + modifiers like NOT NULL, DEFAULT expr,
     // TIME_KEY, SPATIAL_INDEX). Downstream builders (build_strict_schema,
     // build_kv_collection_type, etc.) each strip to the bare type as needed via
-    // parse_column_type_str. Stop only at DEFAULT and REFERENCES which start
-    // default-value or FK sub-clauses that have no bearing on the stored schema.
+    // parse_column_type_str.
+    //
+    // Inline constraint keywords (PRIMARY KEY, UNIQUE, CHECK, FOREIGN KEY, REFERENCES,
+    // CONSTRAINT) appearing after the type are rejected with typed errors — they are
+    // never silently absorbed into the type string.
     let mut type_parts: Vec<&str> = Vec::new();
     let mut in_paren = false;
     let mut hit_generated = false;
     for t in toks {
         let upper_t = t.to_uppercase();
         let stripped = upper_t.trim_end_matches(['(', ')', ',']);
-        // Stop at REFERENCES and CONSTRAINT — sub-clauses with no bearing on the
-        // stored schema.  UNIQUE and CHECK after the type are table-level keywords.
-        // DEFAULT is intentionally included so schema builders can extract the
-        // default expression.
         // GENERATED is NOT stopped here: we pass the raw text through so that
         // `build_strict_schema` can detect and store the generated expression.
-        if !in_paren && matches!(stripped, "REFERENCES" | "CONSTRAINT") {
-            break;
-        }
-        if !in_paren && matches!(stripped, "UNIQUE" | "CHECK") {
-            break;
-        }
         if !in_paren && stripped == "GENERATED" {
             hit_generated = true;
             // Stop the word-by-word iteration here.  We will append the original
             // raw text from "GENERATED" onwards below, preserving spaces inside
             // expressions like GENERATED ALWAYS AS ('café' || city).
             break;
+        }
+        // Reject inline constraint keywords — same error family as table-level constraints.
+        // Note: "PRIMARY" (inline `col TYPE PRIMARY KEY`) is intentionally NOT rejected here;
+        // it flows through to `parse_column_type_str_full` which extracts `is_pk` correctly.
+        if !in_paren {
+            match stripped {
+                "UNIQUE" => {
+                    return Err(SqlError::UnsupportedConstraint {
+                        feature: "UNIQUE constraint".to_string(),
+                        hint: "use a UNIQUE secondary index: \
+                               CREATE INDEX ... ON collection (field) UNIQUE"
+                            .to_string(),
+                    });
+                }
+                "CHECK" => {
+                    return Err(SqlError::UnsupportedConstraint {
+                        feature: "CHECK constraint".to_string(),
+                        hint: "CHECK constraints are unsupported; enforce in application code \
+                               or use a typed function in INSERT"
+                            .to_string(),
+                    });
+                }
+                "FOREIGN" => {
+                    return Err(SqlError::UnsupportedConstraint {
+                        feature: "FOREIGN KEY constraint".to_string(),
+                        hint: "FOREIGN KEY enforcement is unsupported; \
+                               enforce in application code"
+                            .to_string(),
+                    });
+                }
+                "REFERENCES" => {
+                    return Err(SqlError::UnsupportedConstraint {
+                        feature: "REFERENCES constraint".to_string(),
+                        hint: "FOREIGN KEY enforcement is unsupported; \
+                               enforce in application code"
+                            .to_string(),
+                    });
+                }
+                "CONSTRAINT" => {
+                    return Err(SqlError::UnsupportedConstraint {
+                        feature: "CONSTRAINT clause".to_string(),
+                        hint: "named constraints are unsupported; \
+                               use NodeDB-native enforcement (indexes, typeguards)"
+                            .to_string(),
+                    });
+                }
+                _ => {}
+            }
         }
         if t.contains('(') {
             in_paren = true;
