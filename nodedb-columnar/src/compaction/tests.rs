@@ -35,7 +35,7 @@ fn write_segment(rows: usize) -> Vec<u8> {
     }
     let (schema, columns, row_count) = mt.drain();
     SegmentWriter::plain()
-        .write_segment(&schema, &columns, row_count)
+        .write_segment(&schema, &columns, row_count, None)
         .expect("write")
 }
 
@@ -49,7 +49,7 @@ fn compact_removes_deleted_rows() {
         deletes.mark_deleted(i);
     }
 
-    let result = compact_segment(&segment, &deletes, &test_schema(), 0).expect("compact");
+    let result = compact_segment(&segment, &deletes, &test_schema(), 0, None).expect("compact");
 
     assert_eq!(result.live_rows, 90);
     assert_eq!(result.removed_rows, 10);
@@ -82,7 +82,7 @@ fn compact_all_deleted() {
         deletes.mark_deleted(i);
     }
 
-    let result = compact_segment(&segment, &deletes, &test_schema(), 0).expect("compact");
+    let result = compact_segment(&segment, &deletes, &test_schema(), 0, None).expect("compact");
 
     assert_eq!(result.live_rows, 0);
     assert_eq!(result.removed_rows, 10);
@@ -94,7 +94,7 @@ fn compact_no_deletes() {
     let segment = write_segment(50);
     let deletes = DeleteBitmap::new();
 
-    let result = compact_segment(&segment, &deletes, &test_schema(), 0).expect("compact");
+    let result = compact_segment(&segment, &deletes, &test_schema(), 0, None).expect("compact");
 
     assert_eq!(result.live_rows, 50);
     assert_eq!(result.removed_rows, 0);
@@ -111,8 +111,8 @@ fn merge_multiple_segments() {
 
     let del2 = DeleteBitmap::new(); // No deletes from seg2.
 
-    let result =
-        compact_segments(&[(&seg1, &del1), (&seg2, &del2)], &test_schema(), 0).expect("merge");
+    let result = compact_segments(&[(&seg1, &del1), (&seg2, &del2)], &test_schema(), 0, None)
+        .expect("merge");
 
     assert_eq!(result.live_rows, 77); // 50-3 + 30 = 77.
     assert_eq!(result.removed_rows, 3);
@@ -129,7 +129,7 @@ fn compact_preserves_string_data() {
     let mut deletes = DeleteBitmap::new();
     deletes.mark_deleted(0); // Delete first row.
 
-    let result = compact_segment(&segment, &deletes, &test_schema(), 0).expect("compact");
+    let result = compact_segment(&segment, &deletes, &test_schema(), 0, None).expect("compact");
     let new_seg = result.segment.as_ref().expect("segment");
     let reader = SegmentReader::open(new_seg).expect("open");
 

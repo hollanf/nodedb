@@ -28,11 +28,17 @@ pub struct CompactionResult {
 /// Reads the segment, skips rows marked in the delete bitmap, and writes
 /// a new segment with only live rows. Returns `None` segment if all rows
 /// were deleted.
+///
+/// When `kek` is `Some`, the output segment is wrapped in an AES-256-GCM
+/// SEGC envelope. The input segment must be plaintext (the caller is
+/// responsible for decrypting before passing to this function).
 pub fn compact_segment(
     segment_data: &[u8],
     deletes: &DeleteBitmap,
     schema: &ColumnarSchema,
     profile_tag: u8,
+    #[cfg(feature = "encryption")] kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+    #[cfg(not(feature = "encryption"))] _kek: Option<&[u8; 32]>,
 ) -> Result<CompactionResult, ColumnarError> {
     let reader = SegmentReader::open(segment_data)?;
     let total_rows = reader.row_count() as usize;
@@ -74,7 +80,10 @@ pub fn compact_segment(
 
     let (schema, columns, row_count) = memtable.drain();
     let writer = SegmentWriter::new(profile_tag);
-    let new_segment = writer.write_segment(&schema, &columns, row_count)?;
+    #[cfg(feature = "encryption")]
+    let new_segment = writer.write_segment(&schema, &columns, row_count, kek)?;
+    #[cfg(not(feature = "encryption"))]
+    let new_segment = writer.write_segment(&schema, &columns, row_count, None)?;
 
     Ok(CompactionResult {
         segment: Some(new_segment),

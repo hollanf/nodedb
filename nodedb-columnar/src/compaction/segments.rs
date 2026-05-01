@@ -16,10 +16,15 @@ use super::segment::CompactionResult;
 /// Reads all source segments, skips deleted rows from each, and writes
 /// a single merged output segment. This reduces segment count and reclaims
 /// space from deleted rows across all sources.
+///
+/// When `kek` is `Some`, the merged output segment is AES-256-GCM encrypted.
+/// Input segments must be pre-decrypted plaintext.
 pub fn compact_segments(
     segments: &[(&[u8], &DeleteBitmap)],
     schema: &ColumnarSchema,
     profile_tag: u8,
+    #[cfg(feature = "encryption")] kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+    #[cfg(not(feature = "encryption"))] _kek: Option<&[u8; 32]>,
 ) -> Result<CompactionResult, ColumnarError> {
     let mut memtable = ColumnarMemtable::new(schema);
     let mut total_removed = 0usize;
@@ -62,7 +67,10 @@ pub fn compact_segments(
 
     let (schema, columns, row_count) = memtable.drain();
     let writer = SegmentWriter::new(profile_tag);
-    let new_segment = writer.write_segment(&schema, &columns, row_count)?;
+    #[cfg(feature = "encryption")]
+    let new_segment = writer.write_segment(&schema, &columns, row_count, kek)?;
+    #[cfg(not(feature = "encryption"))]
+    let new_segment = writer.write_segment(&schema, &columns, row_count, None)?;
 
     Ok(CompactionResult {
         segment: Some(new_segment),

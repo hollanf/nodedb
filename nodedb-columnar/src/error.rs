@@ -51,4 +51,26 @@ pub enum ColumnarError {
 
     #[error("segment ID space exhausted: u64::MAX segments have been allocated")]
     SegmentIdExhausted,
+
+    /// Segment is encrypted (starts with `SEGV`) but no KEK was supplied.
+    #[error(
+        "columnar segment is encrypted but no encryption key was provided; \
+         cannot read an encrypted segment without a key"
+    )]
+    MissingKek,
+
+    /// Segment is plaintext (`NDBS`) but a KEK is configured (policy violation).
+    #[error(
+        "columnar segment is plaintext but an encryption key is configured; \
+         refusing to load an unencrypted segment when encryption is required"
+    )]
+    KekRequired,
+
+    /// AES-256-GCM encryption of the segment payload failed.
+    #[error("columnar segment encryption failed: {0}")]
+    EncryptionFailed(String),
+
+    /// AES-256-GCM decryption of the segment payload failed.
+    #[error("columnar segment decryption failed: {0}")]
+    DecryptionFailed(String),
 }

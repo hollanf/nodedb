@@ -709,7 +709,7 @@ mod tests {
         assert_eq!(default_bloom.m, BLOOM_BITS_DEFAULT);
     }
 
-    // ── G-03: i64 predicate pushdown correctness ────────────────────────────
+    // ── i64 predicate pushdown correctness ────────────────────────────
 
     /// Helper: BlockStats with exact i64 fields set (as integer() constructor produces).
     fn i64_stats(min: i64, max: i64) -> BlockStats {
@@ -721,7 +721,7 @@ mod tests {
         BlockStats::numeric(min, max, 0, 1024)
     }
 
-    /// G-03-A: large i64 values that collapse to the same f64 must not be
+    /// large i64 values that collapse to the same f64 must not be
     /// incorrectly skipped when the predicate value is between them.
     ///
     /// i64::MAX = 9_223_372_036_854_775_807
@@ -758,7 +758,7 @@ mod tests {
         );
     }
 
-    /// G-03-B: a large i64 predicate value that is clearly outside the block
+    /// a large i64 predicate value that is clearly outside the block
     /// range must be skipped correctly via the i64 path.
     #[test]
     fn large_i64_definitely_outside() {
@@ -771,7 +771,7 @@ mod tests {
         );
     }
 
-    /// G-03-C: for a v0 segment (no min_i64/max_i64), integer predicates whose
+    /// for a v0 segment (no min_i64/max_i64), integer predicates whose
     /// value fits in f64 exactly fall through to the f64 path correctly.
     #[test]
     fn integer_predicate_fallback_to_f64_for_v0_segment() {
@@ -783,7 +783,7 @@ mod tests {
         assert!(!ScanPredicate::eq_i64(0, 30).can_skip_block(&stats));
     }
 
-    /// G-03-D: for a v0 segment, an integer predicate with a value outside
+    /// for a v0 segment, an integer predicate with a value outside
     /// ±2^53 (not exactly representable in f64) must NOT skip — conservative.
     #[test]
     fn integer_predicate_v0_segment_unsafe_value_no_skip() {

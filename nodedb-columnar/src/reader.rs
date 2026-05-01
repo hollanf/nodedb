@@ -67,9 +67,84 @@ pub struct SegmentReader<'a> {
     footer: SegmentFooter,
 }
 
+/// An owned segment reader that holds decrypted segment bytes.
+///
+/// Used when a segment was encrypted at rest: the decrypted plaintext is owned
+/// by this struct, and `reader()` borrows from it for column decoding.
+#[cfg(feature = "encryption")]
+#[derive(Debug)]
+pub struct OwnedSegmentReader {
+    /// Decrypted plaintext segment bytes.
+    plaintext: Vec<u8>,
+    footer: SegmentFooter,
+}
+
+#[cfg(feature = "encryption")]
+impl OwnedSegmentReader {
+    fn from_plaintext(plaintext: Vec<u8>) -> Result<Self, crate::error::ColumnarError> {
+        use crate::format::{SegmentFooter, SegmentHeader};
+        SegmentHeader::from_bytes(&plaintext)?;
+        let footer = SegmentFooter::from_segment_tail(&plaintext)?;
+        Ok(Self { plaintext, footer })
+    }
+
+    /// Open a segment with optional at-rest decryption.
+    ///
+    /// - `kek = None` → requires a plaintext (`NDBS`) segment; returns
+    ///   `Err(MissingKek)` if the blob starts with `SEGC`.
+    /// - `kek = Some(key)` → requires an encrypted (`SEGC`) segment; decrypts
+    ///   the blob, then parses the inner plaintext. Returns `Err(KekRequired)`
+    ///   if the blob starts with `NDBS`.
+    pub fn open_with_kek(
+        blob: &[u8],
+        kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+    ) -> Result<Self, crate::error::ColumnarError> {
+        let is_encrypted = blob.len() >= 4 && blob[0..4] == crate::encrypt::SEGC_MAGIC;
+        if is_encrypted {
+            let key = kek.ok_or(crate::error::ColumnarError::MissingKek)?;
+            let plaintext = crate::encrypt::decrypt_segment(key, blob)?;
+            Self::from_plaintext(plaintext)
+        } else if kek.is_some() {
+            Err(crate::error::ColumnarError::KekRequired)
+        } else {
+            Self::from_plaintext(blob.to_vec())
+        }
+    }
+
+    /// Borrow a `SegmentReader` over the owned plaintext bytes.
+    pub fn reader(&self) -> SegmentReader<'_> {
+        SegmentReader {
+            data: &self.plaintext,
+            footer: self.footer.clone(),
+        }
+    }
+
+    /// Access the segment footer.
+    pub fn footer(&self) -> &SegmentFooter {
+        &self.footer
+    }
+
+    /// Total row count in the segment.
+    pub fn row_count(&self) -> u64 {
+        self.footer.row_count
+    }
+}
+
 impl<'a> SegmentReader<'a> {
-    /// Open a segment from a byte buffer. Validates header and footer CRC.
+    /// Open a plaintext segment from a byte buffer.
+    ///
+    /// Validates the `NDBS` header and footer CRC. If `data` starts with `SEGC`
+    /// (an encrypted envelope) and `kek` is `None`, returns `Err(MissingKek)`.
+    /// If `data` starts with `NDBS` (plaintext) and `kek` is `Some`, returns
+    /// `Err(KekRequired)` — refusing to load unencrypted data when encryption
+    /// is configured.
+    ///
+    /// To read an encrypted segment, use [`SegmentReader::open_encrypted`].
     pub fn open(data: &'a [u8]) -> Result<Self, ColumnarError> {
+        #[cfg(feature = "encryption")]
+        if data.len() >= 4 && data[0..4] == crate::encrypt::SEGC_MAGIC {
+            return Err(ColumnarError::MissingKek);
+        }
         SegmentHeader::from_bytes(data)?;
         let footer = SegmentFooter::from_segment_tail(data)?;
         Ok(Self { data, footer })
@@ -552,7 +627,7 @@ mod tests {
 
         let (schema, columns, row_count) = mt.drain();
         SegmentWriter::plain()
-            .write_segment(&schema, &columns, row_count)
+            .write_segment(&schema, &columns, row_count, None)
             .expect("write")
     }
 
@@ -786,7 +861,7 @@ mod tests {
 
         let (schema, columns, row_count) = mt.drain();
         let segment = crate::writer::SegmentWriter::plain()
-            .write_segment(&schema, &columns, row_count)
+            .write_segment(&schema, &columns, row_count, None)
             .expect("write");
 
         let reader = SegmentReader::open(&segment).expect("open");
@@ -849,7 +924,7 @@ mod tests {
 
         let (schema, columns, row_count) = mt.drain();
         let segment = SegmentWriter::plain()
-            .write_segment(&schema, &columns, row_count)
+            .write_segment(&schema, &columns, row_count, None)
             .expect("write segment");
 
         // Read back.
@@ -908,7 +983,7 @@ mod tests {
 
         let (schema, columns, row_count) = mt.drain();
         let segment = SegmentWriter::plain()
-            .write_segment(&schema, &columns, row_count)
+            .write_segment(&schema, &columns, row_count, None)
             .expect("write");
 
         let reader = SegmentReader::open(&segment).expect("open");

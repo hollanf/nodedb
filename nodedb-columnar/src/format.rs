@@ -15,18 +15,7 @@ pub const VERSION_MAJOR: u8 = 1;
 
 /// Current format minor version. Readers tolerate segments with same major
 /// but higher minor (unknown footer fields are ignored).
-///
-/// Changelog:
-///   0 → 1: `BlockStats` gained `min_i64`/`max_i64` fields for lossless
-///           integer predicate pushdown. Fields are optional with serde
-///           `default`; readers at minor 0 simply see `None` for both.
-///   1 → 2: `BlockStats.bloom` changed from `Option<Vec<u8>>` to
-///           `Option<BloomFilter>` — the bloom parameters (k hash functions,
-///           m bit-array size) are now persisted alongside the bytes so that
-///           future readers are not dependent on compile-time constants to
-///           interpret old segments. The field is still optional with serde
-///           `default`; readers at minor ≤1 see `None`.
-pub const VERSION_MINOR: u8 = 2;
+pub const VERSION_MINOR: u8 = 1;
 
 /// Endianness marker: 0x01 = little-endian (always LE for NodeDB).
 pub const ENDIANNESS_LE: u8 = 0x01;
@@ -488,5 +477,68 @@ mod tests {
         assert!(ScanPredicate::eq(0, 100.0).can_skip_block(&stats));
         // WHERE x = 30 → cannot skip (10 ≤ 30 ≤ 50).
         assert!(!ScanPredicate::eq(0, 30.0).can_skip_block(&stats));
+    }
+
+    #[cfg(test)]
+    mod golden {
+        use super::*;
+
+        /// Asserts magic bytes, version_major == 1, version_minor == 1, and
+        /// that the footer CRC round-trips cleanly.
+        #[test]
+        fn golden_columnar_segment_format() {
+            // Header golden: magic at [0..4], major at [4], minor at [5].
+            let header = SegmentHeader::current();
+            let bytes = header.to_bytes();
+            assert_eq!(&bytes[0..4], b"NDBS", "magic mismatch");
+            assert_eq!(bytes[4], VERSION_MAJOR, "major version mismatch");
+            assert_eq!(bytes[5], VERSION_MINOR, "minor version mismatch");
+            assert_eq!(bytes[4], 1u8, "expected VERSION_MAJOR == 1");
+            assert_eq!(bytes[5], 1u8, "expected VERSION_MINOR == 1");
+
+            // Footer golden: serialize, then re-parse, asserting CRC consistency.
+            let footer = SegmentFooter {
+                schema_hash: 0xAB_CD_EF_01,
+                column_count: 1,
+                row_count: 128,
+                profile_tag: 0,
+                columns: vec![ColumnMeta {
+                    name: "v".into(),
+                    offset: 0,
+                    length: 64,
+                    codec: nodedb_codec::ResolvedColumnCodec::Lz4,
+                    block_count: 1,
+                    block_stats: vec![BlockStats::non_numeric(0, 128)],
+                    dictionary: None,
+                }],
+            };
+            let footer_bytes = footer.to_bytes().expect("serialize");
+            // Layout: [msgpack_body][footer_len u32 LE][crc u32 LE]
+            let n = footer_bytes.len();
+            let stored_crc = u32::from_le_bytes([
+                footer_bytes[n - 4],
+                footer_bytes[n - 3],
+                footer_bytes[n - 2],
+                footer_bytes[n - 1],
+            ]);
+            let body_len = u32::from_le_bytes([
+                footer_bytes[n - 8],
+                footer_bytes[n - 7],
+                footer_bytes[n - 6],
+                footer_bytes[n - 5],
+            ]) as usize;
+            // CRC is computed over the msgpack body only (bytes 0..body_len).
+            let recomputed = crc32c::crc32c(&footer_bytes[..body_len]);
+            assert_eq!(stored_crc, recomputed, "footer CRC mismatch");
+
+            // Round-trip via from_segment_tail.
+            let mut segment = Vec::new();
+            segment.extend_from_slice(&bytes);
+            segment.extend_from_slice(&[0u8; 64]);
+            segment.extend_from_slice(&footer_bytes);
+            let parsed = SegmentFooter::from_segment_tail(&segment).expect("parse");
+            assert_eq!(parsed.schema_hash, footer.schema_hash);
+            assert_eq!(parsed.row_count, 128);
+        }
     }
 }
