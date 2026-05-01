@@ -26,6 +26,10 @@ pub struct OffsetStore {
     db: Database,
     /// In-memory cache: GroupKey → { partition_id → committed_lsn }.
     cache: std::sync::RwLock<HashMap<GroupKey, HashMap<u32, u64>>>,
+    /// Memory-only: last `StreamBuffer::total_evicted` snapshot seen per group.
+    /// Used to compute `evicted_since_last_poll` in `PollResponse`.
+    /// Not persisted — resets to 0 on restart, giving one cycle with delta=0.
+    eviction_baselines: std::sync::RwLock<HashMap<GroupKey, u64>>,
 }
 
 impl OffsetStore {
@@ -99,6 +103,7 @@ impl OffsetStore {
         Ok(Self {
             db,
             cache: std::sync::RwLock::new(cache),
+            eviction_baselines: std::sync::RwLock::new(HashMap::new()),
         })
     }
 
@@ -247,6 +252,32 @@ impl OffsetStore {
         }
 
         Ok(())
+    }
+
+    // ── Eviction baseline (memory-only, for PollResponse delta tracking) ──
+
+    /// Return the last `total_evicted` snapshot recorded for this group, and
+    /// atomically replace it with `current_total`. Returns `(baseline, delta)`:
+    /// - `baseline` is the previous snapshot (0 if this is the group's first poll).
+    /// - `delta = current_total - baseline` is the drop count since the last poll.
+    ///
+    /// Called at the start of each HTTP poll so `evicted_since_last_poll` in
+    /// `PollResponse` reflects exactly the events that fell out of the buffer
+    /// between this poll and the previous one for this group.
+    pub fn swap_eviction_baseline(
+        &self,
+        tenant_id: u64,
+        stream: &str,
+        group: &str,
+        current_total: u64,
+    ) -> u64 {
+        let key = (tenant_id, stream.to_string(), group.to_string());
+        let mut baselines = self
+            .eviction_baselines
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        let baseline = baselines.insert(key, current_total).unwrap_or(0);
+        current_total.saturating_sub(baseline)
     }
 }
 

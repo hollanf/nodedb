@@ -34,6 +34,14 @@ pub struct ConsumeResult {
     pub events: Vec<Arc<CdcEvent>>,
     /// Per-partition latest LSN seen in this batch (for offset tracking).
     pub partition_offsets: Vec<(u32, u64)>,
+    /// Number of events dropped from this stream's buffer since the consumer
+    /// group's previous poll. Zero on the first ever poll for this group, or
+    /// when no evictions have occurred.
+    pub evicted_since_last_poll: u64,
+    /// Oldest LSN still available in the stream buffer. Zero when the buffer
+    /// is empty. A consumer whose `from_lsn` < this value has experienced a
+    /// gap and should resync or alert.
+    pub oldest_available_lsn: u64,
 }
 
 /// Consume events from a change stream using consumer group offsets.
@@ -164,9 +172,21 @@ pub fn consume_local(
         }
     }
 
+    // Compute eviction delta and oldest LSN for the poll response.
+    let total_evicted_now = buffer.total_evicted();
+    let evicted_since_last_poll = state.offset_store.swap_eviction_baseline(
+        params.tenant_id,
+        params.stream_name,
+        params.group_name,
+        total_evicted_now,
+    );
+    let oldest_available_lsn = buffer.earliest_lsn().unwrap_or(0);
+
     Ok(ConsumeResult {
         events,
         partition_offsets: partition_offsets.into_iter().collect(),
+        evicted_since_last_poll,
+        oldest_available_lsn,
     })
 }
 
@@ -277,6 +297,12 @@ pub async fn consume_remote(
     Ok(ConsumeResult {
         events,
         partition_offsets: partition_offsets.into_iter().collect(),
+        // For remote consumes the eviction metadata comes from the remote node.
+        // The remote `consume_local` path already computed the delta on that
+        // node; we cannot reconstruct it here. Surface 0 so callers always get
+        // a valid (conservative) value rather than stale or fabricated data.
+        evicted_since_last_poll: 0,
+        oldest_available_lsn: 0,
     })
 }
 

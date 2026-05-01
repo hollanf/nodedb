@@ -56,16 +56,23 @@ impl StreamBuffer {
     /// Accepts anything that can be turned into an `Arc<CdcEvent>`. The
     /// router hands the SAME `Arc` to every matching stream's buffer so
     /// fan-out across N subscribers is N refcount bumps, not N deep clones.
-    pub fn push(&self, event: impl Into<Arc<CdcEvent>>) {
+    ///
+    /// Returns the number of events evicted as a result of this push (0 or
+    /// more). Callers may use the return value to increment per-stream drop
+    /// counters without an extra atomic read.
+    pub fn push(&self, event: impl Into<Arc<CdcEvent>>) -> u64 {
         let event = event.into();
         let mut events = self.events.write().unwrap_or_else(|p| {
             tracing::warn!(stream = %self.name, "StreamBuffer RwLock poisoned, recovering");
             p.into_inner()
         });
 
+        let mut evicted_this_push: u64 = 0;
+
         // Evict by count.
         while events.len() as u64 >= self.retention.max_events {
             events.pop_front();
+            evicted_this_push += 1;
             self.total_evicted
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
@@ -78,6 +85,7 @@ impl StreamBuffer {
         let cutoff_ms = now_ms.saturating_sub(self.retention.max_age_secs * 1000);
         while events.front().is_some_and(|e| e.event_time < cutoff_ms) {
             events.pop_front();
+            evicted_this_push += 1;
             self.total_evicted
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
@@ -99,6 +107,8 @@ impl StreamBuffer {
         events.push_back(event);
         self.total_pushed
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        evicted_this_push
     }
 
     /// Latest observed LSN per partition, across the entire lifetime of

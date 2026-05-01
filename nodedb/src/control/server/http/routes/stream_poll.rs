@@ -29,6 +29,10 @@ pub struct PollParams {
 }
 
 /// Response body.
+///
+/// All fields that were present before v1.0 remain. `evicted_since_last_poll`
+/// and `oldest_available_lsn` are additive — HTTP clients and ORMs that ignore
+/// unknown JSON fields will not break.
 #[derive(Serialize)]
 pub struct PollResponse {
     /// Events in this batch.
@@ -37,6 +41,15 @@ pub struct PollResponse {
     pub partition_offsets: std::collections::BTreeMap<String, u64>,
     /// Total events returned.
     pub count: usize,
+    /// Events dropped from this stream's buffer since the previous poll for
+    /// this consumer group. Zero on the first poll or when the buffer has not
+    /// overflowed. A non-zero value means the consumer has a gap: events
+    /// between the last committed LSN and `oldest_available_lsn` are gone.
+    pub evicted_since_last_poll: u64,
+    /// Oldest LSN still available in the stream buffer. Zero when the buffer
+    /// is empty. If `evicted_since_last_poll > 0`, seek here to resume
+    /// consumption (events before this LSN are permanently lost).
+    pub oldest_available_lsn: u64,
 }
 
 /// `GET /v1/streams/{stream}/poll`
@@ -105,6 +118,8 @@ pub async fn poll_stream(
         Err(ConsumeError::BufferEmpty(_)) => ConsumeResult {
             events: Vec::new(),
             partition_offsets: Vec::new(),
+            evicted_since_last_poll: 0,
+            oldest_available_lsn: 0,
         },
         Err(e) => {
             return (
@@ -131,6 +146,8 @@ pub async fn poll_stream(
         events,
         partition_offsets,
         count,
+        evicted_since_last_poll: result.evicted_since_last_poll,
+        oldest_available_lsn: result.oldest_available_lsn,
     })
     .into_response()
 }

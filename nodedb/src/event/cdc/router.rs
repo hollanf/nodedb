@@ -13,8 +13,10 @@ use tracing::trace;
 
 use super::buffer::StreamBuffer;
 use super::event::CdcEvent;
+use super::lag_warner::{CdcLagWarner, DEFAULT_THRESHOLD};
 use super::registry::StreamRegistry;
 use super::stream_def::LateDataPolicy;
+use crate::control::metrics::system::SystemMetrics;
 use crate::event::types::WriteEvent;
 use crate::event::watermark_tracker::WatermarkTracker;
 
@@ -24,6 +26,11 @@ pub struct CdcRouter {
     registry: Arc<StreamRegistry>,
     /// Per-stream retention buffers, keyed by `(tenant_id, stream_name)`.
     buffers: std::sync::RwLock<HashMap<(u64, String), Arc<StreamBuffer>>>,
+    /// Per-stream drop rate tracker — emits `warn!` when threshold is crossed.
+    lag_warner: CdcLagWarner,
+    /// System metrics for per-stream Prometheus counters. `None` in unit tests
+    /// that construct a router without a full metrics registry.
+    metrics: Option<Arc<SystemMetrics>>,
 }
 
 impl CdcRouter {
@@ -31,7 +38,16 @@ impl CdcRouter {
         Self {
             registry,
             buffers: std::sync::RwLock::new(HashMap::new()),
+            lag_warner: CdcLagWarner::new(DEFAULT_THRESHOLD),
+            metrics: None,
         }
+    }
+
+    /// Attach system metrics so the router can update
+    /// `nodedb_cdc_events_dropped_total{tenant, stream}` on each eviction.
+    pub fn with_metrics(mut self, metrics: Arc<SystemMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Route a WriteEvent to all matching change streams.
@@ -124,7 +140,15 @@ impl CdcRouter {
             }
 
             let buffer = self.get_or_create_buffer(def.tenant_id, &def.name, &def.retention);
-            buffer.push(Arc::clone(&cdc_event));
+            let evictions = buffer.push(Arc::clone(&cdc_event));
+            if evictions > 0 {
+                let oldest_lsn = buffer.earliest_lsn().unwrap_or(0);
+                self.lag_warner
+                    .record_drops(def.tenant_id, &def.name, evictions, oldest_lsn);
+                if let Some(m) = &self.metrics {
+                    m.record_cdc_stream_drop(def.tenant_id, &def.name, evictions);
+                }
+            }
 
             if is_late && def.late_data == LateDataPolicy::Recompute {
                 let correction = recompute
@@ -147,7 +171,19 @@ impl CdcRouter {
                         })
                     })
                     .clone();
-                buffer.push(correction);
+                let correction_evictions = buffer.push(correction);
+                if correction_evictions > 0 {
+                    let oldest_lsn = buffer.earliest_lsn().unwrap_or(0);
+                    self.lag_warner.record_drops(
+                        def.tenant_id,
+                        &def.name,
+                        correction_evictions,
+                        oldest_lsn,
+                    );
+                    if let Some(m) = &self.metrics {
+                        m.record_cdc_stream_drop(def.tenant_id, &def.name, correction_evictions);
+                    }
+                }
                 trace!(
                     stream = %def.name,
                     lsn = event.lsn.as_u64(),
@@ -217,6 +253,7 @@ impl CdcRouter {
         let key = (tenant_id, stream_name.to_string());
         let mut buffers = self.buffers.write().unwrap_or_else(|p| p.into_inner());
         buffers.remove(&key);
+        self.lag_warner.remove_stream(tenant_id, stream_name);
     }
 
     /// Snapshot of all buffer stats (for SHOW CHANGE STREAMS).
