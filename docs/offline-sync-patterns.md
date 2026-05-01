@@ -144,7 +144,7 @@ await db.sync("wss://origin.example.com/sync");
 
 ### Key Points
 
-- All seven engines work locally on Lite (vector, graph, document, etc.)
+- All eight engines work locally on Lite (document, KV, columnar, timeseries, spatial, vector, array, plus graph and FTS overlays)
 - CRDT sync is transparent — local writes are optimistic, validated at Origin
 - Constraint violations on Origin produce compensation hints in the dead-letter queue
 - The same Decimal type, query engine, and data model work on both Origin and Lite

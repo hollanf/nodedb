@@ -237,6 +237,11 @@ pub enum ErrorCode {
     /// this op-type. Distinguished from `Internal` so pgwire surfaces it as
     /// `0A000` (feature_not_supported) rather than `XX000`.
     Unsupported { detail: String },
+    /// Transaction rollback failed: at least one undo entry could not be
+    /// applied. The shard state is unknown — the client must treat this as a
+    /// fatal error and the operator must restart the shard (WAL replay restores
+    /// correct state on startup). Never silently continues.
+    RollbackFailed { entry_index: usize, detail: String },
 }
 
 impl From<crate::Error> for ErrorCode {

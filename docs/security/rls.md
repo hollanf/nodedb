@@ -1,6 +1,6 @@
 # Row-Level Security (RLS)
 
-RLS policies filter rows based on the authenticated user's context. Policies apply transparently to all queries — no application code changes needed. Works across all seven engines.
+RLS policies filter rows based on the authenticated user's context. Policies apply transparently to all queries — no application code changes needed. Works across all eight engines.
 
 ## Creating Policies
 

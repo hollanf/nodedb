@@ -5,7 +5,7 @@
 //! VectorInsert, EdgePut, EdgeDelete) are tracked for rollback on failure.
 //! CRDT deltas are accumulated in a scratch buffer and only applied on success.
 
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::bridge::envelope::{Response, Status};
 use crate::bridge::physical_plan::PhysicalPlan;
@@ -62,7 +62,25 @@ impl CoreLoop {
                     );
 
                     // Roll back all previous writes in reverse order.
-                    self.rollback_undo_log(tid, undo_log);
+                    // If rollback itself fails, the shard state is unknown —
+                    // return RollbackFailed (never warn-and-continue).
+                    let rollback_error_code = match self.rollback_undo_log(tid, undo_log) {
+                        Ok(()) => error_code,
+                        Err((entry_index, detail)) => {
+                            error!(
+                                core = self.core_id,
+                                plan_index = i,
+                                entry_index,
+                                detail = %detail,
+                                "transaction rollback failed; shard state unknown — \
+                                 restart required for WAL replay"
+                            );
+                            crate::bridge::envelope::ErrorCode::RollbackFailed {
+                                entry_index,
+                                detail,
+                            }
+                        }
+                    };
 
                     // Discard CRDT scratch buffer (never applied).
                     drop(crdt_deltas);
@@ -74,7 +92,7 @@ impl CoreLoop {
                         partial: false,
                         payload: crate::bridge::envelope::Payload::empty(),
                         watermark_lsn: self.watermark,
-                        error_code: Some(error_code),
+                        error_code: Some(rollback_error_code),
                     };
                 }
             }
@@ -87,7 +105,22 @@ impl CoreLoop {
                 "BALANCED constraint violated, rolling back {} operations",
                 undo_log.len()
             );
-            self.rollback_undo_log(tid, undo_log);
+            let rollback_error_code = match self.rollback_undo_log(tid, undo_log) {
+                Ok(()) => error_code,
+                Err((entry_index, detail)) => {
+                    error!(
+                        core = self.core_id,
+                        entry_index,
+                        detail = %detail,
+                        "transaction rollback failed (BALANCED constraint path); \
+                         shard state unknown — restart required for WAL replay"
+                    );
+                    crate::bridge::envelope::ErrorCode::RollbackFailed {
+                        entry_index,
+                        detail,
+                    }
+                }
+            };
             return Response {
                 request_id: task.request_id(),
                 status: Status::Error,
@@ -95,17 +128,61 @@ impl CoreLoop {
                 partial: false,
                 payload: crate::bridge::envelope::Payload::empty(),
                 watermark_lsn: self.watermark,
-                error_code: Some(error_code),
+                error_code: Some(rollback_error_code),
             };
         }
 
         // All sub-plans succeeded. Apply buffered CRDT deltas.
-        for (delta, peer_id) in crdt_deltas {
+        // Failure here means the CRDT state is inconsistent with the already-committed
+        // forward writes — return RollbackFailed so the client knows the shard needs
+        // a restart to restore consistency via WAL replay. Never warn-and-continue.
+        for (crdt_idx, (delta, peer_id)) in crdt_deltas.into_iter().enumerate() {
             let tenant_id = crate::types::TenantId::new(tid);
-            if let Ok(engine) = self.get_crdt_engine(tenant_id) {
-                let _ = peer_id; // peer_id used for dedup in future
-                if let Err(e) = engine.apply_committed_delta(&delta) {
-                    warn!(core = self.core_id, error = %e, "CRDT delta apply failed during tx commit");
+            match self.get_crdt_engine(tenant_id) {
+                Ok(engine) => {
+                    let _ = peer_id; // peer_id used for dedup in future
+                    if let Err(e) = engine.apply_committed_delta(&delta) {
+                        error!(
+                            core = self.core_id,
+                            crdt_delta_index = crdt_idx,
+                            error = %e,
+                            "CRDT delta apply failed after forward writes committed; \
+                             shard state unknown — restart required for WAL replay"
+                        );
+                        return Response {
+                            request_id: task.request_id(),
+                            status: Status::Error,
+                            attempt: 1,
+                            partial: false,
+                            payload: crate::bridge::envelope::Payload::empty(),
+                            watermark_lsn: self.watermark,
+                            error_code: Some(crate::bridge::envelope::ErrorCode::RollbackFailed {
+                                entry_index: crdt_idx,
+                                detail: format!("CRDT delta apply failed: {e}"),
+                            }),
+                        };
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        core = self.core_id,
+                        crdt_delta_index = crdt_idx,
+                        error = %e,
+                        "CRDT engine not found after forward writes committed; \
+                         shard state unknown — restart required for WAL replay"
+                    );
+                    return Response {
+                        request_id: task.request_id(),
+                        status: Status::Error,
+                        attempt: 1,
+                        partial: false,
+                        payload: crate::bridge::envelope::Payload::empty(),
+                        watermark_lsn: self.watermark,
+                        error_code: Some(crate::bridge::envelope::ErrorCode::RollbackFailed {
+                            entry_index: crdt_idx,
+                            detail: format!("CRDT engine not available: {e}"),
+                        }),
+                    };
                 }
             }
         }

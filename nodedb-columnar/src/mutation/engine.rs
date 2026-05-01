@@ -201,6 +201,40 @@ impl MutationEngine {
         self.memtable.get_row(row_idx)
     }
 
+    /// Roll back in-memory inserts to `row_count_before`.
+    ///
+    /// Undoes the effect of one or more inserts that appended rows starting
+    /// at `row_count_before`. For each inserted row:
+    /// - The corresponding PK entry is removed from the PK index.
+    /// - If the insert displaced a prior row (upsert tombstone), that prior
+    ///   row's PK index entry is restored and its tombstone bit cleared.
+    ///
+    /// The memtable is then truncated to `row_count_before`. Used exclusively
+    /// by the transaction undo log; never called on the normal write path.
+    pub fn rollback_memtable_inserts(
+        &mut self,
+        row_count_before: usize,
+        inserted_pks: &[Vec<u8>],
+        displaced: &[(Vec<u8>, crate::pk_index::RowLocation)],
+    ) {
+        // 1. Remove newly inserted PK entries.
+        for pk in inserted_pks {
+            self.pk_index.remove(pk);
+        }
+        // 2. Restore displaced prior-row PK entries and clear tombstones.
+        for (pk, prior_location) in displaced {
+            self.pk_index.upsert(pk.clone(), *prior_location);
+            // Clear the tombstone bit that the insert set on the prior row.
+            if let Some(bm) = self.delete_bitmaps.get_mut(&prior_location.segment_id) {
+                bm.unmark_deleted(prior_location.row_index);
+            }
+        }
+        // 3. Truncate memtable and surrogate list.
+        self.memtable.truncate_to(row_count_before);
+        self.memtable_surrogates.truncate(row_count_before);
+        self.memtable_row_counter = row_count_before as u32;
+    }
+
     /// The segment ID that will be assigned to the next flushed segment.
     ///
     /// Use this to obtain the ID to pass to `on_memtable_flushed`.

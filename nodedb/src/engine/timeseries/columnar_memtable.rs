@@ -494,6 +494,59 @@ impl ColumnarMemtable {
         result
     }
 
+    // -- Mutators --
+
+    /// Truncate this memtable back to `n` rows.
+    ///
+    /// Used during transaction rollback to reverse a `TimeseriesIngest` operation.
+    /// All column vectors are truncated; aggregate stats are recomputed from the
+    /// surviving rows. `series_row_counts` is rebuilt from scratch so per-series
+    /// cardinality remains consistent.
+    pub fn truncate_to(&mut self, n: u64) {
+        if n >= self.row_count {
+            return;
+        }
+        let n_usize = n as usize;
+        let ts_idx = self.schema.timestamp_idx;
+        for col in &mut self.columns {
+            match col {
+                ColumnData::Timestamp(v) | ColumnData::Int64(v) => v.truncate(n_usize),
+                ColumnData::Float64(v) => v.truncate(n_usize),
+                ColumnData::Symbol(v) => v.truncate(n_usize),
+                ColumnData::DictEncoded { ids, valid, .. } => {
+                    ids.truncate(n_usize);
+                    valid.truncate(n_usize);
+                }
+            }
+        }
+        self.row_count = n;
+        // Recompute ts range from surviving timestamps.
+        if n == 0 {
+            self.min_ts = i64::MAX;
+            self.max_ts = i64::MIN;
+            self.series_row_counts.clear();
+        } else if let ColumnData::Timestamp(ts) = &self.columns[ts_idx] {
+            self.min_ts = ts.iter().copied().min().unwrap_or(i64::MAX);
+            self.max_ts = ts.iter().copied().max().unwrap_or(i64::MIN);
+        }
+        // Recompute memory_bytes estimate by re-summing column capacities.
+        self.memory_bytes = self
+            .columns
+            .iter()
+            .map(|c| match c {
+                ColumnData::Timestamp(v) | ColumnData::Int64(v) => v.capacity() * 8,
+                ColumnData::Float64(v) => v.capacity() * 8,
+                ColumnData::Symbol(v) => v.capacity() * 4,
+                ColumnData::DictEncoded {
+                    ids,
+                    valid,
+                    dictionary,
+                    ..
+                } => ids.capacity() * 4 + valid.capacity() + dictionary.len() * 32,
+            })
+            .sum();
+    }
+
     // -- Accessors --
 
     pub fn row_count(&self) -> u64 {

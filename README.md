@@ -6,7 +6,7 @@ NodeDB replaces the combination of PostgreSQL + pgvector + Redis + Neo4j + Click
 
 ## Why NodeDB
 
-- **One binary, not seven services.** No inter-service networking, no schema drift between systems, no data synchronization pipelines. A graph query that feeds a vector search that filters by full-text relevance executes in one process.
+- **One binary, not a polyglot stack.** No inter-service networking, no schema drift between systems, no data synchronization pipelines. A graph query that feeds a vector search that filters by full-text relevance executes in one process.
 - **PostgreSQL wire protocol.** Connect with `psql` or any PostgreSQL client library. Standard SQL with engine-specific extensions where SQL can't express the operation.
 - **Edge to cloud.** The same engines run embedded on phones and browsers (NodeDB-Lite, WASM) with CRDT-based offline-first sync to the server.
 - **Serious about performance.** Thread-per-Core data plane with io_uring, SIMD-accelerated distance functions, zero-copy MessagePack transport, per-column compression (ALP, FastLanes, FSST, Gorilla). See benchmarks below.

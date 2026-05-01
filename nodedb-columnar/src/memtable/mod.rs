@@ -133,6 +133,24 @@ impl ColumnarMemtable {
         Some(row)
     }
 
+    /// Truncate the memtable to `n` rows, discarding all rows beyond that point.
+    ///
+    /// Used by transaction rollback to restore the memtable to its pre-write state.
+    /// No-op if `n >= self.row_count`.
+    pub fn truncate_to(&mut self, n: usize) {
+        if n >= self.row_count {
+            return;
+        }
+        for col in &mut self.columns {
+            col.truncate(n);
+        }
+        self.row_count = n;
+        debug_assert!(
+            self.columns.iter().all(|c| c.len() == self.row_count),
+            "column lengths misaligned after truncate_to"
+        );
+    }
+
     /// Drain the memtable: return all column data and reset to empty.
     pub fn drain(&mut self) -> (ColumnarSchema, Vec<ColumnData>, usize) {
         let columns = std::mem::replace(

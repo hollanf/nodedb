@@ -117,6 +117,15 @@ impl DeleteBitmap {
         self.inner.iter()
     }
 
+    /// Remove a row from the deleted set (undo a tombstone).
+    ///
+    /// Used exclusively by transaction rollback to clear tombstones that
+    /// were set by a preceding insert's upsert path. Returns true if the
+    /// row was previously deleted, false if it was already live.
+    pub fn unmark_deleted(&mut self, row_idx: u32) -> bool {
+        self.inner.remove(row_idx)
+    }
+
     /// Merge another bitmap into this one (union). Used during compaction
     /// to combine delete bitmaps from multiple source segments.
     pub fn merge(&mut self, other: &DeleteBitmap) {
