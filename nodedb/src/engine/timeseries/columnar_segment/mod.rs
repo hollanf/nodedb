@@ -15,6 +15,7 @@
 //! └── partition.meta      # PartitionMeta + per-column statistics (JSON)
 //! ```
 
+pub mod encrypt;
 pub mod mmap;
 
 mod codec;

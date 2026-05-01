@@ -8,7 +8,8 @@
 //! - Projection pushdown at the storage layer
 //! - Zero-copy mmap of specific columns
 //!
-//! File layout:
+//! ## Plaintext layout
+//!
 //! ```text
 //! ┌───────────────────────────────────────┐
 //! │  Column 0 data (compressed bytes)     │
@@ -26,9 +27,33 @@
 //! └───────────────────────────────────────┘
 //! ```
 //!
+//! ## Encrypted layout (KEK present)
+//!
+//! The columns + sparse index payload is wrapped in a `SEGT` AES-256-GCM
+//! envelope. The NDPK footer (msgpack body + 14-byte tail) is left **in
+//! plaintext** so that footer-only range requests remain usable without
+//! decryption. The `PackedFooter::column_ranges` byte offsets refer to
+//! positions within the *decrypted* payload blob, not the on-disk file.
+//!
+//! ```text
+//! ┌───────────────────────────────────────┐
+//! │  SEGT preamble (16 bytes)             │  ← encrypted payload marker
+//! │  AES-256-GCM ciphertext               │  ← columns + sparse index
+//! │    (includes 16B auth tag)            │
+//! ├───────────────────────────────────────┤
+//! │  Footer body (msgpack PackedFooter)   │  ← plaintext
+//! ├───────────────────────────────────────┤
+//! │  footer_len   : u32 LE   (4 bytes)    │
+//! │  crc32c       : u32 LE   (4 bytes)    │
+//! │  version      : u16 LE=1 (2 bytes)    │
+//! │  magic "NDPK" : 4 bytes  (4 bytes)    │  ← always at EOF
+//! └───────────────────────────────────────┘
+//! ```
+//!
 //! Tail is 14 bytes total. Reader: read last 4 bytes for magic, version at
 //! -6..-4, CRC at -10..-6, footer_len at -14..-10, then read body and
-//! verify CRC before deserializing.
+//! verify CRC before deserializing. `read_column` additionally checks for
+//! the `SEGT` preamble and decrypts when a KEK is supplied.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -37,6 +62,10 @@ use serde::{Deserialize, Serialize};
 
 use nodedb_codec::ColumnCodec;
 use nodedb_types::timeseries::PartitionMeta;
+use nodedb_wal::crypto::WalEncryptionKey;
+
+use super::columnar_segment::encrypt::{decrypt_file, encrypt_file, is_encrypted};
+use crate::engine::timeseries::columnar_segment::SegmentError;
 
 /// Magic bytes at the end of a packed partition file (at EOF).
 pub const PACKED_MAGIC: [u8; 4] = *b"NDPK";
@@ -94,13 +123,17 @@ impl<'a> TailCursor<'a> {
 )]
 pub struct PackedFooter {
     /// Per-column byte ranges: column_name → (offset, length).
+    /// Offsets are relative to the start of the *payload* (decrypted blob).
     pub column_ranges: HashMap<String, (u64, u64)>,
-    /// Sparse index byte range (offset, length).
+    /// Sparse index byte range (offset, length) within the payload.
     pub sparse_index_range: Option<(u64, u64)>,
     /// Schema: column names, types, codecs.
     pub schema: Vec<PackedColumnSchema>,
     /// Partition metadata.
     pub meta: PartitionMeta,
+    /// True when the payload (columns + sparse index) is encrypted.
+    #[serde(default)]
+    pub payload_encrypted: bool,
 }
 
 /// Schema entry for a column in the packed format.
@@ -124,50 +157,89 @@ pub enum PackedError {
     UnsupportedVersion { version: u16 },
     #[error("packed partition footer CRC mismatch: stored={stored:#010x} calc={calc:#010x}")]
     InvalidFooterCrc { stored: u32, calc: u32 },
+    #[error("packed partition payload is encrypted (SEGT) but no KEK was provided")]
+    MissingKek,
+    #[error("packed partition KEK provided but payload is not encrypted")]
+    UnexpectedPlaintext,
+    #[error("packed partition payload encryption failed: {0}")]
+    EncryptionFailed(String),
+    #[error("packed partition payload decryption failed: {0}")]
+    DecryptionFailed(String),
+}
+
+impl From<SegmentError> for PackedError {
+    fn from(e: SegmentError) -> Self {
+        match e {
+            SegmentError::MissingKek => PackedError::MissingKek,
+            SegmentError::UnexpectedPlaintext => PackedError::UnexpectedPlaintext,
+            SegmentError::EncryptionFailed(m) => PackedError::EncryptionFailed(m),
+            SegmentError::DecryptionFailed(m) => PackedError::DecryptionFailed(m),
+            SegmentError::Io(m) => PackedError::Io(m),
+            SegmentError::Corrupt(m) => PackedError::Corrupt(m),
+        }
+    }
 }
 
 // ── Writer ────────────────────────────────────────────────────────────────────
 
 /// Write a packed partition file from individual column files.
+///
+/// When `kek` is `Some`, the columns + sparse index payload region is wrapped
+/// in a `SEGT` AES-256-GCM envelope. The NDPK footer remains in plaintext to
+/// allow footer-only range requests without decryption.
+///
+/// The `column_ranges` in the footer record offsets within the *decrypted*
+/// payload blob, not the on-disk ciphertext, so `read_column` can pass them
+/// through after decryption.
 pub fn write_packed(
     output_path: &Path,
     columns: &[(String, Vec<u8>)], // (column_name, compressed_bytes)
     sparse_index: Option<&[u8]>,
     schema: &[PackedColumnSchema],
     meta: &PartitionMeta,
+    kek: Option<&WalEncryptionKey>,
 ) -> Result<u64, PackedError> {
-    let mut buf = Vec::new();
+    let mut payload = Vec::new();
     let mut column_ranges = HashMap::new();
 
-    // Write column data.
+    // Build the payload (columns + sparse index).
     for (name, data) in columns {
-        let offset = buf.len() as u64;
-        buf.extend_from_slice(data);
+        let offset = payload.len() as u64;
+        payload.extend_from_slice(data);
         column_ranges.insert(name.clone(), (offset, data.len() as u64));
     }
 
-    // Write sparse index.
     let sparse_index_range = sparse_index.map(|idx_data| {
-        let offset = buf.len() as u64;
-        buf.extend_from_slice(idx_data);
+        let offset = payload.len() as u64;
+        payload.extend_from_slice(idx_data);
         (offset, idx_data.len() as u64)
     });
 
-    // Build footer body.
+    // Optionally encrypt the payload.
+    let payload_encrypted = kek.is_some();
+    let payload_on_disk: Vec<u8> = if let Some(key) = kek {
+        encrypt_file(key, &payload).map_err(PackedError::from)?
+    } else {
+        payload
+    };
+
+    // Build footer (plaintext).
     let footer = PackedFooter {
         column_ranges,
         sparse_index_range,
         schema: schema.to_vec(),
         meta: meta.clone(),
+        payload_encrypted,
     };
     let footer_body = zerompk::to_msgpack_vec(&footer)
         .map_err(|e| PackedError::Io(format!("footer encode: {e}")))?;
 
-    // Append footer body.
+    // Compose the final file.
+    let mut buf = Vec::with_capacity(payload_on_disk.len() + footer_body.len() + PACKED_TAIL_SIZE);
+    buf.extend_from_slice(&payload_on_disk);
     buf.extend_from_slice(&footer_body);
-    let footer_len = footer_body.len() as u32;
 
-    // CRC32C over footer body only.
+    let footer_len = footer_body.len() as u32;
     let crc = crc32c::crc32c(&footer_body);
 
     // Tail: footer_len (4B) | crc (4B) | version (2B) | magic (4B)
@@ -186,6 +258,8 @@ pub fn write_packed(
 // ── Reader ────────────────────────────────────────────────────────────────────
 
 /// Read the footer from a packed partition file.
+///
+/// The NDPK footer is always plaintext. No KEK needed for footer reads.
 pub fn read_footer(file_path: &Path) -> Result<PackedFooter, PackedError> {
     let data = std::fs::read(file_path)
         .map_err(|e| PackedError::Io(format!("read {}: {e}", file_path.display())))?;
@@ -244,10 +318,16 @@ pub fn read_footer_from_bytes(data: &[u8]) -> Result<PackedFooter, PackedError> 
 }
 
 /// Read a single column's data from a packed file using byte range.
+///
+/// When `footer.payload_encrypted` is true, `kek` must be `Some`; the payload
+/// region (everything before the footer body) is decrypted first, then the
+/// column range is extracted from the plaintext. The NDPK footer itself is
+/// always plaintext.
 pub fn read_column(
     file_path: &Path,
     footer: &PackedFooter,
     column_name: &str,
+    kek: Option<&WalEncryptionKey>,
 ) -> Result<Vec<u8>, PackedError> {
     let (offset, length) = footer
         .column_ranges
@@ -255,22 +335,82 @@ pub fn read_column(
         .ok_or_else(|| PackedError::Corrupt(format!("column '{column_name}' not in footer")))?;
 
     let data = std::fs::read(file_path).map_err(|e| PackedError::Io(format!("read: {e}")))?;
+    read_column_from_bytes(&data, footer, *offset, *length, kek)
+}
 
-    let start = *offset as usize;
-    let end = start + *length as usize;
-    if end > data.len() {
+/// Read a single column from in-memory file bytes (for testing).
+fn read_column_from_bytes(
+    data: &[u8],
+    footer: &PackedFooter,
+    offset: u64,
+    length: u64,
+    kek: Option<&WalEncryptionKey>,
+) -> Result<Vec<u8>, PackedError> {
+    // Determine where the payload ends: everything before the footer body.
+    // We need to find the start of the footer body in `data`.
+    // Footer body is immediately before the tail (PACKED_TAIL_SIZE bytes).
+    // We already have footer.column_ranges so we know footer_len indirectly;
+    // instead just re-derive payload_end from the file structure.
+    //
+    // Payload ends right before the footer body. The footer body starts at
+    // `data.len() - PACKED_TAIL_SIZE - footer_body_len`. We don't have
+    // footer_body_len cached, so compute it by re-reading from the tail.
+    let tail_size = PACKED_TAIL_SIZE;
+    if data.len() < tail_size {
+        return Err(PackedError::Corrupt("file too small".into()));
+    }
+    // Read footer_len from tail (bytes -14..-10).
+    let footer_len_bytes: [u8; 4] = data[data.len() - tail_size..data.len() - tail_size + 4]
+        .try_into()
+        .map_err(|_| PackedError::Corrupt("footer_len read failed".into()))?;
+    let footer_body_len = u32::from_le_bytes(footer_len_bytes) as usize;
+    let payload_end = data.len() - tail_size - footer_body_len;
+
+    let payload_region = &data[..payload_end];
+
+    let plaintext: Vec<u8> = if footer.payload_encrypted {
+        match kek {
+            Some(key) => {
+                if !is_encrypted(payload_region)
+                    .map_err(|e| PackedError::Corrupt(format!("sniff: {e}")))?
+                {
+                    return Err(PackedError::Corrupt(
+                        "footer says payload_encrypted but no SEGT preamble found".into(),
+                    ));
+                }
+                decrypt_file(key, payload_region).map_err(PackedError::from)?
+            }
+            None => return Err(PackedError::MissingKek),
+        }
+    } else {
+        match kek {
+            None => payload_region.to_vec(),
+            Some(_) => {
+                // Only reject when the footer explicitly says not encrypted.
+                return Err(PackedError::UnexpectedPlaintext);
+            }
+        }
+    };
+
+    let start = offset as usize;
+    let end = start + length as usize;
+    if end > plaintext.len() {
         return Err(PackedError::Corrupt(
-            "column range exceeds file size".into(),
+            "column range exceeds payload size".into(),
         ));
     }
 
-    Ok(data[start..end].to_vec())
+    Ok(plaintext[start..end].to_vec())
 }
 
 /// Generate HTTP Range header values for fetching specific columns.
 ///
 /// Returns `(column_name, "bytes=offset-end")` pairs for use with
 /// S3 GetObject or HTTP range requests.
+///
+/// Note: for encrypted packed files, these range headers address the
+/// ciphertext. Column-level reads require full payload decryption
+/// on the client side.
 pub fn http_range_headers(footer: &PackedFooter, columns: &[&str]) -> Vec<(String, String)> {
     columns
         .iter()
@@ -306,6 +446,10 @@ mod tests {
         }
     }
 
+    fn test_kek() -> WalEncryptionKey {
+        WalEncryptionKey::from_bytes(&[0x37u8; 32]).unwrap()
+    }
+
     #[test]
     fn write_and_read_footer() {
         let tmp = TempDir::new().unwrap();
@@ -328,7 +472,7 @@ mod tests {
             },
         ];
 
-        let size = write_packed(&path, &columns, None, &schema, &test_meta()).unwrap();
+        let size = write_packed(&path, &columns, None, &schema, &test_meta(), None).unwrap();
         assert!(size > 0);
 
         let footer = read_footer(&path).unwrap();
@@ -336,6 +480,7 @@ mod tests {
         assert_eq!(footer.column_ranges["timestamp"], (0, 5));
         assert_eq!(footer.column_ranges["value"], (5, 3));
         assert_eq!(footer.meta.row_count, 100);
+        assert!(!footer.payload_encrypted);
     }
 
     #[test]
@@ -350,13 +495,13 @@ mod tests {
             ("value".to_string(), val_data.clone()),
         ];
 
-        write_packed(&path, &columns, None, &[], &test_meta()).unwrap();
+        write_packed(&path, &columns, None, &[], &test_meta(), None).unwrap();
 
         let footer = read_footer(&path).unwrap();
-        let ts_bytes = read_column(&path, &footer, "timestamp").unwrap();
+        let ts_bytes = read_column(&path, &footer, "timestamp", None).unwrap();
         assert_eq!(ts_bytes, ts_data);
 
-        let val_bytes = read_column(&path, &footer, "value").unwrap();
+        let val_bytes = read_column(&path, &footer, "value", None).unwrap();
         assert_eq!(val_bytes, val_data);
     }
 
@@ -372,6 +517,7 @@ mod tests {
             sparse_index_range: None,
             schema: vec![],
             meta: test_meta(),
+            payload_encrypted: false,
         };
 
         let ranges = http_range_headers(&footer, &["cpu"]);
@@ -388,7 +534,7 @@ mod tests {
         let sparse_data = vec![0xDE, 0xAD, 0xBE, 0xEF];
         let columns = vec![("ts".to_string(), vec![1, 2, 3])];
 
-        write_packed(&path, &columns, Some(&sparse_data), &[], &test_meta()).unwrap();
+        write_packed(&path, &columns, Some(&sparse_data), &[], &test_meta(), None).unwrap();
 
         let footer = read_footer(&path).unwrap();
         assert!(footer.sparse_index_range.is_some());
@@ -416,6 +562,7 @@ mod tests {
             sparse_index_range: None,
             schema: vec![],
             meta: test_meta(),
+            payload_encrypted: false,
         };
 
         let headers = http_range_headers(&footer, &["ts", "cpu"]);
@@ -428,7 +575,7 @@ mod tests {
         assert_eq!(fetched, 15000);
     }
 
-    // ── G-04: packed-partition golden tests ────────────────────────────────────
+    // ── packed-partition golden tests ────────────────────────────────────
 
     /// Verify tail layout byte by byte.
     #[test]
@@ -436,7 +583,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("golden.ndpk");
         let columns = vec![("ts".to_string(), vec![1u8, 2, 3])];
-        write_packed(&path, &columns, None, &[], &test_meta()).unwrap();
+        write_packed(&path, &columns, None, &[], &test_meta(), None).unwrap();
 
         let data = std::fs::read(&path).unwrap();
         let n = data.len();
@@ -478,7 +625,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("v2.ndpk");
         let columns = vec![("ts".to_string(), vec![1u8])];
-        write_packed(&path, &columns, None, &[], &test_meta()).unwrap();
+        write_packed(&path, &columns, None, &[], &test_meta(), None).unwrap();
 
         let mut data = std::fs::read(&path).unwrap();
         let n = data.len();
@@ -500,7 +647,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("bad_crc.ndpk");
         let columns = vec![("ts".to_string(), vec![1u8])];
-        write_packed(&path, &columns, None, &[], &test_meta()).unwrap();
+        write_packed(&path, &columns, None, &[], &test_meta(), None).unwrap();
 
         let mut data = std::fs::read(&path).unwrap();
         let n = data.len();
@@ -512,5 +659,73 @@ mod tests {
             matches!(err, PackedError::InvalidFooterCrc { .. }),
             "expected InvalidFooterCrc, got {err:?}"
         );
+    }
+
+    // ── packed partition encryption tests ────────────────────────────────
+
+    use nodedb_wal::crypto::SEGMENT_ENVELOPE_PREAMBLE_SIZE as SEGT_PREAMBLE_SIZE;
+
+    use super::super::columnar_segment::encrypt::SEGT_MAGIC;
+
+    #[test]
+    fn packed_partition_payload_encrypted_footer_plaintext() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("enc.ndpk");
+        let kek = test_kek();
+
+        let columns = vec![
+            ("timestamp".to_string(), vec![1u8, 2, 3, 4]),
+            ("value".to_string(), vec![10u8, 20, 30, 40]),
+        ];
+        write_packed(&path, &columns, None, &[], &test_meta(), Some(&kek)).unwrap();
+
+        let data = std::fs::read(&path).unwrap();
+
+        // NDPK footer magic still present at EOF (plaintext).
+        let n = data.len();
+        assert_eq!(&data[n - 4..], b"NDPK");
+
+        // Footer is readable without KEK.
+        let footer = read_footer(&path).unwrap();
+        assert!(footer.payload_encrypted);
+        assert_eq!(footer.column_ranges.len(), 2);
+
+        // Payload starts with SEGT magic.
+        let footer_len = {
+            let bytes: [u8; 4] = data[n - PACKED_TAIL_SIZE..n - PACKED_TAIL_SIZE + 4]
+                .try_into()
+                .unwrap();
+            u32::from_le_bytes(bytes) as usize
+        };
+        let payload_end = n - PACKED_TAIL_SIZE - footer_len;
+        assert_eq!(&data[..4], &SEGT_MAGIC, "payload must start with SEGT");
+        assert!(
+            payload_end > SEGT_PREAMBLE_SIZE,
+            "payload must include preamble + ciphertext"
+        );
+    }
+
+    #[test]
+    fn packed_partition_read_column_decrypts() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("enc.ndpk");
+        let kek = test_kek();
+
+        let ts_data = vec![0xAAu8, 0xBB, 0xCC];
+        let val_data = vec![0x11u8, 0x22];
+        let columns = vec![
+            ("timestamp".to_string(), ts_data.clone()),
+            ("value".to_string(), val_data.clone()),
+        ];
+        write_packed(&path, &columns, None, &[], &test_meta(), Some(&kek)).unwrap();
+
+        let footer = read_footer(&path).unwrap();
+        assert!(footer.payload_encrypted);
+
+        let ts_read = read_column(&path, &footer, "timestamp", Some(&kek)).unwrap();
+        assert_eq!(ts_read, ts_data);
+
+        let val_read = read_column(&path, &footer, "value", Some(&kek)).unwrap();
+        assert_eq!(val_read, val_data);
     }
 }

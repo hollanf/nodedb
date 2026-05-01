@@ -100,8 +100,8 @@ pub struct PartitionAggParams<'a> {
 pub fn aggregate_partition(p: PartitionAggParams<'_>) -> Option<GroupedAggResult> {
     let num_aggs = p.aggregates.len();
 
-    let schema = ColumnarSegmentReader::read_schema(p.partition_dir).ok()?;
-    let meta = ColumnarSegmentReader::read_meta(p.partition_dir).ok()?;
+    let schema = ColumnarSegmentReader::read_schema(p.partition_dir, None).ok()?;
+    let meta = ColumnarSegmentReader::read_meta(p.partition_dir, None).ok()?;
     let row_count = meta.row_count as usize;
     if row_count == 0 {
         return Some(GroupedAggResult::new(num_aggs));
@@ -110,7 +110,7 @@ pub fn aggregate_partition(p: PartitionAggParams<'_>) -> Option<GroupedAggResult
     let resolved = resolve_schema(&schema.columns, p.group_by, p.aggregates)?;
 
     // Load sparse index for block-level skip.
-    let sparse_idx = ColumnarSegmentReader::read_sparse_index(p.partition_dir)
+    let sparse_idx = ColumnarSegmentReader::read_sparse_index(p.partition_dir, None)
         .ok()
         .flatten();
 
@@ -165,7 +165,7 @@ pub fn aggregate_partition(p: PartitionAggParams<'_>) -> Option<GroupedAggResult
         .filter(|(_, (_, ty))| *ty == ColumnType::Symbol)
         .filter_map(|(i, (name, _))| {
             if p.needed_columns.is_empty() || p.needed_columns.iter().any(|n| n == name) {
-                ColumnarSegmentReader::read_symbol_dict(p.partition_dir, name)
+                ColumnarSegmentReader::read_symbol_dict(p.partition_dir, name, None)
                     .ok()
                     .map(|dict| (i, dict))
             } else {
@@ -311,12 +311,19 @@ fn read_partition_columns(
                         *ty,
                         codec,
                         surviving_blocks.unwrap_or(&[]),
+                        None,
                     )
                     .ok()
                     .map(|(data, _)| data)
                 } else {
-                    ColumnarSegmentReader::read_column_with_codec(partition_dir, name, *ty, codec)
-                        .ok()
+                    ColumnarSegmentReader::read_column_with_codec(
+                        partition_dir,
+                        name,
+                        *ty,
+                        codec,
+                        None,
+                    )
+                    .ok()
                 }
             })
             .collect();
@@ -344,9 +351,14 @@ fn read_partition_columns(
         }
         let (name, ty) = &schema_columns[schema_idx];
         let codec = meta.column_stats.get(name).map(|s| s.codec);
-        if let Ok(data) =
-            ColumnarSegmentReader::decode_column_from_bytes(partition_dir, name, *ty, codec, raw)
-        {
+        if let Ok(data) = ColumnarSegmentReader::decode_column_from_bytes(
+            partition_dir,
+            name,
+            *ty,
+            codec,
+            raw,
+            None,
+        ) {
             decoded.insert(schema_idx, data);
         }
     }

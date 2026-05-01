@@ -107,14 +107,18 @@ fn ts_column_to_shared(
 ///
 /// Returns the segment bytes. The caller is responsible for persisting the
 /// symbol dictionaries separately.
+///
+/// When `kek` is `Some`, the segment is wrapped in an AES-256-GCM SEGC
+/// envelope before being returned.
 pub fn write_ts_drain_as_segment(
     drain: &ColumnarDrainResult,
+    kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
 ) -> Result<Vec<u8>, nodedb_columnar::ColumnarError> {
     let shared_schema = ts_schema_to_shared(&drain.schema);
     let (shared_columns, row_count) = ts_drain_to_shared_columns(drain);
 
     let writer = SegmentWriter::new(nodedb_columnar::writer::PROFILE_TIMESERIES);
-    writer.write_segment(&shared_schema, &shared_columns, row_count)
+    writer.write_segment(&shared_schema, &shared_columns, row_count, kek)
 }
 
 /// Read block statistics from a shared segment footer for timeseries queries.
@@ -313,7 +317,7 @@ mod tests {
         assert_eq!(drain.row_count, 100);
 
         // Write as shared segment.
-        let segment = write_ts_drain_as_segment(&drain).expect("write segment");
+        let segment = write_ts_drain_as_segment(&drain, None).expect("write segment");
 
         // Read back and verify.
         let reader = nodedb_columnar::reader::SegmentReader::open(&segment).expect("open");
@@ -354,7 +358,7 @@ mod tests {
         }
 
         let drain = mt.drain();
-        let segment = write_ts_drain_as_segment(&drain).expect("write");
+        let segment = write_ts_drain_as_segment(&drain, None).expect("write");
         let stats = extract_timestamp_block_stats(&segment).expect("stats");
 
         assert_eq!(stats.len(), 1); // 50 rows < 1024 block size = 1 block.
@@ -377,7 +381,7 @@ mod tests {
             );
         }
         let drain = mt.drain();
-        write_ts_drain_as_segment(&drain).expect("write")
+        write_ts_drain_as_segment(&drain, None).expect("write")
     }
 
     #[test]
@@ -455,7 +459,7 @@ mod tests {
         }
     }
 
-    // -- G-03: lossless i64 predicate pushdown for large timestamps -----------
+    // -- lossless i64 predicate pushdown for large timestamps -----------
 
     /// Write a segment whose timestamp column uses values far above 2^53.
     ///
@@ -476,10 +480,10 @@ mod tests {
             assert_ne!(result, nodedb_types::timeseries::IngestResult::Rejected);
         }
         let drain = mt.drain();
-        write_ts_drain_as_segment(&drain).expect("write large-ts segment")
+        write_ts_drain_as_segment(&drain, None).expect("write large-ts segment")
     }
 
-    /// G-03-E: end-to-end block skip with timestamps outside ±2^53.
+    /// end-to-end block skip with timestamps outside ±2^53.
     ///
     /// The segment contains 50 rows with timestamps in
     /// [LARGE_BASE, LARGE_BASE + 49]. We query with a range that is entirely
@@ -511,7 +515,7 @@ mod tests {
         assert!(vals.is_empty());
     }
 
-    /// G-03-F: end-to-end block NOT skipped when range overlaps large timestamps.
+    /// end-to-end block NOT skipped when range overlaps large timestamps.
     ///
     /// The segment contains rows with timestamps in [LARGE_BASE, LARGE_BASE + 49].
     /// We query for [LARGE_BASE + 10, LARGE_BASE + 20]. The block must NOT be

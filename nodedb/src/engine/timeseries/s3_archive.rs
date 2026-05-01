@@ -107,7 +107,7 @@ pub async fn archive_partition(
     partition_dir_name: &str,
 ) -> Result<String, SegmentError> {
     // Read partition metadata to verify it's sealed.
-    let meta = ColumnarSegmentReader::read_meta(partition_dir)?;
+    let meta = ColumnarSegmentReader::read_meta(partition_dir, None)?;
     if meta.state != PartitionState::Sealed && meta.state != PartitionState::Merged {
         return Err(SegmentError::Io(format!(
             "cannot archive partition in state {:?}",

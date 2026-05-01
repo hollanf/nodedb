@@ -20,7 +20,7 @@ pub fn tag_values_from_partition(
     partition_dir: &Path,
     tag_column: &str,
 ) -> Result<Vec<String>, TagAutoError> {
-    let dict = ColumnarSegmentReader::read_symbol_dict(partition_dir, tag_column)
+    let dict = ColumnarSegmentReader::read_symbol_dict(partition_dir, tag_column, None)
         .map_err(|e| TagAutoError::Io(format!("read symbol dict: {e}")))?;
 
     let mut values = Vec::with_capacity(dict.len());
@@ -176,7 +176,7 @@ mod tests {
 
         let writer = ColumnarSegmentWriter::new(tmp.path());
         writer
-            .write_partition("ts-tags", &drain, 86_400_000, 0)
+            .write_partition("ts-tags", &drain, 86_400_000, 0, None)
             .unwrap();
 
         let part_dir = tmp.path().join("ts-tags");

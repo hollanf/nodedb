@@ -529,7 +529,7 @@ mod tests {
         ));
     }
 
-    // ── G-04: TSEG golden tests ───────────────────────────────────────────────
+    // ── TSEG golden tests ───────────────────────────────────────────────
 
     /// Verify the exact byte layout of the TSEG header.
     #[test]

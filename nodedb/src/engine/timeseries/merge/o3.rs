@@ -34,12 +34,17 @@ pub fn merge_o3_into_partition(
     }
 
     // Read existing partition data.
-    let existing_meta = ColumnarSegmentReader::read_meta(&partition_dir)?;
-    let existing_schema = ColumnarSegmentReader::read_schema(&partition_dir)?;
+    let existing_meta = ColumnarSegmentReader::read_meta(&partition_dir, None)?;
+    let existing_schema = ColumnarSegmentReader::read_schema(&partition_dir, None)?;
 
-    let ts_col =
-        ColumnarSegmentReader::read_column(&partition_dir, "timestamp", ColumnType::Timestamp)?;
-    let val_col = ColumnarSegmentReader::read_column(&partition_dir, "value", ColumnType::Float64)?;
+    let ts_col = ColumnarSegmentReader::read_column(
+        &partition_dir,
+        "timestamp",
+        ColumnType::Timestamp,
+        None,
+    )?;
+    let val_col =
+        ColumnarSegmentReader::read_column(&partition_dir, "value", ColumnType::Float64, None)?;
 
     let existing_ts = ts_col.as_timestamps();
     let existing_val = val_col.as_f64();
@@ -111,6 +116,7 @@ pub fn merge_o3_into_partition(
         &drain,
         existing_meta.interval_ms,
         existing_meta.last_flushed_wal_lsn,
+        None,
     )?;
 
     // Atomic swap: rename tmp → original.

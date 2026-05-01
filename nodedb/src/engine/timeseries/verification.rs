@@ -116,7 +116,7 @@ mod tests {
         }
         let d1 = mt1.drain();
         writer
-            .write_partition("ts-1d-part", &d1, 86_400_000, 0)
+            .write_partition("ts-1d-part", &d1, 86_400_000, 0, None)
             .unwrap();
 
         // Partition 2: 3-day width (rows 100-199, ts 2000-2099)
@@ -132,7 +132,7 @@ mod tests {
         }
         let d2 = mt2.drain();
         writer
-            .write_partition("ts-3d-part", &d2, 3 * 86_400_000, 0)
+            .write_partition("ts-3d-part", &d2, 3 * 86_400_000, 0, None)
             .unwrap();
 
         // Partition 3: 1-week width (rows 200-299, ts 3000-3099)
@@ -148,7 +148,7 @@ mod tests {
         }
         let d3 = mt3.drain();
         writer
-            .write_partition("ts-1w-part", &d3, 7 * 86_400_000, 0)
+            .write_partition("ts-1w-part", &d3, 7 * 86_400_000, 0, None)
             .unwrap();
 
         // Register all three in a registry.
@@ -162,7 +162,7 @@ mod tests {
             ("ts-1w-part", 3000, 7 * 86_400_000),
         ];
         for &(name, start, interval) in partition_specs {
-            let meta = ColumnarSegmentReader::read_meta(&tmp.path().join(name)).unwrap();
+            let meta = ColumnarSegmentReader::read_meta(&tmp.path().join(name), None).unwrap();
             // Verify the segment was written with the correct interval.
             assert!(
                 meta.size_bytes > 0,
@@ -186,9 +186,13 @@ mod tests {
         let mut total_rows = 0;
         for entry in &matching {
             let part_dir = tmp.path().join(&entry.dir_name);
-            let ts_col =
-                ColumnarSegmentReader::read_column(&part_dir, "timestamp", ColumnType::Timestamp)
-                    .unwrap();
+            let ts_col = ColumnarSegmentReader::read_column(
+                &part_dir,
+                "timestamp",
+                ColumnType::Timestamp,
+                None,
+            )
+            .unwrap();
             total_rows += ts_col.len();
         }
         assert_eq!(total_rows, 300, "all 300 rows should be readable");
@@ -249,7 +253,9 @@ mod tests {
             .unwrap();
         }
         let d1 = mt1.drain();
-        writer.write_partition("ts-v1", &d1, 86_400_000, 0).unwrap();
+        writer
+            .write_partition("ts-v1", &d1, 86_400_000, 0, None)
+            .unwrap();
 
         // V2 schema: timestamp + cpu + mem (added)
         let schema_v2 = ColumnarSchema {
@@ -274,10 +280,13 @@ mod tests {
             .unwrap();
         }
         let d2 = mt2.drain();
-        writer.write_partition("ts-v2", &d2, 86_400_000, 0).unwrap();
+        writer
+            .write_partition("ts-v2", &d2, 86_400_000, 0, None)
+            .unwrap();
 
         // Query with V2 schema against V1 partition → "mem" should be NaN.
-        let v1_schema = ColumnarSegmentReader::read_schema(&tmp.path().join("ts-v1")).unwrap();
+        let v1_schema =
+            ColumnarSegmentReader::read_schema(&tmp.path().join("ts-v1"), None).unwrap();
         let mappings = build_column_mappings(&schema_v2, &v1_schema);
 
         let v1_data = vec![
@@ -285,12 +294,14 @@ mod tests {
                 &tmp.path().join("ts-v1"),
                 "timestamp",
                 ColumnType::Timestamp,
+                None,
             )
             .unwrap(),
             ColumnarSegmentReader::read_column(
                 &tmp.path().join("ts-v1"),
                 "cpu",
                 ColumnType::Float64,
+                None,
             )
             .unwrap(),
         ];
@@ -307,6 +318,7 @@ mod tests {
             &tmp.path().join("ts-v2"),
             "mem",
             ColumnType::Float64,
+            None,
         )
         .unwrap();
         assert!((v2_mem.as_f64()[0] - 1024.0).abs() < f64::EPSILON);
@@ -469,7 +481,7 @@ mod tests {
             }
             let drain = mt.drain();
             writer
-                .write_partition(&dir_name, &drain, 86_400_000, 0)
+                .write_partition(&dir_name, &drain, 86_400_000, 0, None)
                 .unwrap();
 
             if let Some(e) = registry.get_mut(start) {

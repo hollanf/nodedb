@@ -23,7 +23,7 @@ pub fn merge_partitions(
     }
 
     // Read schemas — use the first partition's schema as the reference.
-    let ref_schema = ColumnarSegmentReader::read_schema(&source_dirs[0])?;
+    let ref_schema = ColumnarSegmentReader::read_schema(&source_dirs[0], None)?;
 
     // Read and concatenate columns from all sources.
     let mut merged_columns: Vec<ColumnData> = ref_schema
@@ -47,7 +47,7 @@ pub fn merge_partitions(
     }
 
     for source_dir in source_dirs {
-        let meta = ColumnarSegmentReader::read_meta(source_dir)?;
+        let meta = ColumnarSegmentReader::read_meta(source_dir, None)?;
         total_rows += meta.row_count;
         if meta.min_ts < global_min_ts {
             global_min_ts = meta.min_ts;
@@ -58,7 +58,7 @@ pub fn merge_partitions(
         total_size += meta.size_bytes;
 
         // Read partition schema for column mapping (handles schema evolution).
-        let part_schema = ColumnarSegmentReader::read_schema(source_dir)?;
+        let part_schema = ColumnarSegmentReader::read_schema(source_dir, None)?;
 
         for (i, (col_name, col_type)) in ref_schema.columns.iter().enumerate() {
             // Check if this column exists in the source partition.
@@ -66,12 +66,13 @@ pub fn merge_partitions(
 
             match source_idx {
                 Some(_src_i) => {
-                    let col = ColumnarSegmentReader::read_column(source_dir, col_name, *col_type)?;
+                    let col =
+                        ColumnarSegmentReader::read_column(source_dir, col_name, *col_type, None)?;
 
                     if *col_type == ColumnType::Symbol {
                         // Remap symbol IDs through merged dictionary.
                         let source_dict =
-                            ColumnarSegmentReader::read_symbol_dict(source_dir, col_name)?;
+                            ColumnarSegmentReader::read_symbol_dict(source_dir, col_name, None)?;
                         let merged_dict =
                             merged_dicts
                                 .get_mut(&i)
@@ -139,7 +140,7 @@ pub fn merge_partitions(
         "merge partition written"
     );
 
-    let meta = writer.write_partition(output_name, &drain, interval_ms, 0)?;
+    let meta = writer.write_partition(output_name, &drain, interval_ms, 0, None)?;
 
     Ok(MergeResult {
         meta,

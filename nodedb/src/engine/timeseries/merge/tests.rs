@@ -33,7 +33,9 @@ fn write_test_partition(base_dir: &Path, name: &str, start_ts: i64, count: usize
         );
     }
     let drain = mt.drain();
-    writer.write_partition(name, &drain, 86_400_000, 0).unwrap();
+    writer
+        .write_partition(name, &drain, 86_400_000, 0, None)
+        .unwrap();
     base_dir.join(name)
 }
 
@@ -53,7 +55,7 @@ fn merge_two_simple_partitions() {
     // Read back merged data.
     let merged_dir = tmp.path().join("ts-merged");
     let ts_col =
-        ColumnarSegmentReader::read_column(&merged_dir, "timestamp", ColumnType::Timestamp)
+        ColumnarSegmentReader::read_column(&merged_dir, "timestamp", ColumnType::Timestamp, None)
             .unwrap();
     let timestamps = ts_col.as_timestamps();
     assert_eq!(timestamps.len(), 100);
@@ -93,7 +95,7 @@ fn merge_with_tags() {
         }
         let drain = mt.drain();
         writer
-            .write_partition(part_name, &drain, 86_400_000, 0)
+            .write_partition(part_name, &drain, 86_400_000, 0, None)
             .unwrap();
     }
 
@@ -107,7 +109,7 @@ fn merge_with_tags() {
 
     // Read merged symbol dict — should have both hosts.
     let merged_dir = tmp.path().join("ts-merged-tags");
-    let dict = ColumnarSegmentReader::read_symbol_dict(&merged_dir, "host").unwrap();
+    let dict = ColumnarSegmentReader::read_symbol_dict(&merged_dir, "host", None).unwrap();
     assert_eq!(dict.len(), 2);
     assert!(dict.get_id("host-a").is_some());
     assert!(dict.get_id("host-b").is_some());
@@ -128,7 +130,7 @@ fn merge_preserves_timestamp_order() {
 
     let merged_dir = tmp.path().join("ts-sorted");
     let ts_col =
-        ColumnarSegmentReader::read_column(&merged_dir, "timestamp", ColumnType::Timestamp)
+        ColumnarSegmentReader::read_column(&merged_dir, "timestamp", ColumnType::Timestamp, None)
             .unwrap();
     let timestamps = ts_col.as_timestamps();
     // All timestamps from partition 2 (1000-1019) should come before partition 1 (5000-5019).
