@@ -65,8 +65,8 @@ async fn create_index_backfills_existing_rows() {
         1,
         "indexed SELECT must return exactly one row, got: {rows:?}"
     );
-    assert!(
-        rows[0].contains("\"a\""),
+    assert_eq!(
+        rows[0], "a",
         "indexed SELECT row must reference doc id 'a', got: {}",
         rows[0]
     );

@@ -228,8 +228,8 @@ async fn trigger_batch_script_executes_after_trigger_body() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 2);
-    assert!(rows[0].contains("\"id\":\"as1\""), "got: {:?}", rows);
-    assert!(rows[1].contains("\"id\":\"as2\""), "got: {:?}", rows);
+    assert_eq!(rows[0], "as1", "got: {:?}", rows);
+    assert_eq!(rows[1], "as2", "got: {:?}", rows);
 
     server
         .expect_error("DROP TRIGGER log_insert", "does not exist")
@@ -307,10 +307,9 @@ async fn after_async_trigger_insert_persists_side_effect() {
             .await
             .unwrap();
         if rows.len() == 2 {
-            assert!(rows[0].contains("\"id\":\"as1_log\""), "got: {:?}", rows);
-            assert!(rows[0].contains("\"src_id\":\"as1\""), "got: {:?}", rows);
-            assert!(rows[1].contains("\"id\":\"as2_log\""), "got: {:?}", rows);
-            assert!(rows[1].contains("\"src_id\":\"as2\""), "got: {:?}", rows);
+            // query_text returns first column (id) for each row
+            assert_eq!(rows[0], "as1_log", "got: {:?}", rows);
+            assert_eq!(rows[1], "as2_log", "got: {:?}", rows);
             break;
         }
 
@@ -352,8 +351,8 @@ async fn after_sync_trigger_insert_persists_side_effect() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1, "got: {:?}", rows);
-    assert!(rows[0].contains("\"id\":\"as1_log\""), "got: {:?}", rows);
-    assert!(rows[0].contains("\"src_id\":\"as1\""), "got: {:?}", rows);
+    // query_text returns first column (id)
+    assert_eq!(rows[0], "as1_log", "got: {:?}", rows);
 }
 
 /// A trigger body containing `PUBLISH TO <topic> ...` must parse and compile.

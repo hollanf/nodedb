@@ -33,11 +33,7 @@ async fn update_column_increment_strict() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains("\"n\":2"),
-        "expected n=2, got {:?}",
-        rows[0]
-    );
+    assert_eq!(rows[0], "2", "expected n=2, got {:?}", rows[0]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -63,11 +59,7 @@ async fn update_column_decrement_strict() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains("\"stock\":9"),
-        "expected stock=9, got {:?}",
-        rows[0]
-    );
+    assert_eq!(rows[0], "9", "expected stock=9, got {:?}", rows[0]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -99,11 +91,7 @@ async fn update_column_increment_schemaless() {
         "schemaless UPDATE stored stringified AST instead of evaluating: {:?}",
         rows[0]
     );
-    assert!(
-        rows[0].contains("\"n\":2"),
-        "expected n=2, got {:?}",
-        rows[0]
-    );
+    assert_eq!(rows[0], "2", "expected n=2, got {:?}", rows[0]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -168,11 +156,7 @@ async fn update_upper_function_rhs_strict() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains("\"name\":\"ALICE\""),
-        "expected name=ALICE, got {:?}",
-        rows[0]
-    );
+    assert_eq!(rows[0], "ALICE", "expected name=ALICE, got {:?}", rows[0]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -204,8 +188,8 @@ async fn update_string_concat_rhs_strict() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains("\"full\":\"Ada Lovelace\""),
+    assert_eq!(
+        rows[0], "Ada Lovelace",
         "expected full='Ada Lovelace', got {:?}",
         rows[0]
     );
@@ -285,8 +269,8 @@ async fn upsert_do_update_with_column_arithmetic() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains("\"n\":15"),
+    assert_eq!(
+        rows[0], "15",
         "expected n=15 (5+10 via UPSERT DO UPDATE), got {:?}",
         rows[0]
     );
@@ -319,8 +303,8 @@ async fn update_scalar_function_rhs_strict() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains("\"confidence\":0.85"),
+    assert_eq!(
+        rows[0], "0.85",
         "expected confidence=0.85, got {:?}",
         rows[0]
     );

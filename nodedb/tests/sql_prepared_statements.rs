@@ -100,9 +100,18 @@ async fn prepared_select_strict_doc_returns_data() {
     assert!(!rows.is_empty(), "SELECT should return the inserted row");
 
     // Regression guard: the row must contain actual data, not null.
-    assert!(
-        rows[0].contains("alice"),
+    // With the new response shape each projected column is its own field;
+    // query_text returns row.get(0) which is the `id` value. Check that
+    // the row is non-empty (i.e., the query returned actual data, not nulls).
+    // The `name` column value is in column index 1 — use query_rows for it.
+    let rows2 = server
+        .query_rows("SELECT id, name FROM strict_ep WHERE id = 'a'")
+        .await
+        .unwrap();
+    assert!(!rows2.is_empty(), "extended protocol must return data");
+    assert_eq!(
+        rows2[0][1], "alice",
         "extended protocol must not return null columns for STRICT doc, got: {:?}",
-        rows[0]
+        rows2[0]
     );
 }

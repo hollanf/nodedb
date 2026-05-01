@@ -238,8 +238,10 @@ async fn rejects_unsupported_version() {
     let err = push_restore(&server, TENANT, bytes, false)
         .await
         .unwrap_err();
+    let msg = err.to_lowercase();
     assert!(
-        err.to_lowercase().contains("unsupported envelope version"),
+        msg.contains("unsupported")
+            && (msg.contains("envelope version") || msg.contains("backup version")),
         "expected version rejection, got: {err}"
     );
 }

@@ -18,6 +18,7 @@ use nodedb::config::auth::AuthMode;
 use nodedb::control::server::listener::Listener;
 use nodedb::control::startup::{StartupPhase, StartupSequencer};
 use nodedb::control::state::SharedState;
+use nodedb_types::protocol::HelloFrame;
 
 mod common;
 
@@ -104,11 +105,43 @@ async fn native_status_returns_ok_after_gateway_enable() {
     // Give the listener time to reach the accept loop.
     tokio::time::sleep(Duration::from_millis(30)).await;
 
-    // Connect a raw TCP client and send a STATUS request as JSON.
+    // Connect a raw TCP client and perform the Hello/HelloAck handshake first.
     let mut stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(native_addr))
         .await
         .expect("native connect timed out")
         .expect("native TCP connect failed");
+
+    // Native protocol now requires a 16-byte HelloFrame before any frames.
+    let hello = HelloFrame::current().encode();
+    stream
+        .write_all(&hello)
+        .await
+        .expect("write HelloFrame failed");
+    // Server responds with a variable-length HelloAckFrame: magic(4) +
+    // proto_version(2) + capabilities(8) + sv_len(1) + sv_len bytes +
+    // optional limits block (1 flag + 7 * 5 = 36 bytes max).
+    let mut magic_buf = [0u8; 4];
+    tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut magic_buf))
+        .await
+        .expect("HelloAck magic read timed out")
+        .expect("HelloAck magic read failed");
+    assert_eq!(
+        u32::from_be_bytes(magic_buf),
+        nodedb_types::protocol::HELLO_ACK_MAGIC,
+        "handshake did not return HelloAck magic"
+    );
+    let mut fixed_rest = [0u8; 11];
+    stream
+        .read_exact(&mut fixed_rest)
+        .await
+        .expect("HelloAck fixed-rest read failed");
+    let sv_len = fixed_rest[10] as usize;
+    let var_len = sv_len + 1 + 7 * 5;
+    let mut var_buf = vec![0u8; var_len];
+    stream
+        .read_exact(&mut var_buf)
+        .await
+        .expect("HelloAck var-block read failed");
 
     // STATUS request: op 0x03 = Status. `RequestFields` is `#[serde(flatten)]`-ed
     // into `NativeRequest`, and is internally tagged with `kind = "text"`,

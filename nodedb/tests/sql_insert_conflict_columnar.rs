@@ -43,7 +43,7 @@ async fn columnar_insert_duplicate_pk_keeps_latest() {
         .unwrap();
 
     let rows = server
-        .query_text("SELECT id, region, value FROM metrics WHERE id = 'm1'")
+        .query_rows("SELECT id, region, value FROM metrics WHERE id = 'm1'")
         .await
         .unwrap();
 
@@ -54,15 +54,20 @@ async fn columnar_insert_duplicate_pk_keeps_latest() {
         "duplicate PK must not produce two visible rows, got: {rows:?}"
     );
 
-    // Latest-write-wins on the tombstoned prior row.
-    assert!(
-        rows[0].contains("us-west") && rows[0].contains('2'),
-        "expected latest write (us-west / 2.0), got: {}",
+    // Latest-write-wins on the tombstoned prior row. row[0]=id, row[1]=region, row[2]=value.
+    assert_eq!(
+        rows[0][1], "us-west",
+        "expected latest write (us-west), got: {:?}",
         rows[0]
     );
     assert!(
-        !rows[0].contains("us-east"),
-        "prior row must be tombstoned, got: {}",
+        rows[0][2].contains('2'),
+        "expected value 2.0, got: {:?}",
+        rows[0]
+    );
+    assert_ne!(
+        rows[0][1], "us-east",
+        "prior row must be tombstoned, got: {:?}",
         rows[0]
     );
 }
@@ -86,7 +91,7 @@ async fn columnar_full_scan_hides_tombstoned_duplicate() {
         .unwrap();
 
     let rows = server
-        .query_text("SELECT id, v FROM m ORDER BY id")
+        .query_rows("SELECT id, v FROM m ORDER BY id")
         .await
         .unwrap();
 
@@ -95,19 +100,18 @@ async fn columnar_full_scan_hides_tombstoned_duplicate() {
         3,
         "full scan must return 3 rows after dup, got: {rows:?}"
     );
-    // ORDER BY id → a, b, c with latest-wins on b. Regression guards
-    // against silent-duplicate (b=2 still visible) and broken ORDER BY
-    // (rows appearing in insert order).
-    assert!(
-        rows[0].contains("\"id\":\"a\""),
+    // ORDER BY id → a, b, c with latest-wins on b. row[0]=id, row[1]=v.
+    assert_eq!(
+        rows[0][0], "a",
         "first row after ORDER BY id must be 'a', got: {rows:?}"
     );
-    assert!(
-        rows[1].contains("\"id\":\"b\"") && rows[1].contains("\"v\":20"),
+    assert_eq!(rows[1][0], "b", "second row id must be 'b', got: {rows:?}");
+    assert_eq!(
+        rows[1][1], "20",
         "second row must be b=20 (latest wins), got: {rows:?}"
     );
-    assert!(
-        rows[2].contains("\"id\":\"c\""),
+    assert_eq!(
+        rows[2][0], "c",
         "third row after ORDER BY id must be 'c', got: {rows:?}"
     );
 }
@@ -165,13 +169,19 @@ async fn columnar_insert_on_conflict_do_update_merges_excluded() {
         .unwrap();
 
     let rows = server
-        .query_text("SELECT v, note FROM m WHERE id = 'a'")
+        .query_rows("SELECT v, note FROM m WHERE id = 'a'")
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains('7') && rows[0].contains("orig"),
-        "expected v=7 (from EXCLUDED) and note=orig (unchanged), got: {}",
+    // row[0]=v, row[1]=note
+    assert_eq!(
+        rows[0][0], "7",
+        "expected v=7 (from EXCLUDED), got: {:?}",
+        rows[0]
+    );
+    assert_eq!(
+        rows[0][1], "orig",
+        "expected note=orig (unchanged), got: {:?}",
         rows[0]
     );
 }
@@ -261,7 +271,7 @@ async fn spatial_insert_duplicate_pk_keeps_latest() {
         .unwrap();
 
     let rows = server
-        .query_text("SELECT id, label FROM places WHERE id = 'p1'")
+        .query_rows("SELECT id, label FROM places WHERE id = 'p1'")
         .await
         .unwrap();
 
@@ -270,9 +280,15 @@ async fn spatial_insert_duplicate_pk_keeps_latest() {
         1,
         "spatial duplicate PK must not produce two rows, got: {rows:?}"
     );
-    assert!(
-        rows[0].contains("moved") && !rows[0].contains("origin"),
-        "expected latest (moved), got: {}",
+    // row[0]=id, row[1]=label
+    assert_eq!(
+        rows[0][1], "moved",
+        "expected latest (moved), got: {:?}",
+        rows[0]
+    );
+    assert_ne!(
+        rows[0][1], "origin",
+        "prior row must be tombstoned, got: {:?}",
         rows[0]
     );
 }

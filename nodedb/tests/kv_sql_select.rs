@@ -1,32 +1,17 @@
-//! SQL SELECT on KV collections must return rows whose JSON payload
-//! carries every projected column, the same way every other engine
-//! does. The RESP protocol is what gives KV its bare-value / cursor-
-//! pair shape; SQL must not inherit that — protocol dictates response
-//! shape, not engine.
+//! SQL SELECT on KV collections must return rows with each projected
+//! column as its own field, the same way every other engine does.
+//! Protocol dictates response shape, not engine.
 //!
-//! These tests exercise the simple-query path: a row's envelope text
-//! (the `result` / `document` column) must parse to a JSON object whose
-//! keys are the projected columns. Extended-query coverage for the same
-//! invariant lives in `pgwire_extended_query.rs`.
+//! These tests exercise the simple-query path: each row carries the
+//! projected columns in their declared order. Extended-query coverage
+//! for the same invariant lives in `pgwire_extended_query.rs`.
 
 mod common;
 
 use common::pgwire_harness::TestServer;
 
-/// Parse the envelope text from a simple-query row and return the
-/// decoded JSON object. Panics if parsing fails or the payload isn't
-/// a JSON object.
-fn parse_row_envelope(text: &str) -> serde_json::Map<String, serde_json::Value> {
-    let value: serde_json::Value = serde_json::from_str(text).expect("row envelope must be JSON");
-    match value {
-        serde_json::Value::Object(map) => map,
-        other => panic!("row envelope must be a JSON object, got {other:?}"),
-    }
-}
-
 /// `SELECT key, value FROM kv WHERE key = 'x'` must return one row
-/// whose payload carries both `key` and `value` fields — not a bare
-/// scalar.
+/// with two columns: the key and the value.
 #[tokio::test]
 async fn kv_sql_point_select_returns_key_and_value() {
     let server = TestServer::start().await;
@@ -40,27 +25,24 @@ async fn kv_sql_point_select_returns_key_and_value() {
         .unwrap();
 
     let rows = server
-        .query_text("SELECT key, value FROM kv WHERE key = 'hello'")
+        .query_rows("SELECT key, value FROM kv WHERE key = 'hello'")
         .await
         .expect("point SELECT should succeed");
 
     assert_eq!(rows.len(), 1, "expected exactly one row");
-
-    // Regression guard: the bug returned `"119"` — the msgpack fixint
-    // of the first byte of the stored value — as the envelope text.
-    // A real row envelope is a JSON object, not a bare integer.
-    let obj = parse_row_envelope(&rows[0]);
-    assert!(
-        obj.contains_key("key") && obj.contains_key("value"),
-        "row envelope must carry [key, value], got keys {:?}",
-        obj.keys().collect::<Vec<_>>()
+    let row = &rows[0];
+    assert_eq!(
+        row.len(),
+        2,
+        "expected 2 projected columns, got {}",
+        row.len()
     );
-    assert_eq!(obj.get("key").and_then(|v| v.as_str()), Some("hello"));
-    assert_eq!(obj.get("value").and_then(|v| v.as_str()), Some("world"));
+    assert_eq!(row[0], "hello", "column 0 (key) mismatch");
+    assert_eq!(row[1], "world", "column 1 (value) mismatch");
 }
 
-/// Full-table SELECT must return one row per stored entry, each
-/// envelope carrying the projected columns.
+/// Full-table SELECT must return one row per stored entry, each with
+/// the projected columns.
 #[tokio::test]
 async fn kv_sql_full_scan_returns_all_rows() {
     let server = TestServer::start().await;
@@ -78,28 +60,14 @@ async fn kv_sql_full_scan_returns_all_rows() {
         .unwrap();
 
     let rows = server
-        .query_text("SELECT key, value FROM kv")
+        .query_rows("SELECT key, value FROM kv")
         .await
         .expect("full scan SELECT should succeed");
 
     assert_eq!(rows.len(), 2, "expected 2 rows, got {}", rows.len());
 
-    let mut pairs: Vec<(String, String)> = rows
-        .iter()
-        .map(|r| {
-            let obj = parse_row_envelope(r);
-            (
-                obj.get("key")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                obj.get("value")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-            )
-        })
-        .collect();
+    let mut pairs: Vec<(String, String)> =
+        rows.iter().map(|r| (r[0].clone(), r[1].clone())).collect();
     pairs.sort();
     assert_eq!(
         pairs,
@@ -110,8 +78,10 @@ async fn kv_sql_full_scan_returns_all_rows() {
     );
 }
 
-/// Star projection over KV must expose every stored column in the
-/// envelope payload.
+/// Star projection over KV currently returns a single column carrying a
+/// JSON envelope of every stored column. Explicit projection (`SELECT a, b`)
+/// returns separate columns. Both shapes carry the same data; the
+/// inconsistency between `*` and explicit lists is tracked for follow-up.
 #[tokio::test]
 async fn kv_sql_star_projection_returns_all_columns() {
     let server = TestServer::start().await;
@@ -130,16 +100,19 @@ async fn kv_sql_star_projection_returns_all_columns() {
         .expect("star SELECT should succeed");
 
     assert_eq!(rows.len(), 1);
-    let obj = parse_row_envelope(&rows[0]);
+    let envelope: serde_json::Value =
+        serde_json::from_str(&rows[0]).expect("star envelope must be JSON");
+    let obj = envelope
+        .as_object()
+        .expect("envelope must be a JSON object");
     assert_eq!(obj.get("key").and_then(|v| v.as_str()), Some("hello"));
     assert_eq!(obj.get("value").and_then(|v| v.as_str()), Some("world"));
 }
 
 /// KV collections with multi-column typed values must expose every
-/// declared column as its own envelope field. This test uses `key` as
-/// the primary-key column name because the current KV INSERT planner
-/// only recognises a PK column literally named `key` — an orthogonal
-/// bug tracked separately.
+/// declared column in projection order. Uses `key` as the PK column
+/// because the current KV INSERT planner only recognises a PK column
+/// literally named `key`.
 #[tokio::test]
 async fn kv_sql_typed_columns_point_select() {
     let server = TestServer::start().await;
@@ -155,24 +128,20 @@ async fn kv_sql_typed_columns_point_select() {
         .unwrap();
 
     let rows = server
-        .query_text("SELECT key, name, age FROM users WHERE key = 'u1'")
+        .query_rows("SELECT key, name, age FROM users WHERE key = 'u1'")
         .await
         .expect("multi-column point SELECT should succeed");
 
     assert_eq!(rows.len(), 1);
-    let obj = parse_row_envelope(&rows[0]);
-    assert_eq!(obj.get("key").and_then(|v| v.as_str()), Some("u1"));
-    assert_eq!(obj.get("name").and_then(|v| v.as_str()), Some("alice"));
-    let age = obj.get("age").expect("age field must be present");
-    let age_as_i64 = age
-        .as_i64()
-        .or_else(|| age.as_str().and_then(|s| s.parse::<i64>().ok()))
-        .expect("age must decode as integer");
-    assert_eq!(age_as_i64, 30);
+    let row = &rows[0];
+    assert_eq!(row.len(), 3);
+    assert_eq!(row[0], "u1");
+    assert_eq!(row[1], "alice");
+    let age: i64 = row[2].parse().expect("age must decode as integer");
+    assert_eq!(age, 30);
 }
 
-/// Single-column projection must still return the row envelope with
-/// the requested field present.
+/// Single-column projection returns the requested field.
 #[tokio::test]
 async fn kv_sql_single_column_projection() {
     let server = TestServer::start().await;
@@ -186,11 +155,12 @@ async fn kv_sql_single_column_projection() {
         .unwrap();
 
     let rows = server
-        .query_text("SELECT value FROM kv WHERE key = 'hello'")
+        .query_rows("SELECT value FROM kv WHERE key = 'hello'")
         .await
         .expect("single-column point SELECT should succeed");
 
     assert_eq!(rows.len(), 1);
-    let obj = parse_row_envelope(&rows[0]);
-    assert_eq!(obj.get("value").and_then(|v| v.as_str()), Some("world"));
+    let row = &rows[0];
+    assert_eq!(row.len(), 1);
+    assert_eq!(row[0], "world");
 }

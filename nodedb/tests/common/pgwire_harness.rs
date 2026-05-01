@@ -203,6 +203,29 @@ impl TestServer {
         }
     }
 
+    /// Execute a SQL statement, returning every row as a Vec of its column
+    /// values (in projection order). Column count is taken from the first
+    /// row received.
+    pub async fn query_rows(&self, sql: &str) -> Result<Vec<Vec<String>>, String> {
+        match self.client.simple_query(sql).await {
+            Ok(msgs) => {
+                let mut rows: Vec<Vec<String>> = Vec::new();
+                for msg in msgs {
+                    if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
+                        let n = row.len();
+                        let mut cols: Vec<String> = Vec::with_capacity(n);
+                        for i in 0..n {
+                            cols.push(row.get(i).unwrap_or("").to_string());
+                        }
+                        rows.push(cols);
+                    }
+                }
+                Ok(rows)
+            }
+            Err(e) => Err(pg_error_detail(&e)),
+        }
+    }
+
     /// Execute a SQL statement expecting success (no result needed).
     pub async fn exec(&self, sql: &str) -> Result<(), String> {
         match self.client.simple_query(sql).await {

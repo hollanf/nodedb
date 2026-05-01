@@ -82,10 +82,7 @@ async fn tenant_user_can_select_own_collection() {
         .await
         .expect("SELECT under tenant user must not fail with 'unknown table'");
     assert_eq!(rows.len(), 1, "expected 1 row, got {rows:?}");
-    assert!(
-        rows[0].contains("\"a\""),
-        "row should contain id 'a': {rows:?}"
-    );
+    assert_eq!(rows[0], "a", "row should contain id 'a': {rows:?}");
 }
 
 #[tokio::test]
@@ -120,8 +117,8 @@ async fn tenant_user_can_update_own_collection() {
     .await
     .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains("\"new\""),
+    assert_eq!(
+        rows[0], "new",
         "row should reflect updated content: {rows:?}"
     );
 }

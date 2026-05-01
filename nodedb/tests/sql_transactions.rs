@@ -186,8 +186,8 @@ async fn alter_collection_rename_column() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains("\"title\":\"first\""),
+    assert_eq!(
+        rows[0], "first",
         "expected renamed column 'title' = 'first', got {:?}",
         rows[0]
     );
@@ -253,18 +253,19 @@ async fn add_column_preserves_pre_alter_row_existing_columns() {
 
     // Pre-ALTER row must still return correct values for original columns.
     let rows = server
-        .query_text("SELECT id, name FROM ac_preserve WHERE id = 'a'")
+        .query_rows("SELECT id, name FROM ac_preserve WHERE id = 'a'")
         .await
         .unwrap();
     assert_eq!(rows.len(), 1, "pre-ALTER row must be visible");
-    assert!(
-        rows[0].contains("\"name\":\"alice\""),
+    // row[0]=id, row[1]=name
+    assert_eq!(
+        rows[0][1], "alice",
         "original column 'name' must retain its value, got {:?}",
         rows[0]
     );
-    // Regression guard: must NOT return null-everywhere.
-    assert!(
-        !rows[0].contains("\"name\":null"),
+    // Regression guard: must NOT return null.
+    assert_ne!(
+        rows[0][1], "null",
         "pre-ALTER row must not have null-everywhere corruption, got {:?}",
         rows[0]
     );
@@ -290,12 +291,13 @@ async fn add_column_returns_default_for_pre_alter_row() {
 
     // The new column should virtual-fill with its DEFAULT for pre-ALTER rows.
     let rows = server
-        .query_text("SELECT id, name, note FROM ac_default WHERE id = 'a'")
+        .query_rows("SELECT id, name, note FROM ac_default WHERE id = 'a'")
         .await
         .unwrap();
     assert_eq!(rows.len(), 1, "pre-ALTER row must be visible");
-    assert!(
-        rows[0].contains("\"note\":\"n/a\""),
+    // row[0]=id, row[1]=name, row[2]=note
+    assert_eq!(
+        rows[0][2], "n/a",
         "new column must return DEFAULT value for pre-ALTER rows, got {:?}",
         rows[0]
     );
@@ -326,17 +328,18 @@ async fn add_column_then_update_pre_alter_row() {
         .unwrap();
 
     let rows = server
-        .query_text("SELECT id, name, note FROM ac_update WHERE id = 'a'")
+        .query_rows("SELECT id, name, note FROM ac_update WHERE id = 'a'")
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains("\"name\":\"alice\""),
+    // row[0]=id, row[1]=name, row[2]=note
+    assert_eq!(
+        rows[0][1], "alice",
         "original column must survive update, got {:?}",
         rows[0]
     );
-    assert!(
-        rows[0].contains("\"note\":\"updated\""),
+    assert_eq!(
+        rows[0][2], "updated",
         "updated column must reflect new value, got {:?}",
         rows[0]
     );
@@ -367,7 +370,7 @@ async fn multiple_add_columns_preserves_pre_alter_row() {
     // Two sequential ADD COLUMNs compound the schema drift — pre-ALTER row
     // must still be readable with correct values and defaults.
     let rows = server
-        .query_text("SELECT id, name, col1, col2 FROM ac_multi WHERE id = 'a'")
+        .query_rows("SELECT id, name, col1, col2 FROM ac_multi WHERE id = 'a'")
         .await
         .unwrap();
     assert_eq!(
@@ -375,14 +378,15 @@ async fn multiple_add_columns_preserves_pre_alter_row() {
         1,
         "pre-ALTER row must be visible after two ADD COLUMNs"
     );
-    assert!(
-        rows[0].contains("\"name\":\"alice\""),
+    // row[0]=id, row[1]=name, row[2]=col1, row[3]=col2
+    assert_eq!(
+        rows[0][1], "alice",
         "original column must retain value, got {:?}",
         rows[0]
     );
     // Regression guard: null-everywhere means total schema-data offset corruption.
-    assert!(
-        !rows[0].contains("\"name\":null"),
+    assert_ne!(
+        rows[0][1], "null",
         "must not exhibit null-everywhere corruption, got {:?}",
         rows[0]
     );
@@ -413,7 +417,7 @@ async fn drop_column_preserves_pre_alter_row_remaining_columns() {
 
     // Remaining columns of the pre-ALTER row must read correctly.
     let rows = server
-        .query_text("SELECT id, name FROM dc_preserve WHERE id = 'a'")
+        .query_rows("SELECT id, name FROM dc_preserve WHERE id = 'a'")
         .await
         .unwrap();
     assert_eq!(
@@ -421,8 +425,9 @@ async fn drop_column_preserves_pre_alter_row_remaining_columns() {
         1,
         "pre-ALTER row must be visible after DROP COLUMN"
     );
-    assert!(
-        rows[0].contains("\"name\":\"alice\""),
+    // row[0]=id, row[1]=name
+    assert_eq!(
+        rows[0][1], "alice",
         "remaining column 'name' must retain its value after DROP COLUMN, got {:?}",
         rows[0]
     );
@@ -453,12 +458,13 @@ async fn rename_column_preserves_pre_alter_row_value() {
 
     // Pre-ALTER row must be readable under the new column name with correct value.
     let rows = server
-        .query_text("SELECT id, name, points FROM rc_preserve WHERE id = 'a'")
+        .query_rows("SELECT id, name, points FROM rc_preserve WHERE id = 'a'")
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains("\"points\":42") || rows[0].contains("\"points\": 42"),
+    // row[0]=id, row[1]=name, row[2]=points
+    assert_eq!(
+        rows[0][2], "42",
         "renamed column must retain pre-ALTER value, got {:?}",
         rows[0]
     );
@@ -488,12 +494,13 @@ async fn alter_column_type_preserves_pre_alter_row_value() {
 
     // Pre-ALTER row must still read correctly after type widening.
     let rows = server
-        .query_text("SELECT id, value FROM at_preserve WHERE id = 'a'")
+        .query_rows("SELECT id, value FROM at_preserve WHERE id = 'a'")
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains("\"value\":42") || rows[0].contains("\"value\": 42"),
+    // row[0]=id, row[1]=value
+    assert_eq!(
+        rows[0][1], "42",
         "value must survive ALTER COLUMN TYPE, got {:?}",
         rows[0]
     );

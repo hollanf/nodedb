@@ -146,16 +146,10 @@ async fn payload_bitmap_prefilter_restricts_candidates() {
                     ORDER BY vector_distance(vec, ARRAY[0.0, 0.0, 0.0]) LIMIT 20";
     let rows = server.client.simple_query(baseline).await.unwrap();
     let baseline_data: Vec<Vec<String>> = rows.iter().filter_map(row_columns).collect();
-    let baseline_blob = baseline_data
-        .iter()
-        .flatten()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("\n");
-    let baseline_hits = baseline_blob.matches("\"id\":").count();
+    let baseline_hits = baseline_data.len();
     assert_eq!(
         baseline_hits, 10,
-        "baseline (no WHERE) must return 10 hits; blob = {baseline_blob}"
+        "baseline (no WHERE) must return 10 hits; rows = {baseline_data:?}"
     );
 
     let sql = "SELECT id, vector_distance(vec, ARRAY[0.0, 0.0, 0.0]) AS dist \
@@ -167,19 +161,13 @@ async fn payload_bitmap_prefilter_restricts_candidates() {
         .await
         .expect("payload-filtered query must not fail");
     let data: Vec<Vec<String>> = rows.iter().filter_map(row_columns).collect();
-    let blob = data
-        .iter()
-        .flatten()
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("\n");
 
     // Only 5 hits — the A-category subset. The bitmap pre-filter must
     // exclude every B-category surrogate from the HNSW walk.
-    let hit_count = blob.matches("\"id\":").count();
+    let hit_count = data.len();
     assert_eq!(
         hit_count, 5,
-        "payload bitmap pre-filter should restrict to category='A' (5 rows); blob = {blob}"
+        "payload bitmap pre-filter should restrict to category='A' (5 rows); rows = {data:?}"
     );
 }
 
@@ -211,16 +199,11 @@ async fn payload_in_list_prefilter() {
                FROM vp_in WHERE category IN ('A', 'C') \
                ORDER BY vector_distance(vec, ARRAY[0.0,0.0,0.0]) LIMIT 20";
     let rows = server.client.simple_query(sql).await.unwrap();
-    let blob = rows
-        .iter()
-        .filter_map(row_columns)
-        .flatten()
-        .collect::<Vec<_>>()
-        .join("\n");
-    let hits = blob.matches("\"id\":").count();
+    let data: Vec<Vec<String>> = rows.iter().filter_map(row_columns).collect();
+    let hits = data.len();
     assert_eq!(
         hits, 6,
-        "IN ('A','C') should return 6 rows (3 A + 3 C); blob = {blob}"
+        "IN ('A','C') should return 6 rows (3 A + 3 C); rows = {data:?}"
     );
 }
 
@@ -250,16 +233,11 @@ async fn payload_range_prefilter() {
                FROM vp_range WHERE n BETWEEN 3 AND 6 \
                ORDER BY vector_distance(vec, ARRAY[0.0,0.0,0.0]) LIMIT 20";
     let rows = server.client.simple_query(sql).await.unwrap();
-    let blob = rows
-        .iter()
-        .filter_map(row_columns)
-        .flatten()
-        .collect::<Vec<_>>()
-        .join("\n");
-    let hits = blob.matches("\"id\":").count();
+    let data: Vec<Vec<String>> = rows.iter().filter_map(row_columns).collect();
+    let hits = data.len();
     assert_eq!(
         hits, 4,
-        "BETWEEN 3 AND 6 should return 4 rows (3,4,5,6); blob = {blob}"
+        "BETWEEN 3 AND 6 should return 4 rows (3,4,5,6); rows = {data:?}"
     );
 }
 

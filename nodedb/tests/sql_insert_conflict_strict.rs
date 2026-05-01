@@ -85,14 +85,9 @@ async fn strict_insert_duplicate_pk_preserves_original_row() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1, "expected exactly one row, got {rows:?}");
-    assert!(
-        rows[0].contains("\"n\":1"),
+    assert_eq!(
+        rows[0], "1",
         "duplicate-PK INSERT must not overwrite the original row, got: {}",
-        rows[0]
-    );
-    assert!(
-        !rows[0].contains("\"n\":2"),
-        "original row was overwritten with the rejected value: {}",
         rows[0]
     );
 }
@@ -125,8 +120,8 @@ async fn strict_insert_on_conflict_do_nothing_is_noop() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(
-        rows[0].contains("\"n\":1"),
+    assert_eq!(
+        rows[0], "1",
         "ON CONFLICT DO NOTHING must leave the original row intact, got: {}",
         rows[0]
     );
@@ -165,7 +160,7 @@ async fn strict_insert_on_conflict_do_update_overwrites() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(rows[0].contains("\"n\":2"), "got: {}", rows[0]);
+    assert_eq!(rows[0], "2", "got: {}", rows[0]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -196,5 +191,5 @@ async fn strict_upsert_keyword_overwrites() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(rows[0].contains("\"n\":2"), "got: {}", rows[0]);
+    assert_eq!(rows[0], "2", "got: {}", rows[0]);
 }

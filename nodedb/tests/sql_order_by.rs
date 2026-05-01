@@ -33,16 +33,8 @@ async fn order_by_id_asc() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 3);
-    assert!(
-        rows[0].contains("\"a\""),
-        "first row should be a, got: {}",
-        rows[0]
-    );
-    assert!(
-        rows[2].contains("\"c\""),
-        "last row should be c, got: {}",
-        rows[2]
-    );
+    assert_eq!(rows[0], "a", "first row should be a, got: {}", rows[0]);
+    assert_eq!(rows[2], "c", "last row should be c, got: {}", rows[2]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

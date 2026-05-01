@@ -150,7 +150,7 @@ async fn three_node_roundtrip_preserves_data() {
              previous INSERT silently dropped a row. rows={rows:?}",
             rows.len()
         );
-        let needle = format!("\"v{i}\"");
+        let needle = format!("v{i}");
         assert!(
             rows.iter().any(|s| s.contains(&needle)),
             "after INSERT k{i}: v{i} missing — INSERT returned Ok but the row \
@@ -178,7 +178,7 @@ async fn three_node_roundtrip_preserves_data() {
 
     let post = unique_contents(&cluster.nodes[1].client).await;
     for i in 0..6u32 {
-        let needle = format!("\"v{i}\"");
+        let needle = format!("v{i}");
         assert!(
             post.iter().any(|s| s.contains(&needle)),
             "post-restore missing v{i}; rows={post:?}"
@@ -362,7 +362,7 @@ async fn restore_from_different_topology_preserves_all_keys() {
 
     let post = unique_contents(&cluster_b.nodes[1].client).await;
     for i in 0..8u32 {
-        let needle = format!("\"v{i}\"");
+        let needle = format!("v{i}");
         assert!(
             post.iter().any(|s| s.contains(&needle)),
             "cross-cluster restore lost v{i} (cluster B sees: {post:?}) — \

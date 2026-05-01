@@ -69,14 +69,9 @@ async fn schemaless_insert_duplicate_id_preserves_original_row() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1, "expected exactly one row, got {rows:?}");
-    assert!(
-        rows[0].contains("\"n\":1"),
+    assert_eq!(
+        rows[0], "1",
         "duplicate-id INSERT must not overwrite the original row, got: {}",
-        rows[0]
-    );
-    assert!(
-        !rows[0].contains("\"n\":2"),
-        "original row was overwritten with the rejected value: {}",
         rows[0]
     );
 }
@@ -102,5 +97,5 @@ async fn schemaless_insert_on_conflict_do_nothing_is_noop() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert!(rows[0].contains("\"n\":1"), "got: {}", rows[0]);
+    assert_eq!(rows[0], "1", "got: {}", rows[0]);
 }
