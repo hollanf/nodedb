@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn write_and_read_file_encrypted_restart_roundtrip() {
-        // G-01 equivalent for segment-store: write encrypted, simulate restart
+        // equivalent for segment-store: write encrypted, simulate restart
         // by creating a new key instance (same bytes, fresh in-memory epoch),
         // and verify decryption still succeeds using the on-disk preamble epoch.
         let dir = tempfile::tempdir().unwrap();
@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn preamble_tamper_rejected() {
-        // G-02 binding test: swapping the preamble (different epoch) must
+        // binding test: swapping the preamble (different epoch) must
         // cause decryption to fail due to AAD mismatch.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("tamper.seg");

@@ -71,7 +71,7 @@ fn ten_k_tile_roundtrip_exact_equality() {
     seg_writer
         .append_sparse(TileId::snapshot(1), &tile)
         .unwrap();
-    let bytes = seg_writer.finish().unwrap();
+    let bytes = seg_writer.finish(None).unwrap();
 
     let reader = SegmentReader::open(&bytes).unwrap();
     assert_eq!(reader.tile_count(), 1);
@@ -203,7 +203,7 @@ fn mixed_sparse_dense_segment_decodes() {
     let mut w = SegmentWriter::new(0xCAFE_BABE);
     w.append_sparse(TileId::new(1, 100), &sparse).unwrap();
     w.append_dense(TileId::new(2, 100), &dense).unwrap();
-    let bytes = w.finish().unwrap();
+    let bytes = w.finish(None).unwrap();
 
     let r = SegmentReader::open(&bytes).unwrap();
     assert_eq!(r.tile_count(), 2);

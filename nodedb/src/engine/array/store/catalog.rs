@@ -15,6 +15,8 @@ use nodedb_array::tile::sparse_tile::{SparseTile, SparseTileBuilder};
 use nodedb_array::types::TileId;
 use nodedb_array::types::coord::value::CoordValue;
 
+use nodedb_wal::crypto::WalEncryptionKey;
+
 use super::manifest::{Manifest, ManifestError, SegmentRef, segment_path};
 use super::segment_handle::{SegmentHandle, SegmentHandleError};
 use crate::engine::array::memtable::Memtable;
@@ -35,6 +37,9 @@ pub struct ArrayStore {
     pub(crate) memtable: Memtable,
     pub(crate) segments: HashMap<String, SegmentHandle>,
     next_segment_seq: u64,
+    /// At-rest encryption key for SEGA segment envelopes. When `Some`,
+    /// all segment opens use AES-256-GCM decryption.
+    kek: Option<WalEncryptionKey>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -70,8 +75,12 @@ impl ArrayStore {
         let mut segments = HashMap::with_capacity(manifest.segments.len());
         let mut max_seq: u64 = 0;
         for seg in &manifest.segments {
-            let h =
-                SegmentHandle::open(&segment_path(&root, &seg.id), seg.id.clone(), schema_hash)?;
+            let h = SegmentHandle::open(
+                &segment_path(&root, &seg.id),
+                seg.id.clone(),
+                schema_hash,
+                None,
+            )?;
             if let Some(seq) = parse_segment_seq(&seg.id) {
                 max_seq = max_seq.max(seq);
             }
@@ -85,7 +94,21 @@ impl ArrayStore {
             memtable: Memtable::new(),
             segments,
             next_segment_seq: max_seq + 1,
+            kek: None,
         })
+    }
+
+    /// Install the at-rest encryption key for SEGA segment envelopes.
+    ///
+    /// Call this once from the `ArrayEngine` after opening the WAL key.
+    /// All subsequent `SegmentHandle::open` calls (install, replace) will
+    /// use AES-256-GCM decryption.
+    pub fn set_kek(&mut self, kek: WalEncryptionKey) {
+        self.kek = Some(kek);
+    }
+
+    pub fn kek(&self) -> Option<&WalEncryptionKey> {
+        self.kek.as_ref()
     }
 
     pub fn root(&self) -> &std::path::Path {
@@ -123,6 +146,7 @@ impl ArrayStore {
             &segment_path(&self.root, &seg.id),
             seg.id.clone(),
             self.schema_hash,
+            self.kek.as_ref(),
         )?;
         self.segments.insert(seg.id.clone(), h);
         self.manifest.append(seg);
@@ -143,6 +167,7 @@ impl ArrayStore {
                 &segment_path(&self.root, &seg.id),
                 seg.id.clone(),
                 self.schema_hash,
+                self.kek.as_ref(),
             )?;
             new_handles.push(h);
         }

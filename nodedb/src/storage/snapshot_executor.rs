@@ -69,7 +69,7 @@ pub fn execute_restore(
 
     // Restore each core's state.
     for core_id in 0..manifest.num_cores {
-        let core_snap = load_core_snapshot(snap_dir, core_id)?;
+        let core_snap = load_core_snapshot(snap_dir, core_id, None)?;
         let (docs, vectors) = restore_core_state(data_dir, core_id, &core_snap)?;
         total_docs += docs;
         total_vectors += vectors;
@@ -354,9 +354,10 @@ mod tests {
 
         let snap_bytes = snap.to_bytes().unwrap();
         let core_snaps = vec![(0, snap_bytes)];
-        let (meta, snap_dir) =
-            crate::storage::snapshot_writer::create_base_snapshot(&data_dir, core_snaps, "test")
-                .unwrap();
+        let (meta, snap_dir) = crate::storage::snapshot_writer::create_base_snapshot(
+            &data_dir, core_snaps, "test", None,
+        )
+        .unwrap();
 
         // Restore from the snapshot (no WAL records to replay).
         let result = execute_restore(&data_dir, &snap_dir, &[]).unwrap();

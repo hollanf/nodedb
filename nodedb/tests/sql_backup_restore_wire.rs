@@ -165,11 +165,12 @@ async fn rejects_random_bytes() {
 
 #[tokio::test]
 async fn rejects_unsupported_envelope_version() {
-    // A plaintext (version 1) envelope must be rejected at the version-check
-    // gate now that plaintext envelopes are no longer accepted. The server
-    // must return a clear "unsupported envelope version" message rather than
-    // a generic format error, so operators know to re-take the backup with
-    // an encryption KEK configured.
+    // A plaintext envelope (no crypto block) must be rejected because
+    // the restore path only accepts encrypted envelopes. Both plaintext and
+    // encrypted envelopes now carry version = 1 in the header; the parser
+    // detects a non-encrypted envelope structurally (the crypto block is
+    // absent, making the byte slice too short for parse_encrypted's minimum).
+    // The server surfaces this as a generic format error.
     let server = TestServer::start().await;
     let mut writer = EnvelopeWriter::new(EnvelopeMeta {
         tenant_id: TENANT,
@@ -178,13 +179,13 @@ async fn rejects_unsupported_envelope_version() {
         snapshot_watermark: 0,
     });
     writer.push_section(0, b"x".to_vec()).unwrap();
-    let bytes = writer.finalize(); // produces a version-1 plaintext envelope
+    let bytes = writer.finalize(); // produces a plaintext envelope (no crypto block)
     let err = push_restore(&server, TENANT, bytes, false)
         .await
         .unwrap_err();
     assert!(
-        err.to_lowercase().contains("unsupported envelope version"),
-        "expected version-rejection message, got: {err}"
+        err.to_lowercase().contains("invalid backup format"),
+        "expected format-rejection message, got: {err}"
     );
 }
 

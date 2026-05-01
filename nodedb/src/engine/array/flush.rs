@@ -29,8 +29,9 @@ impl ArrayEngine {
         }
         let schema = store.schema().clone();
         let schema_hash = store.schema_hash();
+        let kek = store.kek().cloned();
         let drained = std::mem::replace(&mut store.memtable, Memtable::new()).drain_sorted();
-        let built = build_segment_from_memtable(&schema, schema_hash, &drained)?;
+        let built = build_segment_from_memtable(&schema, schema_hash, kek.as_ref(), &drained)?;
         let segment_id = store.allocate_segment_id();
         Ok(Some(PreparedFlush {
             segment_id,
@@ -84,6 +85,7 @@ struct BuiltSegment {
 fn build_segment_from_memtable(
     schema: &ArraySchema,
     schema_hash: u64,
+    kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
     drained: &[(TileId, TileBuffer)],
 ) -> ArrayResult<BuiltSegment> {
     let mut writer = SegmentWriter::new(schema_hash);
@@ -101,7 +103,7 @@ fn build_segment_from_memtable(
         tile_count += 1;
     }
     Ok(BuiltSegment {
-        bytes: writer.finish()?,
+        bytes: writer.finish(kek)?,
         min_tile,
         max_tile,
         tile_count,

@@ -1,11 +1,15 @@
-//! Open segment file — `mmap`'d bytes plus the cached MBR R-tree.
+//! Open segment file — mmap'd bytes (plaintext) or owned decrypted buffer.
 //!
-//! `SegmentReader` borrows the file slice with an explicit lifetime so
-//! it cannot be stored alongside the `Mmap` directly (self-referential).
-//! Instead the handle owns the mmap (via `Arc<Mmap>` so reader scans
-//! can outlive a manifest swap) and exposes [`SegmentHandle::bytes`] to
-//! reconstruct a borrowed reader on demand. The R-tree is built once
-//! at open time and reused for every query.
+//! `SegmentReader` borrows its byte slice with an explicit lifetime so it
+//! cannot be stored alongside the buffer directly (self-referential). Instead
+//! the handle owns the backing storage and exposes [`SegmentHandle::reader`]
+//! to reconstruct a borrowed reader on demand. The R-tree is built once at
+//! open time and reused for every query.
+//!
+//! For plaintext segments the backing storage is an `Arc<Mmap>` (zero-copy).
+//! For encrypted segments the backing storage is an `Arc<Vec<u8>>` holding
+//! the decrypted plaintext — mmap zero-copy is not available for encrypted
+//! on-disk blobs, which is acceptable given the one-time open cost.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -13,6 +17,7 @@ use std::sync::Arc;
 use memmap2::Mmap;
 
 use nodedb_array::segment::{HilbertPackedRTree, SegmentReader};
+use nodedb_wal::crypto::WalEncryptionKey;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SegmentHandleError {
@@ -24,11 +29,27 @@ pub enum SegmentHandleError {
     SchemaHashMismatch { array: u64, seg: u64 },
 }
 
+/// Backing storage for an open segment.
+enum Backing {
+    /// Memory-mapped plaintext file (zero-copy).
+    Mmap(Arc<Mmap>),
+    /// Heap-allocated decrypted plaintext.
+    Decrypted(Arc<Vec<u8>>),
+}
+
+impl Backing {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Backing::Mmap(m) => m,
+            Backing::Decrypted(v) => v,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct SegmentHandle {
-    bytes: Arc<Mmap>,
-    /// Cached R-tree. Built once at open from the segment footer; the
-    /// segment file itself is immutable for the life of the handle.
+    backing: Arc<Backing>,
+    /// Cached R-tree. Built once at open from the segment footer.
     rtree: Arc<HilbertPackedRTree>,
     schema_hash: u64,
     tile_count: usize,
@@ -36,27 +57,52 @@ pub struct SegmentHandle {
 }
 
 impl SegmentHandle {
-    /// Open and validate a segment file. Verifies schema_hash matches
-    /// the array's expected value before caching the R-tree.
+    /// Open and validate a segment file.
+    ///
+    /// When `kek` is `Some` the file is read into memory and AES-256-GCM
+    /// decrypted; the resulting plaintext is used as the backing buffer.
+    /// An encrypted (`SEGA`) segment without a KEK or a plaintext (`NDAS`)
+    /// segment with a KEK both return a typed error from the array crate.
+    ///
+    /// When `kek` is `None` the file is memory-mapped directly (zero-copy)
+    /// and must be a plaintext (`NDAS`) segment.
     pub fn open(
         path: &Path,
         id: String,
         expected_schema_hash: u64,
+        kek: Option<&WalEncryptionKey>,
     ) -> Result<Self, SegmentHandleError> {
-        let file = std::fs::File::open(path).map_err(|e| SegmentHandleError::Open {
-            detail: format!("{path:?}: {e}"),
-        })?;
-        // Safety: the segment file is treated as read-only; we never
-        // mutate it through the mmap and the file is not shared for
-        // writing while the handle is alive.
-        let mmap = unsafe { Mmap::map(&file) }.map_err(|e| SegmentHandleError::Mmap {
-            detail: format!("{path:?}: {e}"),
-        })?;
-        let mmap = Arc::new(mmap);
-        let (rtree, schema_hash, tile_count) = {
-            let reader = SegmentReader::open(&mmap[..]).map_err(|e| SegmentHandleError::Open {
+        let backing: Arc<Backing> = if let Some(key) = kek {
+            // Encrypted path: read raw bytes, decrypt via OwnedSegmentReader.
+            let raw = std::fs::read(path).map_err(|e| SegmentHandleError::Open {
                 detail: format!("{path:?}: {e}"),
             })?;
+            let owned =
+                nodedb_array::segment::reader::OwnedSegmentReader::open_with_kek(&raw, Some(key))
+                    .map_err(|e| SegmentHandleError::Open {
+                    detail: format!("{path:?}: {e}"),
+                })?;
+            // Extract the decrypted plaintext bytes for long-term storage.
+            Arc::new(Backing::Decrypted(Arc::new(owned.into_plaintext())))
+        } else {
+            // Plaintext path: mmap directly.
+            let file = std::fs::File::open(path).map_err(|e| SegmentHandleError::Open {
+                detail: format!("{path:?}: {e}"),
+            })?;
+            // Safety: the segment file is treated as read-only; we never
+            // mutate it through the mmap and the file is not shared for
+            // writing while the handle is alive.
+            let mmap = unsafe { Mmap::map(&file) }.map_err(|e| SegmentHandleError::Mmap {
+                detail: format!("{path:?}: {e}"),
+            })?;
+            Arc::new(Backing::Mmap(Arc::new(mmap)))
+        };
+
+        let (rtree, schema_hash, tile_count) = {
+            let reader =
+                SegmentReader::open(backing.bytes()).map_err(|e| SegmentHandleError::Open {
+                    detail: format!("{path:?}: {e}"),
+                })?;
             if reader.schema_hash() != expected_schema_hash {
                 return Err(SegmentHandleError::SchemaHashMismatch {
                     array: expected_schema_hash,
@@ -66,8 +112,9 @@ impl SegmentHandle {
             let rtree = HilbertPackedRTree::build(reader.tiles());
             (rtree, reader.schema_hash(), reader.tile_count())
         };
+
         Ok(Self {
-            bytes: mmap,
+            backing,
             rtree: Arc::new(rtree),
             schema_hash,
             tile_count,
@@ -95,8 +142,8 @@ impl SegmentHandle {
     /// the handle reference it was built from.
     pub fn reader(&self) -> SegmentReader<'_> {
         // Already validated at open time; unwrap is safe because we
-        // hold a live mmap of the same bytes that already parsed.
-        SegmentReader::open(&self.bytes[..]).expect("segment validated at open")
+        // hold a live backing buffer of the same bytes that already parsed.
+        SegmentReader::open(self.backing.bytes()).expect("segment validated at open")
     }
 }
 

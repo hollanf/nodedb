@@ -261,7 +261,7 @@ fn scan_one_partition(
     filter_predicates: &[crate::bridge::scan_filter::ScanFilter],
     has_filters: bool,
 ) -> Vec<rmpv::Value> {
-    let schema = match ColumnarSegmentReader::read_schema(part_dir) {
+    let schema = match ColumnarSegmentReader::read_schema(part_dir, None) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
@@ -273,7 +273,7 @@ fn scan_one_partition(
     let col_data: Vec<Option<ColumnData>> = schema
         .columns
         .iter()
-        .map(|(name, ty)| ColumnarSegmentReader::read_column(part_dir, name, *ty).ok())
+        .map(|(name, ty)| ColumnarSegmentReader::read_column(part_dir, name, *ty, None).ok())
         .collect();
 
     let sym_dicts: HashMap<usize, nodedb_types::timeseries::SymbolDictionary> = schema
@@ -282,7 +282,7 @@ fn scan_one_partition(
         .enumerate()
         .filter(|(_, (_, ty))| *ty == ColumnType::Symbol)
         .filter_map(|(i, (name, _))| {
-            ColumnarSegmentReader::read_symbol_dict(part_dir, name)
+            ColumnarSegmentReader::read_symbol_dict(part_dir, name, None)
                 .ok()
                 .map(|dict| (i, dict))
         })

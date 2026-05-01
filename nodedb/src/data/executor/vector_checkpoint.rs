@@ -72,7 +72,7 @@ impl CoreLoop {
             if collection.is_empty() {
                 continue;
             }
-            let bytes = collection.checkpoint_to_bytes();
+            let bytes = collection.checkpoint_to_bytes(self.vector_checkpoint_kek.as_ref());
             if bytes.is_empty() {
                 continue;
             }
@@ -130,19 +130,33 @@ impl CoreLoop {
             }
             let tuple_key = parse_build_key(&filename);
 
-            if let Ok(bytes) = nodedb_wal::segment::read_checkpoint_dontneed(&path)
-                && let Some(collection) =
-                    crate::engine::vector::collection::VectorCollection::from_checkpoint(&bytes)
-            {
-                tracing::info!(
-                    core = self.core_id,
-                    key = %filename,
-                    vectors = collection.len(),
-                    "loaded vector checkpoint"
-                );
-                self.vector_collections.insert(tuple_key, collection);
-                loaded += 1;
-            }
+            let Ok(bytes) = nodedb_wal::segment::read_checkpoint_dontneed(&path) else {
+                continue;
+            };
+            let kek = self.vector_checkpoint_kek.as_ref();
+            let load_result =
+                crate::engine::vector::collection::VectorCollection::from_checkpoint(&bytes, kek);
+            let collection = match load_result {
+                Ok(Some(c)) => c,
+                Ok(None) => continue,
+                Err(e) => {
+                    tracing::warn!(
+                        core = self.core_id,
+                        key = %filename,
+                        error = %e,
+                        "vector checkpoint rejected"
+                    );
+                    continue;
+                }
+            };
+            tracing::info!(
+                core = self.core_id,
+                key = %filename,
+                vectors = collection.len(),
+                "loaded vector checkpoint"
+            );
+            self.vector_collections.insert(tuple_key, collection);
+            loaded += 1;
         }
 
         if loaded > 0 {

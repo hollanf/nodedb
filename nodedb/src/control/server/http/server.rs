@@ -77,7 +77,8 @@ fn build_router(state: AppState) -> Router {
         );
 
     // ── JSON routes (Content-Type stamped to v1 vendor type) ─────────────────
-    let json_routes = Router::new()
+    #[allow(unused_mut)]
+    let mut json_routes = Router::new()
         .route("/v1/query", post(routes::query::query))
         .route("/v1/query/stream", post(routes::query::query_ndjson))
         .route("/v1/status", get(routes::status::status))

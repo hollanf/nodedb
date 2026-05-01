@@ -19,8 +19,7 @@ use std::time::Duration;
 use nodedb_cluster::routing::{VSHARD_COUNT, vshard_for_collection};
 use nodedb_cluster::rpc_codec::{ExecuteRequest, ExecuteResponse, RaftRpc, TypedClusterError};
 use nodedb_types::backup_envelope::{
-    DEFAULT_MAX_TOTAL_BYTES, EnvelopeError, VERSION_ENCRYPTED,
-    parse_encrypted as parse_envelope_encrypted,
+    DEFAULT_MAX_TOTAL_BYTES, EnvelopeError, parse_encrypted as parse_envelope_encrypted,
 };
 use serde::Serialize;
 
@@ -71,30 +70,17 @@ pub async fn restore_tenant(
     envelope_bytes: &[u8],
     dry_run: bool,
 ) -> Result<RestoreStats, Error> {
-    // Detect envelope version from the 5th byte (version field in header).
-    // Version 2 envelopes are encrypted; version 1 are plaintext.
-    // If the byte slice is too short, `parse_envelope` / `parse_envelope_encrypted`
-    // will return `Truncated` as expected.
-    let envelope_version = envelope_bytes.get(4).copied().unwrap_or(0);
-    let env = if envelope_version == VERSION_ENCRYPTED {
-        match &state.backup_kek {
-            Some(kek) => parse_envelope_encrypted(envelope_bytes, DEFAULT_MAX_TOTAL_BYTES, kek)
-                .map_err(envelope_to_err)?,
-            None => {
-                return Err(Error::Internal {
-                    detail: "restore: envelope is encrypted (version 2) but no backup KEK \
-                             is configured; set [backup_encryption] in the server config"
-                        .into(),
-                });
-            }
+    // Only encrypted envelopes are accepted at restore time.
+    let env = match &state.backup_kek {
+        Some(kek) => parse_envelope_encrypted(envelope_bytes, DEFAULT_MAX_TOTAL_BYTES, kek)
+            .map_err(envelope_to_err)?,
+        None => {
+            return Err(Error::Internal {
+                detail: "restore: envelope is encrypted but no backup KEK is configured; \
+                         set [backup_encryption] in the server config"
+                    .into(),
+            });
         }
-    } else {
-        return Err(Error::Internal {
-            detail: format!(
-                "restore: unsupported envelope version {envelope_version}; \
-                 only encrypted (version 2) envelopes are accepted"
-            ),
-        });
     };
     if env.meta.tenant_id != tenant_id {
         // Mismatch is a hard error — request is for a different tenant.

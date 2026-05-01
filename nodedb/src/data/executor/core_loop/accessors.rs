@@ -43,6 +43,48 @@ impl CoreLoop {
         }
     }
 
+    /// Install the encryption key used for vector checkpoint at-rest encryption.
+    ///
+    /// Called by the server bootstrap after opening the WAL key. When set,
+    /// `checkpoint_vector_indexes` encrypts checkpoint files and
+    /// `load_vector_checkpoints` refuses plaintext ones.
+    pub fn set_vector_checkpoint_kek(&mut self, kek: nodedb_wal::crypto::WalEncryptionKey) {
+        self.vector_checkpoint_kek = Some(kek);
+    }
+
+    /// Install the encryption key used for spatial checkpoint at-rest encryption.
+    ///
+    /// When set, `checkpoint_spatial_indexes` encrypts checkpoint files and
+    /// `load_spatial_checkpoints` refuses plaintext ones.
+    pub fn set_spatial_checkpoint_kek(&mut self, kek: nodedb_wal::crypto::WalEncryptionKey) {
+        self.spatial_checkpoint_kek = Some(kek);
+    }
+
+    /// Install the encryption key used for columnar segment at-rest encryption.
+    ///
+    /// When set, columnar segment flushes produce AES-256-GCM encrypted SEGC
+    /// envelopes and the segment reader refuses to load plaintext segments.
+    pub fn set_columnar_segment_kek(&mut self, kek: nodedb_wal::crypto::WalEncryptionKey) {
+        self.columnar_segment_kek = Some(kek);
+    }
+
+    /// Install the encryption key used for array segment at-rest encryption.
+    ///
+    /// When set, array segment flushes produce AES-256-GCM encrypted SEGA
+    /// envelopes and the segment handle refuses to load plaintext segments.
+    pub fn set_array_segment_kek(&mut self, kek: nodedb_wal::crypto::WalEncryptionKey) {
+        self.array_engine.set_kek(kek.clone());
+        self.array_segment_kek = Some(kek);
+    }
+
+    /// Install the encryption key for timeseries columnar segment files.
+    ///
+    /// When set, `flush_ts_collection` wraps each output file in a `SEGT`
+    /// AES-256-GCM envelope and readers refuse to load plaintext segment files.
+    pub fn set_ts_segment_kek(&mut self, kek: nodedb_wal::crypto::WalEncryptionKey) {
+        self.ts_segment_kek = Some(kek);
+    }
+
     /// Set the last timeseries ingest timestamp (for testing idle flush).
     pub fn set_last_ts_ingest(&mut self, value: Option<std::time::Instant>) {
         self.last_ts_ingest = value;

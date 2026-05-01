@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{info, warn};
 
 use crate::data::snapshot::CoreSnapshot;
+use crate::storage::segment::{SegmentFooter, read_encrypted_segment, write_encrypted_segment};
 use crate::storage::snapshot::{
     SNAPSHOT_FORMAT_VERSION, SnapshotCatalog, SnapshotKind, SnapshotMeta,
 };
@@ -66,11 +67,16 @@ fn snapshot_dir_name(snapshot_id: u64, lsn: u64) -> String {
 /// `core_snapshots` contains `(core_id, snapshot_bytes)` pairs collected
 /// from all Data Plane cores via `PhysicalPlan::CreateSnapshot`.
 ///
+/// When `encryption_key` is `Some`, each core `.snap` file is written using
+/// `write_encrypted_segment` (AES-256-GCM). When `None`, the current
+/// plaintext `atomic_write_fsync` path is used.
+///
 /// Returns the snapshot metadata and the directory path where files were written.
 pub fn create_base_snapshot(
     data_dir: &Path,
     core_snapshots: Vec<(usize, Vec<u8>)>,
     node_name: &str,
+    encryption_key: Option<&nodedb_wal::crypto::WalEncryptionKey>,
 ) -> crate::Result<(SnapshotMeta, PathBuf)> {
     if core_snapshots.is_empty() {
         return Err(crate::Error::BadRequest {
@@ -101,15 +107,31 @@ pub fn create_base_snapshot(
     // Create snapshot directory.
     fs::create_dir_all(&snap_dir).map_err(crate::Error::Io)?;
 
-    // Write per-core snapshot files with atomic temp+rename.
+    // Write per-core snapshot files.
+    // When a key is configured, each file gets the encrypted segment format
+    // (preamble + AES-256-GCM ciphertext + footer). Otherwise, atomic
+    // temp+rename with no encryption.
     let mut core_files = Vec::with_capacity(core_snapshots.len());
     for (core_id, bytes) in &core_snapshots {
         let filename = format!("core-{core_id}.snap");
         let final_path = snap_dir.join(&filename);
         let tmp_path = snap_dir.join(format!("core-{core_id}.snap.tmp"));
 
-        nodedb_wal::segment::atomic_write_fsync(&tmp_path, &final_path, bytes)
-            .map_err(crate::Error::Wal)?;
+        if let Some(key) = encryption_key {
+            // Parse the watermark from the snapshot bytes (if possible) to
+            // populate the SegmentFooter. If parsing fails, use min_watermark.
+            let watermark = CoreSnapshot::from_bytes(bytes)
+                .map(|s| s.watermark)
+                .unwrap_or(min_watermark);
+            let lsn = Lsn::new(watermark);
+            let footer = SegmentFooter::new(node_name, crc32c::crc32c(bytes), lsn, lsn);
+            // Write to a temp path first, then rename.
+            write_encrypted_segment(&tmp_path, bytes, &footer, Some(key))?;
+            std::fs::rename(&tmp_path, &final_path).map_err(crate::Error::Io)?;
+        } else {
+            nodedb_wal::segment::atomic_write_fsync(&tmp_path, &final_path, bytes)
+                .map_err(crate::Error::Wal)?;
+        }
 
         core_files.push(filename);
     }
@@ -179,9 +201,21 @@ pub fn load_manifest(snap_dir: &Path) -> crate::Result<SnapshotManifest> {
 }
 
 /// Load a per-core snapshot from a snapshot directory.
-pub fn load_core_snapshot(snap_dir: &Path, core_id: usize) -> crate::Result<CoreSnapshot> {
+///
+/// When `encryption_key` is `Some`, the file is decrypted using
+/// `read_encrypted_segment` before deserialization. When `None`, the raw
+/// bytes are read directly (unencrypted snapshot).
+pub fn load_core_snapshot(
+    snap_dir: &Path,
+    core_id: usize,
+    encryption_key: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+) -> crate::Result<CoreSnapshot> {
     let path = snap_dir.join(format!("core-{core_id}.snap"));
-    let bytes = fs::read(&path).map_err(crate::Error::Io)?;
+    let bytes = if encryption_key.is_some() {
+        read_encrypted_segment(&path, encryption_key)?
+    } else {
+        fs::read(&path).map_err(crate::Error::Io)?
+    };
     CoreSnapshot::from_bytes(&bytes).ok_or_else(|| crate::Error::Serialization {
         format: "msgpack".into(),
         detail: format!("failed to deserialize core-{core_id} snapshot"),
@@ -262,7 +296,8 @@ mod tests {
 
         let core_snaps = vec![(0, make_core_snapshot(100)), (1, make_core_snapshot(105))];
 
-        let (meta, snap_dir) = create_base_snapshot(dir.path(), core_snaps, "test-node").unwrap();
+        let (meta, snap_dir) =
+            create_base_snapshot(dir.path(), core_snaps, "test-node", None).unwrap();
 
         assert_eq!(meta.begin_lsn, Lsn::new(100)); // min watermark
         assert_eq!(meta.end_lsn, Lsn::new(105)); // max watermark
@@ -276,9 +311,9 @@ mod tests {
         assert_eq!(manifest.meta.snapshot_id, meta.snapshot_id);
 
         // Load per-core snapshots.
-        let core0 = load_core_snapshot(&snap_dir, 0).unwrap();
+        let core0 = load_core_snapshot(&snap_dir, 0, None).unwrap();
         assert_eq!(core0.watermark, 100);
-        let core1 = load_core_snapshot(&snap_dir, 1).unwrap();
+        let core1 = load_core_snapshot(&snap_dir, 1, None).unwrap();
         assert_eq!(core1.watermark, 105);
     }
 
@@ -287,8 +322,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         // Create two snapshots.
-        create_base_snapshot(dir.path(), vec![(0, make_core_snapshot(50))], "n1").unwrap();
-        create_base_snapshot(dir.path(), vec![(0, make_core_snapshot(200))], "n1").unwrap();
+        create_base_snapshot(dir.path(), vec![(0, make_core_snapshot(50))], "n1", None).unwrap();
+        create_base_snapshot(dir.path(), vec![(0, make_core_snapshot(200))], "n1", None).unwrap();
 
         let found = discover_snapshots(dir.path());
         assert_eq!(found.len(), 2);
@@ -304,7 +339,8 @@ mod tests {
     fn delete_snapshot_removes_dir() {
         let dir = tempfile::tempdir().unwrap();
         let (_, snap_dir) =
-            create_base_snapshot(dir.path(), vec![(0, make_core_snapshot(10))], "n1").unwrap();
+            create_base_snapshot(dir.path(), vec![(0, make_core_snapshot(10))], "n1", None)
+                .unwrap();
 
         assert!(snap_dir.exists());
         delete_snapshot(&snap_dir).unwrap();
@@ -314,7 +350,7 @@ mod tests {
     #[test]
     fn empty_cores_rejected() {
         let dir = tempfile::tempdir().unwrap();
-        let result = create_base_snapshot(dir.path(), vec![], "n1");
+        let result = create_base_snapshot(dir.path(), vec![], "n1", None);
         assert!(result.is_err());
     }
 

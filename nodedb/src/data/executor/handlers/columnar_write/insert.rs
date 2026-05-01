@@ -272,8 +272,9 @@ impl CoreLoop {
             let new_segment_id = engine.next_segment_id();
             let (schema, columns, row_count) = engine.memtable_mut().drain_optimized();
             if row_count > 0 {
+                let kek = self.columnar_segment_kek.as_ref();
                 match nodedb_columnar::SegmentWriter::plain()
-                    .write_segment(&schema, &columns, row_count)
+                    .write_segment(&schema, &columns, row_count, kek)
                 {
                     Ok(bytes) => {
                         self.columnar_flushed_segments

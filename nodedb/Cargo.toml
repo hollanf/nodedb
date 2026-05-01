@@ -20,7 +20,7 @@ path = "src/lib.rs"
 [dependencies]
 # Internal foundation crates
 nodedb-types = { workspace = true }
-nodedb-columnar = { workspace = true }
+nodedb-columnar = { workspace = true, features = ["encryption"] }
 nodedb-bridge = { workspace = true }
 rust_decimal = { workspace = true }
 nodedb-cluster = { workspace = true }
@@ -32,10 +32,10 @@ nodedb-query = { workspace = true }
 nodedb-crdt = { workspace = true }
 nodedb-codec = { workspace = true }
 nodedb-strict = { workspace = true }
-nodedb-spatial = { workspace = true }
+nodedb-spatial = { workspace = true, features = ["encryption"] }
 nodedb-graph = { workspace = true }
 nodedb-vector = { workspace = true, features = ["collection"] }
-nodedb-array = { workspace = true }
+nodedb-array = { workspace = true, features = ["encryption"] }
 nodedb-sql = { workspace = true }
 arrow = { workspace = true }
 
@@ -150,7 +150,7 @@ tokio-postgres = { workspace = true }
 proptest = "1"
 nodedb-types = { workspace = true }
 reqwest = { workspace = true }
-nodedb-array = { workspace = true, features = ["test-utils"] }
+nodedb-array = { workspace = true, features = ["test-utils", "encryption"] }
 tower = { workspace = true }
 
 [features]

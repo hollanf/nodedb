@@ -80,6 +80,7 @@ fn rewrite_segment(store: &mut ArrayStore, action: &SegmentPurgeAction) -> Resul
             .clone();
 
         let schema_hash = store.schema_hash();
+        let kek = store.kek().cloned();
 
         let handle = store.segments.get(&action.segment_id).ok_or_else(|| {
             ArrayError::SegmentCorruption {
@@ -170,9 +171,12 @@ fn rewrite_segment(store: &mut ArrayStore, action: &SegmentPurgeAction) -> Resul
 
             // `reader`, `handle`, and all borrows of `store` end here at
             // the close of this block. `new_bytes` etc. are owned.
-            let new_bytes = writer.finish().map_err(|e| ArrayError::SegmentCorruption {
-                detail: format!("purge: segment writer finish: {e}"),
-            })?;
+            let new_bytes =
+                writer
+                    .finish(kek.as_ref())
+                    .map_err(|e| ArrayError::SegmentCorruption {
+                        detail: format!("purge: segment writer finish: {e}"),
+                    })?;
 
             if new_tile_count == 0 {
                 ReadPhaseResult::RemoveEntirely { seg_ref }

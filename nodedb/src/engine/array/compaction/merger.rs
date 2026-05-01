@@ -107,25 +107,36 @@ impl CompactionMerger {
             }
         };
 
+        let kek = store.kek().cloned();
         let id = next_segment_id_for_compaction(store, inputs);
         let seg_path = store.root().join(&id);
-        let writer_bytes = build_segment_bytes(&schema, schema_hash, merged.into_iter())?;
+        let writer_bytes =
+            build_segment_bytes(&schema, schema_hash, kek.as_ref(), merged.into_iter())?;
         write_atomic(&seg_path, &writer_bytes).map_err(|e| CompactionError::Io {
             detail: format!("write merged segment {seg_path:?}: {e}"),
         })?;
 
-        // Reopen from disk to pull a fresh handle for the new bounds.
-        let handle = nodedb_array::segment::SegmentReader::open(&writer_bytes)?;
-        let (min_tile, max_tile) = match (handle.tiles().first(), handle.tiles().last()) {
-            (Some(a), Some(b)) => (a.tile_id, b.tile_id),
-            _ => (TileId::snapshot(0), TileId::snapshot(0)),
+        // Reopen from the written bytes to pull tile bounds.
+        // When encryption is active, writer_bytes is an encrypted SEGA blob;
+        // use OwnedSegmentReader to decrypt before inspecting tiles.
+        let (min_tile, max_tile, tile_count) = {
+            let owned = nodedb_array::segment::reader::OwnedSegmentReader::open_with_kek(
+                &writer_bytes,
+                kek.as_ref(),
+            )?;
+            let reader = owned.reader();
+            let (mn, mx) = match (reader.tiles().first(), reader.tiles().last()) {
+                (Some(a), Some(b)) => (a.tile_id, b.tile_id),
+                _ => (TileId::snapshot(0), TileId::snapshot(0)),
+            };
+            (mn, mx, reader.tile_count() as u32)
         };
         let segment_ref = SegmentRef {
             id,
             level: output_level,
             min_tile,
             max_tile,
-            tile_count: handle.tile_count() as u32,
+            tile_count,
             flush_lsn: max_flush_lsn,
         };
         Ok(CompactionOutput {
@@ -282,6 +293,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 fn build_segment_bytes(
     schema: &ArraySchema,
     schema_hash: u64,
+    kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
     tiles: impl Iterator<Item = (TileId, MergedTile)>,
 ) -> ArrayResult<Vec<u8>> {
     let mut writer = SegmentWriter::new(schema_hash);
@@ -294,7 +306,7 @@ fn build_segment_bytes(
         }
         writer.append_sparse(tile_id, &tile)?;
     }
-    writer.finish()
+    writer.finish(kek)
 }
 
 /// Row record inside a [`MergedTile`] accumulator.

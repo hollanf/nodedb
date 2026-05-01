@@ -11,6 +11,9 @@ impl CoreLoop {
     /// Each index is serialized via `nodedb_spatial::persist` to a file at
     /// `{data_dir}/spatial-ckpt/{index_key}.ckpt`. The doc_map is saved
     /// alongside as `{index_key}.docmap`.
+    ///
+    /// When `spatial_checkpoint_kek` is set, checkpoint files are written
+    /// encrypted (AES-256-GCM SEGV framing) and plaintext loads are refused.
     pub fn checkpoint_spatial_indexes(&self) -> usize {
         if self.spatial_indexes.is_empty() {
             return 0;
@@ -25,10 +28,12 @@ impl CoreLoop {
             return 0;
         }
 
+        let kek = self.spatial_checkpoint_kek.as_ref();
+
         let mut checkpointed = 0;
         for ((tid, coll, field), rtree) in &self.spatial_indexes {
             let key_str = format!("{}:{}:{}", tid.as_u64(), coll, field);
-            let bytes = match rtree.checkpoint_to_bytes() {
+            let bytes = match rtree.checkpoint_to_bytes(kek) {
                 Ok(b) if !b.is_empty() => b,
                 Ok(_) => continue,
                 Err(e) => {
@@ -52,7 +57,13 @@ impl CoreLoop {
                 .map(|((_, _, _, entry_id), doc_id)| (*entry_id, doc_id.clone()))
                 .collect();
             if !doc_entries.is_empty() {
-                let map_bytes = zerompk::to_msgpack_vec(&doc_entries).unwrap_or_default();
+                let map_bytes = match zerompk::to_msgpack_vec(&doc_entries) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::warn!(%key_str, error = %e, "spatial doc_map serialization failed");
+                        continue;
+                    }
+                };
                 let map_path = ckpt_dir.join(format!("{}.docmap", sanitize_key(&key_str)));
                 let map_tmp = ckpt_dir.join(format!("{}.docmap.tmp", sanitize_key(&key_str)));
                 let _ = nodedb_wal::segment::atomic_write_fsync(&map_tmp, &map_path, &map_bytes);
@@ -71,6 +82,9 @@ impl CoreLoop {
     }
 
     /// Load R-tree checkpoints from disk on startup.
+    ///
+    /// When `spatial_checkpoint_kek` is set, plaintext checkpoint files are
+    /// rejected and encrypted files are decrypted before loading.
     pub fn load_spatial_checkpoints(&mut self) {
         let ckpt_dir = self.data_dir.join("spatial-ckpt");
         if !ckpt_dir.exists() {
@@ -101,38 +115,51 @@ impl CoreLoop {
             // Restore the original key from sanitized form.
             let key = unsanitize_key(&sanitized);
 
-            if let Ok(bytes) = nodedb_wal::segment::read_checkpoint_dontneed(&path)
-                && let Ok(rtree) = crate::engine::spatial::RTree::from_checkpoint(&bytes)
-            {
-                // Parse key string "{tid}:{coll}:{field}" back to tuple.
-                // unsanitize_key restores the ':' separators.
-                let Some(map_key) = parse_spatial_key(&key) else {
+            let Ok(bytes) = nodedb_wal::segment::read_checkpoint_dontneed(&path) else {
+                continue;
+            };
+
+            let kek = self.spatial_checkpoint_kek.as_ref();
+            let rtree = match crate::engine::spatial::RTree::from_checkpoint(&bytes, kek) {
+                Ok(r) => r,
+                Err(e) => {
                     tracing::warn!(
                         core = self.core_id,
                         %key,
-                        "failed to parse spatial checkpoint key, skipping"
+                        error = %e,
+                        "spatial checkpoint rejected"
                     );
                     continue;
-                };
-                tracing::info!(
+                }
+            };
+
+            // Parse key string "{tid}:{coll}:{field}" back to tuple.
+            let Some(map_key) = parse_spatial_key(&key) else {
+                tracing::warn!(
                     core = self.core_id,
                     %key,
-                    entries = rtree.len(),
-                    "loaded spatial checkpoint"
+                    "failed to parse spatial checkpoint key, skipping"
                 );
-                self.spatial_indexes.insert(map_key.clone(), rtree);
-                loaded += 1;
+                continue;
+            };
+            tracing::info!(
+                core = self.core_id,
+                %key,
+                entries = rtree.len(),
+                "loaded spatial checkpoint"
+            );
+            self.spatial_indexes.insert(map_key.clone(), rtree);
+            loaded += 1;
 
-                // Load doc_map.
-                let map_path = ckpt_dir.join(format!("{sanitized}.docmap"));
-                if let Ok(map_bytes) = nodedb_wal::segment::read_checkpoint_dontneed(&map_path)
-                    && let Ok(doc_entries) = zerompk::from_msgpack::<Vec<(u64, String)>>(&map_bytes)
-                {
-                    for (entry_id, doc_id) in doc_entries {
-                        let (tid, coll, field) = map_key.clone();
-                        self.spatial_doc_map
-                            .insert((tid, coll, field, entry_id), doc_id);
-                    }
+            // Load doc_map.
+            let map_path = ckpt_dir.join(format!("{sanitized}.docmap"));
+            if let Ok(map_bytes) = nodedb_wal::segment::read_checkpoint_dontneed(&map_path)
+                && let Ok(doc_entries) = zerompk::from_msgpack::<Vec<(u64, String)>>(&map_bytes)
+            {
+                for (entry_id, doc_id) in doc_entries {
+                    let (tid, coll, field) = map_key.clone();
+                    self.spatial_doc_map
+                        .insert((tid, coll, field, entry_id), doc_id);
                 }
             }
         }

@@ -15,12 +15,24 @@ use nodedb_array::types::ArrayId;
 
 use super::store::ArrayStore;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ArrayEngineConfig {
     /// Root directory containing one subdirectory per array.
     pub root: PathBuf,
     /// Auto-flush when a memtable holds at least this many cells.
     pub flush_cell_threshold: usize,
+    /// Optional at-rest encryption key for SEGA segment envelopes.
+    pub(super) kek: Option<nodedb_wal::crypto::WalEncryptionKey>,
+}
+
+impl std::fmt::Debug for ArrayEngineConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ArrayEngineConfig")
+            .field("root", &self.root)
+            .field("flush_cell_threshold", &self.flush_cell_threshold)
+            .field("kek", &self.kek.is_some())
+            .finish()
+    }
 }
 
 impl ArrayEngineConfig {
@@ -28,6 +40,7 @@ impl ArrayEngineConfig {
         Self {
             root,
             flush_cell_threshold: 4096,
+            kek: None,
         }
     }
 }
@@ -92,13 +105,27 @@ impl ArrayEngine {
             });
         }
         let dir = array_dir(&self.cfg.root, &id);
-        let store = ArrayStore::open(dir, schema, schema_hash)?;
+        let mut store = ArrayStore::open(dir, schema, schema_hash)?;
+        if let Some(kek) = &self.cfg.kek {
+            store.set_kek(kek.clone());
+        }
         self.arrays.insert(id, store);
         Ok(())
     }
 
     pub fn array_ids(&self) -> impl Iterator<Item = &ArrayId> {
         self.arrays.keys()
+    }
+
+    /// Install the at-rest encryption key for SEGA segment envelopes.
+    ///
+    /// Propagates the key to every currently-open `ArrayStore` and stores it
+    /// so newly-opened arrays also receive it via `open_array`.
+    pub fn set_kek(&mut self, kek: nodedb_wal::crypto::WalEncryptionKey) {
+        self.cfg.kek = Some(kek.clone());
+        for store in self.arrays.values_mut() {
+            store.set_kek(kek.clone());
+        }
     }
 
     /// Drop the per-core store for `id` and best-effort remove the

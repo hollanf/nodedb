@@ -99,7 +99,8 @@ impl CoreLoop {
         // Use the max ingested WAL LSN for this collection so the partition
         // records which WAL records have been flushed.
         let flush_wal_lsn = self.ts_max_ingested_lsn.get(&key).copied().unwrap_or(0);
-        match writer.write_partition(&partition_name, &drain, 0, flush_wal_lsn) {
+        let ts_kek = self.ts_segment_kek.as_ref();
+        match writer.write_partition(&partition_name, &drain, 0, flush_wal_lsn, ts_kek) {
             Ok(meta) => {
                 tracing::info!(
                     collection,
