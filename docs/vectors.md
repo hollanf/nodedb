@@ -11,20 +11,29 @@ NodeDB's vector engine is built for production semantic search — not vectors s
 
 ## Key Features
 
-- **HNSW index** — Hierarchical Navigable Small World graph for approximate nearest neighbor search. Construction uses full precision (FP32/FP16) for structural integrity; traversal uses quantized payloads for cache residency.
-- **Quantization** — Three levels depending on your recall/memory tradeoff:
-  - **SQ8** — Scalar quantization to 8-bit. ~4x memory reduction, minimal recall loss.
-  - **PQ** — Product quantization. ~4-8x memory reduction, ~95% recall.
-  - **IVF-PQ** — Inverted file with product quantization. ~16 bytes/vector, best for >10M vectors.
-- **Adaptive pre-filtering** — Roaring Bitmap-based filtering with automatic strategy selection (pre-filter, post-filter, or brute-force) based on selectivity.
-- **Distance metrics** — L2 (Euclidean), cosine similarity, negative inner product.
-- **Cross-engine fusion** — Combine vector search with graph traversal ([GraphRAG](graph.md)), full-text BM25 ([hybrid search](full-text-search.md)), or spatial filtering ([geo-aware search](spatial.md)) in a single query.
+- **Indexes**: HNSW (in-memory hierarchical) + Vamana / DiskANN (SSD-resident flat-beam, billion-scale on one node). The cost-model planner picks based on collection size + workload signals.
+- **Quantization frontier**:
+  - **SQ8** — Scalar quantization to 8-bit. ~4× memory reduction, minimal recall loss.
+  - **PQ** / **IVF-PQ** — Classic product quantization. ~4-8× / ~16 bytes/vector for very large indexes.
+  - **OPQ** — PQ + learned random rotation; minor accuracy bump over `pq`.
+  - **Binary** — Sign-bit Hamming for ultra-cold tiers (no rerank).
+  - **Ternary** — BitNet 1.58 trit-pack `{-1, 0, +1}` with cold/hot pack and AVX-512 popcnt.
+  - **RaBitQ** — 1-bit quantization with `O(1/√D)` error bound (SIGMOD 2024). Frontier 1-bit primary path.
+  - **BBQ** — Centroid-asymmetric 1-bit + 14-byte corrective factors + oversample rerank.
+- **Filtered traversal**: NaviX adaptive-local (VLDB 2025) — per-hop switch between standard / directed / blind heuristics by local selectivity. Replaces classic ACORN-1.
+- **Workload routing**: SIEVE — pre-built specialized HNSW subindices for stable predicates (e.g. `tenant_id`); planner-routed filtered queries.
+- **Multi-vector**: MetaEmbed Matryoshka multivec + ColBERT MaxSim + budgeted PLAID (ICLR 2026); `meta_token_budget` query option drives test-time scaling.
+- **Adaptive-dim**: Matryoshka coarse-to-fine on first-N dims of MRL embeddings via `query_dim`.
+- **Streaming updates**: SPFresh + LIRE topology-aware local rebalancing (SOSP 2023) — no full-rebuild stalls.
+- **Adaptive pre-filtering**: Roaring Bitmap with automatic pre / post / brute-force strategy selection by selectivity.
+- **Distance metrics**: L2, cosine, negative inner product, Hamming/Jaccard for binary.
+- **Cross-engine fusion**: Combine with graph ([GraphRAG](graph.md)), BM25 ([hybrid](full-text-search.md)), spatial ([geo-aware](spatial.md)), array slices, or document predicates — all via roaring-bitmap intersection of cross-engine surrogate IDs.
 
 ## Examples
 
 ```sql
--- Create a collection with a vector index
-CREATE COLLECTION articles TYPE document;
+-- Create a collection with a vector index (vector as side-index on a document collection)
+CREATE COLLECTION articles;
 CREATE VECTOR INDEX idx_articles_embedding ON articles METRIC cosine DIM 384;
 
 -- Insert documents with embeddings
@@ -54,14 +63,60 @@ WHERE id IN (
 LIMIT 10;
 ```
 
+## ANN Tuning (Named Arguments)
+
+`vector_distance(field, query, name => value, ...)` accepts a closed set of typed named arguments. Validation is strict — unknown names, duplicate keys, positional 3rd args, or `=` instead of `=>` all return typed errors.
+
+| Argument            | Type   | Notes                                                                                       |
+| ------------------- | ------ | ------------------------------------------------------------------------------------------- |
+| `quantization`      | string | `none`, `sq8`, `pq`, `binary`, `ternary`, `rabitq`, `bbq`, `opq`                            |
+| `oversample`        | u8     | Candidates fetched before rerank. Default `3`. Final rerank set = `oversample × ef_search`. |
+| `query_dim`         | u32    | Coarse-to-fine on first-N dims of Matryoshka embeddings.                                    |
+| `meta_token_budget` | u8     | MetaEmbed multivec MaxSim / PLAID budget.                                                   |
+| `ef_search`         | u32    | HNSW / Vamana beam width. Default `64`.                                                     |
+| `target_recall`     | f32    | Adaptive recall target — cost-model planner picks `oversample` and `ef_search` to hit it.   |
+
+Set `target_recall` and let the planner do the rest unless you need a hard latency ceiling.
+
+## Vector-Primary Collections
+
+By default, vectors are an _index_ attached to a column on a normal collection — the document store is the source of truth. For pure-vector workloads (RAG corpora, recommendation memory, embedding stores) flip a collection into vector-primary mode where the vector index is the primary access path and the document store is a metadata sidecar:
+
+```sql
+CREATE COLLECTION corpus (
+    id UUID DEFAULT gen_uuid_v7(),
+    embedding FLOAT[384],
+    title TEXT,
+    tenant_id UUID,
+    created_at TIMESTAMP DEFAULT now()
+) WITH (
+    primary='vector',
+    vector_field='embedding',
+    dim=384,
+    metric='cosine',
+    quantization='rabitq',
+    m=32,
+    ef_construction=200,
+    payload_indexes=['tenant_id', 'created_at']
+);
+```
+
+`primary='vector'` is purely an access-path hint — not a different engine. Cross-engine queries, CRDT sync, SQL semantics all keep working. `payload_indexes` are per-field equality / range / boolean indexes over the metadata sidecar for filtered ANN (replaces Pinecone metadata filters).
+
+Default `primary='document'` is unchanged: classic `CREATE VECTOR INDEX ON ...` syntax continues to work.
+
 ## Quantization Selection
 
-| Index Type  | Memory per Vector (384d) | Recall  | Best For                   |
-| ----------- | ------------------------ | ------- | -------------------------- |
-| HNSW (FP32) | ~1.5 KB                  | ~99%    | < 1M vectors, max accuracy |
-| HNSW + SQ8  | ~384 B                   | ~98%    | 1-10M vectors              |
-| HNSW + PQ   | ~96 B                    | ~95%    | 10-50M vectors             |
-| IVF-PQ      | ~16 B                    | ~85-95% | 50M+ vectors               |
+| Codec     | Bits/dim | Recall (typ.) | Best For                                                 |
+| --------- | -------- | ------------- | -------------------------------------------------------- |
+| `none`    | 32       | 100%          | Small index (< 1M vectors), latency not critical         |
+| `sq8`     | 8        | ~99%          | Balanced default for medium index sizes                  |
+| `pq`      | ~2       | ~95%          | Large memory-bound indexes; classic Product Quantization |
+| `opq`     | ~2       | ~96%          | PQ + learned random rotation                             |
+| `rabitq`  | 1        | ~97%          | Frontier 1-bit with `O(1/√D)` error bound                |
+| `bbq`     | 1        | ~98%          | Centroid-asymmetric 1-bit + 14-byte corrective           |
+| `binary`  | 1        | ~85%          | Hamming-only, ultra-cold tiers                           |
+| `ternary` | 1.58     | ~96%          | BitNet `{-1, 0, +1}` cold/hot pack                       |
 
 ## How It Works
 

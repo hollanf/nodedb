@@ -11,7 +11,7 @@ Welcome to the NodeDB docs. These guides explain what each engine does, when to 
 
 ## Engine Guides
 
-- [Vector Search](vectors.md) — HNSW index, quantization, adaptive filtering, hybrid search
+- [Vector Search](vectors.md) — HNSW + Vamana, frontier quantization, adaptive filtering, vector-primary collections, hybrid search
 - [Graph](graph.md) — CSR adjacency, 13 algorithms, MATCH patterns, GraphRAG
 - [Documents](documents.md) — Schemaless (MessagePack + CRDT) and Strict (Binary Tuples, OLTP)
 - [Columnar](columnar.md) — Per-column compression, predicate pushdown, HTAP bridge
