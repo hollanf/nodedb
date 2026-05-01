@@ -13,8 +13,18 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::VectorError;
+
+/// Magic bytes identifying a serialized [`Sq8Codec`] blob.
+///
+/// Format: `[NDSQ\0\0 (6 bytes)][version: u8 = 1][msgpack payload]`
+pub const MAGIC: &[u8; 6] = b"NDSQ\0\0";
+
+/// Wire format version for [`Sq8Codec`] serialization.
+pub const SQ8_FORMAT_VERSION: u8 = 1;
+
 /// SQ8 calibration parameters: per-dimension min/max.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub struct Sq8Codec {
     pub dim: usize,
     /// Per-dimension minimum observed during calibration.
@@ -169,11 +179,98 @@ impl Sq8Codec {
     pub fn dim(&self) -> usize {
         self.dim
     }
+
+    /// Serialize the codec to bytes with a versioned magic header.
+    ///
+    /// Format: `[NDSQ\0\0 (6 bytes)][version: u8 = 1][msgpack payload]`
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let payload = zerompk::to_msgpack_vec(self).unwrap_or_default();
+        let mut out = Vec::with_capacity(7 + payload.len());
+        out.extend_from_slice(MAGIC);
+        out.push(SQ8_FORMAT_VERSION);
+        out.extend_from_slice(&payload);
+        out
+    }
+
+    /// Deserialize the codec from bytes produced by [`Self::to_bytes`].
+    ///
+    /// Returns `VectorError::InvalidMagic` if the header does not match
+    /// `NDSQ\0\0`, and `VectorError::UnsupportedVersion` for unknown versions.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, VectorError> {
+        if bytes.len() < 7 || &bytes[0..6] != MAGIC {
+            return Err(VectorError::InvalidMagic);
+        }
+        let version = bytes[6];
+        if version != SQ8_FORMAT_VERSION {
+            return Err(VectorError::UnsupportedVersion {
+                found: version,
+                expected: SQ8_FORMAT_VERSION,
+            });
+        }
+        zerompk::from_msgpack::<Self>(&bytes[7..])
+            .map_err(|e| VectorError::DeserializationFailed(e.to_string()))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_codec() -> Sq8Codec {
+        let vecs: Vec<Vec<f32>> = (0..100)
+            .map(|i| vec![i as f32 * 0.1, (i as f32).sin(), (i as f32).cos()])
+            .collect();
+        let refs: Vec<&[f32]> = vecs.iter().map(|v| v.as_slice()).collect();
+        Sq8Codec::calibrate(&refs, 3)
+    }
+
+    #[test]
+    fn sq8_codec_golden_format() {
+        let codec = make_codec();
+        let bytes = codec.to_bytes();
+        // First 6 bytes are magic.
+        assert_eq!(&bytes[0..6], MAGIC);
+        // Byte 6 is the version.
+        assert_eq!(bytes[6], SQ8_FORMAT_VERSION);
+        // Bytes 7+ must decode back to a valid Sq8Codec.
+        let decoded = zerompk::from_msgpack::<Sq8Codec>(&bytes[7..]).unwrap();
+        assert_eq!(decoded.dim, 3);
+    }
+
+    #[test]
+    fn sq8_roundtrip() {
+        let codec = make_codec();
+        let bytes = codec.to_bytes();
+        let restored = Sq8Codec::from_bytes(&bytes).unwrap();
+        assert_eq!(restored.dim, codec.dim);
+        assert_eq!(restored.inv_scales.len(), codec.inv_scales.len());
+        for (a, b) in restored.inv_scales.iter().zip(codec.inv_scales.iter()) {
+            assert!((a - b).abs() < 1e-6, "inv_scales mismatch: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn sq8_invalid_magic_returns_error() {
+        let mut bytes = make_codec().to_bytes();
+        bytes[0] = b'X'; // corrupt magic
+        assert!(matches!(
+            Sq8Codec::from_bytes(&bytes),
+            Err(VectorError::InvalidMagic)
+        ));
+    }
+
+    #[test]
+    fn sq8_version_mismatch_returns_error() {
+        let mut bytes = make_codec().to_bytes();
+        bytes[6] = 0; // wrong version
+        assert!(matches!(
+            Sq8Codec::from_bytes(&bytes),
+            Err(VectorError::UnsupportedVersion {
+                found: 0,
+                expected: 1
+            })
+        ));
+    }
 
     fn make_vectors() -> Vec<Vec<f32>> {
         (0..100)

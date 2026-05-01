@@ -12,4 +12,19 @@ pub enum VectorError {
     InvalidMagic,
     #[error("PQ codec deserialization failed: {0}")]
     DeserializationFailed(String),
+    /// Checkpoint file is encrypted (starts with `SEGV`) but no KEK was supplied.
+    #[error(
+        "vector checkpoint is encrypted but no encryption key was provided; \
+         cannot load plaintext from an encrypted checkpoint"
+    )]
+    CheckpointEncryptedNoKey,
+    /// Checkpoint file is plaintext but a KEK was configured (policy violation).
+    #[error(
+        "vector checkpoint is plaintext but an encryption key is configured; \
+         refusing to load an unencrypted checkpoint when encryption is required"
+    )]
+    CheckpointPlaintextKeyRequired,
+    /// AES-256-GCM encryption/decryption or envelope framing of a checkpoint failed.
+    #[error("vector checkpoint encryption error: {detail}")]
+    CheckpointEncryptionError { detail: String },
 }

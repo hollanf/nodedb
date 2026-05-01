@@ -1,4 +1,21 @@
 //! Checkpoint serialization and deserialization for `VectorCollection`.
+//!
+//! ## On-disk framing
+//!
+//! **Plaintext** checkpoints are raw MessagePack bytes (existing format).
+//! The first 4 bytes are never `SEGV`, so detection is unambiguous.
+//!
+//! **Encrypted** checkpoints use the following layout:
+//!
+//! ```text
+//! [SEGV (4B)] [version_u16_le (2B)] [cipher_alg_u8 (1B)] [kid_u8 (1B)]
+//! [epoch (4B)] [reserved (4B)] [AES-256-GCM ciphertext of msgpack payload]
+//! ```
+//!
+//! The first 16 bytes form a `SegmentPreamble` (reusing the existing preamble
+//! layout with a distinct `SEGV` magic). These 16 bytes are included as AAD,
+//! preventing preamble-swap attacks. The nonce is `(epoch, lsn=0)` — epoch
+//! provides per-write uniqueness even without an LSN.
 
 use std::collections::HashMap;
 
@@ -9,11 +26,41 @@ use crate::collection::payload_index::PayloadIndexSetSnapshot;
 use crate::collection::segment::{DEFAULT_SEAL_THRESHOLD, SealedSegment};
 use crate::collection::tier::StorageTier;
 use crate::distance::DistanceMetric;
+use crate::error::VectorError;
 use crate::flat::FlatIndex;
 use crate::hnsw::{HnswIndex, HnswParams};
 use crate::quantize::pq::PqCodec;
+use crate::quantize::sq8::Sq8Codec;
 
 use super::lifecycle::VectorCollection;
+
+/// Magic bytes identifying an encrypted vector checkpoint. Shared with
+/// `nodedb-spatial`'s SEGV checkpoint format.
+const SEGV_MAGIC: [u8; 4] = *b"SEGV";
+
+/// Encrypt `plaintext` into the SEGV envelope from [`nodedb_wal::crypto`].
+fn encrypt_checkpoint(
+    key: &nodedb_wal::crypto::WalEncryptionKey,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, VectorError> {
+    nodedb_wal::crypto::encrypt_segment_envelope(key, &SEGV_MAGIC, plaintext).map_err(|e| {
+        VectorError::CheckpointEncryptionError {
+            detail: e.to_string(),
+        }
+    })
+}
+
+/// Decrypt an encrypted checkpoint blob (starting at byte 0, which is `SEGV`).
+fn decrypt_checkpoint(
+    key: &nodedb_wal::crypto::WalEncryptionKey,
+    blob: &[u8],
+) -> Result<Vec<u8>, VectorError> {
+    nodedb_wal::crypto::decrypt_segment_envelope(key, &SEGV_MAGIC, blob).map_err(|e| {
+        VectorError::CheckpointEncryptionError {
+            detail: e.to_string(),
+        }
+    })
+}
 
 #[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
 pub(crate) struct CollectionSnapshot {
@@ -53,6 +100,16 @@ pub(crate) struct SealedSnapshot {
     pub pq_bytes: Option<Vec<u8>>,
     #[serde(default)]
     pub pq_codes: Option<Vec<u8>>,
+    /// Serialized [`Sq8Codec`] bytes (magic + version + msgpack).
+    /// Present when SQ8 quantization is active and PQ is absent.
+    /// `None` means no SQ8 quantization for this segment.
+    #[serde(default)]
+    pub sq8_bytes: Option<Vec<u8>>,
+    /// Pre-quantized SQ8 codes for all vectors in this segment.
+    /// Layout: `[v0_d0, v0_d1, ..., v1_d0, ...]` (dim bytes per vector).
+    /// `None` when SQ8 is not configured.
+    #[serde(default)]
+    pub sq8_codes: Option<Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
@@ -65,7 +122,17 @@ pub(crate) struct BuildingSnapshot {
 
 impl VectorCollection {
     /// Serialize all segments for checkpointing.
-    pub fn checkpoint_to_bytes(&self) -> Vec<u8> {
+    ///
+    /// When `kek` is `Some`, the MessagePack payload is wrapped in an
+    /// AES-256-GCM encrypted envelope with a `SEGV` preamble. When `None`,
+    /// raw MessagePack bytes are returned (existing plaintext format).
+    ///
+    /// Returns an empty `Vec` on serialization failure (callers treat this as a
+    /// skip signal, consistent with the pre-existing error handling).
+    pub fn checkpoint_to_bytes(
+        &self,
+        kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+    ) -> Vec<u8> {
         let snapshot = CollectionSnapshot {
             dim: self.dim,
             params_m: self.params.m,
@@ -88,11 +155,22 @@ impl VectorCollection {
                         Some((codec, codes)) => (Some(codec.to_bytes()), Some(codes.clone())),
                         None => (None, None),
                     };
+                    // Only serialize SQ8 when PQ is absent — a segment never carries both.
+                    let (sq8_bytes, sq8_codes) = if pq_bytes.is_none() {
+                        match &s.sq8 {
+                            Some((codec, codes)) => (Some(codec.to_bytes()), Some(codes.clone())),
+                            None => (None, None),
+                        }
+                    } else {
+                        (None, None)
+                    };
                     SealedSnapshot {
                         base_id: s.base_id,
                         hnsw_bytes: s.index.checkpoint_to_bytes(),
                         pq_bytes,
                         pq_codes,
+                        sq8_bytes,
+                        sq8_codes,
                     }
                 })
                 .collect(),
@@ -134,18 +212,63 @@ impl VectorCollection {
                 }
             },
         };
-        match zerompk::to_msgpack_vec(&snapshot) {
+        let msgpack = match zerompk::to_msgpack_vec(&snapshot) {
             Ok(bytes) => bytes,
             Err(e) => {
                 tracing::warn!(error = %e, "vector collection checkpoint serialization failed");
-                Vec::new()
+                return Vec::new();
             }
+        };
+
+        if let Some(key) = kek {
+            match encrypt_checkpoint(key, &msgpack) {
+                Ok(encrypted) => encrypted,
+                Err(e) => {
+                    tracing::warn!(error = %e, "vector collection checkpoint encryption failed");
+                    Vec::new()
+                }
+            }
+        } else {
+            msgpack
         }
     }
 
     /// Restore a collection from checkpoint bytes.
-    pub fn from_checkpoint(bytes: &[u8]) -> Option<Self> {
-        let snap: CollectionSnapshot = zerompk::from_msgpack(bytes).ok()?;
+    ///
+    /// `kek` controls the expected framing:
+    /// - `None` → the file must be plaintext MessagePack (starting with bytes
+    ///   that are NOT `SEGV`). If the file starts with `SEGV` and no key is
+    ///   provided, returns `Err(CheckpointEncryptedNoKey)`.
+    /// - `Some(key)` → encryption is **required**. If the file starts with
+    ///   `SEGV`, it is decrypted with `key`. If the file is plaintext, returns
+    ///   `Err(CheckpointPlaintextKeyRequired)` — refuse to silently load
+    ///   unencrypted data when the operator has enabled at-rest encryption.
+    pub fn from_checkpoint(
+        bytes: &[u8],
+        kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+    ) -> Result<Option<Self>, VectorError> {
+        let is_encrypted = bytes.len() >= 4 && bytes[0..4] == SEGV_MAGIC;
+
+        let msgpack: Vec<u8>;
+        let msgpack_ref: &[u8];
+
+        if is_encrypted {
+            if let Some(key) = kek {
+                msgpack = decrypt_checkpoint(key, bytes)?;
+                msgpack_ref = &msgpack;
+            } else {
+                return Err(VectorError::CheckpointEncryptedNoKey);
+            }
+        } else if kek.is_some() {
+            return Err(VectorError::CheckpointPlaintextKeyRequired);
+        } else {
+            msgpack_ref = bytes;
+        }
+
+        let snap: CollectionSnapshot = match zerompk::from_msgpack(msgpack_ref) {
+            Ok(s) => s,
+            Err(_) => return Ok(None),
+        };
         let metric = match snap.params_metric {
             0 => DistanceMetric::L2,
             1 => DistanceMetric::Cosine,
@@ -183,11 +306,17 @@ impl VectorCollection {
                         .map(|codec| (codec, codes.clone())),
                     _ => None,
                 };
-                // Only train SQ8 when PQ isn't present — a segment never carries both.
+                // Restore SQ8 from persisted bytes — never recompute on load.
+                // A segment never carries both PQ and SQ8.
                 let sq8 = if pq.is_some() {
                     None
                 } else {
-                    VectorCollection::build_sq8_for_index(&index)
+                    match (&ss.sq8_bytes, &ss.sq8_codes) {
+                        (Some(codec_bytes), Some(codes)) => Sq8Codec::from_bytes(codec_bytes)
+                            .ok()
+                            .map(|codec| (codec, codes.clone())),
+                        _ => None,
+                    }
                 };
                 sealed.push(SealedSegment {
                     index,
@@ -230,7 +359,7 @@ impl VectorCollection {
             hnsw: params.clone(),
             ..crate::index_config::IndexConfig::default()
         };
-        Some(Self {
+        Ok(Some(Self {
             growing,
             growing_base_id: snap.growing_base_id,
             sealed,
@@ -270,7 +399,7 @@ impl VectorCollection {
                     .unwrap_or_default()
             },
             arena_index: None,
-        })
+        }))
     }
 }
 
@@ -310,6 +439,69 @@ mod tests {
     use crate::distance::DistanceMetric;
     use crate::hnsw::HnswParams;
 
+    /// SQ8 calibration data must survive a checkpoint round-trip without
+    /// being recomputed. Verifies that the O(N*dim) rebuild-on-restart bug
+    /// is eliminated: `sq8` on the restored sealed segment is `Some` and
+    /// its `inv_scales` match the original exactly.
+    #[cfg(feature = "collection")]
+    #[test]
+    fn checkpoint_roundtrip_preserves_sq8() {
+        use crate::collection::lifecycle::VectorCollection;
+        use crate::hnsw::{HnswIndex, HnswParams};
+
+        let params = HnswParams {
+            metric: crate::distance::DistanceMetric::L2,
+            ..HnswParams::default()
+        };
+        // 1024 vectors of dim=8 — enough to pass the ≥1000 threshold in
+        // `build_sq8_for_index`, so sq8 will be Some after complete_build.
+        // Uses plain HNSW (default IndexType::Hnsw) so SQ8 is selected.
+        let mut coll = VectorCollection::with_seal_threshold(8, params, 1024);
+        for i in 0..1024u32 {
+            let mut v = vec![0.0f32; 8];
+            for (d, slot) in v.iter_mut().enumerate() {
+                *slot = ((i as f32) * 0.01 + (d as f32) * 0.1).sin();
+            }
+            coll.insert(v);
+        }
+        let req = coll.seal("sq8_test").expect("seal produced request");
+        let mut idx = HnswIndex::new(req.dim, req.params.clone());
+        for v in &req.vectors {
+            idx.insert(v.clone()).unwrap();
+        }
+        coll.complete_build(req.segment_id, idx);
+
+        let sealed = coll.sealed_segments();
+        assert!(!sealed.is_empty(), "expected at least one sealed segment");
+        let orig_sq8 = sealed[0]
+            .sq8
+            .as_ref()
+            .expect("sq8 must be Some after complete_build with ≥1000 vectors");
+        let orig_dim = orig_sq8.0.dim();
+        // Capture serialized form as ground truth.
+        let orig_bytes = orig_sq8.0.to_bytes();
+
+        let checkpoint = coll.checkpoint_to_bytes(None);
+        let restored = VectorCollection::from_checkpoint(&checkpoint, None)
+            .unwrap()
+            .unwrap();
+
+        let restored_sealed = restored.sealed_segments();
+        assert!(!restored_sealed.is_empty());
+        let restored_sq8 = restored_sealed[0]
+            .sq8
+            .as_ref()
+            .expect("sq8 must be Some after restoring checkpoint — never recomputed");
+
+        assert_eq!(restored_sq8.0.dim(), orig_dim, "dim mismatch after restore");
+        // Byte-level equality guarantees calibration data is persisted, not recomputed.
+        assert_eq!(
+            restored_sq8.0.to_bytes(),
+            orig_bytes,
+            "sq8 codec bytes differ — calibration data was recomputed rather than persisted"
+        );
+    }
+
     #[test]
     fn checkpoint_roundtrip() {
         let mut coll = VectorCollection::new(
@@ -322,8 +514,10 @@ mod tests {
         for i in 0..50u32 {
             coll.insert(vec![i as f32, 0.0, 0.0]);
         }
-        let bytes = coll.checkpoint_to_bytes();
-        let restored = VectorCollection::from_checkpoint(&bytes).unwrap();
+        let bytes = coll.checkpoint_to_bytes(None);
+        let restored = VectorCollection::from_checkpoint(&bytes, None)
+            .unwrap()
+            .unwrap();
         assert_eq!(restored.len(), 50);
         assert_eq!(restored.dim(), 3);
 
@@ -358,8 +552,10 @@ mod tests {
             coll.payload.insert_row(node_id, &fields);
         }
 
-        let bytes = coll.checkpoint_to_bytes();
-        let restored = VectorCollection::from_checkpoint(&bytes).unwrap();
+        let bytes = coll.checkpoint_to_bytes(None);
+        let restored = VectorCollection::from_checkpoint(&bytes, None)
+            .unwrap()
+            .unwrap();
 
         let pred = FilterPredicate::Eq {
             field: "category".to_string(),

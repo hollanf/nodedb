@@ -379,7 +379,7 @@ mod tests {
         assert_eq!(batch.len(), 2 * 200); // M=2, N=200
     }
 
-    // G-04: golden format test — verifies the on-disk layout is stable.
+    // golden format test — verifies the on-disk layout is stable.
     #[test]
     fn pq_codec_golden_format() {
         let vecs = make_clustered_data();

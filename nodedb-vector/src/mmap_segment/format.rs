@@ -1,17 +1,11 @@
-//! On-disk format constants and shared types for the NDVS v2 vector segment.
+//! On-disk format constants and shared types for the NDVS vector segment.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
 pub(super) const MAGIC: [u8; 4] = *b"NDVS";
-/// Current on-disk format version.
-///
-/// v1 → v2 changes:
-/// - Removed `min_lsn`/`max_lsn` fields (were always zero, never tracked).
-/// - Added trailing magic (`b"NDVS"`) as the last 4 bytes of the footer.
-/// - Footer shrinks from 58 → 46 bytes.
-pub(super) const FORMAT_VERSION: u16 = 2;
+pub(super) const FORMAT_VERSION: u16 = 1;
 pub(super) const DTYPE_F32: u8 = 0;
 
 /// Header size in bytes (32). Padded to 8-byte alignment so the surrogate
