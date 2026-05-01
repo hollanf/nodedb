@@ -335,7 +335,7 @@ async fn restore_from_different_topology_preserves_all_keys() {
         cluster
             .exec_ddl_on_any_leader(
                 "CREATE COLLECTION cl_docs  \
-                 (id TEXT PRIMARY KEY, content TEXT) WITH (engine='document_strict')",
+                 (id TEXT, content TEXT) WITH (engine='document_strict')",
             )
             .await
             .expect("CREATE COLLECTION");

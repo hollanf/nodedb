@@ -29,6 +29,10 @@ async fn columnar_insert_duplicate_pk_keeps_latest() {
         )
         .await
         .unwrap();
+    server
+        .exec("CREATE UNIQUE INDEX metrics_pk ON metrics (id)")
+        .await
+        .unwrap();
 
     server
         .exec("INSERT INTO metrics (id, region, value) VALUES ('m1', 'us-east', 1.0)")
@@ -80,6 +84,10 @@ async fn columnar_full_scan_hides_tombstoned_duplicate() {
         .exec("CREATE COLLECTION m (id TEXT PRIMARY KEY, v INT) WITH (engine='columnar')")
         .await
         .unwrap();
+    server
+        .exec("CREATE UNIQUE INDEX m_pk ON m (id)")
+        .await
+        .unwrap();
 
     server
         .exec("INSERT INTO m (id, v) VALUES ('a', 1), ('b', 2), ('c', 3)")
@@ -124,6 +132,10 @@ async fn columnar_insert_on_conflict_do_nothing_keeps_original() {
         .exec("CREATE COLLECTION m (id TEXT PRIMARY KEY, v INT) WITH (engine='columnar')")
         .await
         .unwrap();
+    server
+        .exec("CREATE UNIQUE INDEX m_pk ON m (id)")
+        .await
+        .unwrap();
 
     server
         .exec("INSERT INTO m (id, v) VALUES ('a', 1)")
@@ -152,6 +164,10 @@ async fn columnar_insert_on_conflict_do_update_merges_excluded() {
         .exec(
             "CREATE COLLECTION m (id TEXT PRIMARY KEY, v INT, note TEXT) WITH (engine='columnar')",
         )
+        .await
+        .unwrap();
+    server
+        .exec("CREATE UNIQUE INDEX m_pk ON m (id)")
         .await
         .unwrap();
 
@@ -192,6 +208,10 @@ async fn columnar_upsert_keyword_overwrites_on_pk() {
 
     server
         .exec("CREATE COLLECTION m (id TEXT PRIMARY KEY, v INT) WITH (engine='columnar')")
+        .await
+        .unwrap();
+    server
+        .exec("CREATE UNIQUE INDEX m_pk ON m (id)")
         .await
         .unwrap();
 
@@ -257,6 +277,10 @@ async fn spatial_insert_duplicate_pk_keeps_latest() {
                 id TEXT PRIMARY KEY, geom GEOMETRY SPATIAL_INDEX, label TEXT\
             ) WITH (engine='spatial')",
         )
+        .await
+        .unwrap();
+    server
+        .exec("CREATE UNIQUE INDEX places_pk ON places (id)")
         .await
         .unwrap();
 
