@@ -1,6 +1,6 @@
 //! HNSW checkpoint serialization and deserialization.
 //!
-//! Supports rkyv (current format) and legacy MessagePack for backward compat.
+//! Serialization format: rkyv with a `RKHNS\0` magic header.
 
 use std::cell::RefCell;
 
@@ -68,11 +68,11 @@ impl HnswIndex {
     /// Restore an index from a checkpoint snapshot.
     ///
     /// Returns:
-    /// - `Ok(Some(index))` — successfully decoded (rkyv or legacy MessagePack).
-    /// - `Ok(None)` — bytes could not be decoded by any known format.
+    /// - `Ok(Some(index))` — successfully decoded (rkyv format).
+    /// - `Ok(None)` — bytes do not start with the `RKHNS\0` magic header.
     /// - `Err(VectorError::UnsupportedVersion)` — magic matches `RKHNS\0` but
     ///   the version byte is not `HNSW_FORMAT_VERSION`; the caller must reject
-    ///   the buffer rather than silently falling through to legacy decode.
+    ///   the buffer.
     pub fn from_checkpoint(bytes: &[u8]) -> Result<Option<Self>, crate::error::VectorError> {
         let header_len = HNSW_RKYV_MAGIC.len() + 1; // magic + version byte
         if bytes.len() > header_len && &bytes[..HNSW_RKYV_MAGIC.len()] == HNSW_RKYV_MAGIC {
@@ -85,8 +85,8 @@ impl HnswIndex {
             }
             return Ok(Self::from_rkyv_checkpoint(&bytes[header_len..]));
         }
-        // No magic prefix — fall through to legacy MessagePack.
-        Ok(Self::from_msgpack_checkpoint(bytes))
+        // No recognized magic prefix — no index to restore.
+        Ok(None)
     }
 
     /// Restore from rkyv-serialized bytes.
@@ -96,46 +96,6 @@ impl HnswIndex {
         let snap: HnswSnapshotRkyv =
             rkyv::from_bytes::<HnswSnapshotRkyv, rkyv::rancor::Error>(&aligned).ok()?;
         Self::from_hnsw_snapshot(snap)
-    }
-
-    /// Restore from legacy MessagePack bytes.
-    fn from_msgpack_checkpoint(bytes: &[u8]) -> Option<Self> {
-        use zerompk::{FromMessagePack, ToMessagePack};
-
-        #[derive(ToMessagePack, FromMessagePack)]
-        struct Snapshot {
-            dim: usize,
-            m: usize,
-            m0: usize,
-            ef_construction: usize,
-            metric: u8,
-            entry_point: Option<u32>,
-            max_layer: usize,
-            rng_state: u64,
-            nodes: Vec<NodeSnap>,
-        }
-
-        #[derive(ToMessagePack, FromMessagePack)]
-        struct NodeSnap {
-            vector: Vec<f32>,
-            neighbors: Vec<Vec<u32>>,
-            deleted: bool,
-        }
-
-        let snap: Snapshot = zerompk::from_msgpack(bytes).ok()?;
-        Self::from_hnsw_snapshot(HnswSnapshotRkyv {
-            dim: snap.dim,
-            m: snap.m,
-            m0: snap.m0,
-            ef_construction: snap.ef_construction,
-            metric: snap.metric,
-            entry_point: snap.entry_point,
-            max_layer: snap.max_layer,
-            rng_state: snap.rng_state,
-            node_vectors: snap.nodes.iter().map(|n| n.vector.clone()).collect(),
-            node_neighbors: snap.nodes.iter().map(|n| n.neighbors.clone()).collect(),
-            node_deleted: snap.nodes.iter().map(|n| n.deleted).collect(),
-        })
     }
 
     /// Reconstruct HnswIndex from deserialized snapshot fields.

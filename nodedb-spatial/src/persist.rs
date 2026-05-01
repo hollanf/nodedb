@@ -1,8 +1,7 @@
 //! R-tree checkpoint/restore for durable persistence.
 //!
-//! Follows the same pattern as the vector engine's HNSW checkpoint:
-//! serialize all entries to bytes (MessagePack) → write to storage →
-//! restore via bulk_load on cold start.
+//! Entries are serialized to rkyv bytes (magic `RKSPT\0`) and written to
+//! storage. On cold start they are restored via bulk_load.
 //!
 //! Storage key scheme (in redb under Namespace::Spatial):
 //! - `{collection}\x00{field}\x00rtree` → serialized R-tree entries
@@ -61,12 +60,6 @@ const RTREE_RKYV_MAGIC: &[u8; 6] = b"RKSPT\0";
 /// Current format version for rkyv-serialized R-tree snapshots.
 pub const RTREE_FORMAT_VERSION: u8 = 1;
 
-/// Serialized R-tree snapshot (legacy MessagePack).
-#[derive(Debug, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
-pub struct RTreeSnapshot {
-    pub entries: Vec<RTreeEntry>,
-}
-
 /// rkyv-serialized R-tree snapshot.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 struct RTreeSnapshotRkyv {
@@ -90,33 +83,31 @@ impl RTree {
 
     /// Restore an R-tree from checkpoint bytes.
     ///
-    /// Auto-detects format: rkyv (magic `RKSPT\0`) or legacy MessagePack.
-    /// Uses bulk_load (STR packing) for optimal node packing.
+    /// Expects rkyv format with magic `RKSPT\0`. Uses bulk_load (STR packing)
+    /// for optimal node packing.
     ///
     /// Returns `Err(RTreeCheckpointError::UnsupportedVersion)` when the magic
-    /// matches but the version byte is not `RTREE_FORMAT_VERSION`. Buffers
-    /// without the magic prefix fall through to legacy MessagePack decode.
+    /// matches but the version byte is not `RTREE_FORMAT_VERSION`.
+    /// Returns `Err(RTreeCheckpointError::UnrecognizedFormat)` for bytes that
+    /// lack the `RKSPT\0` magic header.
     pub fn from_checkpoint(bytes: &[u8]) -> Result<Self, RTreeCheckpointError> {
         let header_len = RTREE_RKYV_MAGIC.len() + 1; // magic + version byte
-        if bytes.len() > header_len && &bytes[..RTREE_RKYV_MAGIC.len()] == RTREE_RKYV_MAGIC {
-            let version = bytes[RTREE_RKYV_MAGIC.len()];
-            if version != RTREE_FORMAT_VERSION {
-                return Err(RTreeCheckpointError::UnsupportedVersion {
-                    found: version,
-                    expected: RTREE_FORMAT_VERSION,
-                });
-            }
-            let rkyv_bytes = &bytes[header_len..];
-            let mut aligned = rkyv::util::AlignedVec::<16>::with_capacity(rkyv_bytes.len());
-            aligned.extend_from_slice(rkyv_bytes);
-            let snapshot: RTreeSnapshotRkyv =
-                rkyv::from_bytes::<RTreeSnapshotRkyv, rkyv::rancor::Error>(&aligned)
-                    .map_err(|e| RTreeCheckpointError::RkyvDeserialize(e.to_string()))?;
-            return Ok(RTree::bulk_load(snapshot.entries));
+        if bytes.len() <= header_len || &bytes[..RTREE_RKYV_MAGIC.len()] != RTREE_RKYV_MAGIC {
+            return Err(RTreeCheckpointError::UnrecognizedFormat);
         }
-        // Legacy MessagePack fallback.
-        let snapshot: RTreeSnapshot =
-            zerompk::from_msgpack(bytes).map_err(RTreeCheckpointError::Deserialize)?;
+        let version = bytes[RTREE_RKYV_MAGIC.len()];
+        if version != RTREE_FORMAT_VERSION {
+            return Err(RTreeCheckpointError::UnsupportedVersion {
+                found: version,
+                expected: RTREE_FORMAT_VERSION,
+            });
+        }
+        let rkyv_bytes = &bytes[header_len..];
+        let mut aligned = rkyv::util::AlignedVec::<16>::with_capacity(rkyv_bytes.len());
+        aligned.extend_from_slice(rkyv_bytes);
+        let snapshot: RTreeSnapshotRkyv =
+            rkyv::from_bytes::<RTreeSnapshotRkyv, rkyv::rancor::Error>(&aligned)
+                .map_err(|e| RTreeCheckpointError::RkyvDeserialize(e.to_string()))?;
         Ok(RTree::bulk_load(snapshot.entries))
     }
 }
@@ -171,6 +162,8 @@ pub enum RTreeCheckpointError {
     RkyvDeserialize(String),
     #[error("unsupported R-tree checkpoint version {found}; expected {expected}")]
     UnsupportedVersion { found: u8, expected: u8 },
+    #[error("unrecognized R-tree checkpoint format (missing RKSPT\\0 magic)")]
+    UnrecognizedFormat,
 }
 
 #[cfg(test)]
@@ -225,7 +218,10 @@ mod tests {
 
     #[test]
     fn corrupted_bytes_returns_error() {
-        assert!(RTree::from_checkpoint(&[0xFF, 0xFF, 0xFF]).is_err());
+        assert!(matches!(
+            RTree::from_checkpoint(&[0xFF, 0xFF, 0xFF]),
+            Err(RTreeCheckpointError::UnrecognizedFormat)
+        ));
     }
 
     #[test]

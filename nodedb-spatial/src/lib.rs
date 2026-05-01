@@ -21,8 +21,8 @@ pub use h3::{
 pub use hybrid::{SpatialPreFilterResult, bitmap_contains, ids_to_bitmap, spatial_prefilter};
 pub use operations::{st_buffer, st_envelope, st_union};
 pub use persist::{
-    RTreeCheckpointError, RTreeSnapshot, SpatialIndexMeta, SpatialIndexType, deserialize_meta,
-    meta_storage_key, rtree_storage_key, serialize_meta,
+    RTreeCheckpointError, SpatialIndexMeta, SpatialIndexType, deserialize_meta, meta_storage_key,
+    rtree_storage_key, serialize_meta,
 };
 pub use predicates::{
     st_contains, st_disjoint, st_distance, st_dwithin, st_intersection, st_intersects, st_within,
