@@ -77,7 +77,27 @@ impl NodeDbPgHandler {
 
         if !buffered.is_empty() {
             let tenant_id = identity.tenant_id;
-            let vshard_id = buffered[0].vshard_id;
+
+            // Detect cross-shard batches. All writes in a single
+            // TransactionBatch must target the same vShard. Multi-shard
+            // Calvin coordination is not yet wired up — reject explicitly
+            // rather than silently routing everything to buffered[0].vshard_id
+            // and losing atomicity across shards.
+            let first_vshard = buffered[0].vshard_id;
+            if let Some(mismatched) = buffered.iter().find(|t| t.vshard_id != first_vshard) {
+                return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                    "ERROR".to_owned(),
+                    "0A000".to_owned(),
+                    format!(
+                        "cross-shard transactions are not yet supported: \
+                         batch spans vshard {} and vshard {}; \
+                         split writes into separate transactions",
+                        first_vshard.as_u32(),
+                        mismatched.vshard_id.as_u32(),
+                    ),
+                ))));
+            }
+            let vshard_id = first_vshard;
 
             let mut sub_records: Vec<(u16, Vec<u8>)> = Vec::with_capacity(buffered.len());
             for task in &buffered {

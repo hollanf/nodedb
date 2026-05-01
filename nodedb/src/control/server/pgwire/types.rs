@@ -206,6 +206,17 @@ pub fn error_code_to_sqlstate(code: &ErrorCode) -> (&'static str, &'static str, 
         ErrorCode::Unsupported { detail } => {
             ("ERROR", sqlstate::FEATURE_NOT_SUPPORTED, detail.clone())
         }
+        ErrorCode::RollbackFailed {
+            entry_index,
+            detail,
+        } => (
+            "ERROR",
+            sqlstate::INTERNAL_ERROR,
+            format!(
+                "transaction rollback failed at undo entry {entry_index}: {detail}; \
+                 shard state is unknown — restart required"
+            ),
+        ),
     }
 }
 

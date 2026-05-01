@@ -58,5 +58,9 @@ mod test_tenant_quota;
 mod test_timeseries;
 #[path = "executor_tests/test_transaction.rs"]
 mod test_transaction;
+#[path = "executor_tests/test_transaction_matrix.rs"]
+mod test_transaction_matrix;
+#[path = "executor_tests/test_transaction_matrix_kv.rs"]
+mod test_transaction_matrix_kv;
 #[path = "executor_tests/test_vector.rs"]
 mod test_vector;
