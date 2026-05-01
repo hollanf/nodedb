@@ -157,9 +157,25 @@ cargo install cargo-nextest --locked  # one-time
 cargo nextest run --all-features
 ```
 
-## Status
+## Release Status
 
-Released and production-ready. All engines implemented and tested. Currently onboarding early adopters — full support provided.
+NodeDB Origin is in **public beta** as of **v0.1.0 (2026-05-01)**. All eight engines are feature-complete and covered by tests. The wire protocols (pgwire, HTTP, native MessagePack, RESP, ILP, WebSocket) are stable — clients written against 0.1.0 will keep working through 1.0.
+
+**v0.1.0 — Beta (today).** Build new products on it. The public surface (SQL dialect, wire protocols, configuration) is stable; expect internal changes (storage layout, on-disk format, replication internals) between minor releases. Patch and minor bumps will land as needed — if something requires a 0.2, we ship a 0.2. The two months between beta and 1.0 are deliberately for real workloads to surface edge cases we can't manufacture in-house.
+
+**v1.0.0 — Production-ready (target: 2026-07-01).** What 1.0 guarantees:
+
+- **API & SQL stability** — semver from 1.0 onward. No breaking SQL or client-API changes within a major.
+- **Wire protocol stability** — pgwire, HTTP, native MessagePack, RESP, ILP, WebSocket frozen.
+- **On-disk format stability** — no breaking migrations within 1.x. Forward-compatible upgrades only.
+- **Cluster & Raft stability** — rolling upgrades supported within 1.x; no quorum-breaking changes.
+- **Performance SLAs** — published p50/p99 targets per engine, regression-gated in CI.
+- **Security audit** — third-party audit completed and findings remediated before 1.0 ships.
+- **Storage, backup, and recovery** — fully exercised under fault injection, sustained load, and crash-restart cycles.
+
+Pre-1.0 versions may change internals between releases — those changes are critical-path work (storage, backup, security, recovery) that has to be hardened in real production conditions before we put a stability stamp on it. The wire protocol and SQL surface won't break; everything underneath is fair game until 1.0.
+
+> **Note:** This release track applies to **NodeDB Origin** (the server) only. [NodeDB-Lite](https://github.com/NodeDB-Lab/nodedb-lite), [`ndb` CLI](https://github.com/NodeDB-Lab/nodedb-cli), and [NodeDB Studio](https://github.com/NodeDB-Lab/nodedb-studio) are versioned independently on their own tracks.
 
 ## License
 
