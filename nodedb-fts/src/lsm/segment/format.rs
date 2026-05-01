@@ -23,7 +23,7 @@ use super::error::SegmentError;
 pub const MAGIC: &[u8; 4] = b"FTSS";
 
 /// Current segment format version.
-pub const VERSION: u16 = 3;
+pub const VERSION: u16 = 1;
 
 /// Maximum term byte length that can be stored (u16::MAX).
 pub const MAX_TERM_LEN: usize = u16::MAX as usize;
@@ -195,7 +195,7 @@ mod tests {
         buf
     }
 
-    // ── G-04: golden format test ─────────────────────────────────────────────
+    // ── golden format test ─────────────────────────────────────────────
 
     #[test]
     fn golden_magic_version_crc() {
@@ -207,7 +207,7 @@ mod tests {
         // Version at 4..6.
         let version = u16::from_le_bytes([buf[4], buf[5]]);
         assert_eq!(version, VERSION, "version mismatch");
-        assert_eq!(version, 3, "expected VERSION==3");
+        assert_eq!(version, 1, "expected VERSION==1");
 
         // Footer CRC: last 4 bytes must be internally consistent.
         verify_footer_crc(&buf).expect("footer CRC should be valid");
@@ -247,7 +247,7 @@ mod tests {
                 err,
                 SegmentError::UnsupportedVersion {
                     found: 2,
-                    expected: 3
+                    expected: 1
                 }
             ),
             "expected UnsupportedVersion, got {err}"
