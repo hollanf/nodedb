@@ -93,7 +93,7 @@ INSERT INTO users [
 SELECT * FROM users WHERE age > 25;
 ```
 
-See [Getting Started](docs/getting-started.md) for build-from-source and configuration.
+New here? Start with the [Quickstart](https://nodedb.dev/docs/introduction/quickstart/) on the official documentation site: **[nodedb.dev/docs](https://nodedb.dev/docs)**.
 
 ## Deployment Modes
 
@@ -137,6 +137,10 @@ See [NodeDB-Lite](https://github.com/NodeDB-Lab/nodedb-lite) for platform detail
 
 ## Documentation
 
+The official documentation site is **[nodedb.dev/docs](https://nodedb.dev/docs)** — start with the [Quickstart](https://nodedb.dev/docs/introduction/quickstart/).
+
+In-repo references:
+
 - [Getting Started](docs/getting-started.md) -- Build, run, connect
 - [Architecture](docs/architecture.md) -- Three-plane execution model
 - [Engine Guides](docs/README.md) -- Deep dives into each engine
@@ -176,6 +180,8 @@ NodeDB Origin is in **public beta** as of **v0.1.0 (2026-05-01)**. All eight eng
 Pre-1.0 versions may change internals between releases — those changes are critical-path work (storage, backup, security, recovery) that has to be hardened in real production conditions before we put a stability stamp on it. The wire protocol and SQL surface won't break; everything underneath is fair game until 1.0.
 
 > **Note:** This release track applies to **NodeDB Origin** (the server) only. [NodeDB-Lite](https://github.com/NodeDB-Lab/nodedb-lite), [`ndb` CLI](https://github.com/NodeDB-Lab/nodedb-cli), and [NodeDB Studio](https://github.com/NodeDB-Lab/nodedb-studio) are versioned independently on their own tracks.
+
+**Want to test or experiment with NodeDB?** Join our [Discord](https://discord.gg/s54gDMVc7B) — we provide full support for early adopters during the beta.
 
 ## License
 
