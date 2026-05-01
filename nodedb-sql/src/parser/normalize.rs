@@ -5,8 +5,7 @@ use crate::error::{Result, SqlError};
 /// Human-readable message for schema-qualified name rejections.
 /// Defined once so all rejection sites produce consistent output.
 pub const SCHEMA_QUALIFIED_MSG: &str = "schema-qualified names are not supported; NodeDB has no schema concept \
-     — use 'users' not 'public.users' (if using Prisma/Drizzle/ORMs, disable \
-     the schema prefix in your ORM config)";
+     — use 'users' not 'public.users'";
 
 /// Normalize a SQL identifier: lowercase unquoted, preserve quoted.
 pub fn normalize_ident(ident: &sqlparser::ast::Ident) -> String {

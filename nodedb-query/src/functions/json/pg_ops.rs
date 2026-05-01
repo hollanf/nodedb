@@ -1,11 +1,34 @@
 //! Implementation of the 9 PostgreSQL JSON operators, lowered to function calls.
 //!
 //! `->` / `->>` / `#>` / `#>>` / `@>` / `<@` / `?` / `?&` / `?|`
+//!
+//! Document columns in the schemaless engine are stored as string literals
+//! (the raw JSON text) rather than pre-parsed objects. Every operator that
+//! accepts a JSON target therefore calls `coerce_json_string` first so that
+//! a `Value::String(s)` that contains valid JSON text is transparently parsed
+//! and the operator proceeds against the resulting structured value.
 
 use nodedb_types::Value;
 
+/// If `v` is a `Value::String` containing valid JSON, parse and return the
+/// structured `Value`. Otherwise return a clone of `v` unchanged.
+///
+/// This is a cheap path: non-string values pass through a single `matches!`
+/// check; strings that are not valid JSON also return quickly from the parser.
+fn coerce_json_string(v: &Value) -> std::borrow::Cow<'_, Value> {
+    if let Value::String(s) = v
+        && let Ok(parsed) = sonic_rs::from_str::<serde_json::Value>(s)
+    {
+        let ndb = nodedb_types::conversion::json_to_value(parsed);
+        return std::borrow::Cow::Owned(ndb);
+    }
+    std::borrow::Cow::Borrowed(v)
+}
+
 /// `->`: get JSON field by key (object) or by integer index (array). Returns Json.
 pub(super) fn pg_json_get(target: &Value, key: &Value) -> Value {
+    let target = coerce_json_string(target);
+    let target = target.as_ref();
     match (target, key) {
         (Value::Object(map), Value::String(k)) => {
             map.get(k.as_str()).cloned().unwrap_or(Value::Null)
@@ -38,6 +61,8 @@ pub(super) fn pg_json_get_text(target: &Value, key: &Value) -> Value {
 
 /// `#>`: get JSON sub-object at path `'{a,b,c}'`. Returns Json.
 pub(super) fn pg_json_path_get(target: &Value, path_lit: &Value) -> Value {
+    let coerced = coerce_json_string(target);
+    let target = coerced.as_ref();
     let keys = match parse_pg_path_literal(path_lit) {
         Some(k) => k,
         None => return Value::Null,
@@ -67,12 +92,16 @@ pub(super) fn pg_json_path_get_text(target: &Value, path_lit: &Value) -> Value {
 
 /// `@>`: true iff every (key,value) pair in `b` is present in `a` (recursive).
 pub(super) fn pg_json_contains(a: &Value, b: &Value) -> Value {
-    Value::Bool(json_contains(a, b))
+    let ca = coerce_json_string(a);
+    let cb = coerce_json_string(b);
+    Value::Bool(json_contains(ca.as_ref(), cb.as_ref()))
 }
 
 /// `<@`: reverse of `@>` — true iff `a` is contained by `b`.
 pub(super) fn pg_json_contained_by(a: &Value, b: &Value) -> Value {
-    Value::Bool(json_contains(b, a))
+    let ca = coerce_json_string(a);
+    let cb = coerce_json_string(b);
+    Value::Bool(json_contains(cb.as_ref(), ca.as_ref()))
 }
 
 /// `?`: true iff `key` exists as a top-level key in object, or as element in array.
@@ -81,6 +110,8 @@ pub(super) fn pg_json_has_key(target: &Value, key: &Value) -> Value {
         Some(s) => s,
         None => return Value::Null,
     };
+    let coerced = coerce_json_string(target);
+    let target = coerced.as_ref();
     let result = match target {
         Value::Object(map) => map.contains_key(k),
         Value::Array(arr) => arr.iter().any(|v| v.as_str() == Some(k)),
@@ -95,6 +126,8 @@ pub(super) fn pg_json_has_all_keys(target: &Value, keys: &Value) -> Value {
         Some(k) => k,
         None => return Value::Null,
     };
+    let coerced = coerce_json_string(target);
+    let target = coerced.as_ref();
     let result = key_list.iter().all(|k| has_key(target, k));
     Value::Bool(result)
 }
@@ -105,6 +138,8 @@ pub(super) fn pg_json_has_any_key(target: &Value, keys: &Value) -> Value {
         Some(k) => k,
         None => return Value::Null,
     };
+    let coerced = coerce_json_string(target);
+    let target = coerced.as_ref();
     let result = key_list.iter().any(|k| has_key(target, k));
     Value::Bool(result)
 }

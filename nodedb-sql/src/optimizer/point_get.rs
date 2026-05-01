@@ -10,9 +10,15 @@ pub fn optimize(plan: SqlPlan) -> SqlPlan {
             ref alias,
             ref engine,
             ref filters,
+            ref projection,
             ref temporal,
             ..
-        } if filters.len() == 1 && !temporal.is_temporal() => {
+        } if filters.len() == 1
+            && !temporal.is_temporal()
+            && !projection
+                .iter()
+                .any(|p| matches!(p, Projection::Computed { .. })) =>
+        {
             if let Some((key_col, key_val)) = extract_pk_equality(&filters[0]) {
                 return SqlPlan::PointGet {
                     collection: collection.clone(),

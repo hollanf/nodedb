@@ -59,6 +59,77 @@ pub fn fold_constant(expr: &SqlExpr, registry: &FunctionRegistry) -> Option<SqlV
             fold_binary(l, *op, r)
         }
         SqlExpr::Function { name, args, .. } => fold_function_call(name, args, registry),
+        SqlExpr::Cast { expr, to_type } => fold_cast(fold_constant(expr, registry)?, to_type),
+        _ => None,
+    }
+}
+
+/// Fold a CAST at plan time. Only applies when the inner expression is already
+/// a constant. The `to_type` string comes from sqlparser's `format!("{data_type}")`
+/// output, so parameterised types like `NUMERIC(5,1)` must be matched by prefix.
+fn fold_cast(inner: SqlValue, to_type: &str) -> Option<SqlValue> {
+    let upper = to_type.to_uppercase();
+    // Strip any precision/scale suffix: "NUMERIC(5,1)" → "NUMERIC".
+    let base = upper
+        .split('(')
+        .next()
+        .map(str::trim)
+        .unwrap_or(upper.as_str());
+
+    match base {
+        "NUMERIC" | "DECIMAL" => match inner {
+            SqlValue::Decimal(d) => Some(SqlValue::Decimal(d)),
+            SqlValue::Int(i) => Some(SqlValue::Decimal(rust_decimal::Decimal::from(i))),
+            SqlValue::Float(f) => rust_decimal::Decimal::try_from(f)
+                .ok()
+                .map(SqlValue::Decimal),
+            SqlValue::String(s) => rust_decimal::Decimal::from_str_exact(&s)
+                .ok()
+                .map(SqlValue::Decimal),
+            _ => None,
+        },
+        "INTEGER" | "INT" | "BIGINT" | "SMALLINT" | "INT2" | "INT4" | "INT8" => match inner {
+            SqlValue::Int(i) => Some(SqlValue::Int(i)),
+            SqlValue::Decimal(d) => {
+                rust_decimal::prelude::ToPrimitive::to_i64(&d).map(SqlValue::Int)
+            }
+            SqlValue::Float(f) => {
+                if f.is_finite() {
+                    Some(SqlValue::Int(f as i64))
+                } else {
+                    None
+                }
+            }
+            SqlValue::String(s) => s.parse::<i64>().ok().map(SqlValue::Int),
+            _ => None,
+        },
+        "FLOAT" | "DOUBLE" | "REAL" | "FLOAT4" | "FLOAT8" | "DOUBLE PRECISION" => match inner {
+            SqlValue::Float(f) => Some(SqlValue::Float(f)),
+            SqlValue::Int(i) => Some(SqlValue::Float(i as f64)),
+            SqlValue::Decimal(d) => {
+                rust_decimal::prelude::ToPrimitive::to_f64(&d).map(SqlValue::Float)
+            }
+            SqlValue::String(s) => s.parse::<f64>().ok().map(SqlValue::Float),
+            _ => None,
+        },
+        "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING" | "CHARACTER" | "BPCHAR" => match inner {
+            SqlValue::String(s) => Some(SqlValue::String(s)),
+            SqlValue::Int(i) => Some(SqlValue::String(i.to_string())),
+            SqlValue::Float(f) => Some(SqlValue::String(f.to_string())),
+            SqlValue::Decimal(d) => Some(SqlValue::String(d.to_string())),
+            SqlValue::Bool(b) => Some(SqlValue::String(b.to_string())),
+            _ => None,
+        },
+        "BOOL" | "BOOLEAN" => match inner {
+            SqlValue::Bool(b) => Some(SqlValue::Bool(b)),
+            SqlValue::Int(i) => Some(SqlValue::Bool(i != 0)),
+            SqlValue::String(s) => match s.to_lowercase().as_str() {
+                "true" | "t" | "yes" | "1" | "on" => Some(SqlValue::Bool(true)),
+                "false" | "f" | "no" | "0" | "off" => Some(SqlValue::Bool(false)),
+                _ => None,
+            },
+            _ => None,
+        },
         _ => None,
     }
 }
