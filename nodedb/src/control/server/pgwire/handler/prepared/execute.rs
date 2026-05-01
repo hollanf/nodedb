@@ -5,17 +5,14 @@
 //! all DDL dispatch, transaction handling, and permission checks.
 
 use std::fmt::Debug;
-use std::sync::Arc;
 
 use bytes::Bytes;
-use futures::StreamExt;
 use futures::sink::Sink;
 use pgwire::api::portal::Portal;
-use pgwire::api::results::{DataRowEncoder, FieldInfo, QueryResponse, Response};
+use pgwire::api::results::{FieldInfo, Response};
 use pgwire::api::{ClientInfo, ClientPortalStore, Type};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 use pgwire::messages::PgWireBackendMessage;
-use sonic_rs;
 
 use super::super::core::NodeDbPgHandler;
 use super::statement::ParsedStatement;
@@ -136,151 +133,17 @@ impl NodeDbPgHandler {
 }
 
 /// Re-encode a simple-query envelope response to match the column schema
-/// declared by Describe.
+/// declared by Describe. Delegates to the shared projection module.
 ///
-/// Simple-query and extended-query share the same Data Plane — the Data
-/// Plane emits a JSON payload (an array of row objects, or a single row
-/// object), and `payload_to_response` wraps it in a `{result: "..."}` /
-/// `{document: "..."}` single-column envelope. Simple-query clients rely
-/// on that envelope; extended-query clients want column-shaped rows against
-/// the schema they received in Describe.
-///
-/// This function consumes the envelope deterministically:
-///
-/// 1. Each pgwire `DataRow` carries one text field — the row's JSON text.
-/// 2. That JSON is parsed and flattened into a stream of row objects,
-///    with one fixed unwrap rule: the Data Plane's document-scan codec
-///    wraps rows as `{id, data: {...}}` (see `response_codec::encode_raw_document_rows`)
-///    where `data` is the actual row. When a row has exactly the keys
-///    `id` and `data` and `data` is an object, we unwrap to `data`. This
-///    is not a fallback — it is the documented wire contract of the
-///    scan codec.
-/// 3. For each flat row object, we encode one pgwire field per declared
-///    column; missing columns become SQL NULL.
-///
-/// Non-query responses (execution tags, empty query) pass through.
+/// Prepared statements that reach this path are scalar / single-table SELECTs
+/// where the lookup key matches the display name; we pass the field names as
+/// the lookup keys.
 async fn reproject_response(
     response: Response,
     result_fields: &[FieldInfo],
 ) -> PgWireResult<Response> {
-    let qr = match response {
-        Response::Query(qr) => qr,
-        other => return Ok(other),
-    };
-
-    let schema = Arc::new(result_fields.to_vec());
-    let field_names: Vec<String> = result_fields.iter().map(|f| f.name().to_string()).collect();
-
-    let flat_rows = collect_flat_rows(qr).await?;
-
-    let mut pgwire_rows = Vec::with_capacity(flat_rows.len());
-    for obj in &flat_rows {
-        let mut encoder = DataRowEncoder::new(schema.clone());
-        for name in &field_names {
-            match obj.get(name) {
-                None | Some(serde_json::Value::Null) => {
-                    let _ = encoder.encode_field(&Option::<String>::None);
-                }
-                Some(v) => {
-                    let text = match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    let _ = encoder.encode_field(&text);
-                }
-            }
-        }
-        pgwire_rows.push(Ok(encoder.take_row()));
-    }
-
-    Ok(Response::Query(QueryResponse::new(
-        schema,
-        futures::stream::iter(pgwire_rows),
-    )))
-}
-
-/// Consume the envelope stream and return a flat list of row objects
-/// ready for column projection.
-async fn collect_flat_rows(
-    mut qr: QueryResponse,
-) -> PgWireResult<Vec<serde_json::Map<String, serde_json::Value>>> {
-    let mut rows = Vec::new();
-    while let Some(row_result) = qr.data_rows.next().await {
-        let row = row_result?;
-        let Some(text) = decode_first_field_text(&row.data) else {
-            continue;
-        };
-        // The envelope text is produced by `payload_to_response` from
-        // Data-Plane output and is always valid JSON under correct
-        // operation. A parse failure means upstream corruption — fail
-        // loud rather than silently truncating the result set (which
-        // is the class of bug the extended-query work exists to fix).
-        let value = sonic_rs::from_str::<serde_json::Value>(text).map_err(|e| {
-            PgWireError::UserError(Box::new(ErrorInfo::new(
-                "ERROR".to_owned(),
-                "XX000".to_owned(),
-                format!("malformed Data-Plane response envelope: {e}"),
-            )))
-        })?;
-        push_flat_rows(value, &mut rows);
-    }
-    Ok(rows)
-}
-
-/// Flatten a parsed JSON value into row objects. A value may be:
-/// - an Array (from `PlanKind::SingleDocument` carrying a full array payload)
-/// - an Object with `{id, data: {...}}` (scan wrapper)
-/// - a plain Object (aggregate output, constant projection, ad-hoc DML returns)
-fn push_flat_rows(
-    value: serde_json::Value,
-    out: &mut Vec<serde_json::Map<String, serde_json::Value>>,
-) {
-    match value {
-        serde_json::Value::Array(items) => {
-            for item in items {
-                push_flat_rows(item, out);
-            }
-        }
-        serde_json::Value::Object(mut map) => {
-            if is_scan_wrapper(&map)
-                && let Some(serde_json::Value::Object(inner)) = map.remove("data")
-            {
-                out.push(inner);
-                return;
-            }
-            out.push(map);
-        }
-        _ => {}
-    }
-}
-
-/// The Data Plane's raw document-scan codec emits objects with exactly
-/// the keys `id` (string) and `data` (object). This is the one wire shape
-/// we unwrap before column projection.
-fn is_scan_wrapper(map: &serde_json::Map<String, serde_json::Value>) -> bool {
-    map.len() == 2
-        && matches!(map.get("id"), Some(serde_json::Value::String(_)))
-        && matches!(map.get("data"), Some(serde_json::Value::Object(_)))
-}
-
-/// Decode the text bytes of the first field from a pgwire `DataRow` wire buffer.
-///
-/// Wire format: for each field, 4-byte big-endian length followed by bytes.
-/// Returns `None` for NULL fields or invalid encodings.
-fn decode_first_field_text(data: &bytes::BytesMut) -> Option<&str> {
-    if data.len() < 4 {
-        return None;
-    }
-    let len = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-    if len < 0 {
-        // NULL field.
-        return None;
-    }
-    let len = len as usize;
-    if data.len() < 4 + len {
-        return None;
-    }
-    std::str::from_utf8(&data[4..4 + len]).ok()
+    let lookup_keys: Vec<String> = result_fields.iter().map(|f| f.name().to_string()).collect();
+    super::super::projection::reproject_response(response, result_fields, &lookup_keys).await
 }
 
 /// Convert pgwire portal parameters to typed `ParamValue` for AST-level binding.
@@ -643,6 +506,7 @@ mod tests {
 
     #[test]
     fn decode_first_field_text_normal() {
+        use crate::control::server::pgwire::handler::projection::decode_first_field_text;
         // Wire format: 4-byte length (big-endian) + UTF-8 bytes.
         let text = b"hello";
         let mut data = bytes::BytesMut::new();
@@ -653,6 +517,7 @@ mod tests {
 
     #[test]
     fn decode_first_field_text_null() {
+        use crate::control::server::pgwire::handler::projection::decode_first_field_text;
         // -1 length means SQL NULL.
         let mut data = bytes::BytesMut::new();
         data.extend_from_slice(&(-1i32).to_be_bytes());
@@ -661,6 +526,7 @@ mod tests {
 
     #[test]
     fn decode_first_field_text_empty() {
+        use crate::control::server::pgwire::handler::projection::decode_first_field_text;
         assert_eq!(decode_first_field_text(&bytes::BytesMut::new()), None);
     }
 }
