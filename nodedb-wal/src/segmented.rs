@@ -591,7 +591,7 @@ mod tests {
         }
     }
 
-    /// G-01: WAL restart roundtrip with encryption.
+    /// WAL restart roundtrip with encryption.
     ///
     /// Writes encrypted records, simulates a process restart (different in-memory
     /// epoch), replays, and verifies that decryption succeeds because the epoch
@@ -654,7 +654,7 @@ mod tests {
         }
     }
 
-    /// G-02: Epoch tamper rejection.
+    /// Epoch tamper rejection.
     ///
     /// After writing an encrypted segment, corrupt the preamble bytes on disk.
     /// Decryption must fail because the preamble is part of the AAD.
