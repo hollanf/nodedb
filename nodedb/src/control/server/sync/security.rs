@@ -32,6 +32,7 @@ use tracing::warn;
 
 use super::wire::DeltaPushMsg;
 use crate::control::security::audit::{AuditEvent, AuditLog};
+use crate::control::security::auth_context::AuthContext;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::security::jwt::{JwtConfig, JwtError, JwtValidator};
 use crate::control::security::rls::RlsPolicyStore;
@@ -161,27 +162,37 @@ pub fn enforce_rls_on_delta(
         return Ok(()); // No write policies → allow.
     }
 
-    // Convert delta to msgpack bytes for binary filter evaluation.
-    // If already msgpack, use as-is. Otherwise encode from JSON/CRDT.
-    let doc_bytes = delta_to_msgpack_bytes(&delta.delta);
+    // Build an AuthContext so compiled predicates can resolve $auth.* references.
+    let auth = AuthContext::from_identity(identity, "sync".into());
+    if auth.is_superuser() {
+        return Ok(());
+    }
+
+    // Decode the delta payload to a JSON value for compiled predicate evaluation.
+    let doc_json = delta_bytes_to_json(&delta.delta);
 
     for policy in &write_policies {
-        if policy.predicate.is_empty() {
-            continue; // No predicate = allow-all policy.
-        }
+        if let Some(ref compiled) = policy.compiled_predicate {
+            use crate::control::security::predicate_eval::substitute_to_scan_filters;
 
-        let filters: Vec<crate::bridge::scan_filter::ScanFilter> =
-            match zerompk::from_msgpack(&policy.predicate) {
-                Ok(f) => f,
-                Err(_) => continue, // Skip unparseable policies.
+            let filters = match substitute_to_scan_filters(compiled, &auth) {
+                Some(f) => f,
+                None => {
+                    // Unresolvable $auth reference: fail-closed.
+                    return Err(SyncRejectionReason::RlsPolicyViolation {
+                        policy_name: policy.name.clone(),
+                    });
+                }
             };
 
-        let passes = filters.iter().all(|f| f.matches_binary(&doc_bytes));
-        if !passes {
-            return Err(SyncRejectionReason::RlsPolicyViolation {
-                policy_name: policy.name.clone(),
-            });
+            let doc_mp = nodedb_types::json_to_msgpack_or_empty(&doc_json);
+            if !filters.iter().all(|f| f.matches_binary(&doc_mp)) {
+                return Err(SyncRejectionReason::RlsPolicyViolation {
+                    policy_name: policy.name.clone(),
+                });
+            }
         }
+        // A policy with no compiled_predicate is vacuous (passes all rows).
     }
 
     Ok(())
@@ -236,30 +247,21 @@ pub fn log_silent_rejection(
 
 /// Try to extract a JSON document value from CRDT delta bytes.
 ///
-/// Falls back to an empty object if the delta can't be parsed.
-/// This allows RLS predicates to evaluate against the document content
-/// when possible, while still allowing through deltas that are pure
-/// CRDT operations (which can't be evaluated against field-level predicates).
-/// Convert delta bytes to msgpack for binary filter evaluation.
+/// Decode delta bytes to a `serde_json::Value` for compiled predicate evaluation.
 ///
-/// If already valid msgpack map, returns as-is. Otherwise tries JSON parse
-/// and re-encodes to msgpack. Falls back to empty msgpack map.
-fn delta_to_msgpack_bytes(delta_bytes: &[u8]) -> Vec<u8> {
-    // If already a valid msgpack map, use directly.
-    if !delta_bytes.is_empty() {
-        let first = delta_bytes[0];
-        if (0x80..=0x8F).contains(&first) || first == 0xDE || first == 0xDF {
-            return delta_bytes.to_vec();
-        }
+/// Tries JSON parse first; if that fails, tries msgpack decode. Opaque CRDT
+/// deltas that cannot be decoded return an empty object — all field predicates
+/// pass vacuously, matching the historical behaviour for pure CRDT operations.
+fn delta_bytes_to_json(delta_bytes: &[u8]) -> serde_json::Value {
+    if let Ok(json) = sonic_rs::from_slice::<serde_json::Value>(delta_bytes) {
+        return json;
     }
-    // Try raw JSON → re-encode to msgpack.
-    if let Ok(json) = sonic_rs::from_slice::<serde_json::Value>(delta_bytes)
-        && let Ok(mp) = nodedb_types::json_msgpack::json_to_msgpack(&json)
+    if let Ok(json_str) = nodedb_types::json_msgpack::msgpack_to_json_string(delta_bytes)
+        && let Ok(val) = sonic_rs::from_str::<serde_json::Value>(&json_str)
     {
-        return mp;
+        return val;
     }
-    // Opaque CRDT delta — return empty msgpack map (all field predicates pass vacuously).
-    vec![0x80] // fixmap with 0 entries
+    serde_json::Value::Object(serde_json::Map::new())
 }
 
 /// SHA-256 hex digest of arbitrary bytes (for forensic logging).
@@ -316,25 +318,22 @@ mod tests {
 
     #[test]
     fn rls_allows_matching_delta() {
+        use crate::control::security::predicate::{CompareOp, PredicateValue, RlsPredicate};
+
         let store = RlsPolicyStore::new();
-
-        let filter = crate::bridge::scan_filter::ScanFilter {
+        // Literal predicate: status = 'active'
+        let predicate = RlsPredicate::Compare {
             field: "status".into(),
-            op: "eq".into(),
-            value: nodedb_types::Value::String("active".into()),
-            clauses: Vec::new(),
-            expr: None,
+            op: CompareOp::Eq,
+            value: PredicateValue::Literal(serde_json::json!("active")),
         };
-        let predicate = zerompk::to_msgpack_vec(&vec![filter]).unwrap();
-
         store
             .create_policy(RlsPolicy {
                 name: "require_active".into(),
                 collection: "orders".into(),
                 tenant_id: 1,
                 policy_type: PolicyType::Write,
-                predicate,
-                compiled_predicate: None,
+                compiled_predicate: Some(predicate),
                 mode: crate::control::security::predicate::PolicyMode::default(),
                 on_deny: Default::default(),
                 enabled: true,
@@ -350,25 +349,21 @@ mod tests {
 
     #[test]
     fn rls_rejects_non_matching_delta() {
+        use crate::control::security::predicate::{CompareOp, PredicateValue, RlsPredicate};
+
         let store = RlsPolicyStore::new();
-
-        let filter = crate::bridge::scan_filter::ScanFilter {
+        let predicate = RlsPredicate::Compare {
             field: "status".into(),
-            op: "eq".into(),
-            value: nodedb_types::Value::String("active".into()),
-            clauses: Vec::new(),
-            expr: None,
+            op: CompareOp::Eq,
+            value: PredicateValue::Literal(serde_json::json!("active")),
         };
-        let predicate = zerompk::to_msgpack_vec(&vec![filter]).unwrap();
-
         store
             .create_policy(RlsPolicy {
                 name: "require_active".into(),
                 collection: "orders".into(),
                 tenant_id: 1,
                 policy_type: PolicyType::Write,
-                predicate,
-                compiled_predicate: None,
+                compiled_predicate: Some(predicate),
                 mode: crate::control::security::predicate::PolicyMode::default(),
                 on_deny: Default::default(),
                 enabled: true,
@@ -416,16 +411,25 @@ mod tests {
     }
 
     #[test]
-    fn delta_to_msgpack_handles_opaque_bytes() {
-        // Truly invalid data → empty msgpack map (0x80).
-        let mp = delta_to_msgpack_bytes(&[0xFF, 0xFF, 0xFF]);
-        assert_eq!(mp, vec![0x80]);
+    fn delta_bytes_to_json_handles_opaque_bytes() {
+        // Truncated / unparseable msgpack + invalid JSON → empty object fallback.
+        // 0x8F is fixmap with 15 entries but no payload — truncated map.
+        let val = delta_bytes_to_json(&[0x8F]);
+        assert!(
+            val.as_object().is_some_and(|m| m.is_empty()),
+            "truncated msgpack should fall back to empty object; got {val:?}"
+        );
 
-        // Valid MessagePack map → returned as-is.
+        // Valid JSON bytes → parsed correctly.
         let data = serde_json::json!({"key": "value"});
-        let msgpack = nodedb_types::json_to_msgpack(&data).unwrap();
-        let mp = delta_to_msgpack_bytes(&msgpack);
-        assert_eq!(mp, msgpack);
+        let json_bytes = sonic_rs::to_vec(&data).unwrap();
+        let val = delta_bytes_to_json(&json_bytes);
+        assert_eq!(val["key"], serde_json::json!("value"));
+
+        // Valid msgpack map bytes → parsed correctly.
+        let mp = nodedb_types::json_to_msgpack(&data).unwrap();
+        let val = delta_bytes_to_json(&mp);
+        assert_eq!(val["key"], serde_json::json!("value"));
     }
 
     #[test]

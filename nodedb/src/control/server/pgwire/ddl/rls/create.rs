@@ -93,7 +93,6 @@ pub fn create_rls_policy(
         collection: collection.to_string(),
         tenant_id,
         policy_type,
-        predicate: compiled.predicate,
         compiled_predicate: compiled.compiled_predicate,
         mode,
         on_deny: compiled.on_deny,

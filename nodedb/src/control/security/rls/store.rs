@@ -173,7 +173,6 @@ mod tests {
             collection: collection.into(),
             tenant_id: 1,
             policy_type,
-            predicate: Vec::new(),
             compiled_predicate: None,
             mode: PolicyMode::default(),
             on_deny: Default::default(),

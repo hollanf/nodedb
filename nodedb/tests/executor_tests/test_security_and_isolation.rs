@@ -59,19 +59,20 @@ fn security_tenant_isolation() {
 
 #[test]
 fn security_rls_policy_enforcement() {
+    use nodedb::control::security::auth_context::AuthContext;
+    use nodedb::control::security::identity::{AuthMethod, AuthenticatedIdentity, Role};
+    use nodedb::control::security::predicate::{CompareOp, PredicateValue, RlsPredicate};
     use nodedb::control::security::rls::{PolicyType, RlsPolicy, RlsPolicyStore};
+    use nodedb_types::TenantId;
 
     let store = RlsPolicyStore::new();
 
     // Create a write policy requiring status = "approved".
-    let filter = nodedb::bridge::scan_filter::ScanFilter {
+    let predicate = RlsPredicate::Compare {
         field: "status".into(),
-        op: "eq".into(),
-        value: nodedb_types::Value::String("approved".into()),
-        clauses: Vec::new(),
-        expr: None,
+        op: CompareOp::Eq,
+        value: PredicateValue::Literal(serde_json::json!("approved")),
     };
-    let predicate = zerompk::to_msgpack_vec(&vec![filter]).unwrap();
 
     store
         .create_policy(RlsPolicy {
@@ -79,8 +80,7 @@ fn security_rls_policy_enforcement() {
             collection: "orders".into(),
             tenant_id: 1,
             policy_type: PolicyType::Write,
-            predicate,
-            compiled_predicate: None,
+            compiled_predicate: Some(predicate),
             mode: nodedb::control::security::predicate::PolicyMode::default(),
             on_deny: Default::default(),
             enabled: true,
@@ -89,18 +89,38 @@ fn security_rls_policy_enforcement() {
         })
         .unwrap();
 
+    let make_auth = |tenant_id: u64| {
+        let identity = AuthenticatedIdentity {
+            user_id: 1,
+            username: "user1".into(),
+            tenant_id: TenantId::new(tenant_id),
+            auth_method: AuthMethod::ApiKey,
+            roles: vec![Role::ReadWrite],
+            is_superuser: false,
+        };
+        AuthContext::from_identity(&identity, "test".into())
+    };
+
     // Approved document passes.
     let doc_ok = serde_json::json!({"status": "approved", "amount": 100});
-    assert!(store.check_write(1, "orders", &doc_ok, "user1").is_ok());
+    assert!(
+        store
+            .check_write_with_auth(1, "orders", &doc_ok, &make_auth(1))
+            .is_ok()
+    );
 
     // Pending document rejected.
     let doc_bad = serde_json::json!({"status": "pending", "amount": 200});
-    let err = store.check_write(1, "orders", &doc_bad, "user1");
+    let err = store.check_write_with_auth(1, "orders", &doc_bad, &make_auth(1));
     assert!(err.is_err());
     assert!(err.unwrap_err().to_string().contains("require_approved"));
 
     // Different tenant has no policies — allowed.
-    assert!(store.check_write(99, "orders", &doc_bad, "user1").is_ok());
+    assert!(
+        store
+            .check_write_with_auth(99, "orders", &doc_bad, &make_auth(99))
+            .is_ok()
+    );
 }
 
 #[test]

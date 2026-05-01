@@ -26,7 +26,6 @@ fn put_rls(catalog: &nodedb::control::security::catalog::SystemCatalog, name: &s
         collection: coll.into(),
         name: name.into(),
         policy_type_tag: 0,
-        legacy_predicate: Vec::new(),
         compiled_predicate_json: String::new(),
         mode_tag: 0,
         on_deny_json: String::new(),

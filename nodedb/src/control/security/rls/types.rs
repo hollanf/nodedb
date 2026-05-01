@@ -17,13 +17,11 @@ pub struct RlsPolicy {
     pub tenant_id: u64,
     /// Policy type: read, write, or both.
     pub policy_type: PolicyType,
-    /// Legacy predicate as serialized `ScanFilter` (static, no `$auth`).
-    /// Retained for backward compatibility with existing policies.
-    pub predicate: Vec<u8>,
     /// Compiled predicate AST with `$auth.*` support.
     ///
-    /// If present, this takes precedence over `predicate`. Substituted at
-    /// plan time via `AuthContext` to produce concrete `ScanFilter` values.
+    /// Substituted at plan time via `AuthContext` to produce concrete
+    /// `ScanFilter` values. `None` means the policy has no row filter
+    /// (vacuous — all rows pass).
     #[serde(default)]
     pub compiled_predicate: Option<RlsPredicate>,
     /// Policy combination mode: permissive (OR) or restrictive (AND).

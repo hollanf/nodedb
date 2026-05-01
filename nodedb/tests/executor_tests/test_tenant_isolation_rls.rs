@@ -3,24 +3,37 @@
 //! Tenant A's RLS policies must be invisible to Tenant B.
 //! RLS policies are scoped by `(tenant_id, collection)` by construction.
 
+use nodedb::control::security::auth_context::AuthContext;
+use nodedb::control::security::identity::{AuthMethod, AuthenticatedIdentity, Role};
+use nodedb::control::security::predicate::{CompareOp, PredicateValue, RlsPredicate};
 use nodedb::control::security::rls::{PolicyType, RlsPolicy, RlsPolicyStore};
+use nodedb_types::TenantId;
 
 const TENANT_A: u64 = 10;
 const TENANT_B: u64 = 20;
+
+fn make_auth(tenant_id: u64) -> AuthContext {
+    let identity = AuthenticatedIdentity {
+        user_id: 1,
+        username: "user1".into(),
+        tenant_id: TenantId::new(tenant_id),
+        auth_method: AuthMethod::ApiKey,
+        roles: vec![Role::ReadWrite],
+        is_superuser: false,
+    };
+    AuthContext::from_identity(&identity, "test".into())
+}
 
 #[test]
 fn rls_policies_isolated_between_tenants() {
     let store = RlsPolicyStore::new();
 
     // Create a restrictive write policy for Tenant A on "orders".
-    let filter = nodedb::bridge::scan_filter::ScanFilter {
+    let predicate = RlsPredicate::Compare {
         field: "status".into(),
-        op: "eq".into(),
-        value: nodedb_types::Value::String("approved".into()),
-        clauses: Vec::new(),
-        expr: None,
+        op: CompareOp::Eq,
+        value: PredicateValue::Literal(serde_json::json!("approved")),
     };
-    let predicate = zerompk::to_msgpack_vec(&vec![filter]).unwrap();
 
     store
         .create_policy(RlsPolicy {
@@ -28,8 +41,7 @@ fn rls_policies_isolated_between_tenants() {
             collection: "orders".into(),
             tenant_id: TENANT_A,
             policy_type: PolicyType::Write,
-            predicate,
-            compiled_predicate: None,
+            compiled_predicate: Some(predicate),
             mode: nodedb::control::security::predicate::PolicyMode::default(),
             on_deny: Default::default(),
             enabled: true,
@@ -40,14 +52,16 @@ fn rls_policies_isolated_between_tenants() {
 
     // Tenant A's write on "orders" with status=pending → BLOCKED by RLS.
     let pending_doc = serde_json::json!({"status": "pending", "amount": 100});
-    let result_a = store.check_write(TENANT_A, "orders", &pending_doc, "user1");
+    let result_a =
+        store.check_write_with_auth(TENANT_A, "orders", &pending_doc, &make_auth(TENANT_A));
     assert!(
         result_a.is_err(),
         "Tenant A's RLS should block pending writes"
     );
 
     // Tenant B's write on "orders" with status=pending → ALLOWED (no policy for Tenant B).
-    let result_b = store.check_write(TENANT_B, "orders", &pending_doc, "user1");
+    let result_b =
+        store.check_write_with_auth(TENANT_B, "orders", &pending_doc, &make_auth(TENANT_B));
     assert!(
         result_b.is_ok(),
         "Tenant B has no RLS policy — write should be allowed"
@@ -57,7 +71,7 @@ fn rls_policies_isolated_between_tenants() {
     let approved_doc = serde_json::json!({"status": "approved", "amount": 200});
     assert!(
         store
-            .check_write(TENANT_A, "orders", &approved_doc, "user1")
+            .check_write_with_auth(TENANT_A, "orders", &approved_doc, &make_auth(TENANT_A))
             .is_ok()
     );
 }
@@ -68,12 +82,10 @@ fn rls_policy_listing_scoped() {
 
     // Create policies for different tenants.
     for (tid, name) in [(TENANT_A, "policy_a"), (TENANT_B, "policy_b")] {
-        let filter = nodedb::bridge::scan_filter::ScanFilter {
+        let predicate = RlsPredicate::Compare {
             field: "role".into(),
-            op: "eq".into(),
-            value: nodedb_types::Value::String("admin".into()),
-            clauses: Vec::new(),
-            expr: None,
+            op: CompareOp::Eq,
+            value: PredicateValue::Literal(serde_json::json!("admin")),
         };
         store
             .create_policy(RlsPolicy {
@@ -81,8 +93,7 @@ fn rls_policy_listing_scoped() {
                 collection: "users".into(),
                 tenant_id: tid,
                 policy_type: PolicyType::Read,
-                predicate: zerompk::to_msgpack_vec(&vec![filter]).unwrap(),
-                compiled_predicate: None,
+                compiled_predicate: Some(predicate),
                 mode: nodedb::control::security::predicate::PolicyMode::default(),
                 on_deny: Default::default(),
                 enabled: true,

@@ -31,7 +31,6 @@ pub struct StoredRlsPolicy {
     pub name: String,
     /// 0 = Read, 1 = Write, 2 = All.
     pub policy_type_tag: u8,
-    pub legacy_predicate: Vec<u8>,
     /// JSON-serialized `Option<RlsPredicate>`. Empty string = None.
     pub compiled_predicate_json: String,
     /// 0 = Permissive, 1 = Restrictive.
@@ -60,7 +59,6 @@ impl StoredRlsPolicy {
                 PolicyType::Write => 1,
                 PolicyType::All => 2,
             },
-            legacy_predicate: p.predicate.clone(),
             compiled_predicate_json,
             mode_tag: match p.mode {
                 PolicyMode::Permissive => 0,
@@ -110,7 +108,6 @@ impl StoredRlsPolicy {
             collection: self.collection.clone(),
             tenant_id: self.tenant_id,
             policy_type,
-            predicate: self.legacy_predicate.clone(),
             compiled_predicate,
             mode,
             on_deny,
@@ -241,7 +238,6 @@ mod tests {
             collection: collection.into(),
             tenant_id,
             policy_type: PolicyType::Read,
-            predicate: Vec::new(),
             compiled_predicate: None,
             mode: PolicyMode::Permissive,
             on_deny: DenyMode::default(),
