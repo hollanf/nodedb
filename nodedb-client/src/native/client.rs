@@ -218,7 +218,7 @@ impl NodeDb for NativeClient {
                 OpCode::GraphHop,
                 TextFields {
                     start_node: Some(start.as_str().to_string()),
-                    depth: Some(depth as u64),
+                    depth: Some(depth as u32),
                     edge_label: edge_filter.and_then(|f| f.labels.first().cloned()),
                     ..Default::default()
                 },

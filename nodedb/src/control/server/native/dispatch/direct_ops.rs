@@ -29,6 +29,11 @@ pub(crate) async fn handle_direct_op(
     let vshard_id = ctx.vshard_for_key(vshard_key);
     let tenant_id = ctx.tenant_id();
 
+    // Per-operation cap enforcement (vector dim, top_k, batch size, etc.).
+    if let Err(e) = super::limits::check_op_limits(ctx.state, fields) {
+        return NativeResponse::error(seq, "0A000", e.to_string());
+    }
+
     // Quota enforcement — reject before planning or dispatch.
     if let Err(e) = ctx.state.check_tenant_quota(tenant_id) {
         return error_to_native(seq, &e);

@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use nodedb_types::config::TuningConfig;
+use nodedb_types::protocol::Limits;
 
 use crate::bridge::dispatch::Dispatcher;
 use crate::control::request_tracker::RequestTracker;
@@ -529,6 +530,12 @@ pub struct SharedState {
     /// calling `SharedState::open`, then swaps this field via
     /// `Arc::get_mut`. See `control::startup` for the contract.
     pub startup: Arc<crate::control::startup::StartupGate>,
+
+    /// Per-operation limits announced to clients in `HelloAckFrame`.
+    ///
+    /// Populated at startup from configuration and used by both the
+    /// handshake (sent to the client) and dispatch cap enforcement.
+    pub limits: Limits,
 
     /// Performance tuning configuration.
     pub tuning: TuningConfig,

@@ -52,11 +52,11 @@ where
             return Err(crate::Error::Io(io));
         }
         Ok(Ok(_)) => match HelloFrame::decode(&buf) {
-            Ok(f) => f,
-            Err(code) => {
-                let msg = format!("bad hello frame: {code}");
-                send_error(stream, code, &msg).await;
-                return Err(crate::Error::BadRequest { detail: msg });
+            Some(f) => f,
+            None => {
+                let msg = "bad hello frame: BadMagic";
+                send_error(stream, HelloErrorCode::BadMagic, msg).await;
+                return Err(crate::Error::BadRequest { detail: msg.into() });
             }
         },
     };
@@ -64,7 +64,7 @@ where
     debug!(
         proto_min = hello.proto_min,
         proto_max = hello.proto_max,
-        caps = hello.caps,
+        capabilities = hello.capabilities,
         "hello received"
     );
 
@@ -83,9 +83,9 @@ where
 
     // ── 3. Send HelloAck ─────────────────────────────────────────────────
     let ack = HelloAckFrame {
-        proto_ver,
-        caps: hello.caps, // echo back what client offered (server supports all for v1)
-        server_info: format!("NodeDB/{}", env!("CARGO_PKG_VERSION")),
+        proto_version: proto_ver,
+        capabilities: hello.capabilities, // echo back what client offered (server supports all for v1)
+        server_version: format!("NodeDB/{}", env!("CARGO_PKG_VERSION")),
         limits: limits.clone(),
     };
     let ack_bytes = ack.encode();
@@ -95,7 +95,7 @@ where
         .map_err(crate::Error::Io)?;
     stream.flush().await.map_err(crate::Error::Io)?;
 
-    debug!(proto_ver, "handshake complete");
+    debug!(proto_version = proto_ver, "handshake complete");
     Ok(proto_ver)
 }
 
@@ -176,8 +176,8 @@ mod tests {
 
         // Parse the ack.
         let ack = HelloAckFrame::decode(&response).expect("should be valid ack");
-        assert_eq!(ack.proto_ver, 1);
-        assert!(ack.server_info.contains("NodeDB"));
+        assert_eq!(ack.proto_version, 1);
+        assert!(ack.server_version.contains("NodeDB"));
     }
 
     #[tokio::test]
@@ -197,7 +197,7 @@ mod tests {
         let frame = HelloFrame {
             proto_min: 99,
             proto_max: 100,
-            caps: CAP_MSGPACK | CAP_STREAMING,
+            capabilities: CAP_MSGPACK | CAP_STREAMING,
         }
         .encode();
         let (result, response) = server_shake(frame.to_vec()).await;
@@ -239,8 +239,62 @@ mod tests {
     }
 
     #[test]
+    fn negotiate_version_below_minimum() {
+        // Client range entirely below server minimum — no overlap.
+        if PROTO_VERSION_MIN == 0 {
+            return; // no version below 0; skip
+        }
+        let below = PROTO_VERSION_MIN - 1;
+        assert_eq!(negotiate_version(0, below), None);
+    }
+
+    #[test]
+    fn negotiate_version_above_maximum() {
+        // Client range entirely above server maximum — no overlap.
+        let above_min = PROTO_VERSION_MAX.saturating_add(1);
+        let above_max = PROTO_VERSION_MAX.saturating_add(5);
+        assert_eq!(negotiate_version(above_min, above_max), None);
+    }
+
+    #[tokio::test]
+    async fn handshake_rejects_lower_wire_version() {
+        // Client speaks versions 0..(MIN-1) — no overlap with server range.
+        if PROTO_VERSION_MIN == 0 {
+            return; // no version below 0; skip
+        }
+        let frame = HelloFrame {
+            proto_min: 0,
+            proto_max: PROTO_VERSION_MIN - 1,
+            capabilities: CAP_MSGPACK | CAP_STREAMING,
+        }
+        .encode();
+        let (result, response) = server_shake(frame.to_vec()).await;
+        assert!(result.is_err());
+
+        let err = HelloErrorFrame::decode(&response).expect("should be a HelloErrorFrame");
+        assert_eq!(err.code, HelloErrorCode::VersionMismatch);
+    }
+
+    #[tokio::test]
+    async fn handshake_rejects_higher_wire_version() {
+        // Client speaks versions above server maximum — no overlap.
+        let frame = HelloFrame {
+            proto_min: PROTO_VERSION_MAX + 1,
+            proto_max: PROTO_VERSION_MAX + 5,
+            capabilities: CAP_MSGPACK | CAP_STREAMING,
+        }
+        .encode();
+        let (result, response) = server_shake(frame.to_vec()).await;
+        assert!(result.is_err());
+
+        let err = HelloErrorFrame::decode(&response).expect("should be a HelloErrorFrame");
+        assert_eq!(err.code, HelloErrorCode::VersionMismatch);
+    }
+
+    #[test]
     fn hello_magic_correct() {
-        assert_eq!(HELLO_MAGIC, b"NDB\x01");
+        // b"NDBH" = 0x4E44_4248 in big-endian
+        assert_eq!(HELLO_MAGIC.to_be_bytes(), *b"NDBH");
     }
 
     #[tokio::test]

@@ -168,6 +168,13 @@ pub enum Error {
     #[error("execution limit exceeded: {detail}")]
     ExecutionLimitExceeded { detail: String },
 
+    #[error("operation limit exceeded: {limit_name} = {value} exceeds cap {max}")]
+    LimitExceeded {
+        limit_name: &'static str,
+        value: u64,
+        max: u64,
+    },
+
     // --- Infrastructure errors ---
     #[error("WAL error: {0}")]
     Wal(#[from] nodedb_wal::WalError),
@@ -396,6 +403,13 @@ impl From<Error> for NodeDbError {
                 "raft leader change overwrote entry at group {group_id} index {log_index}; retry exhausted"
             )),
             Error::ExecutionLimitExceeded { detail } => NodeDbError::bad_request(detail),
+            Error::LimitExceeded {
+                limit_name,
+                value,
+                max,
+            } => {
+                NodeDbError::bad_request(format!("{limit_name} = {value} exceeds server cap {max}"))
+            }
 
             // Infrastructure — flatten to opaque public variants
             Error::Wal(wal_err) => NodeDbError::wal(wal_err),

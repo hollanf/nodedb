@@ -8,9 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use nodedb_types::error::{NodeDbError, NodeDbResult};
 use nodedb_types::protocol::{
     AuthMethod, CAP_COLUMNAR, CAP_CRDT, CAP_FTS, CAP_GRAPHRAG, CAP_SPATIAL, CAP_STREAMING,
-    CAP_TIMESERIES, FRAME_HEADER_LEN, HELLO_MAGIC, HelloAckFrame, HelloFrame, Limits,
-    MAX_FRAME_SIZE, NativeRequest, NativeResponse, OpCode, PROTO_VERSION, RequestFields,
-    ResponseStatus, TextFields,
+    CAP_TIMESERIES, FRAME_HEADER_LEN, HelloAckFrame, HelloFrame, Limits, MAX_FRAME_SIZE,
+    NativeRequest, NativeResponse, OpCode, PROTO_VERSION, RequestFields, ResponseStatus,
+    TextFields,
 };
 use nodedb_types::result::QueryResult;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -98,11 +98,13 @@ pub struct NativeConnection {
 
 impl NativeConnection {
     /// Connect to a NodeDB server at the given address (plain TCP).
+    ///
+    /// Performs the native protocol handshake immediately after connecting.
     pub async fn connect(addr: &str) -> NodeDbResult<Self> {
         let stream = TcpStream::connect(addr)
             .await
             .map_err(|e| NodeDbError::sync_connection_failed(format!("connect to {addr}: {e}")))?;
-        Ok(Self {
+        let mut conn = Self {
             stream: ConnStream::Plain(stream),
             seq: AtomicU64::new(1),
             authenticated: false,
@@ -110,7 +112,9 @@ impl NativeConnection {
             capabilities: 0,
             server_version: String::new(),
             limits: Limits::default(),
-        })
+        };
+        conn.perform_client_handshake().await?;
+        Ok(conn)
     }
 
     /// Connect to a NodeDB server with TLS.
@@ -139,7 +143,7 @@ impl NativeConnection {
             NodeDbError::sync_connection_failed(format!("TLS handshake failed: {e}"))
         })?;
 
-        Ok(Self {
+        let mut conn = Self {
             stream: ConnStream::Tls(Box::new(tls_stream)),
             seq: AtomicU64::new(1),
             authenticated: false,
@@ -147,7 +151,9 @@ impl NativeConnection {
             capabilities: 0,
             server_version: String::new(),
             limits: Limits::default(),
-        })
+        };
+        conn.perform_client_handshake().await?;
+        Ok(conn)
     }
 
     /// Perform the native protocol handshake.
@@ -173,45 +179,72 @@ impl NativeConnection {
             proto_max: PROTO_VERSION,
             capabilities: client_caps,
         };
-        let payload = hello.encode();
 
-        // Write length-prefixed HelloFrame.
-        let len = payload.len() as u32;
-        self.stream
-            .write_all(&len.to_be_bytes())
-            .await
-            .map_err(io_err)?;
+        // HelloFrame is sent raw (no length prefix) — exactly 16 bytes.
+        // The server reads `HelloFrame::WIRE_SIZE` bytes directly.
+        let payload = hello.encode();
         self.stream.write_all(&payload).await.map_err(io_err)?;
         self.stream.flush().await.map_err(io_err)?;
 
-        // Peek the magic prefix to detect pre-handshake servers.
-        let mut len_buf = [0u8; FRAME_HEADER_LEN];
-        self.stream.read_exact(&mut len_buf).await.map_err(io_err)?;
-        let ack_len = u32::from_be_bytes(len_buf);
-        if ack_len > MAX_FRAME_SIZE {
-            return Err(NodeDbError::internal(format!(
-                "HelloAck frame too large: {ack_len}"
-            )));
+        // The server replies with either a HelloAckFrame or a HelloErrorFrame,
+        // both of which start with a 4-byte magic. Peek those 4 bytes then read
+        // the rest dynamically.
+        //
+        // HelloAckFrame: variable-length; read until end-of-relevant-data by
+        // buffering a generous upper bound (1 KiB covers all valid acks).
+        let mut magic_buf = [0u8; 4];
+        self.stream
+            .read_exact(&mut magic_buf)
+            .await
+            .map_err(io_err)?;
+
+        let magic = u32::from_be_bytes(magic_buf);
+
+        if magic == nodedb_types::protocol::HELLO_ERROR_MAGIC_U32 {
+            // Server rejected the handshake — read the rest of the error frame.
+            let mut header = [0u8; 2]; // code (1) + msg_len (1)
+            self.stream.read_exact(&mut header).await.map_err(io_err)?;
+            let msg_len = header[1] as usize;
+            let mut msg_bytes = vec![0u8; msg_len];
+            self.stream
+                .read_exact(&mut msg_bytes)
+                .await
+                .map_err(io_err)?;
+
+            let code = match header[0] {
+                0 => nodedb_types::protocol::HelloErrorCode::BadMagic,
+                1 => nodedb_types::protocol::HelloErrorCode::VersionMismatch,
+                _ => nodedb_types::protocol::HelloErrorCode::Malformed,
+            };
+            let message = String::from_utf8_lossy(&msg_bytes).into_owned();
+            return Err(NodeDbError::handshake_failed(code, message));
         }
 
-        let mut ack_buf = vec![0u8; ack_len as usize];
-        self.stream.read_exact(&mut ack_buf).await.map_err(io_err)?;
-
-        let magic_bytes: [u8; 4] = if ack_buf.len() >= 4 {
-            [ack_buf[0], ack_buf[1], ack_buf[2], ack_buf[3]]
-        } else {
-            return Err(NodeDbError::internal(format!(
-                "HelloAck frame too short to contain magic: {} bytes",
-                ack_buf.len()
-            )));
-        };
-        if u32::from_be_bytes(magic_bytes) != nodedb_types::protocol::HELLO_ACK_MAGIC {
+        if magic != nodedb_types::protocol::HELLO_ACK_MAGIC {
             return Err(NodeDbError::internal(format!(
                 "HelloAck magic mismatch: expected {:#010x}, got {:#010x}",
                 nodedb_types::protocol::HELLO_ACK_MAGIC,
-                u32::from_be_bytes(magic_bytes)
+                magic,
             )));
         }
+
+        // Read the remainder of the HelloAckFrame.
+        // Fixed header after magic: proto_version(2) + capabilities(8) + sv_len(1) = 11 bytes.
+        let mut fixed_rest = [0u8; 11];
+        self.stream
+            .read_exact(&mut fixed_rest)
+            .await
+            .map_err(io_err)?;
+        let sv_len = fixed_rest[10] as usize;
+        // Variable: server_version bytes + optional limits block (1 flag + 7*5 = 36 bytes max).
+        let var_len = sv_len + 1 + 7 * 5;
+        let mut var_buf = vec![0u8; var_len];
+        self.stream.read_exact(&mut var_buf).await.map_err(io_err)?;
+
+        let mut ack_buf = Vec::with_capacity(4 + 11 + var_len);
+        ack_buf.extend_from_slice(&magic_buf);
+        ack_buf.extend_from_slice(&fixed_rest);
+        ack_buf.extend_from_slice(&var_buf);
 
         let ack = HelloAckFrame::decode(&ack_buf)
             .ok_or_else(|| NodeDbError::internal("failed to decode HelloAckFrame from server"))?;
@@ -568,6 +601,9 @@ fn response_to_query_result(resp: NativeResponse) -> NodeDbResult<QueryResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nodedb_types::protocol::{
+        CAP_MSGPACK, CAP_STREAMING, HELLO_ACK_MAGIC, HELLO_MAGIC, HelloAckFrame,
+    };
 
     #[test]
     fn response_to_query_result_ok() {
@@ -602,5 +638,153 @@ mod tests {
     fn check_error_fail() {
         let resp = NativeResponse::error(1, "XX000", "boom");
         assert!(check_error(resp).is_err());
+    }
+
+    // ── Handshake unit tests ─────────────────────────────────────────────────
+    //
+    // These tests drive the client-side handshake logic by simulating a server
+    // on a `tokio::io::duplex` stream pair.
+
+    #[tokio::test]
+    async fn client_handshake_succeeds_when_versions_match() {
+        use nodedb_types::protocol::HelloAckFrame;
+        use tokio::io::{AsyncWriteExt, duplex};
+
+        let (mut server_half, mut client_half) = duplex(4096);
+
+        let server_task = tokio::spawn(async move {
+            // Drain the 16-byte HelloFrame the client sends.
+            let mut hello_buf = [0u8; HelloFrame::WIRE_SIZE];
+            tokio::io::AsyncReadExt::read_exact(&mut server_half, &mut hello_buf)
+                .await
+                .unwrap();
+            // Verify magic.
+            let magic =
+                u32::from_be_bytes([hello_buf[0], hello_buf[1], hello_buf[2], hello_buf[3]]);
+            assert_eq!(magic, HELLO_MAGIC, "client sent correct HelloFrame magic");
+
+            // Send back a valid HelloAckFrame.
+            let ack = HelloAckFrame {
+                proto_version: 1,
+                capabilities: CAP_STREAMING | CAP_MSGPACK,
+                server_version: "NodeDB/test".into(),
+                limits: Limits::default(),
+            };
+            server_half.write_all(&ack.encode()).await.unwrap();
+            server_half.flush().await.unwrap();
+        });
+
+        // Run the client-side handshake inline on the duplex stream.
+        let result = handshake_on_duplex(&mut client_half).await;
+        server_task.await.unwrap();
+
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        let (proto_version, server_version) = result.unwrap();
+        assert_eq!(proto_version, 1);
+        assert!(server_version.contains("NodeDB"));
+    }
+
+    #[tokio::test]
+    async fn client_handshake_returns_typed_error_on_version_mismatch() {
+        use nodedb_types::protocol::{HelloErrorCode, HelloErrorFrame};
+        use tokio::io::{AsyncWriteExt, duplex};
+
+        let (mut server_half, mut client_half) = duplex(4096);
+
+        let server_task = tokio::spawn(async move {
+            let mut hello_buf = [0u8; HelloFrame::WIRE_SIZE];
+            tokio::io::AsyncReadExt::read_exact(&mut server_half, &mut hello_buf)
+                .await
+                .unwrap();
+            let err_frame = HelloErrorFrame {
+                code: HelloErrorCode::VersionMismatch,
+                message: "client range 99..100 does not overlap server range 1..1".into(),
+            };
+            server_half.write_all(&err_frame.encode()).await.unwrap();
+            server_half.flush().await.unwrap();
+        });
+
+        let result = handshake_on_duplex(&mut client_half).await;
+        server_task.await.unwrap();
+
+        assert!(result.is_err(), "expected Err");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("handshake"),
+            "error should mention handshake: {err_msg}"
+        );
+    }
+
+    /// Drive the client hello/ack exchange on a `DuplexStream` and return
+    /// `(proto_version, server_version)` on success.
+    async fn handshake_on_duplex(
+        stream: &mut tokio::io::DuplexStream,
+    ) -> NodeDbResult<(u16, String)> {
+        use tokio::io::AsyncWriteExt;
+
+        // Send HelloFrame.
+        let hello = HelloFrame {
+            proto_min: 1,
+            proto_max: PROTO_VERSION,
+            capabilities: CAP_STREAMING | CAP_MSGPACK,
+        };
+        stream.write_all(&hello.encode()).await.map_err(io_err)?;
+        stream.flush().await.map_err(io_err)?;
+
+        // Read 4-byte magic prefix.
+        let mut magic_buf = [0u8; 4];
+        tokio::io::AsyncReadExt::read_exact(stream, &mut magic_buf)
+            .await
+            .map_err(io_err)?;
+        let magic = u32::from_be_bytes(magic_buf);
+
+        if magic == nodedb_types::protocol::HELLO_ERROR_MAGIC_U32 {
+            let mut header = [0u8; 2];
+            tokio::io::AsyncReadExt::read_exact(stream, &mut header)
+                .await
+                .map_err(io_err)?;
+            let msg_len = header[1] as usize;
+            let mut msg_bytes = vec![0u8; msg_len];
+            tokio::io::AsyncReadExt::read_exact(stream, &mut msg_bytes)
+                .await
+                .map_err(io_err)?;
+            let code = match header[0] {
+                0 => nodedb_types::protocol::HelloErrorCode::BadMagic,
+                1 => nodedb_types::protocol::HelloErrorCode::VersionMismatch,
+                _ => nodedb_types::protocol::HelloErrorCode::Malformed,
+            };
+            return Err(NodeDbError::handshake_failed(
+                code,
+                String::from_utf8_lossy(&msg_bytes),
+            ));
+        }
+
+        if magic != HELLO_ACK_MAGIC {
+            return Err(NodeDbError::internal(format!(
+                "unexpected HelloAck magic: {magic:#010x}"
+            )));
+        }
+
+        // Read fixed remainder: proto_version(2) + capabilities(8) + sv_len(1).
+        let mut fixed_rest = [0u8; 11];
+        tokio::io::AsyncReadExt::read_exact(stream, &mut fixed_rest)
+            .await
+            .map_err(io_err)?;
+        let sv_len = fixed_rest[10] as usize;
+        let var_len = sv_len + 1 + 7 * 5;
+        let mut var_buf = vec![0u8; var_len];
+        tokio::io::AsyncReadExt::read_exact(stream, &mut var_buf)
+            .await
+            .map_err(io_err)?;
+
+        let mut ack_buf = Vec::with_capacity(4 + 11 + var_len);
+        ack_buf.extend_from_slice(&magic_buf);
+        ack_buf.extend_from_slice(&fixed_rest);
+        ack_buf.extend_from_slice(&var_buf);
+
+        let ack = HelloAckFrame::decode(&ack_buf)
+            .ok_or_else(|| NodeDbError::internal("failed to decode HelloAckFrame"))?;
+
+        Ok((ack.proto_version, ack.server_version))
     }
 }

@@ -75,29 +75,28 @@ fn check_limits(limits: &Limits, fields: &TextFields) -> Result<(), Error> {
                 fields.final_top_k.map(|v| v as u64),
             ),
         ] {
-            if let Some(v) = val {
-                if v > max as u64 {
-                    return Err(Error::LimitExceeded {
-                        limit_name: name,
-                        value: v,
-                        max: max as u64,
-                    });
-                }
+            if let Some(v) = val
+                && v > max as u64
+            {
+                return Err(Error::LimitExceeded {
+                    limit_name: name,
+                    value: v,
+                    max: max as u64,
+                });
             }
         }
     }
 
     // max_scan_limit — limit field.
-    if let Some(max) = limits.max_scan_limit {
-        if let Some(v) = fields.limit {
-            if v as u64 > max as u64 {
-                return Err(Error::LimitExceeded {
-                    limit_name: "max_scan_limit",
-                    value: v as u64,
-                    max: max as u64,
-                });
-            }
-        }
+    if let Some(max) = limits.max_scan_limit
+        && let Some(v) = fields.limit
+        && v > max as u64
+    {
+        return Err(Error::LimitExceeded {
+            limit_name: "max_scan_limit",
+            value: v,
+            max: max as u64,
+        });
     }
 
     // max_batch_size — vectors and documents batch arrays.
@@ -125,30 +124,30 @@ fn check_limits(limits: &Limits, fields: &TextFields) -> Result<(), Error> {
     }
 
     // max_crdt_delta_bytes — delta field byte length.
-    if let Some(max) = limits.max_crdt_delta_bytes {
-        if let Some(delta) = &fields.delta {
-            let n = delta.len() as u64;
-            if n > max as u64 {
-                return Err(Error::LimitExceeded {
-                    limit_name: "max_crdt_delta_bytes",
-                    value: n,
-                    max: max as u64,
-                });
-            }
+    if let Some(max) = limits.max_crdt_delta_bytes
+        && let Some(delta) = &fields.delta
+    {
+        let n = delta.len() as u64;
+        if n > max as u64 {
+            return Err(Error::LimitExceeded {
+                limit_name: "max_crdt_delta_bytes",
+                value: n,
+                max: max as u64,
+            });
         }
     }
 
     // max_query_text_bytes — query_text field byte length.
-    if let Some(max) = limits.max_query_text_bytes {
-        if let Some(qt) = &fields.query_text {
-            let n = qt.len() as u64;
-            if n > max as u64 {
-                return Err(Error::LimitExceeded {
-                    limit_name: "max_query_text_bytes",
-                    value: n,
-                    max: max as u64,
-                });
-            }
+    if let Some(max) = limits.max_query_text_bytes
+        && let Some(qt) = &fields.query_text
+    {
+        let n = qt.len() as u64;
+        if n > max as u64 {
+            return Err(Error::LimitExceeded {
+                limit_name: "max_query_text_bytes",
+                value: n,
+                max: max as u64,
+            });
         }
     }
 
@@ -161,14 +160,14 @@ fn check_limits(limits: &Limits, fields: &TextFields) -> Result<(), Error> {
                 fields.expansion_depth.map(|v| v as u64),
             ),
         ] {
-            if let Some(v) = val {
-                if v > max as u64 {
-                    return Err(Error::LimitExceeded {
-                        limit_name: name,
-                        value: v,
-                        max: max as u64,
-                    });
-                }
+            if let Some(v) = val
+                && v > max as u64
+            {
+                return Err(Error::LimitExceeded {
+                    limit_name: name,
+                    value: v,
+                    max: max as u64,
+                });
             }
         }
     }
@@ -193,7 +192,7 @@ mod tests {
         let mut fields = empty_fields();
         fields.query_vector = Some(vec![0.1; 2048]);
         fields.top_k = Some(u32::MAX);
-        fields.limit = Some(u32::MAX);
+        fields.limit = Some(u32::MAX as u64);
         assert!(check_limits(&limits, &fields).is_ok());
     }
 

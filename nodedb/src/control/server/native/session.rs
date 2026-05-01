@@ -42,6 +42,8 @@ pub struct NativeSession {
     /// Wall-clock time when this session was accepted. Used for absolute
     /// session lifetime enforcement (`session_absolute_timeout_secs`).
     connected_at: Instant,
+    /// Protocol version negotiated during the handshake.
+    pub proto_ver: u16,
 }
 
 impl NativeSession {
@@ -63,6 +65,7 @@ impl NativeSession {
             query_ctx,
             sessions: SessionStore::new(),
             connected_at: Instant::now(),
+            proto_ver: 0,
         }
     }
 
@@ -89,6 +92,11 @@ impl NativeSession {
     /// Run the session loop: read frames, route by opcode, write responses.
     #[instrument(skip(self), fields(peer = %self.peer_addr))]
     pub async fn run(mut self) -> crate::Result<()> {
+        // Perform the version-negotiation handshake before any frame exchange.
+        let limits = self.state.limits.clone();
+        self.proto_ver =
+            super::handshake::perform_server_handshake(&mut self.stream, &limits).await?;
+
         let idle_timeout_secs = self.state.idle_timeout_secs();
         let absolute_timeout_secs = self.state.session_absolute_timeout_secs();
 

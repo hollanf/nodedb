@@ -3,6 +3,7 @@
 mod auth;
 mod conversion;
 mod direct_ops;
+mod limits;
 mod pgwire_bridge;
 mod plan_builder;
 mod session_ops;
