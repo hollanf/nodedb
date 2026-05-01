@@ -9,6 +9,27 @@ use super::super::details::ErrorDetails;
 use super::super::types::NodeDbError;
 
 impl NodeDbError {
+    // ── Protocol handshake ──
+
+    /// Build a `HandshakeFailed` error from a `HelloErrorCode` and the server's
+    /// diagnostic message.
+    pub fn handshake_failed(
+        code: crate::protocol::HelloErrorCode,
+        message: impl fmt::Display,
+    ) -> Self {
+        let server_code = match code {
+            crate::protocol::HelloErrorCode::BadMagic => 0,
+            crate::protocol::HelloErrorCode::VersionMismatch => 1,
+            crate::protocol::HelloErrorCode::Malformed => 2,
+        };
+        Self {
+            code: ErrorCode::HANDSHAKE_FAILED,
+            message: format!("protocol handshake failed: {message}"),
+            details: ErrorDetails::HandshakeFailed { server_code },
+            cause: None,
+        }
+    }
+
     // ── Sync ──
 
     pub fn sync_connection_failed(detail: impl fmt::Display) -> Self {

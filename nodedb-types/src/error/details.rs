@@ -85,6 +85,13 @@ pub enum ErrorDetails {
     #[serde(rename = "auth_expired")]
     AuthExpired,
 
+    // Protocol handshake
+    #[serde(rename = "handshake_failed")]
+    HandshakeFailed {
+        /// Numeric error code sent by the server (0=BadMagic, 1=VersionMismatch, 2=Malformed).
+        server_code: u8,
+    },
+
     // Sync
     #[serde(rename = "sync_connection_failed")]
     SyncConnectionFailed,

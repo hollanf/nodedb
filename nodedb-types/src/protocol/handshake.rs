@@ -16,6 +16,12 @@ pub const DEFAULT_NATIVE_PORT: u16 = 6433;
 /// Current native protocol version advertised in `HelloFrame`.
 pub const PROTO_VERSION: u16 = 1;
 
+/// Minimum protocol version this server accepts from clients.
+pub const PROTO_VERSION_MIN: u16 = 1;
+
+/// Maximum protocol version this server can speak.
+pub const PROTO_VERSION_MAX: u16 = PROTO_VERSION;
+
 // ─── Capability Bits ────────────────────────────────────────────────
 
 /// Capability bit: server supports streaming (partial-response chunking).
@@ -32,6 +38,9 @@ pub const CAP_SPATIAL: u64 = 1 << 4;
 pub const CAP_TIMESERIES: u64 = 1 << 5;
 /// Capability bit: server supports columnar scan.
 pub const CAP_COLUMNAR: u64 = 1 << 6;
+
+/// Capability bit: connection uses MessagePack framing (always set for native protocol).
+pub const CAP_MSGPACK: u64 = 1 << 7;
 
 // ─── Per-Operation Limits ───────────────────────────────────────────
 
@@ -62,6 +71,22 @@ pub const HELLO_MAGIC: u32 = 0x4E44_4248;
 
 impl HelloFrame {
     pub const WIRE_SIZE: usize = 16;
+
+    /// Build a `HelloFrame` advertising the current protocol range and all capabilities.
+    pub fn current() -> Self {
+        Self {
+            proto_min: PROTO_VERSION_MIN,
+            proto_max: PROTO_VERSION_MAX,
+            capabilities: CAP_STREAMING
+                | CAP_GRAPHRAG
+                | CAP_FTS
+                | CAP_CRDT
+                | CAP_SPATIAL
+                | CAP_TIMESERIES
+                | CAP_COLUMNAR
+                | CAP_MSGPACK,
+        }
+    }
 
     pub fn encode(&self) -> [u8; Self::WIRE_SIZE] {
         let mut buf = [0u8; Self::WIRE_SIZE];
@@ -160,6 +185,87 @@ impl HelloAckFrame {
             server_version,
             limits,
         })
+    }
+}
+
+// ─── HelloErrorFrame ─────────────────────────────────────────────────
+
+/// Error code sent in a `HelloErrorFrame` when the server rejects a handshake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelloErrorCode {
+    /// The client sent a frame with an unrecognised magic number.
+    BadMagic,
+    /// The client's version range does not overlap with the server's.
+    VersionMismatch,
+    /// The frame was otherwise malformed (truncated, invalid field values, etc.)
+    Malformed,
+}
+
+impl std::fmt::Display for HelloErrorCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HelloErrorCode::BadMagic => write!(f, "BadMagic"),
+            HelloErrorCode::VersionMismatch => write!(f, "VersionMismatch"),
+            HelloErrorCode::Malformed => write!(f, "Malformed"),
+        }
+    }
+}
+
+/// Frame sent by the server when it rejects a `HelloFrame`.
+///
+/// Wire format (all big-endian):
+/// - magic: `b"NDBE"` (4 bytes)
+/// - code:  u8  (0=BadMagic, 1=VersionMismatch, 2=Malformed)
+/// - msg_len: u8
+/// - message: UTF-8 bytes (up to 255)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HelloErrorFrame {
+    pub code: HelloErrorCode,
+    pub message: String,
+}
+
+/// Magic bytes for `HelloErrorFrame`: `b"NDBE"`.
+pub const HELLO_ERROR_MAGIC: &[u8; 4] = b"NDBE";
+
+/// Magic for `HelloErrorFrame` as a `u32` (big-endian: 0x4E44_4245).
+pub const HELLO_ERROR_MAGIC_U32: u32 = 0x4E44_4245;
+
+impl HelloErrorFrame {
+    pub fn encode(&self) -> Vec<u8> {
+        let msg = self.message.as_bytes();
+        let msg_len = msg.len().min(255) as u8;
+        let code_byte = match self.code {
+            HelloErrorCode::BadMagic => 0u8,
+            HelloErrorCode::VersionMismatch => 1u8,
+            HelloErrorCode::Malformed => 2u8,
+        };
+        let mut buf = Vec::with_capacity(6 + msg_len as usize);
+        buf.extend_from_slice(HELLO_ERROR_MAGIC);
+        buf.push(code_byte);
+        buf.push(msg_len);
+        buf.extend_from_slice(&msg[..msg_len as usize]);
+        buf
+    }
+
+    pub fn decode(data: &[u8]) -> Option<Self> {
+        if data.len() < 6 {
+            return None;
+        }
+        if &data[0..4] != HELLO_ERROR_MAGIC {
+            return None;
+        }
+        let code = match data[4] {
+            0 => HelloErrorCode::BadMagic,
+            1 => HelloErrorCode::VersionMismatch,
+            2 => HelloErrorCode::Malformed,
+            _ => return None,
+        };
+        let msg_len = data[5] as usize;
+        if data.len() < 6 + msg_len {
+            return None;
+        }
+        let message = String::from_utf8_lossy(&data[6..6 + msg_len]).into_owned();
+        Some(Self { code, message })
     }
 }
 

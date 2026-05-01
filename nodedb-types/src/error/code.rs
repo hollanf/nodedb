@@ -45,6 +45,9 @@ impl ErrorCode {
     pub const AUTHORIZATION_DENIED: Self = Self(2000);
     pub const AUTH_EXPIRED: Self = Self(2001);
 
+    // Protocol handshake (2100–2199)
+    pub const HANDSHAKE_FAILED: Self = Self(2100);
+
     // Sync (3000–3099)
     pub const SYNC_CONNECTION_FAILED: Self = Self(3000);
     pub const SYNC_DELTA_REJECTED: Self = Self(3001);
