@@ -130,4 +130,36 @@ mod tests {
         buf[last] ^= 0xFF;
         assert!(SegmentFooter::decode(&buf).is_err());
     }
+
+    /// Asserts `NDFT` magic at trailer bytes [12..16], footer_off points inside
+    /// the buffer, and footer_length is non-zero.
+    #[test]
+    fn golden_array_segment_footer_format() {
+        let f = SegmentFooter::new(0xCAFE_BABE_1234_5678, vec![]);
+        let mut buf = vec![0u8; 32]; // simulate preceding segment data
+        f.encode_to(&mut buf).unwrap();
+
+        let n = buf.len();
+        assert!(n >= TRAILER_SIZE, "buffer too small for trailer");
+        let trailer = &buf[n - TRAILER_SIZE..];
+
+        // Last 4 bytes of trailer must be NDFT.
+        assert_eq!(&trailer[12..16], b"NDFT", "NDFT magic not at EOF trailer");
+
+        // footer_off must point inside the buffer (before the trailer).
+        let mut u64_buf = [0u8; 8];
+        u64_buf.copy_from_slice(&trailer[..8]);
+        let footer_off = u64::from_le_bytes(u64_buf) as usize;
+        assert!(footer_off < n - TRAILER_SIZE, "footer_off out of range");
+
+        // footer_length must be non-zero.
+        let mut u32_buf = [0u8; 4];
+        u32_buf.copy_from_slice(&trailer[8..12]);
+        let footer_len = u32::from_le_bytes(u32_buf) as usize;
+        assert!(footer_len > 0, "footer_length must be > 0");
+
+        // Round-trip validates schema_hash survives encode/decode.
+        let decoded = SegmentFooter::decode(&buf).unwrap();
+        assert_eq!(decoded.schema_hash, 0xCAFE_BABE_1234_5678);
+    }
 }

@@ -1,3 +1,5 @@
+#[cfg(feature = "encryption")]
+pub(crate) mod encrypt;
 pub mod format;
 pub mod mbr_index;
 pub mod reader;

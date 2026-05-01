@@ -289,6 +289,90 @@ impl<'a> SegmentReader<'a> {
     }
 }
 
+/// An owned segment reader that holds decrypted segment bytes.
+///
+/// Exists because `SegmentReader<'a>` borrows its byte slice; for
+/// encrypted segments the plaintext lives in a `Vec<u8>` that must
+/// outlive the reader. `OwnedSegmentReader` ties the two together.
+#[cfg(feature = "encryption")]
+#[derive(Debug)]
+pub struct OwnedSegmentReader {
+    /// Decrypted plaintext segment bytes.
+    plaintext: Vec<u8>,
+    header: SegmentHeader,
+    footer: SegmentFooter,
+}
+
+#[cfg(feature = "encryption")]
+impl OwnedSegmentReader {
+    /// Open a segment with optional at-rest decryption.
+    ///
+    /// - `kek = None` → requires a plaintext (`NDAS`) segment; returns
+    ///   `Err(MissingKek)` if the blob starts with `SEGA`.
+    /// - `kek = Some(key)` → requires an encrypted (`SEGA`) segment; decrypts
+    ///   the blob, then parses the inner plaintext. Returns `Err(KekRequired)`
+    ///   if the blob starts with `NDAS`.
+    pub fn open_with_kek(
+        blob: &[u8],
+        kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+    ) -> ArrayResult<Self> {
+        use super::encrypt::{decrypt_segment, detect_encryption};
+        let is_encrypted = detect_encryption(blob)?;
+        let plaintext = match (is_encrypted, kek) {
+            (true, Some(key)) => decrypt_segment(key, blob)?,
+            (true, None) => return Err(ArrayError::MissingKek),
+            (false, Some(_)) => return Err(ArrayError::KekRequired),
+            (false, None) => blob.to_vec(),
+        };
+        let header = SegmentHeader::decode(&plaintext[..HEADER_SIZE.min(plaintext.len())])?;
+        let footer = SegmentFooter::decode(&plaintext)?;
+        if header.schema_hash != footer.schema_hash {
+            return Err(ArrayError::SegmentCorruption {
+                detail: format!(
+                    "header/footer schema_hash mismatch: header={:x} footer={:x}",
+                    header.schema_hash, footer.schema_hash
+                ),
+            });
+        }
+        Ok(Self {
+            plaintext,
+            header,
+            footer,
+        })
+    }
+
+    /// Borrow a `SegmentReader` over the owned plaintext bytes.
+    pub fn reader(&self) -> SegmentReader<'_> {
+        SegmentReader {
+            bytes: &self.plaintext,
+            header: self.header,
+            footer: self.footer.clone(),
+        }
+    }
+
+    /// Consume the owned reader and return the inner plaintext buffer.
+    pub fn into_plaintext(self) -> Vec<u8> {
+        self.plaintext
+    }
+}
+
+impl<'a> SegmentReader<'a> {
+    /// Validate a segment blob with optional KEK, returning `Err` on mismatch.
+    ///
+    /// - `kek = None` + encrypted blob → `Err(MissingKek)`
+    /// - `kek = Some` + plaintext blob → `Err(KekRequired)`
+    ///
+    /// On success the segment is fully parsed but the owned bytes are
+    /// discarded. Use [`OwnedSegmentReader`] when you need to keep the reader.
+    #[cfg(feature = "encryption")]
+    pub fn open_with_kek(
+        blob: &[u8],
+        kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+    ) -> ArrayResult<OwnedSegmentReader> {
+        OwnedSegmentReader::open_with_kek(blob, kek)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,7 +423,7 @@ mod tests {
             .unwrap();
         w.append_sparse(TileId::snapshot(2), &make_sparse(&s, 2))
             .unwrap();
-        let bytes = w.finish().unwrap();
+        let bytes = w.finish(None).unwrap();
         let r = SegmentReader::open(&bytes).unwrap();
         assert_eq!(r.tile_count(), 2);
         let t0 = r.read_tile(0).unwrap();
@@ -355,7 +439,7 @@ mod tests {
         let mut w = SegmentWriter::new(0xBEEF);
         w.append_dense(TileId::snapshot(1), &DenseTile::empty(&s))
             .unwrap();
-        let bytes = w.finish().unwrap();
+        let bytes = w.finish(None).unwrap();
         let r = SegmentReader::open(&bytes).unwrap();
         match r.read_tile(0).unwrap() {
             TilePayload::Dense(t) => assert_eq!(t.cell_count(), 16),
@@ -374,7 +458,7 @@ mod tests {
         let mut w = SegmentWriter::new(0x1);
         w.append_sparse(TileId::snapshot(1), &make_sparse(&s, 1))
             .unwrap();
-        let mut bytes = w.finish().unwrap();
+        let mut bytes = w.finish(None).unwrap();
         bytes[12] ^= 0xFF; // corrupt header schema_hash
         assert!(SegmentReader::open(&bytes).is_err());
     }
@@ -385,7 +469,7 @@ mod tests {
         let mut w = SegmentWriter::new(0x1);
         w.append_sparse(TileId::snapshot(1), &make_sparse(&s, 1))
             .unwrap();
-        let bytes = w.finish().unwrap();
+        let bytes = w.finish(None).unwrap();
         let r = SegmentReader::open(&bytes).unwrap();
         assert!(r.read_tile(99).is_err());
     }
@@ -401,7 +485,7 @@ mod tests {
             .unwrap();
         w.append_sparse(TileId::new(1, 300), &make_sparse(&s, 3))
             .unwrap();
-        let bytes = w.finish().unwrap();
+        let bytes = w.finish(None).unwrap();
         let r = SegmentReader::open(&bytes).unwrap();
         // Read at cutoff 250 — between v2 (200) and v3 (300). Should return v2.
         let result = r.read_tile_as_of(1, 250, None).unwrap();
@@ -422,7 +506,7 @@ mod tests {
         let mut w = SegmentWriter::new(0xBEEF);
         w.append_sparse(TileId::new(1, 100), &make_sparse(&s, 1))
             .unwrap();
-        let bytes = w.finish().unwrap();
+        let bytes = w.finish(None).unwrap();
         let r = SegmentReader::open(&bytes).unwrap();
         // Read at cutoff before any version (50 < 100).
         let result = r.read_tile_as_of(1, 50, None).unwrap();
@@ -479,7 +563,7 @@ mod tests {
             .unwrap();
         w.append_sparse(TileId::new(1, 300), &make_sparse(&s, 3))
             .unwrap();
-        let bytes = w.finish().unwrap();
+        let bytes = w.finish(None).unwrap();
         let r = SegmentReader::open(&bytes).unwrap();
         let versions: Vec<_> = r
             .iter_tile_versions(1, i64::MAX)
@@ -499,7 +583,7 @@ mod tests {
             .unwrap();
         w.append_sparse(TileId::new(1, 300), &make_sparse(&s, 3))
             .unwrap();
-        let bytes = w.finish().unwrap();
+        let bytes = w.finish(None).unwrap();
         let r = SegmentReader::open(&bytes).unwrap();
         let versions: Vec<_> = r
             .iter_tile_versions(1, 250)
@@ -572,7 +656,7 @@ mod tests {
             .unwrap();
         w.append_sparse(TileId::new(1, 300), &make_sparse(&s, 3))
             .unwrap();
-        let bytes = w.finish().unwrap();
+        let bytes = w.finish(None).unwrap();
         let r = SegmentReader::open(&bytes).unwrap();
         // Read at cutoff exactly equal to v2's system_from_ms.
         let result = r.read_tile_as_of(1, 200, None).unwrap();
@@ -583,5 +667,91 @@ mod tests {
             }
             other => panic!("expected Some(Sparse), got {other:?}"),
         }
+    }
+
+    #[cfg(feature = "encryption")]
+    fn test_kek() -> nodedb_wal::crypto::WalEncryptionKey {
+        nodedb_wal::crypto::WalEncryptionKey::from_bytes(&[0xA1u8; 32]).unwrap()
+    }
+
+    #[cfg(feature = "encryption")]
+    fn write_plain(s: &crate::schema::ArraySchema, id: TileId) -> Vec<u8> {
+        let mut w = SegmentWriter::new(0xCAFE);
+        w.append_sparse(id, &make_sparse(s, 1)).unwrap();
+        w.finish(None).unwrap()
+    }
+
+    #[cfg(feature = "encryption")]
+    fn write_encrypted(s: &crate::schema::ArraySchema, id: TileId) -> Vec<u8> {
+        let kek = test_kek();
+        let mut w = SegmentWriter::new(0xCAFE);
+        w.append_sparse(id, &make_sparse(s, 1)).unwrap();
+        w.finish(Some(&kek)).unwrap()
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn array_segment_refuses_plaintext_with_kek() {
+        let s = schema();
+        let plain = write_plain(&s, TileId::snapshot(1));
+        let kek = test_kek();
+        let err = OwnedSegmentReader::open_with_kek(&plain, Some(&kek)).unwrap_err();
+        assert!(
+            matches!(err, crate::error::ArrayError::KekRequired),
+            "expected KekRequired, got {err:?}"
+        );
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn array_segment_refuses_encrypted_without_kek() {
+        let s = schema();
+        let encrypted = write_encrypted(&s, TileId::snapshot(1));
+        let err = OwnedSegmentReader::open_with_kek(&encrypted, None).unwrap_err();
+        assert!(
+            matches!(err, crate::error::ArrayError::MissingKek),
+            "expected MissingKek, got {err:?}"
+        );
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn array_segment_tampered_ciphertext_rejected() {
+        let s = schema();
+        let mut encrypted = write_encrypted(&s, TileId::snapshot(1));
+        // Flip a byte after the 16-byte preamble.
+        encrypted[nodedb_wal::crypto::SEGMENT_ENVELOPE_PREAMBLE_SIZE + 2] ^= 0xFF;
+        let kek = test_kek();
+        assert!(OwnedSegmentReader::open_with_kek(&encrypted, Some(&kek)).is_err());
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn array_segment_encrypted_at_rest() {
+        let s = schema();
+        let encrypted = write_encrypted(&s, TileId::snapshot(1));
+        // Encrypted blob must start with SEGA.
+        assert_eq!(&encrypted[..4], b"SEGA");
+        let kek = test_kek();
+        let owned = OwnedSegmentReader::open_with_kek(&encrypted, Some(&kek)).unwrap();
+        let reader = owned.reader();
+        assert_eq!(reader.tile_count(), 1);
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn array_segment_handle_decrypts_into_owned_buffer() {
+        let s = schema();
+        let kek = test_kek();
+        let mut w = SegmentWriter::new(0x1234);
+        w.append_sparse(TileId::new(1, 100), &make_sparse(&s, 1))
+            .unwrap();
+        w.append_sparse(TileId::new(2, 200), &make_sparse(&s, 2))
+            .unwrap();
+        let encrypted = w.finish(Some(&kek)).unwrap();
+        let owned = OwnedSegmentReader::open_with_kek(&encrypted, Some(&kek)).unwrap();
+        let reader = owned.reader();
+        assert_eq!(reader.tile_count(), 2);
+        assert_eq!(reader.tiles()[0].tile_id, TileId::new(1, 100));
     }
 }

@@ -357,7 +357,7 @@ mod tests {
         for (id, tile) in pairs {
             w.append_sparse(id, &tile).unwrap();
         }
-        w.finish().unwrap()
+        w.finish(None).unwrap()
     }
 
     /// Build a single-row Live SparseTile at coord `x` with value `v`.

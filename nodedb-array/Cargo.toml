@@ -11,6 +11,7 @@ homepage.workspace = true
 
 [features]
 default = []
+encryption = ["dep:nodedb-wal"]
 test-utils = []
 
 [dependencies]
@@ -23,6 +24,7 @@ tracing = { workspace = true }
 crc32c = { workspace = true }
 uuid = { workspace = true }
 loro = { workspace = true }
+nodedb-wal = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

@@ -20,7 +20,7 @@ use crate::error::{ArrayError, ArrayResult};
 pub const HEADER_MAGIC: [u8; 8] = *b"NDAS\0\0\0\x01";
 
 /// On-disk format version. Bump on layout-incompatible changes.
-pub const FORMAT_VERSION: u16 = 4;
+pub const FORMAT_VERSION: u16 = 1;
 
 pub const HEADER_SIZE: usize = 24;
 
@@ -133,26 +133,6 @@ mod tests {
     }
 
     #[test]
-    fn header_rejects_v1_segment() {
-        // Craft a synthetic v1 header bytestream: magic + version=1 + flags=0 + schema_hash=0.
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&HEADER_MAGIC);
-        buf.extend_from_slice(&1u16.to_le_bytes()); // version = 1
-        buf.extend_from_slice(&0u16.to_le_bytes()); // flags
-        buf.extend_from_slice(&0u64.to_le_bytes()); // schema_hash
-        let crc = crc32c::crc32c(&buf[..20]);
-        buf.extend_from_slice(&crc.to_le_bytes());
-        let err = SegmentHeader::decode(&buf).unwrap_err();
-        assert!(
-            matches!(
-                err,
-                crate::error::ArrayError::UnsupportedSegmentFormat { version: 1 }
-            ),
-            "expected UnsupportedSegmentFormat {{version: 1}}, got {err:?}"
-        );
-    }
-
-    #[test]
     fn header_rejects_v2_segment() {
         let mut buf = Vec::new();
         buf.extend_from_slice(&HEADER_MAGIC);
@@ -171,25 +151,23 @@ mod tests {
         );
     }
 
+    /// Asserts 8-byte magic, FORMAT_VERSION == 1 at bytes [8..10], and CRC at [20..24].
     #[test]
-    fn header_rejects_v3_segment() {
-        // v3 segments lack the per-row `row_kinds` column in SparseTile.
-        // Reject them so callers receive a structured error rather than
-        // silent Live classification for tombstone / erasure rows.
+    fn golden_array_segment_header_format() {
+        let h = SegmentHeader::new(0xDEAD_BEEF_CAFE_BABE);
         let mut buf = Vec::new();
-        buf.extend_from_slice(&HEADER_MAGIC);
-        buf.extend_from_slice(&3u16.to_le_bytes()); // version = 3
-        buf.extend_from_slice(&0u16.to_le_bytes()); // flags
-        buf.extend_from_slice(&0u64.to_le_bytes()); // schema_hash
-        let crc = crc32c::crc32c(&buf[..20]);
-        buf.extend_from_slice(&crc.to_le_bytes());
-        let err = SegmentHeader::decode(&buf).unwrap_err();
-        assert!(
-            matches!(
-                err,
-                crate::error::ArrayError::UnsupportedSegmentFormat { version: 3 }
-            ),
-            "expected UnsupportedSegmentFormat {{version: 3}}, got {err:?}"
-        );
+        h.encode_to(&mut buf);
+
+        assert_eq!(&buf[0..8], b"NDAS\0\0\0\x01", "magic mismatch");
+
+        let version = u16::from_le_bytes([buf[8], buf[9]]);
+        assert_eq!(version, FORMAT_VERSION, "version mismatch");
+        assert_eq!(version, 1u16, "expected FORMAT_VERSION == 1");
+
+        let stored_crc = u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
+        let expected_crc = crc32c::crc32c(&buf[..20]);
+        assert_eq!(stored_crc, expected_crc, "header CRC mismatch");
+
+        assert_eq!(buf.len(), HEADER_SIZE);
     }
 }

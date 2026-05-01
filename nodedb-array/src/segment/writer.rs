@@ -83,7 +83,15 @@ impl SegmentWriter {
 
     /// Finalise the segment by appending the footer + trailer. Consumes
     /// the writer and returns the complete byte vector.
-    pub fn finish(mut self) -> ArrayResult<Vec<u8>> {
+    ///
+    /// When `kek` is `Some`, the assembled plaintext buffer is wrapped in an
+    /// AES-256-GCM `SEGA` envelope before being returned. When `None`, the
+    /// raw `NDAS` segment bytes are returned.
+    pub fn finish(
+        mut self,
+        #[cfg(feature = "encryption")] kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+        #[cfg(not(feature = "encryption"))] _kek: Option<&[u8; 32]>,
+    ) -> ArrayResult<Vec<u8>> {
         if self.finished {
             return Err(ArrayError::SegmentCorruption {
                 detail: "SegmentWriter::finish called twice".into(),
@@ -92,6 +100,12 @@ impl SegmentWriter {
         let footer = SegmentFooter::new(self.schema_hash, std::mem::take(&mut self.entries));
         footer.encode_to(&mut self.buf)?;
         self.finished = true;
+
+        #[cfg(feature = "encryption")]
+        if let Some(key) = kek {
+            return super::encrypt::encrypt_segment(key, &self.buf);
+        }
+
         Ok(self.buf)
     }
 
@@ -110,6 +124,14 @@ mod tests {
     use crate::types::cell_value::value::CellValue;
     use crate::types::coord::value::CoordValue;
     use crate::types::domain::{Domain, DomainBound};
+
+    /// Finish a writer without encryption — convenience for existing tests.
+    fn finish_plain(w: SegmentWriter) -> crate::error::ArrayResult<Vec<u8>> {
+        #[cfg(feature = "encryption")]
+        return w.finish(None);
+        #[cfg(not(feature = "encryption"))]
+        return w.finish(None);
+    }
 
     fn schema() -> crate::schema::ArraySchema {
         ArraySchemaBuilder::new("g")
@@ -152,7 +174,7 @@ mod tests {
             .unwrap();
         w.append_sparse(TileId::snapshot(2), &sparse_tile(&s))
             .unwrap();
-        let bytes = w.finish().unwrap();
+        let bytes = finish_plain(w).unwrap();
         let footer = SegmentFooter::decode(&bytes).unwrap();
         assert_eq!(footer.schema_hash, 0x1234);
         assert_eq!(footer.tiles.len(), 2);
@@ -163,7 +185,7 @@ mod tests {
     #[test]
     fn writer_emits_header_first() {
         let w = SegmentWriter::new(0xAA);
-        let bytes = w.finish().unwrap();
+        let bytes = finish_plain(w).unwrap();
         let h = SegmentHeader::decode(&bytes).unwrap();
         assert_eq!(h.schema_hash, 0xAA);
     }
@@ -191,10 +213,109 @@ mod tests {
             .unwrap();
         w.append_sparse(TileId::new(5, 200), &sparse_tile(&s))
             .unwrap();
-        let bytes = w.finish().unwrap();
+        let bytes = finish_plain(w).unwrap();
         let footer = SegmentFooter::decode(&bytes).unwrap();
         assert_eq!(footer.tiles.len(), 2);
         assert_eq!(footer.tiles[0].tile_id, TileId::new(5, 100));
         assert_eq!(footer.tiles[1].tile_id, TileId::new(5, 200));
+    }
+
+    #[cfg(feature = "encryption")]
+    fn test_kek() -> nodedb_wal::crypto::WalEncryptionKey {
+        nodedb_wal::crypto::WalEncryptionKey::from_bytes(&[0x42u8; 32]).unwrap()
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn array_segment_encrypted_at_rest() {
+        let s = schema();
+        let mut w = SegmentWriter::new(0xCAFE);
+        w.append_sparse(TileId::snapshot(1), &sparse_tile(&s))
+            .unwrap();
+        let kek = test_kek();
+        let bytes = w.finish(Some(&kek)).unwrap();
+        // Output must start with SEGA, not NDAS.
+        assert_eq!(&bytes[..4], b"SEGA");
+        // Must not start with plaintext NDAS magic.
+        assert_ne!(&bytes[..4], b"NDAS");
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn array_segment_refuses_plaintext_with_kek() {
+        // Write an encrypted segment, then verify the reader rejects it
+        // when presented without a KEK.
+        let s = schema();
+        let mut w = SegmentWriter::new(0xBEEF);
+        w.append_sparse(TileId::snapshot(1), &sparse_tile(&s))
+            .unwrap();
+        let kek = test_kek();
+        let encrypted = w.finish(Some(&kek)).unwrap();
+        // Attempt to open without KEK — must return MissingKek.
+        let err = super::super::reader::SegmentReader::open_with_kek(&encrypted, None).unwrap_err();
+        assert!(
+            matches!(err, crate::error::ArrayError::MissingKek),
+            "expected MissingKek, got {err:?}"
+        );
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn array_segment_refuses_encrypted_without_kek() {
+        // Write a plaintext segment, then verify the reader rejects it
+        // when presented with a KEK (encryption enforcement).
+        let s = schema();
+        let mut w = SegmentWriter::new(0xDEAD);
+        w.append_sparse(TileId::snapshot(1), &sparse_tile(&s))
+            .unwrap();
+        let plaintext = w.finish(None).unwrap();
+        let kek = test_kek();
+        // Attempt to open plaintext with KEK — must return KekRequired.
+        let err =
+            super::super::reader::SegmentReader::open_with_kek(&plaintext, Some(&kek)).unwrap_err();
+        assert!(
+            matches!(err, crate::error::ArrayError::KekRequired),
+            "expected KekRequired, got {err:?}"
+        );
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn array_segment_handle_decrypts_into_owned_buffer() {
+        // Encrypt a multi-tile segment and round-trip it through the full
+        // SegmentReader::open_with_kek path.
+        let s = schema();
+        let mut w = SegmentWriter::new(0x1234);
+        w.append_sparse(TileId::new(1, 100), &sparse_tile(&s))
+            .unwrap();
+        w.append_sparse(TileId::new(2, 200), &sparse_tile(&s))
+            .unwrap();
+        let kek = test_kek();
+        let encrypted = w.finish(Some(&kek)).unwrap();
+        let owned = super::super::reader::OwnedSegmentReader::open_with_kek(&encrypted, Some(&kek))
+            .unwrap();
+        let reader = owned.reader();
+        assert_eq!(reader.tile_count(), 2);
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn array_segment_encrypted_roundtrip_multiple_tiles() {
+        let s = schema();
+        let mut w = SegmentWriter::new(0xABCD);
+        for i in 1u64..=5 {
+            w.append_sparse(TileId::new(i, i as i64 * 100), &sparse_tile(&s))
+                .unwrap();
+        }
+        let kek = test_kek();
+        let encrypted = w.finish(Some(&kek)).unwrap();
+        let owned = super::super::reader::OwnedSegmentReader::open_with_kek(&encrypted, Some(&kek))
+            .unwrap();
+        let reader = owned.reader();
+        assert_eq!(reader.tile_count(), 5);
+        for idx in 0..5 {
+            let tile = reader.read_tile(idx).unwrap();
+            assert!(matches!(tile, super::super::reader::TilePayload::Sparse(_)));
+        }
     }
 }
