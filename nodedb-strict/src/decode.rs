@@ -255,10 +255,17 @@ impl TupleDecoder {
     /// Decode a tuple written with an older schema version.
     ///
     /// Columns present in the old schema are extracted normally. Columns added
-    /// in newer schema versions return their default value or null.
+    /// in newer schema versions return their declared default value, or
+    /// `Value::Null` for nullable columns without a default.
     ///
     /// `old_col_count` is the number of columns in the schema version that
     /// wrote this tuple.
+    ///
+    /// Correctness invariant: a non-nullable column added via
+    /// `ALTER ADD COLUMN ... NOT NULL DEFAULT <expr>` will always return the
+    /// materialized default, never `Value::Null`. The ALTER path rejects
+    /// `NOT NULL` without a `DEFAULT`, so every non-nullable column in the
+    /// schema must have `col.default` populated.
     pub fn extract_value_versioned(
         &self,
         tuple: &[u8],
@@ -268,16 +275,15 @@ impl TupleDecoder {
         self.check_bounds(col_idx)?;
 
         if col_idx >= old_col_count {
-            // Column was added after this tuple was written.
-            // Return default or null.
+            // Column was added after this tuple was written: materialize the
+            // declared default, or null for nullable columns without a default.
             let col = &self.schema.columns[col_idx];
-            return if col.nullable {
-                Ok(Value::Null)
-            } else {
-                // Non-nullable column added later must have a default.
-                // Return null as a sentinel — the write path enforces defaults.
-                Ok(Value::Null)
-            };
+            let value = col
+                .default
+                .as_deref()
+                .map(nodedb_types::columnar::StrictSchema::parse_default_literal)
+                .unwrap_or(Value::Null);
+            return Ok(value);
         }
 
         self.extract_value(tuple, col_idx)
@@ -818,5 +824,138 @@ mod tests {
         } else {
             panic!("expected array");
         }
+    }
+
+    /// Build a two-column "base" schema (id INT64, name TEXT) encoded as a
+    /// tuple, then decode it against a four-column "current" schema that added
+    /// two columns via ALTER.
+    fn base_schema() -> StrictSchema {
+        StrictSchema::new(vec![
+            ColumnDef::required("id", ColumnType::Int64).with_primary_key(),
+            ColumnDef::required("name", ColumnType::String),
+        ])
+        .unwrap()
+    }
+
+    fn base_tuple() -> Vec<u8> {
+        TupleEncoder::new(&base_schema())
+            .encode(&[Value::Integer(7), Value::String("Alice".into())])
+            .unwrap()
+    }
+
+    #[test]
+    fn versioned_int_default_zero_not_null() {
+        // Schema gained a NOT NULL column with DEFAULT 0.
+        let mut schema = base_schema();
+        let mut col = ColumnDef::required("score", ColumnType::Int64).with_default("0");
+        col.added_at_version = 2;
+        schema.columns.push(col);
+        schema.version = 2;
+
+        let decoder = TupleDecoder::new(&schema);
+        let tuple = base_tuple();
+
+        // Column 2 (score) did not exist when the tuple was written (old_col_count=2).
+        let val = decoder.extract_value_versioned(&tuple, 2, 2).unwrap();
+        assert_eq!(val, Value::Integer(0), "expected default 0, not null");
+    }
+
+    #[test]
+    fn versioned_text_default_pending_not_null() {
+        // Schema gained a NOT NULL TEXT column with DEFAULT 'pending'.
+        let mut schema = base_schema();
+        let mut col = ColumnDef::required("status", ColumnType::String).with_default("'pending'");
+        col.added_at_version = 2;
+        schema.columns.push(col);
+        schema.version = 2;
+
+        let decoder = TupleDecoder::new(&schema);
+        let tuple = base_tuple();
+
+        let val = decoder.extract_value_versioned(&tuple, 2, 2).unwrap();
+        assert_eq!(
+            val,
+            Value::String("pending".into()),
+            "expected default 'pending', not null"
+        );
+    }
+
+    #[test]
+    fn versioned_new_row_written_at_new_schema_no_double_default() {
+        // A tuple written under the new schema already has the column encoded;
+        // extract_value_versioned must read the real encoded value, not the default.
+        let mut schema = base_schema();
+        let mut col = ColumnDef::required("score", ColumnType::Int64).with_default("0");
+        col.added_at_version = 2;
+        schema.columns.push(col);
+        schema.version = 2;
+
+        let encoder = TupleEncoder::new(&schema);
+        let tuple = encoder
+            .encode(&[
+                Value::Integer(42),
+                Value::String("Bob".into()),
+                Value::Integer(99),
+            ])
+            .unwrap();
+
+        let decoder = TupleDecoder::new(&schema);
+        // All three columns were present when this tuple was written.
+        let val = decoder.extract_value_versioned(&tuple, 2, 3).unwrap();
+        assert_eq!(
+            val,
+            Value::Integer(99),
+            "must read encoded value, not default"
+        );
+    }
+
+    #[test]
+    fn versioned_multiple_alters_accumulate() {
+        // V0 (2 cols) → V1 adds `a INT64 DEFAULT 10` → V2 adds `b TEXT DEFAULT 'x'`.
+        // A V0 tuple must read defaults for both `a` and `b`.
+        let mut schema = base_schema();
+
+        let mut col_a = ColumnDef::required("a", ColumnType::Int64).with_default("10");
+        col_a.added_at_version = 2;
+        schema.columns.push(col_a);
+        schema.version = 2;
+
+        let mut col_b = ColumnDef::required("b", ColumnType::String).with_default("'x'");
+        col_b.added_at_version = 3;
+        schema.columns.push(col_b);
+        schema.version = 3;
+
+        let decoder = TupleDecoder::new(&schema);
+        let tuple = base_tuple(); // written at V1 (2 cols)
+
+        let a = decoder.extract_value_versioned(&tuple, 2, 2).unwrap();
+        assert_eq!(a, Value::Integer(10), "a default must be 10");
+
+        let b = decoder.extract_value_versioned(&tuple, 3, 2).unwrap();
+        assert_eq!(b, Value::String("x".into()), "b default must be 'x'");
+
+        // Original columns still decode correctly.
+        let id = decoder.extract_value_versioned(&tuple, 0, 2).unwrap();
+        assert_eq!(id, Value::Integer(7));
+    }
+
+    #[test]
+    fn versioned_nullable_column_no_default_returns_null() {
+        // A nullable column with no default must return null (not an error).
+        let mut schema = base_schema();
+        let mut col = ColumnDef::nullable("note", ColumnType::String);
+        col.added_at_version = 2;
+        schema.columns.push(col);
+        schema.version = 2;
+
+        let decoder = TupleDecoder::new(&schema);
+        let tuple = base_tuple();
+
+        let val = decoder.extract_value_versioned(&tuple, 2, 2).unwrap();
+        assert_eq!(
+            val,
+            Value::Null,
+            "nullable column without default must be null"
+        );
     }
 }
