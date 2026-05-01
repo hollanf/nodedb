@@ -2,7 +2,7 @@
 
 use super::types::{
     DEFAULT_MAX_SECTION_BYTES, DEFAULT_MAX_TOTAL_BYTES, HEADER_LEN, MAGIC, SECTION_OVERHEAD,
-    TRAILER_LEN, VERSION_PLAIN,
+    TRAILER_LEN, VERSION,
 };
 use super::types::{EnvelopeError, EnvelopeMeta, Section};
 
@@ -60,12 +60,7 @@ impl EnvelopeWriter {
     /// Finalize without encryption. Produces a version-1 envelope.
     pub fn finalize(self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.framed_size as usize);
-        write_header(
-            &mut out,
-            &self.meta,
-            self.sections.len() as u16,
-            VERSION_PLAIN,
-        );
+        write_header(&mut out, &self.meta, self.sections.len() as u16, VERSION);
         for section in &self.sections {
             write_section(&mut out, section);
         }

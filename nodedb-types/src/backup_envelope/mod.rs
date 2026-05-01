@@ -8,7 +8,7 @@ pub use read::parse;
 pub use types::{
     DEFAULT_MAX_SECTION_BYTES, DEFAULT_MAX_TOTAL_BYTES, HEADER_LEN, MAGIC,
     SECTION_ORIGIN_CATALOG_ROWS, SECTION_ORIGIN_SOURCE_TOMBSTONES, SECTION_OVERHEAD, TRAILER_LEN,
-    VERSION_ENCRYPTED, VERSION_PLAIN,
+    VERSION,
 };
 pub use types::{
     Envelope, EnvelopeError, EnvelopeMeta, Section, SourceTombstoneEntry, StoredCollectionBlob,

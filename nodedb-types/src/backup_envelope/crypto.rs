@@ -1,6 +1,6 @@
-//! Per-backup DEK + KEK wrapping for encrypted backup envelopes (version 2).
+//! Per-backup DEK + KEK wrapping for encrypted backup envelopes.
 //!
-//! ## Wire layout after the 52-byte HEADER (version byte = 2):
+//! ## Wire layout after the 52-byte HEADER (version byte = 1):
 //!
 //! ```text
 //! ┌─ CRYPTO BLOCK (68 bytes) ──────────────────────────────────────────────┐
@@ -51,7 +51,7 @@ use aes_gcm::aead::{Aead, KeyInit};
 use sha2::{Digest, Sha256};
 
 use super::types::{Envelope, EnvelopeError, EnvelopeMeta, Section, read2, read4, read8};
-use super::types::{HEADER_LEN, MAGIC, TRAILER_LEN, VERSION_ENCRYPTED};
+use super::types::{HEADER_LEN, MAGIC, TRAILER_LEN, VERSION};
 use super::write::{EnvelopeWriter, write_header};
 
 /// Size of the crypto block inserted after the header in version-2 envelopes.
@@ -115,7 +115,7 @@ fn aes_decrypt(
 // ── EnvelopeWriter extension ─────────────────────────────────────────────────
 
 impl EnvelopeWriter {
-    /// Finalize with encryption. Produces a version-2 envelope.
+    /// Finalize with encryption. Produces a version-1 encrypted envelope.
     ///
     /// - Generates a random 32-byte DEK via `getrandom`.
     /// - Wraps the DEK with the KEK using AES-256-GCM (random 12-byte nonce).
@@ -150,13 +150,8 @@ impl EnvelopeWriter {
 
         let mut out = Vec::with_capacity(total_size);
 
-        // Header (version 2).
-        write_header(
-            &mut out,
-            &self.meta,
-            self.sections.len() as u16,
-            VERSION_ENCRYPTED,
-        );
+        // Header.
+        write_header(&mut out, &self.meta, self.sections.len() as u16, VERSION);
 
         // Crypto block.
         out.extend_from_slice(&fingerprint);
@@ -183,7 +178,7 @@ impl EnvelopeWriter {
 
 // ── Decryption ────────────────────────────────────────────────────────────────
 
-/// Parse and decrypt a version-2 encrypted envelope.
+/// Parse and decrypt an encrypted backup envelope (version 1 with crypto block).
 ///
 /// Verifies the KEK fingerprint before attempting decryption, surfacing
 /// [`EnvelopeError::WrongBackupKek`] when the presented key does not match
@@ -209,7 +204,7 @@ pub fn parse_encrypted(
         return Err(EnvelopeError::BadMagic);
     }
     let version = header_bytes[4];
-    if version != VERSION_ENCRYPTED {
+    if version != VERSION {
         return Err(EnvelopeError::UnsupportedVersion(version));
     }
 

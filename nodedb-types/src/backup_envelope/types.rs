@@ -4,10 +4,10 @@ use thiserror::Error;
 
 pub const MAGIC: &[u8; 4] = b"NDBB";
 
-/// Version 1: original format (no encryption).
-pub const VERSION_PLAIN: u8 = 1;
-/// Version 2: per-backup DEK wrapped by a backup KEK (AES-256-GCM).
-pub const VERSION_ENCRYPTED: u8 = 2;
+/// Backup envelope version stamped in byte 4 of every envelope header.
+/// Both plaintext and encrypted envelopes use version 1; the presence
+/// of the crypto block (68 bytes after the header) distinguishes them.
+pub const VERSION: u8 = 1;
 
 /// Header is fixed-size — 52 bytes (48 framed + 4 crc).
 ///

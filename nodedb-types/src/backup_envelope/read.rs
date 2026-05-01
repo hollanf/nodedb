@@ -1,12 +1,12 @@
 //! `parse` — decode and fully validate a plaintext backup envelope.
 
 use super::types::{Envelope, EnvelopeError, EnvelopeMeta, Section, read2, read4, read8};
-use super::types::{HEADER_LEN, MAGIC, SECTION_OVERHEAD, TRAILER_LEN, VERSION_PLAIN};
+use super::types::{HEADER_LEN, MAGIC, SECTION_OVERHEAD, TRAILER_LEN, VERSION};
 
-/// Parse and fully validate an unencrypted (version 1) envelope.
+/// Parse and fully validate a plaintext backup envelope.
 ///
-/// Rejects encrypted envelopes with [`EnvelopeError::UnsupportedVersion`].
-/// Use [`crate::backup_envelope::parse_encrypted`] for version-2 envelopes.
+/// Rejects bytes that do not carry version 1 in the header.
+/// Use [`crate::backup_envelope::parse_encrypted`] for encrypted envelopes.
 pub fn parse(bytes: &[u8], max_total: u64) -> Result<Envelope, EnvelopeError> {
     if bytes.len() as u64 > max_total {
         return Err(EnvelopeError::OverSizeTotal { cap: max_total });
@@ -21,7 +21,7 @@ pub fn parse(bytes: &[u8], max_total: u64) -> Result<Envelope, EnvelopeError> {
         return Err(EnvelopeError::BadMagic);
     }
     let version = header_bytes[4];
-    if version != VERSION_PLAIN {
+    if version != VERSION {
         return Err(EnvelopeError::UnsupportedVersion(version));
     }
 
@@ -257,5 +257,27 @@ mod tests {
         let bytes = w.finalize();
         let truncated = &bytes[..bytes.len() - 8];
         assert!(parse(truncated, DEFAULT_MAX_TOTAL_BYTES).is_err());
+    }
+
+    /// Asserts `NDBB` magic at [0..4], VERSION == 1 at [4], and that the
+    /// header CRC at [48..52] covers header bytes [0..48].
+    #[test]
+    fn golden_backup_envelope_format() {
+        use crate::backup_envelope::types::{HEADER_LEN, MAGIC, VERSION};
+
+        let bytes = EnvelopeWriter::new(meta()).finalize();
+
+        // Magic at [0..4].
+        assert_eq!(&bytes[0..4], MAGIC.as_slice(), "magic mismatch");
+
+        // VERSION == 1 at [4].
+        assert_eq!(bytes[4], VERSION, "version mismatch");
+        assert_eq!(bytes[4], 1u8, "expected VERSION == 1");
+
+        // Header CRC at [48..52] covers [0..48].
+        assert!(bytes.len() >= HEADER_LEN, "envelope too short for header");
+        let stored_crc = u32::from_le_bytes([bytes[48], bytes[49], bytes[50], bytes[51]]);
+        let recomputed = crc32c::crc32c(&bytes[..48]);
+        assert_eq!(stored_crc, recomputed, "header CRC mismatch");
     }
 }
