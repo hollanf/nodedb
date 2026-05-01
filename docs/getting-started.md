@@ -60,7 +60,7 @@ The container entrypoint runs as root just long enough to fix ownership on the d
 ### Verify it's running
 
 ```bash
-curl http://localhost:6480/health
+curl http://localhost:6480/healthz
 # {"status":"ok", ...}
 ```
 
@@ -320,13 +320,13 @@ SELECT name, email FROM users WHERE age > 25;
 
 ```sql
 -- Create a strict collection with a defined schema
-CREATE COLLECTION orders TYPE DOCUMENT STRICT (
+CREATE COLLECTION orders (
     id TEXT PRIMARY KEY,
     customer_id TEXT,
     total FLOAT,
     status TEXT,
     created_at TIMESTAMP
-);
+) WITH (engine='document_strict');
 
 INSERT INTO orders (id, customer_id, total, status)
 VALUES ('o1', 'u1', 99.99, 'pending');
@@ -377,7 +377,7 @@ GRAPH ALGO PAGERANK ON social DAMPING 0.85 ITERATIONS 20 TOLERANCE 1e-7;
 
 ```sql
 -- Create a KV collection
-CREATE COLLECTION sessions TYPE KEY_VALUE (key TEXT PRIMARY KEY);
+CREATE COLLECTION sessions (key TEXT PRIMARY KEY) WITH (engine='kv');
 
 -- Set a key-value pair (standard SQL)
 INSERT INTO sessions (key, value) VALUES ('sess_abc', 'token-abc');
@@ -390,16 +390,16 @@ SELECT * FROM sessions WHERE key = 'sess_abc';
 
 ### Columnar (Analytics)
 
-Columnar collections store data in compressed columns with block-level skip. Three variants are available via column modifiers and the `WITH` clause:
+Columnar storage compresses by column with block-level skip. Three peer engines share the same storage core: `columnar` (general analytics), `timeseries` (append-only time data), and `spatial` (geo-primary).
 
 ```sql
 -- Plain columnar: general analytics
-CREATE COLLECTION web_events TYPE COLUMNAR (
+CREATE COLLECTION web_events (
     ts TIMESTAMP,
     user_id UUID,
     page VARCHAR,
     duration_ms INT
-);
+) WITH (engine='columnar');
 
 SELECT page, AVG(duration_ms), COUNT(*)
 FROM web_events
@@ -407,14 +407,14 @@ WHERE ts > now() - INTERVAL '7 days'
 GROUP BY page
 ORDER BY COUNT(*) DESC;
 
--- Timeseries profile: TIME_KEY column drives partition-by-time and block skip
-CREATE COLLECTION cpu_metrics TYPE COLUMNAR (
+-- Timeseries: TIME_KEY column drives partition-by-time and block skip
+CREATE COLLECTION cpu_metrics (
     ts TIMESTAMP TIME_KEY,
     host VARCHAR,
     cpu FLOAT
-) WITH profile = 'timeseries', partition_by = '1h';
+) WITH (engine='timeseries', partition_by='1h');
 
--- CREATE TIMESERIES is a convenience alias for the timeseries profile
+-- CREATE TIMESERIES is a convenience alias equivalent to engine='timeseries'
 -- CREATE TIMESERIES cpu_metrics;
 
 SELECT time_bucket('5 minutes', ts) AS bucket, host, AVG(cpu)
@@ -422,11 +422,11 @@ FROM cpu_metrics
 WHERE ts > now() - INTERVAL '1 hour'
 GROUP BY bucket, host;
 
--- Spatial profile: SPATIAL_INDEX column gets an automatic R*-tree
-CREATE COLLECTION locations TYPE COLUMNAR (
+-- Spatial: SPATIAL_INDEX column gets an automatic R*-tree
+CREATE COLLECTION locations (
     geom GEOMETRY SPATIAL_INDEX,
     name VARCHAR
-);
+) WITH (engine='spatial');
 
 SELECT name, ST_Distance(geom, ST_Point(-73.98, 40.75)) AS dist
 FROM locations

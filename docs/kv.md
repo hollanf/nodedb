@@ -37,10 +37,10 @@ NodeDB's KV engine eliminates this:
 
 ```sql
 -- Create a KV collection (minimal form — value is a schemaless blob by default)
-CREATE COLLECTION sessions TYPE KEY_VALUE (key TEXT PRIMARY KEY);
+CREATE COLLECTION sessions (key TEXT PRIMARY KEY) WITH (engine='kv');
 
 -- Extra columns are optional typed value fields (for secondary indexes and field-level access)
--- CREATE COLLECTION sessions TYPE KEY_VALUE (key TEXT PRIMARY KEY, user_id TEXT, role TEXT, ttl INT);
+-- CREATE COLLECTION sessions (key TEXT PRIMARY KEY, user_id TEXT, role TEXT, ttl INT) WITH (engine='kv');
 
 -- Set with TTL (seconds)
 INSERT INTO sessions { key: 'sess_abc123', user_id: 'alice', role: 'admin', ttl: 3600 };

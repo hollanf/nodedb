@@ -18,7 +18,7 @@ CREATE COLLECTION eval_metrics (
     ndcg_10     FLOAT,
     latency_ms  FLOAT,
     doc_count   INT
-) WITH (storage = 'columnar', profile = 'timeseries', partition_by = '1d', retention = '365d');
+) WITH (engine='timeseries', partition_by='1d', retention='365d');
 
 -- Log evaluation results (your eval harness inserts these)
 INSERT INTO eval_metrics VALUES (
@@ -93,7 +93,7 @@ CREATE COLLECTION model_perf (
     token_count INT,
     score       FLOAT,
     error       BOOLEAN
-) WITH (storage = 'columnar', profile = 'timeseries', partition_by = '1h', retention = '90d');
+) WITH (engine='timeseries', partition_by='1h', retention='90d');
 
 -- Continuous aggregation: 5-minute rollups for dashboards
 CREATE CONTINUOUS AGGREGATE model_perf_5m

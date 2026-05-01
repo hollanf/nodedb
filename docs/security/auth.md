@@ -43,7 +43,7 @@ DROP API KEY 'my-service';
 Use in HTTP requests:
 
 ```bash
-curl -H "Authorization: Bearer <api-key>" http://localhost:6480/query
+curl -H "Authorization: Bearer <api-key>" http://localhost:6480/v1/query
 ```
 
 ## JWKS (JWT Auto-Discovery)

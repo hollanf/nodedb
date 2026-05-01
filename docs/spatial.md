@@ -26,13 +26,13 @@ Spatial is a **columnar profile**. Collections with a `SPATIAL_INDEX` column mod
 ## Examples
 
 ```sql
--- Create a columnar collection with an automatic R*-tree on the geometry column
-CREATE COLLECTION restaurants TYPE COLUMNAR (
+-- Spatial peer engine with automatic R*-tree on the geometry column
+CREATE COLLECTION restaurants (
     location GEOMETRY SPATIAL_INDEX,
     name VARCHAR,
     cuisine VARCHAR,
     rating FLOAT
-);
+) WITH (engine='spatial');
 
 -- Alternatively, add a spatial index to a document collection
 CREATE COLLECTION restaurants;
@@ -75,24 +75,24 @@ FROM restaurants r, delivery_zones z
 WHERE ST_Contains(z.boundary, r.location);
 ```
 
-## Spatial as a Columnar Profile
+## Spatial as a Peer Engine
 
-The `SPATIAL_INDEX` column modifier designates a geometry column for automatic R\*-tree indexing. Use the unified `CREATE COLLECTION` DDL:
+The `SPATIAL_INDEX` column modifier designates a geometry column for automatic R\*-tree indexing. Spatial is a peer engine alongside columnar, timeseries, and the rest:
 
 ```sql
--- Spatial columnar collection
-CREATE COLLECTION locations TYPE COLUMNAR (
+-- Spatial peer engine
+CREATE COLLECTION locations (
     geom GEOMETRY SPATIAL_INDEX,
     name VARCHAR
-);
+) WITH (engine='spatial');
 
--- Combine with TIME_KEY for fleet tracking or IoT
-CREATE COLLECTION fleet_positions TYPE COLUMNAR (
+-- Combine with TIME_KEY for fleet tracking or IoT (timeseries engine + spatial column)
+CREATE COLLECTION fleet_positions (
     ts TIMESTAMP TIME_KEY,
     vehicle_id VARCHAR,
     position GEOMETRY SPATIAL_INDEX,
     speed FLOAT
-) WITH profile = 'timeseries', partition_by = '1d';
+) WITH (engine='timeseries', partition_by='1d');
 ```
 
 **Query execution model:**
@@ -113,7 +113,7 @@ ORDER BY dist;
 
 ## Temporal Spatial Queries
 
-The Spatial engine is an index. It points at records; it does not carry temporal columns itself. To query geometry at a point in time, attach a Spatial index to a Document collection that has `bitemporal = true`. The Document collection holds the geometry column and temporal columns; the R*-tree narrows candidates by location; `AS OF` filtering happens at the Document layer.
+The Spatial engine is an index. It points at records; it does not carry temporal columns itself. To query geometry at a point in time, attach a Spatial index to a Document collection that has `bitemporal = true`. The Document collection holds the geometry column and temporal columns; the R\*-tree narrows candidates by location; `AS OF` filtering happens at the Document layer.
 
 See [Bitemporal Queries — Bitemporal Spatial Queries](bitemporal.md#bitemporal-spatial-queries) for a worked example.
 

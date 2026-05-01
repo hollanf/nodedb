@@ -115,7 +115,7 @@ See [NodeDB-Lite](https://github.com/NodeDB-Lab/nodedb-lite) for platform detail
 
 ## Key Features
 
-**Write-time validation** -- Typeguards enforce types, required fields, CHECK constraints, and DEFAULT/VALUE expressions on schemaless collections. Graduate to strict schema with `CONVERT COLLECTION x TO strict`.
+**Write-time validation** -- Typeguards enforce types, required fields, CHECK constraints, and DEFAULT/VALUE expressions on schemaless collections. Graduate to strict schema with `CONVERT COLLECTION x TO document_strict`.
 
 **Bitemporal queries** -- System time (audit trail) and valid time (temporal semantics) across all engines. Query data as it existed in the past, or as it was valid on a past date. GDPR-compliant tile purge on array engine.
 

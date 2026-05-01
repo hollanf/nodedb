@@ -72,7 +72,7 @@ INSERT INTO users { id: 'u4', email: 'z@w.com', extra_field: 'anything' };
 - **CHECK** — SQL boolean expression validated at write time
 - **REQUIRED** — field must be present and non-null
 - **VALIDATE** — scan existing data for violations without blocking writes
-- **CONVERT TO strict** — typeguard fields become schema columns, CHECK constraints carry over
+- **CONVERT TO document_strict** — typeguard fields become schema columns, CHECK constraints carry over
 
 ```sql
 -- Modify guards
@@ -87,7 +87,7 @@ SHOW CONSTRAINTS ON users;
 VALIDATE TYPEGUARD ON users;
 
 -- Graduate to strict schema
-CONVERT COLLECTION users TO strict;
+CONVERT COLLECTION users TO document_strict;
 ```
 
 ## Strict Documents
@@ -113,13 +113,13 @@ Schema-enforced documents stored as Binary Tuples with O(1) field extraction. Th
 ### Examples
 
 ```sql
-CREATE COLLECTION orders TYPE DOCUMENT STRICT (
+CREATE COLLECTION orders (
     id UUID DEFAULT gen_uuid_v7(),
     customer_id UUID NOT NULL,
     total DECIMAL NOT NULL,
     status STRING DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT now()
-);
+) WITH (engine='document_strict');
 
 INSERT INTO orders (customer_id, total, status)
 VALUES ('550e8400-e29b-41d4-a716-446655440000', 149.99, 'shipped');
@@ -152,10 +152,9 @@ GROUP BY status;
 
 ```sql
 -- Start schemaless, convert when schema stabilizes
-CONVERT COLLECTION users TO strict;
+CONVERT COLLECTION users TO document_strict;
 
--- Or convert to other storage models
-CONVERT COLLECTION logs TO columnar;
+-- Or move into KV
 CONVERT COLLECTION cache TO kv;
 ```
 

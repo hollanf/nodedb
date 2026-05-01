@@ -44,10 +44,10 @@ NodeDB splits work across three planes connected by lock-free ring buffers. This
 
 There are two ways a query reaches the Data Plane. Both produce the same `PhysicalPlan` and execute identically from that point on.
 
-**SQL path (user-facing)** — All user-visible interfaces use SQL. `psql`, the `ndb` CLI, and the HTTP `/query` endpoint all accept SQL text. The Control Plane runs it through DataFusion (parse → logical plan → optimize → `PhysicalPlan`):
+**SQL path (user-facing)** — All user-visible interfaces use SQL. `psql`, the `ndb` CLI, and the HTTP `/v1/query` endpoint all accept SQL text. The Control Plane runs it through DataFusion (parse → logical plan → optimize → `PhysicalPlan`):
 
 ```
-psql / ndb CLI / HTTP /query
+psql / ndb CLI / HTTP /v1/query
          │
          ▼
    DataFusion parser

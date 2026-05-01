@@ -16,7 +16,7 @@ CREATE COLLECTION user_features (
     cart_value  FLOAT,
     embedding   VARCHAR,
     region      VARCHAR
-) WITH (storage = 'columnar', profile = 'timeseries', partition_by = '1d', retention = '365d');
+) WITH (engine='timeseries', partition_by='1d', retention='365d');
 
 -- Ingest features (batch or streaming)
 INSERT INTO user_features VALUES (
@@ -44,7 +44,7 @@ CREATE COLLECTION training_events (
     event_id VARCHAR,
     user_id  VARCHAR,
     label    INT
-) WITH (storage = 'columnar', profile = 'timeseries');
+) WITH (engine='timeseries');
 
 -- Point-in-time join: for each training event, get the most recent
 -- feature values that were available BEFORE the event timestamp.

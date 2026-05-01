@@ -79,11 +79,11 @@ Insert a correction that becomes valid in the past:
 
 ```sql
 -- Columnar timeseries with corrected measurements
-CREATE TIMESERIES sensor_readings TYPE COLUMNAR (
+CREATE COLLECTION sensor_readings (
     ts TIMESTAMP TIME_KEY,
     location VARCHAR,
     temperature FLOAT
-);
+) WITH (engine='timeseries');
 
 -- Original reading was wrong; re-insert with correct value at original timestamp
 INSERT INTO sensor_readings (ts, location, temperature, valid_time)
@@ -287,12 +287,11 @@ Use `audit_retain_ms` to enforce automatic purge of old versions:
 
 ```sql
 -- Columnar table with 30-day retention (GDPR compliance)
-CREATE COLLECTION user_activity TYPE COLUMNAR (
+CREATE COLLECTION user_activity (
     user_id UUID,
     action VARCHAR,
     ts TIMESTAMP TIME_KEY
-)
-WITH (profile = 'plain', audit_retain_ms = 2592000000);  -- 30 days
+) WITH (engine='columnar', audit_retain_ms=2592000000);  -- 30 days
 
 -- Tiles/versions older than 30 days are purged during compaction
 -- Historical queries beyond retention window will raise an error or return no rows

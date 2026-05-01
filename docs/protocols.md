@@ -78,41 +78,52 @@ REST API for web clients and services.
 
 ```bash
 # Execute SQL
-curl -X POST http://localhost:6480/query \
+curl -X POST http://localhost:6480/v1/query \
   -H "Authorization: Bearer ndb_..." \
   -H "Content-Type: application/json" \
+  -H "Accept: application/vnd.nodedb.v1+json" \
   -d '{"sql": "SELECT * FROM users LIMIT 10"}'
 
 # Stream results (NDJSON)
-curl -X POST http://localhost:6480/query/stream \
+curl -X POST http://localhost:6480/v1/query/stream \
   -d '{"sql": "SELECT * FROM large_table"}'
 
-# Health check
-curl http://localhost:6480/health
+# k8s readiness probe (503 until startup ready)
+curl http://localhost:6480/healthz
 
-# Readiness (WAL recovered)
+# Liveness / Readiness
+curl http://localhost:6480/health/live
 curl http://localhost:6480/health/ready
 
 # Prometheus metrics
 curl http://localhost:6480/metrics
 ```
 
+All non-probe routes are under `/v1/`. JSON responses carry `Content-Type: application/vnd.nodedb.v1+json; charset=utf-8`. Probes are unversioned and always reachable.
+
 **Additional endpoints:**
 
-| Endpoint                         | Method | Purpose                                |
-| -------------------------------- | ------ | -------------------------------------- |
-| `/query`                         | POST   | Execute SQL, return JSON               |
-| `/query/stream`                  | POST   | Stream results as NDJSON               |
-| `/health`                        | GET    | Health check                           |
-| `/health/ready`                  | GET    | Readiness probe                        |
-| `/metrics`                       | GET    | Prometheus metrics                     |
-| `/ws`                            | GET    | WebSocket upgrade (live subscriptions) |
-| `/cdc/{collection}`              | GET    | Change Data Capture (SSE stream)       |
-| `/cdc/{collection}/poll`         | GET    | CDC poll-based                         |
-| `/api/auth/exchange-key`         | POST   | API key authentication                 |
-| `/collections/{name}/crdt/apply` | POST   | CRDT delta application                 |
-| `/obsv/api/v1/write`             | POST   | Prometheus remote write                |
-| `/obsv/api/v1/query_range`       | POST   | PromQL range queries                   |
+| Endpoint                            | Method      | Purpose                          |
+| ----------------------------------- | ----------- | -------------------------------- |
+| `/v1/query`                         | POST        | Execute SQL, return JSON         |
+| `/v1/query/stream`                  | POST        | Stream results as NDJSON         |
+| `/v1/status`                        | GET         | Node status                      |
+| `/v1/cluster/status`                | GET         | Cluster status                   |
+| `/v1/auth/exchange-key`             | POST        | API key → session token          |
+| `/v1/auth/session`                  | POST/DELETE | Create/delete session            |
+| `/v1/collections/{name}/crdt/apply` | POST        | CRDT delta application           |
+| `/v1/cdc/{collection}`              | GET         | Change Data Capture (SSE stream) |
+| `/v1/cdc/{collection}/poll`         | GET         | CDC poll-based                   |
+| `/v1/streams/{stream}/events`       | GET         | Named-stream events (SSE)        |
+| `/v1/streams/{stream}/poll`         | GET         | Named-stream long-poll           |
+| `/v1/ws`                            | GET         | WebSocket upgrade                |
+| `/v1/obsv/api/v1/write`             | POST        | Prometheus remote write          |
+| `/v1/obsv/api/v1/query_range`       | POST        | PromQL range queries             |
+| `/healthz`                          | GET         | k8s readiness probe              |
+| `/health/live`                      | GET         | Liveness                         |
+| `/health/ready`                     | GET         | Readiness                        |
+| `/health/drain`                     | POST        | Cooperative drain                |
+| `/metrics`                          | GET         | Prometheus metrics               |
 
 ## RESP (Redis Protocol)
 

@@ -102,11 +102,11 @@ UPSERT INTO users { id: 'u1', name: 'Alice Updated' };
 For strict collections:
 
 ```sql
-CREATE COLLECTION orders TYPE DOCUMENT STRICT (
+CREATE COLLECTION orders (
     id TEXT PRIMARY KEY DEFAULT gen_uuid_v7(),
     customer TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT now()
-);
+) WITH (engine='document_strict');
 
 -- created_at auto-filled on INSERT
 INSERT INTO orders (customer) VALUES ('Alice');

@@ -27,15 +27,15 @@ Timeseries is a **columnar profile**. It extends the [Columnar engine](columnar.
 ```sql
 -- Unified DDL syntax (preferred)
 -- TIME_KEY designates the primary time column; enables partition-by-time and block-level skip
-CREATE COLLECTION cpu_metrics TYPE COLUMNAR (
+CREATE COLLECTION cpu_metrics (
     ts TIMESTAMP TIME_KEY,
     host VARCHAR,
     region VARCHAR,
     cpu_usage FLOAT,
     mem_usage FLOAT
-) WITH profile = 'timeseries', partition_by = '1d', retention = '90d';
+) WITH (engine='timeseries', partition_by='1d', retention='90d');
 
--- CREATE TIMESERIES is a convenience alias for the above form
+-- CREATE TIMESERIES is a convenience alias equivalent to engine='timeseries'
 CREATE TIMESERIES cpu_metrics;
 
 -- Insert metrics

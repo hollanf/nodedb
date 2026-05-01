@@ -79,12 +79,12 @@ On **Origin:**
 1. **Origin maintains the rate table:**
 
 ```sql
-CREATE COLLECTION tax_rates WITH storage = 'strict' (
+CREATE COLLECTION tax_rates (
     id          STRING PRIMARY KEY,
     jurisdiction STRING NOT NULL,
     rate        DECIMAL NOT NULL,
     effective_from STRING NOT NULL
-);
+) WITH (engine='document_strict');
 ```
 
 2. **Sync subset to Lite:** Use CRDT shape subscriptions to sync only relevant jurisdictions:

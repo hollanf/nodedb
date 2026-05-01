@@ -231,16 +231,16 @@ TRUNCATE users;
 CREATE COLLECTION users;
 
 -- Strict schema (Binary Tuple encoding, O(1) field extraction)
-CREATE COLLECTION orders TYPE DOCUMENT STRICT (
+CREATE COLLECTION orders (
     id TEXT PRIMARY KEY,
     customer_id TEXT,
     total FLOAT,
     status TEXT,
     created_at TIMESTAMP
-);
+) WITH (engine='document_strict');
 
 -- Key-Value collection
-CREATE COLLECTION sessions TYPE KEY_VALUE (key TEXT PRIMARY KEY);
+CREATE COLLECTION sessions (key TEXT PRIMARY KEY) WITH (engine='kv');
 -- extra columns are optional typed value fields
 
 -- Graph edges are overlays on document collections, not a separate collection type.
@@ -284,39 +284,39 @@ materialized views, change streams, schedules, or implicit sequences
 reference the collection, the handler rejects with SQLSTATE `2BP01`
 listing every dependent.
 
-#### Unified Columnar DDL
+#### Columnar Family DDL
 
-All columnar variants (plain, timeseries, spatial) use `CREATE COLLECTION ... TYPE COLUMNAR (...)`. Column modifiers designate special columns:
+`columnar`, `timeseries`, and `spatial` are peer engines sharing the same compressed-column storage core. Pick one per collection via `WITH (engine='<name>')`. Column modifiers designate special columns:
 
-| Modifier        | Column type              | Effect                                                                                                                          |
-| --------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `TIME_KEY`      | `TIMESTAMP` / `DATETIME` | Primary time column. Required for timeseries profile. Enables partition-by-time, block-level time skip, and retention policies. |
-| `SPATIAL_INDEX` | `GEOMETRY`               | Automatically builds and maintains an R\*-tree index on this column. Required for spatial profile.                              |
+| Modifier        | Column type              | Effect                                                                                                              |
+| --------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `TIME_KEY`      | `TIMESTAMP` / `DATETIME` | Primary time column. Required for `engine='timeseries'`. Drives partition-by-time, block-level skip, and retention. |
+| `SPATIAL_INDEX` | `GEOMETRY`               | Automatically builds and maintains an R\*-tree index on this column. Required for `engine='spatial'`.               |
 
 ```sql
 -- Plain columnar
-CREATE COLLECTION logs TYPE COLUMNAR (
+CREATE COLLECTION logs (
     ts TIMESTAMP TIME_KEY,
     host VARCHAR,
     level VARCHAR,
     message VARCHAR
-);
+) WITH (engine='columnar');
 
--- Timeseries profile (TIME_KEY required)
-CREATE COLLECTION metrics TYPE COLUMNAR (
+-- Timeseries (TIME_KEY required)
+CREATE COLLECTION metrics (
     ts TIMESTAMP TIME_KEY,
     host VARCHAR,
     cpu FLOAT
-) WITH profile = 'timeseries', partition_by = '1h', retention = '90d';
+) WITH (engine='timeseries', partition_by='1h', retention='90d');
 
--- CREATE TIMESERIES is a convenience alias equivalent to profile = 'timeseries'
+-- CREATE TIMESERIES is a convenience alias equivalent to engine='timeseries'
 CREATE TIMESERIES metrics;
 
--- Spatial profile (SPATIAL_INDEX required)
-CREATE COLLECTION locations TYPE COLUMNAR (
+-- Spatial (SPATIAL_INDEX required)
+CREATE COLLECTION locations (
     geom GEOMETRY SPATIAL_INDEX,
     name VARCHAR
-);
+) WITH (engine='spatial');
 ```
 
 ### Schema Evolution
@@ -328,17 +328,14 @@ ALTER TABLE orders ADD COLUMN priority INT;
 ### Storage Conversion
 
 ```sql
--- Convert to kv, document, or strict
-CONVERT COLLECTION cache TO STORAGE='kv';
-CONVERT COLLECTION events TO STORAGE='document';
-CONVERT COLLECTION users TO STORAGE='strict' WITH SCHEMA { ... };
-
--- Convert to columnar (plain or with profile)
-CONVERT COLLECTION logs TO STORAGE='columnar';
-CONVERT COLLECTION metrics TO STORAGE='columnar' WITH (profile = 'timeseries');
+CONVERT COLLECTION cache  TO kv;
+CONVERT COLLECTION events TO document_schemaless;
+CONVERT COLLECTION users  TO document_strict;
+-- Optional column definitions when converting into document_strict / kv:
+CONVERT COLLECTION users  TO document_strict (id TEXT PRIMARY KEY, email TEXT);
 ```
 
-`CONVERT COLLECTION` works for document, strict, and kv targets. Columnar conversions re-encode existing data into compressed segments.
+`CONVERT COLLECTION` accepts `document_schemaless`, `document_strict`, or `kv` as the target type. The columnar / timeseries / spatial engines are picked at collection-creation time, not via CONVERT.
 
 ### Triggers
 
@@ -681,15 +678,15 @@ KV collections also support the [Redis wire protocol](kv.md#redis-compatible-acc
 ### Timeseries
 
 ```sql
--- Create (convenience alias; equivalent to TYPE COLUMNAR (...) WITH profile = 'timeseries')
+-- Create (convenience alias; equivalent to WITH (engine='timeseries'))
 CREATE TIMESERIES metrics;
 
 -- Full form with TIME_KEY modifier
-CREATE COLLECTION metrics TYPE COLUMNAR (
+CREATE COLLECTION metrics (
     ts TIMESTAMP TIME_KEY,
     host VARCHAR,
     cpu_load FLOAT
-) WITH profile = 'timeseries', partition_by = '1h';
+) WITH (engine='timeseries', partition_by='1h');
 
 -- Ingest (also via ILP protocol on port 8086)
 INSERT INTO metrics (ts, host, cpu_load) VALUES (now(), 'server01', 0.65);
@@ -999,7 +996,7 @@ SHOW USERS;
 | `WITH RECURSIVE`              | Supported     | Iterative fixed-point execution. For graph traversal, the native `GRAPH TRAVERSE`, `GRAPH PATH`, and algorithm functions remain more efficient.                                                                                                                                                                                     |
 | `UPDATE/DELETE ... JOIN`      | Not supported | The Data Plane executes mutations as single-collection atomic operations through the SPSC bridge. Multi-collection mutations would require cross-engine coordination that breaks the isolation model. Rewrite as a subquery: `DELETE FROM orders WHERE user_id IN (SELECT id FROM users WHERE ...)`.                                |
 | `FOREIGN KEY`                 | Not enforced  | In a distributed system with CRDT sync and eventual consistency at the edge, enforcing FK constraints across collections would require cross-shard coordination on every write — killing write throughput. CRDT constraint validation (UNIQUE, FK) is enforced at Raft commit time for synced collections, but not for general SQL. |
-| `COPY TO` (export)            | Not supported | The Data Plane is write-optimized with io_uring for ingest, but export requires serialization across all shards and cores. Use the HTTP API (`/query/stream`) for NDJSON export or query into Parquet via L2 cold storage.                                                                                                          |
+| `COPY TO` (export)            | Not supported | The Data Plane is write-optimized with io_uring for ingest, but export requires serialization across all shards and cores. Use the HTTP API (`/v1/query/stream`) for NDJSON export or query into Parquet via L2 cold storage.                                                                                                       |
 | `UPDATE/DELETE` on timeseries | Not supported | Timeseries collections use append-only columnar memtables with cascading compression (ALP + FastLanes + FSST + Gorilla + LZ4). In-place mutation would break compression chains and invalidate block statistics. Use retention policies to age out old data.                                                                        |
 | `EXPLAIN ANALYZE`             | Not yet       | Requires instrumentation across the SPSC bridge to collect per-core execution stats from the Data Plane and merge them on the Control Plane. The bridge currently returns results but not timing metadata. Planned.                                                                                                                 |
 
