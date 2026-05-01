@@ -148,20 +148,75 @@ impl GeohashIndex {
     }
 
     /// Checkpoint: serialize all entries for persistence.
-    pub fn checkpoint_to_bytes(&self) -> Result<Vec<u8>, crate::persist::RTreeCheckpointError> {
+    ///
+    /// When `kek` is `Some`, the msgpack payload is wrapped in an AES-256-GCM
+    /// encrypted SEGV envelope. When `None`, raw msgpack bytes are returned.
+    pub fn checkpoint_to_bytes(
+        &self,
+        #[cfg(feature = "encryption")] kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+        #[cfg(not(feature = "encryption"))] _kek: Option<&[u8; 32]>,
+    ) -> Result<Vec<u8>, crate::persist::RTreeCheckpointError> {
         let snap = GeohashSnapshot {
             collection: self.collection.clone(),
             field: self.field.clone(),
             precision: self.precision,
             entries: self.entries.clone(),
         };
-        zerompk::to_msgpack_vec(&snap).map_err(crate::persist::RTreeCheckpointError::Serialize)
+        let msgpack = zerompk::to_msgpack_vec(&snap)
+            .map_err(crate::persist::RTreeCheckpointError::Serialize)?;
+
+        #[cfg(feature = "encryption")]
+        if let Some(key) = kek {
+            return crate::persist::encrypt_geohash_payload(key, &msgpack);
+        }
+
+        Ok(msgpack)
     }
 
     /// Restore from checkpoint.
-    pub fn from_checkpoint(bytes: &[u8]) -> Result<Self, crate::persist::RTreeCheckpointError> {
-        let snap: GeohashSnapshot = zerompk::from_msgpack(bytes)
-            .map_err(crate::persist::RTreeCheckpointError::Deserialize)?;
+    ///
+    /// `kek` controls the expected framing:
+    /// - `None` → file must be plaintext msgpack. If encrypted (`SEGV`), returns
+    ///   `Err(MissingKek)`.
+    /// - `Some(key)` → encryption is **required**. Plaintext returns `Err(KekRequired)`.
+    pub fn from_checkpoint(
+        bytes: &[u8],
+        #[cfg(feature = "encryption")] kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+        #[cfg(not(feature = "encryption"))] _kek: Option<&[u8; 32]>,
+    ) -> Result<Self, crate::persist::RTreeCheckpointError> {
+        use crate::persist::RTreeCheckpointError;
+
+        let is_encrypted = bytes.len() >= 4 && bytes[0..4] == *b"SEGV";
+
+        let msgpack: Vec<u8>;
+        let msgpack_ref: &[u8];
+
+        #[cfg(feature = "encryption")]
+        {
+            if is_encrypted {
+                if let Some(key) = kek {
+                    msgpack = crate::persist::decrypt_geohash_payload(key, bytes)?;
+                    msgpack_ref = &msgpack;
+                } else {
+                    return Err(RTreeCheckpointError::MissingKek);
+                }
+            } else if kek.is_some() {
+                return Err(RTreeCheckpointError::KekRequired);
+            } else {
+                msgpack_ref = bytes;
+            }
+        }
+
+        #[cfg(not(feature = "encryption"))]
+        {
+            if is_encrypted {
+                return Err(RTreeCheckpointError::MissingKek);
+            }
+            msgpack_ref = bytes;
+        }
+
+        let snap: GeohashSnapshot =
+            zerompk::from_msgpack(msgpack_ref).map_err(RTreeCheckpointError::Deserialize)?;
         let mut index = Self::new(&snap.collection, &snap.field, snap.precision);
         // Rebuild prefix_index from entries.
         for (doc_id, hash) in &snap.entries {
@@ -279,8 +334,8 @@ mod tests {
             idx.index_document(&format!("d{i}"), &Geometry::point(i as f64, i as f64));
         }
 
-        let bytes = idx.checkpoint_to_bytes().unwrap();
-        let restored = GeohashIndex::from_checkpoint(&bytes).unwrap();
+        let bytes = idx.checkpoint_to_bytes(None).unwrap();
+        let restored = GeohashIndex::from_checkpoint(&bytes, None).unwrap();
         assert_eq!(restored.len(), 50);
         assert_eq!(restored.collection, "places");
         assert_eq!(restored.precision, 6);
@@ -288,5 +343,46 @@ mod tests {
         // Verify search still works.
         let hash = restored.get_geohash("d25").unwrap();
         assert_eq!(hash.len(), 6);
+    }
+
+    #[cfg(feature = "encryption")]
+    fn make_test_kek() -> nodedb_wal::crypto::WalEncryptionKey {
+        nodedb_wal::crypto::WalEncryptionKey::from_bytes(&[0x77u8; 32]).unwrap()
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn spatial_geohash_checkpoint_encrypted_at_rest() {
+        let kek = make_test_kek();
+        let mut idx = GeohashIndex::new("places", "loc", 6);
+        for i in 0..30 {
+            idx.index_document(&format!("d{i}"), &Geometry::point(i as f64, i as f64 * 0.5));
+        }
+
+        let enc_bytes = idx.checkpoint_to_bytes(Some(&kek)).unwrap();
+
+        // Encrypted blob starts with SEGV, not raw msgpack.
+        assert_eq!(&enc_bytes[0..4], b"SEGV");
+
+        // Round-trip: decrypt and verify all entries survive.
+        let restored = GeohashIndex::from_checkpoint(&enc_bytes, Some(&kek)).unwrap();
+        assert_eq!(restored.len(), 30);
+        assert_eq!(restored.collection, "places");
+        assert_eq!(restored.precision, 6);
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn spatial_geohash_refuses_plaintext_when_kek_required() {
+        let kek = make_test_kek();
+        let mut idx = GeohashIndex::new("places", "loc", 6);
+        idx.index_document("doc1", &Geometry::point(10.0, 20.0));
+
+        let plain_bytes = idx.checkpoint_to_bytes(None).unwrap();
+
+        assert!(matches!(
+            GeohashIndex::from_checkpoint(&plain_bytes, Some(&kek)),
+            Err(crate::persist::RTreeCheckpointError::KekRequired)
+        ));
     }
 }
