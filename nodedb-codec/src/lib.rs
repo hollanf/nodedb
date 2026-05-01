@@ -195,6 +195,64 @@ impl std::fmt::Display for ColumnCodec {
     }
 }
 
+/// Parse a user-supplied codec name string into a [`ColumnCodec`].
+///
+/// Accepts **only** the exact canonical lowercase snake_case forms produced by
+/// [`ColumnCodec::as_str()`]. No case folding, no hyphen variants, no aliases.
+/// This is the single gate that must be used whenever codec names enter the
+/// system from user input (DDL `WITH (codec=…)`, REST params, config files).
+///
+/// # Canonical names (frozen — changing any is a wire break)
+///
+/// | Name                   | Codec                       |
+/// |------------------------|-----------------------------|
+/// | `auto`                 | `ColumnCodec::Auto`         |
+/// | `alp_fastlanes_lz4`    | `ColumnCodec::AlpFastLanesLz4` |
+/// | `alp_rd_lz4`           | `ColumnCodec::AlpRdLz4`     |
+/// | `pcodec_lz4`           | `ColumnCodec::PcodecLz4`    |
+/// | `delta_fastlanes_lz4`  | `ColumnCodec::DeltaFastLanesLz4` |
+/// | `fastlanes_lz4`        | `ColumnCodec::FastLanesLz4` |
+/// | `fsst_lz4`             | `ColumnCodec::FsstLz4`      |
+/// | `alp_fastlanes_rans`   | `ColumnCodec::AlpFastLanesRans` |
+/// | `delta_fastlanes_rans` | `ColumnCodec::DeltaFastLanesRans` |
+/// | `fsst_rans`            | `ColumnCodec::FsstRans`     |
+/// | `gorilla`              | `ColumnCodec::Gorilla`      |
+/// | `double_delta`         | `ColumnCodec::DoubleDelta`  |
+/// | `delta`                | `ColumnCodec::Delta`        |
+/// | `lz4`                  | `ColumnCodec::Lz4`          |
+/// | `zstd`                 | `ColumnCodec::Zstd`         |
+/// | `raw`                  | `ColumnCodec::Raw`          |
+///
+/// # Errors
+///
+/// Returns [`CodecError::UnknownCodec`] if `s` is not an exact match.
+pub fn parse_codec_name(s: &str) -> Result<ColumnCodec, CodecError> {
+    match s {
+        "auto" => Ok(ColumnCodec::Auto),
+        "alp_fastlanes_lz4" => Ok(ColumnCodec::AlpFastLanesLz4),
+        "alp_rd_lz4" => Ok(ColumnCodec::AlpRdLz4),
+        "pcodec_lz4" => Ok(ColumnCodec::PcodecLz4),
+        "delta_fastlanes_lz4" => Ok(ColumnCodec::DeltaFastLanesLz4),
+        "fastlanes_lz4" => Ok(ColumnCodec::FastLanesLz4),
+        "fsst_lz4" => Ok(ColumnCodec::FsstLz4),
+        "alp_fastlanes_rans" => Ok(ColumnCodec::AlpFastLanesRans),
+        "delta_fastlanes_rans" => Ok(ColumnCodec::DeltaFastLanesRans),
+        "fsst_rans" => Ok(ColumnCodec::FsstRans),
+        "gorilla" => Ok(ColumnCodec::Gorilla),
+        "double_delta" => Ok(ColumnCodec::DoubleDelta),
+        "delta" => Ok(ColumnCodec::Delta),
+        "lz4" => Ok(ColumnCodec::Lz4),
+        "zstd" => Ok(ColumnCodec::Zstd),
+        "raw" => Ok(ColumnCodec::Raw),
+        _ => Err(CodecError::UnknownCodec {
+            name: s.to_owned(),
+            valid: "auto, alp_fastlanes_lz4, alp_rd_lz4, pcodec_lz4, delta_fastlanes_lz4, \
+                    fastlanes_lz4, fsst_lz4, alp_fastlanes_rans, delta_fastlanes_rans, \
+                    fsst_rans, gorilla, double_delta, delta, lz4, zstd, raw",
+        }),
+    }
+}
+
 /// A `ColumnCodec` that has been resolved away from `Auto`.
 ///
 /// Invariant: this type can never hold the `Auto` variant. All on-disk
@@ -646,5 +704,101 @@ mod tests {
             uncompressed_bytes: 800,
         };
         assert!((stats.compression_ratio() - 4.0).abs() < f64::EPSILON);
+    }
+
+    // ── parse_codec_name snapshot tests ───────────────────────────────────────
+
+    /// Every canonical name parses to the correct variant (round-trip through as_str).
+    /// This test doubles as a snapshot lock: if any as_str() return value changes,
+    /// either parse_codec_name's match arm or this assertion will fail first.
+    #[test]
+    fn parse_codec_name_all_canonical_round_trip() {
+        let cases: &[(&str, ColumnCodec)] = &[
+            ("auto", ColumnCodec::Auto),
+            ("alp_fastlanes_lz4", ColumnCodec::AlpFastLanesLz4),
+            ("alp_rd_lz4", ColumnCodec::AlpRdLz4),
+            ("pcodec_lz4", ColumnCodec::PcodecLz4),
+            ("delta_fastlanes_lz4", ColumnCodec::DeltaFastLanesLz4),
+            ("fastlanes_lz4", ColumnCodec::FastLanesLz4),
+            ("fsst_lz4", ColumnCodec::FsstLz4),
+            ("alp_fastlanes_rans", ColumnCodec::AlpFastLanesRans),
+            ("delta_fastlanes_rans", ColumnCodec::DeltaFastLanesRans),
+            ("fsst_rans", ColumnCodec::FsstRans),
+            ("gorilla", ColumnCodec::Gorilla),
+            ("double_delta", ColumnCodec::DoubleDelta),
+            ("delta", ColumnCodec::Delta),
+            ("lz4", ColumnCodec::Lz4),
+            ("zstd", ColumnCodec::Zstd),
+            ("raw", ColumnCodec::Raw),
+        ];
+        for &(name, expected) in cases {
+            let parsed = parse_codec_name(name)
+                .unwrap_or_else(|e| panic!("parse_codec_name({name:?}) failed: {e}"));
+            assert_eq!(parsed, expected, "parse mismatch for {name:?}");
+            // Round-trip: parsed variant's as_str() must reproduce the input name.
+            assert_eq!(
+                parsed.as_str(),
+                name,
+                "as_str() round-trip mismatch for {name:?}"
+            );
+        }
+        // Verify the count matches total ColumnCodec variants (16 including Auto).
+        assert_eq!(
+            cases.len(),
+            16,
+            "variant count changed — update parse_codec_name"
+        );
+    }
+
+    /// Non-canonical spellings must be rejected — no case folding, no hyphens.
+    #[test]
+    fn parse_codec_name_rejects_non_canonical() {
+        let bad: &[&str] = &[
+            "LZ4",
+            "Lz4",
+            "GORILLA",
+            "Gorilla",
+            "FastLanes",
+            "fast_lanes",
+            "fast-lanes",
+            "FSST",
+            "alp-fastlanes-lz4",
+            "ALP_FASTLANES_LZ4",
+            "Delta_FastLanes_LZ4",
+            "ZSTD",
+            "RAW",
+            "",
+            " lz4",
+            "lz4 ",
+            "unknown",
+            "pcodec",
+        ];
+        for &name in bad {
+            let result = parse_codec_name(name);
+            assert!(
+                result.is_err(),
+                "parse_codec_name({name:?}) should have been rejected but returned Ok"
+            );
+            let err = result.unwrap_err();
+            assert!(
+                matches!(err, crate::error::CodecError::UnknownCodec { .. }),
+                "wrong error variant for {name:?}: {err}"
+            );
+        }
+    }
+
+    /// Error message for an unknown codec must contain the supplied name and the valid list.
+    #[test]
+    fn parse_codec_name_error_message_content() {
+        let err = parse_codec_name("BadCodec").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("BadCodec"),
+            "error message should contain the bad name: {msg}"
+        );
+        assert!(
+            msg.contains("lz4"),
+            "error message should list at least one valid name: {msg}"
+        );
     }
 }

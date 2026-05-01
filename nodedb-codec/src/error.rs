@@ -36,4 +36,12 @@ pub enum CodecError {
     /// has a bug — `ColumnCodec::try_resolve()` was not called.
     #[error("unresolved Auto codec: codec must be resolved to a concrete variant before writing")]
     UnresolvedAuto,
+
+    /// A codec name string did not match any canonical form.
+    ///
+    /// Canonical names are lowercase snake_case exactly as returned by
+    /// `ColumnCodec::as_str()`. No case-insensitive matching; no hyphen or
+    /// space variants. The error message lists all valid names.
+    #[error("unknown codec name '{name}'; valid names: {valid}")]
+    UnknownCodec { name: String, valid: &'static str },
 }
