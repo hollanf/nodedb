@@ -21,14 +21,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// # Wire format note
 ///
-/// `logical` was widened from `u32` to `u64` to eliminate
-/// saturation under high-frequency burst writes. Persisted zerompk
-/// blobs from before this change carry a 32-bit logical counter;
-/// MessagePack integers decode by value (not by declared width), so
-/// existing small values deserialise correctly. New writes encode
-/// logical as a 64-bit integer, which is forward-incompatible with
-/// readers compiled against the old type. See `CATALOG_FORMAT_VERSION`
-/// in `nodedb-cluster` for the persisted-format bump that gates this.
+/// `logical` is a 64-bit counter. MessagePack integers decode by value,
+/// so small values serialised by future readers will still deserialise
+/// correctly into this type.
 #[non_exhaustive]
 #[derive(
     Debug,

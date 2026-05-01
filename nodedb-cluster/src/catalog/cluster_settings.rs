@@ -37,11 +37,6 @@ pub enum PlacementHashId {
 }
 
 /// Cluster-wide settings that are fixed at bootstrap time.
-///
-/// All fields use `#[msgpack(default)]` so that a v1 catalog (which
-/// has no `cluster_settings` key at all) can be migrated by writing
-/// the default value, and future field additions remain backward-
-/// compatible without an extra migration arm.
 #[derive(
     Debug,
     Clone,

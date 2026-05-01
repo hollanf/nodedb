@@ -1,40 +1,8 @@
 //! Catalog format migration runner.
 //!
-//! The format version stamped into every catalog by `ClusterCatalog::open`
-//! is the pivot that future schema changes land on: when the next
-//! breaking change to a zerompk-persisted type ships, add a
-//! `v{N}_to_v{N+1}` arm to [`migrate_if_needed`], bump
-//! `CATALOG_FORMAT_VERSION`, and the upgrade path is wired
-//! automatically.
-//!
-//! The **lowest accepted catalog version is 3**. Catalogs older than v3
-//! cannot be opened; the process aborts with a `ClusterError::Codec`
-//! error.
-//!
-//! # Why zerompk needs versioning at all
-//!
-//! zerompk's `FromMessagePack` derive enforces exact map length
-//! and returns `KeyNotFound` for any missing field. That makes
-//! adding a field to a zerompk-persisted struct a breaking wire
-//! change, and the only safe way to do it is through a versioned
-//! migration. The format version key is the pivot that future
-//! upgrade arms hang off.
-//!
-//! # Future migrations
-//!
-//! When the next breaking schema change lands, the pattern is:
-//!
-//! 1. Define a private `FooVN` shim struct mirroring the old
-//!    shape with its own `zerompk::FromMessagePack` derive.
-//! 2. Add a `v{N}_to_v{N+1}` arm in `migrate_if_needed` that
-//!    reads via the shim and writes via the current serializer.
-//! 3. Bump `CATALOG_FORMAT_VERSION` in `schema.rs`.
-//! 4. Add an integration test in
-//!    `tests/cluster_catalog_migration.rs` (create the file when
-//!    needed) that builds a vN fixture and verifies the upgrade.
-//!
-//! Failures are returned as `ClusterError::Codec` so startup
-//! aborts loudly — there is no silent-clobber code path.
+//! Stamps fresh catalogs at `CATALOG_FORMAT_VERSION = 1` and rejects older
+//! and newer formats with a hard error. No live migration arms — first launch
+//! baseline.
 
 use tracing::info;
 
@@ -148,9 +116,8 @@ mod tests {
     }
 
     #[test]
-    fn older_version_without_migration_is_refused() {
+    fn older_version_is_refused() {
         let (_dir, db) = temp_db();
-        // Version 0 predates v1 and has no migration arm — must fail loudly.
         write_format_version(&db, 0).unwrap();
         let err = migrate_if_needed(&db).unwrap_err().to_string();
         assert!(
