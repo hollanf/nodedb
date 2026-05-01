@@ -45,6 +45,14 @@ pub struct NexarTransport {
     /// running in insecure transport mode.  Transmitted in `JoinRequest`
     /// so remote peers can pin our identity.
     local_spki_pin: Option<[u8; 32]>,
+    /// Agreed wire version per connection, keyed on `conn.stable_id()`.
+    /// Populated by `perform_version_handshake_client` after the
+    /// per-connection handshake completes; evicted on connection drop.
+    ///
+    /// Cluster-plane only: this cache is consulted by send-path callers
+    /// inside the cluster transport and never crosses the SPSC bridge
+    /// into the Data Plane.
+    pub(super) agreed_versions: RwLock<HashMap<usize, crate::wire_version::WireVersion>>,
 }
 
 impl NexarTransport {
@@ -190,6 +198,7 @@ impl NexarTransport {
             retry_policy: RetryPolicy::default(),
             auth,
             local_spki_pin,
+            agreed_versions: RwLock::new(HashMap::new()),
         })
     }
 
@@ -228,18 +237,74 @@ impl NexarTransport {
     }
 
     /// Return the negotiated [`WireVersion`] for the connection identified by
-    /// `stable_id`.
-    ///
-    /// Currently the wire-version handshake is not yet injected into the QUIC
-    /// connection accept/dial path, so this returns the local current version
-    /// for any live connection.  Once the handshake is wired in, this will
-    /// return the per-connection agreed version from the handshake cache.
-    pub fn agreed_version_for(
+    /// `stable_id`. Returns `None` if the handshake has not yet completed for
+    /// this connection (e.g. first RPC not yet sent, or connection was evicted).
+    pub fn agreed_version_for(&self, stable_id: usize) -> Option<crate::wire_version::WireVersion> {
+        let versions = self
+            .agreed_versions
+            .read()
+            .unwrap_or_else(|p| p.into_inner());
+        versions.get(&stable_id).copied()
+    }
+
+    /// Store the agreed wire version for a connection (called after the
+    /// per-connection handshake completes on the client side).
+    pub(super) fn store_agreed_version(
         &self,
-        _stable_id: usize,
-    ) -> Option<crate::wire_version::WireVersion> {
-        use crate::wire_version::WireVersion;
-        Some(WireVersion::CURRENT)
+        stable_id: usize,
+        version: crate::wire_version::WireVersion,
+    ) {
+        let mut versions = self
+            .agreed_versions
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        versions.insert(stable_id, version);
+    }
+
+    /// Remove the cached agreed version for an evicted connection.
+    pub(super) fn evict_agreed_version(&self, stable_id: usize) {
+        let mut versions = self
+            .agreed_versions
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        versions.remove(&stable_id);
+    }
+
+    /// Accept a raw incoming QUIC connection without the wire-version handshake
+    /// or any RPC dispatch. Intended for tests that need to inspect or send
+    /// deliberately malformed handshake frames server-side.
+    #[doc(hidden)]
+    pub async fn accept_raw(&self) -> crate::error::Result<quinn::Connection> {
+        self.listener
+            .accept()
+            .await
+            .map_err(|e| crate::error::ClusterError::Transport {
+                detail: format!("accept_raw: {e}"),
+            })
+    }
+
+    /// Establish a raw QUIC connection to `addr` without registering it as a
+    /// named peer and without running the wire-version handshake. Intended for
+    /// tests that need to send deliberately malformed handshake frames.
+    #[doc(hidden)]
+    pub async fn connect_raw(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> crate::error::Result<quinn::Connection> {
+        self.listener
+            .endpoint()
+            .connect_with(
+                self.client_config.clone(),
+                addr,
+                crate::transport::config::SNI_HOSTNAME,
+            )
+            .map_err(|e| crate::error::ClusterError::Transport {
+                detail: format!("connect_raw to {addr}: {e}"),
+            })?
+            .await
+            .map_err(|e| crate::error::ClusterError::Transport {
+                detail: format!("connect_raw handshake with {addr}: {e}"),
+            })
     }
 
     /// Snapshot of every peer the transport has addresses cached for,

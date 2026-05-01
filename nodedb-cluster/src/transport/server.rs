@@ -42,6 +42,7 @@ use crate::transport::auth_context::AuthContext;
 use crate::transport::peer_identity_verifier::{
     IDENTITY_MISMATCH_QUIC_ERROR, VerifyOutcome, verify_peer_identity,
 };
+use crate::wire_version::handshake_io::{local_version_range, perform_version_handshake_server};
 
 /// Topology-decoupled lookup for per-node identity pins.
 ///
@@ -133,6 +134,59 @@ pub(crate) async fn handle_connection<H: RaftRpcHandler, S: PeerIdentityStore>(
 ) -> Result<()> {
     // Extract the peer cert once per connection; it does not change.
     let peer_cert_der: Option<Vec<u8>> = peer_leaf_cert_der(&conn);
+    let peer_addr = conn.remote_address();
+
+    // Perform the wire-version handshake on the first bidi stream before
+    // dispatching any RPCs. The client opens a dedicated stream for this
+    // exchange; subsequent streams on the same connection are RPC streams.
+    let agreed_version = {
+        let accepted = tokio::select! {
+            biased;
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    return Ok(());
+                }
+                // Spurious change — retry the accept.
+                conn.accept_bi().await
+            }
+            result = conn.accept_bi() => result,
+        };
+
+        let (mut hs_send, mut hs_recv) = match accepted {
+            Ok(streams) => streams,
+            Err(quinn::ConnectionError::ApplicationClosed(_)) => return Ok(()),
+            Err(quinn::ConnectionError::LocallyClosed) => return Ok(()),
+            Err(e) => {
+                return Err(ClusterError::Transport {
+                    detail: format!("accept handshake stream from {peer_addr}: {e}"),
+                });
+            }
+        };
+
+        let local = local_version_range();
+        match perform_version_handshake_server(&conn, &mut hs_send, &mut hs_recv).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    peer_addr = %peer_addr,
+                    local_min = %local.min,
+                    local_max = %local.max,
+                    error = %e,
+                    "wire version handshake failed; closing connection"
+                );
+                // perform_version_handshake_server already closed the QUIC
+                // connection on range mismatch; propagate the error so the
+                // caller logs it and the connection task exits.
+                return Err(e);
+            }
+        }
+    };
+
+    debug!(
+        peer_addr = %peer_addr,
+        agreed_version = %agreed_version,
+        "wire version handshake complete"
+    );
 
     loop {
         let accepted = tokio::select! {

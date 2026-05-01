@@ -16,6 +16,7 @@ use crate::error::{ClusterError, Result};
 use crate::rpc_codec::{self, RaftRpc, auth_envelope};
 use crate::transport::config::SNI_HOSTNAME;
 use crate::transport::server;
+use crate::wire_version::handshake_io::perform_version_handshake_client;
 
 use super::transport::NexarTransport;
 
@@ -49,6 +50,16 @@ impl NexarTransport {
             .map_err(|e| ClusterError::Transport {
                 detail: format!("handshake with {addr}: {e}"),
             })?;
+
+        // Perform the wire-version handshake on the first bidi stream.
+        {
+            let (mut hs_send, mut hs_recv) =
+                conn.open_bi().await.map_err(|e| ClusterError::Transport {
+                    detail: format!("open handshake stream to {addr}: {e}"),
+                })?;
+            perform_version_handshake_client(&mut hs_send, &mut hs_recv).await?;
+            let _ = hs_send.finish();
+        }
 
         let (mut send, mut recv) = conn.open_bi().await.map_err(|e| ClusterError::Transport {
             detail: format!("open_bi to {addr}: {e}"),

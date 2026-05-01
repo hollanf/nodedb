@@ -17,9 +17,11 @@
 
 use std::net::SocketAddr;
 
+use tracing::warn;
+
 use crate::routing::RoutingTable;
 use crate::rpc_codec::{JoinGroupInfo, JoinNodeInfo, JoinRequest, JoinResponse};
-use crate::topology::{ClusterTopology, NodeInfo, NodeState};
+use crate::topology::{CLUSTER_WIRE_FORMAT_VERSION, ClusterTopology, NodeInfo, NodeState};
 
 /// Build a `JoinResponse` for an incoming `JoinRequest`.
 ///
@@ -38,6 +40,26 @@ pub fn handle_join_request(
     routing: &RoutingTable,
     cluster_id: u64,
 ) -> JoinResponse {
+    // Validate the wire version carried in the JOIN payload (belt-and-suspenders
+    // check; the transport-level handshake already negotiated a compatible version
+    // before this RPC was dispatched). The `wire_version` field here is the
+    // cluster-wide schema version (`CLUSTER_WIRE_FORMAT_VERSION`), distinct from
+    // the transport-level RPC frame version. We require an exact match because
+    // this build uses floor == ceiling (no backward-compat window in the schema).
+    if req.wire_version != CLUSTER_WIRE_FORMAT_VERSION {
+        warn!(
+            node_id = req.node_id,
+            joiner_wire_version = req.wire_version,
+            expected_wire_version = CLUSTER_WIRE_FORMAT_VERSION,
+            "join request rejected: joiner cluster wire_version mismatch"
+        );
+        return reject(format!(
+            "joiner wire_version {} does not match this cluster's wire_version {} — \
+             rolling upgrade is required before this node can join",
+            req.wire_version, CLUSTER_WIRE_FORMAT_VERSION
+        ));
+    }
+
     // Validate the listen address early.
     let addr: SocketAddr = match req.listen_addr.parse() {
         Ok(a) => a,

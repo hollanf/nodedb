@@ -63,13 +63,12 @@ pub fn negotiate(
 ///
 /// The actual injection into the QUIC connection accept loop lives in
 /// `transport/client` (outbound) and `transport/server` (inbound).
-///
-/// PHASE2-WIRE: Wire `VersionHandshake` at the QUIC bidi-stream level.
-/// On connect (client): send `VersionHandshake { range: local_range }` before
-/// any RPC frame. On accept (server): read the handshake, negotiate, send
-/// `VersionHandshakeAck { agreed }` back, then proceed with RPCs encoded at
-/// the agreed version. Close the stream with a logged error if ranges are
-/// disjoint. See `negotiation::negotiate` for the algorithm.
+/// On connect, the client opens a dedicated bidi stream and sends
+/// `VersionHandshake { range: local_range }` before any RPC frames.
+/// The server reads the handshake, negotiates, and replies with
+/// `VersionHandshakeAck { agreed }`. If ranges are disjoint the server
+/// closes the QUIC connection with application error code 0x01.
+/// See `handshake_io` and `negotiation::negotiate` for implementation.
 #[derive(
     Debug,
     Clone,

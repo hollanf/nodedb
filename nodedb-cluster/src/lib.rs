@@ -148,6 +148,9 @@ pub use auth::{
     spawn_inflight_timeout, token_hash, verify_token,
 };
 
+pub use wire_version::handshake_io::{
+    perform_version_handshake_client, perform_version_handshake_server,
+};
 pub use wire_version::{
     VersionHandshake, VersionHandshakeAck, VersionRange, Versioned, WireVersion, WireVersionError,
     WireVersionMetrics, decode_versioned, encode_versioned, local_version_range, negotiate,

@@ -6,6 +6,7 @@ use tracing::debug;
 
 use crate::error::{ClusterError, Result};
 use crate::transport::config::SNI_HOSTNAME;
+use crate::wire_version::handshake_io::{local_version_range, perform_version_handshake_client};
 
 use super::transport::NexarTransport;
 
@@ -92,6 +93,42 @@ impl NexarTransport {
 
         debug!(target, %addr, "connected to peer");
 
+        // Open a dedicated bidi stream for the wire-version handshake.
+        // This must complete before any RPC stream is opened on this connection.
+        let agreed = {
+            let (mut hs_send, mut hs_recv) =
+                conn.open_bi().await.map_err(|e| ClusterError::Transport {
+                    detail: format!("open handshake stream to node {target} at {addr}: {e}"),
+                })?;
+            let version = tokio::time::timeout(
+                self.rpc_timeout,
+                perform_version_handshake_client(&mut hs_send, &mut hs_recv),
+            )
+            .await
+            .map_err(|_| ClusterError::Transport {
+                detail: format!(
+                    "handshake timeout ({}ms) with node {target} at {addr}",
+                    self.rpc_timeout.as_millis()
+                ),
+            })??;
+            // Finish the handshake send stream — the server reads it until FIN.
+            let _ = hs_send.finish();
+            version
+        };
+
+        let local = local_version_range();
+        debug!(
+            target,
+            %addr,
+            agreed_version = %agreed,
+            local_min = %local.min,
+            local_max = %local.max,
+            "wire version negotiated"
+        );
+
+        // Cache the agreed version keyed on the QUIC connection's stable id.
+        self.store_agreed_version(conn.stable_id(), agreed);
+
         // Cache (harmless race: last writer wins, both connections valid).
         let mut peers = self.peers.write().unwrap_or_else(|p| p.into_inner());
         peers.insert(target, conn.clone());
@@ -100,7 +137,15 @@ impl NexarTransport {
 
     /// Remove a cached connection (forces reconnect on next use).
     pub(super) fn evict_peer(&self, target: u64) {
+        let stable_id = {
+            let peers = self.peers.read().unwrap_or_else(|p| p.into_inner());
+            peers.get(&target).map(|c| c.stable_id())
+        };
         let mut peers = self.peers.write().unwrap_or_else(|p| p.into_inner());
         peers.remove(&target);
+        drop(peers);
+        if let Some(id) = stable_id {
+            self.evict_agreed_version(id);
+        }
     }
 }
