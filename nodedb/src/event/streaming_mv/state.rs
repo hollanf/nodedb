@@ -111,20 +111,6 @@ impl MvState {
         }
     }
 
-    /// Update the MV state (without event time — backward compat).
-    pub fn update(&self, group_key: &str, agg_values: &[f64]) {
-        let mut groups = self.groups.write().unwrap_or_else(|p| p.into_inner());
-        let states = groups
-            .entry(group_key.to_string())
-            .or_insert_with(|| vec![GroupState::default(); self.aggregates.len()]);
-
-        for (i, &value) in agg_values.iter().enumerate() {
-            if i < states.len() && !value.is_nan() {
-                states[i].update(value);
-            }
-        }
-    }
-
     /// Read the current aggregate results.
     ///
     /// Returns: Vec<(group_key, Vec<(agg_name, value)>)>
@@ -270,9 +256,9 @@ mod tests {
             }],
         );
 
-        state.update("INSERT", &[1.0]);
-        state.update("INSERT", &[1.0]);
-        state.update("UPDATE", &[1.0]);
+        state.update_with_time("INSERT", &[1.0], 0);
+        state.update_with_time("INSERT", &[1.0], 0);
+        state.update_with_time("UPDATE", &[1.0], 0);
 
         let results = state.read_results();
         assert_eq!(results.len(), 2);

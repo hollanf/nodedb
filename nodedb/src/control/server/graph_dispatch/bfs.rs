@@ -14,38 +14,10 @@ use crate::control::state::SharedState;
 use crate::engine::graph::traversal_options::GraphTraversalOptions;
 use crate::types::{Lsn, RequestId, TenantId, TraceId};
 
-/// Cross-core BFS orchestration for graph traversal.
-///
-/// Implements multi-hop BFS. In single-node mode, broadcasts `GraphNeighbors`
-/// to all local Data Plane cores. In cluster mode, after each local hop the
-/// frontier is partitioned into local/remote nodes and remote nodes are
-/// coordinated via `scatter_gather::coordinate_cross_shard_hop`.
-///
-/// Returns a JSON array of all discovered node IDs.
-pub async fn cross_core_bfs(
-    shared: &SharedState,
-    tenant_id: TenantId,
-    start_nodes: Vec<String>,
-    edge_label: Option<String>,
-    direction: crate::engine::graph::edge_store::Direction,
-    max_depth: usize,
-) -> crate::Result<Response> {
-    cross_core_bfs_with_options(
-        shared,
-        tenant_id,
-        start_nodes,
-        edge_label,
-        direction,
-        max_depth,
-        &GraphTraversalOptions::default(),
-    )
-    .await
-}
-
 /// Cross-core BFS with explicit traversal options (fan-out limits, partial mode).
 ///
-/// This is the full cluster-aware entry point. `cross_core_bfs` delegates here
-/// with default options for backward compatibility.
+/// This is the cluster-aware entry point. Callers pass `&GraphTraversalOptions::default()`
+/// for standard traversal.
 pub async fn cross_core_bfs_with_options(
     shared: &SharedState,
     tenant_id: TenantId,

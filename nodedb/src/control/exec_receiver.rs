@@ -152,7 +152,7 @@ impl LocalPlanExecutor {
             user_roles: Vec::new(),
         };
 
-        let rx = self.state.tracker.register_oneshot(request_id);
+        let mut rx = self.state.tracker.register(request_id);
 
         let dispatch_result = match self.state.dispatcher.lock() {
             Ok(mut d) => d.dispatch(request),
@@ -167,7 +167,7 @@ impl LocalPlanExecutor {
         }
 
         // ── 5. Collect response payloads ──────────────────────────────────────
-        match tokio::time::timeout(deadline, rx).await {
+        match tokio::time::timeout(deadline, async { rx.recv().await.ok_or(()) }).await {
             Ok(Ok(resp)) => {
                 if resp.status == crate::bridge::envelope::Status::Error {
                     let msg = resp

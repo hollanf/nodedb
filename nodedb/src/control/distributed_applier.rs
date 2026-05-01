@@ -418,7 +418,7 @@ pub async fn run_apply_loop(
                 user_roles: Vec::new(),
             };
 
-            let rx = state.tracker.register_oneshot(request_id);
+            let mut rx = state.tracker.register(request_id);
 
             let dispatch_result = match state.dispatcher.lock() {
                 Ok(mut d) => d.dispatch(request),
@@ -444,7 +444,9 @@ pub async fn run_apply_loop(
             }
 
             // Await Data Plane response.
-            match tokio::time::timeout(Duration::from_secs(30), rx).await {
+            match tokio::time::timeout(Duration::from_secs(30), async { rx.recv().await.ok_or(()) })
+                .await
+            {
                 Ok(Ok(resp)) => {
                     let payload = resp.payload.to_vec();
                     if resp.status == Status::Error {

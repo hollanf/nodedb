@@ -15,7 +15,7 @@ impl NodeDbPgHandler {
         vshard_id: VShardId,
         plan: &crate::bridge::envelope::PhysicalPlan,
     ) -> crate::Result<()> {
-        crate::control::server::dispatch_utils::wal_append_if_write(
+        crate::control::server::wal_dispatch::wal_append_if_write(
             &self.state.wal,
             tenant_id,
             vshard_id,

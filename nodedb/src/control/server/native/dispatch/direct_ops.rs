@@ -8,6 +8,8 @@ use crate::control::gateway::core::QueryContext as GatewayQueryContext;
 use crate::data::executor::response_codec;
 use crate::types::{Lsn, RequestId, TraceId};
 
+use crate::control::server::wal_dispatch;
+
 use super::super::super::dispatch_utils;
 use super::{DispatchCtx, error_to_native};
 
@@ -51,7 +53,7 @@ pub(crate) async fn handle_direct_op(
     // target node, but we still append locally for the boot/single-node path).
     if ctx.state.gateway.is_none()
         && let Err(e) =
-            dispatch_utils::wal_append_if_write(&ctx.state.wal, tenant_id, vshard_id, &plan)
+            wal_dispatch::wal_append_if_write(&ctx.state.wal, tenant_id, vshard_id, &plan)
     {
         return error_to_native(seq, &e);
     }

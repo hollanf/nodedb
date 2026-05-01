@@ -225,7 +225,7 @@ pub(super) async fn dispatch_plan(
     vshard_id: crate::types::VShardId,
     plan: crate::bridge::envelope::PhysicalPlan,
 ) -> Option<PgWireResult<Vec<Response>>> {
-    if let Err(e) = crate::control::server::dispatch_utils::wal_append_if_write(
+    if let Err(e) = crate::control::server::wal_dispatch::wal_append_if_write(
         &state.wal, tenant_id, vshard_id, &plan,
     ) {
         return Some(Err(sqlstate_error("XX000", &e.to_string())));
@@ -330,7 +330,7 @@ pub(super) async fn plan_and_dispatch(
         .await
         .map_err(|e| sqlstate_error_raw("XX000", &e.to_string()))?;
     for task in tasks {
-        crate::control::server::dispatch_utils::wal_append_if_write(
+        crate::control::server::wal_dispatch::wal_append_if_write(
             &state.wal,
             tenant_id,
             task.vshard_id,

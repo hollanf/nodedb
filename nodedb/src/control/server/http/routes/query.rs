@@ -178,7 +178,7 @@ fn wal_append_if_write(
     state: &AppState,
     task: &crate::control::planner::physical::PhysicalTask,
 ) -> Result<(), ApiError> {
-    crate::control::server::dispatch_utils::wal_append_if_write(
+    crate::control::server::wal_dispatch::wal_append_if_write(
         &state.shared.wal,
         task.tenant_id,
         task.vshard_id,

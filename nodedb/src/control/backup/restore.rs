@@ -19,8 +19,8 @@ use std::time::Duration;
 use nodedb_cluster::routing::{VSHARD_COUNT, vshard_for_collection};
 use nodedb_cluster::rpc_codec::{ExecuteRequest, ExecuteResponse, RaftRpc, TypedClusterError};
 use nodedb_types::backup_envelope::{
-    DEFAULT_MAX_TOTAL_BYTES, EnvelopeError, VERSION_ENCRYPTED, VERSION_PLAIN,
-    parse as parse_envelope, parse_encrypted as parse_envelope_encrypted,
+    DEFAULT_MAX_TOTAL_BYTES, EnvelopeError, VERSION_ENCRYPTED,
+    parse_encrypted as parse_envelope_encrypted,
 };
 use serde::Serialize;
 
@@ -89,20 +89,12 @@ pub async fn restore_tenant(
             }
         }
     } else {
-        // Version 1 (plaintext) or unknown — let parse surface the error.
-        if envelope_version != VERSION_PLAIN && envelope_version != 0 {
-            tracing::warn!(
-                envelope_version,
-                "restore: unrecognised envelope version; attempting plaintext parse"
-            );
-        }
-        if envelope_version == VERSION_PLAIN && state.backup_kek.is_some() {
-            tracing::warn!(
-                "restore: envelope is unencrypted (version 1) but a backup KEK is configured; \
-                 proceeding without decryption — re-backup to produce an encrypted envelope"
-            );
-        }
-        parse_envelope(envelope_bytes, DEFAULT_MAX_TOTAL_BYTES).map_err(envelope_to_err)?
+        return Err(Error::Internal {
+            detail: format!(
+                "restore: unsupported envelope version {envelope_version}; \
+                 only encrypted (version 2) envelopes are accepted"
+            ),
+        });
     };
     if env.meta.tenant_id != tenant_id {
         // Mismatch is a hard error — request is for a different tenant.

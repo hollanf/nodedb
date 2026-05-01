@@ -10,9 +10,9 @@ use pgwire::error::PgWireResult;
 use sonic_rs;
 
 use crate::control::security::identity::AuthenticatedIdentity;
-use crate::control::server::dispatch_utils;
 use crate::control::server::pgwire::types::{sqlstate_error, text_field};
 use crate::control::state::SharedState;
+use crate::engine::graph::traversal_options::GraphTraversalOptions;
 
 use super::parse::{extract_function_args, extract_number_after};
 
@@ -41,13 +41,14 @@ pub async fn tree_children(
     let max_depth = extract_number_after(&upper, "MAX_DEPTH")?.unwrap_or(100);
 
     let dir = crate::engine::graph::edge_store::Direction::Out;
-    let bfs_result = dispatch_utils::cross_core_bfs(
+    let bfs_result = crate::control::server::graph_dispatch::cross_core_bfs_with_options(
         state,
         tenant_id,
         vec![root_id],
         Some(graph_index),
         dir,
         max_depth,
+        &GraphTraversalOptions::default(),
     )
     .await
     .map_err(|e| sqlstate_error("XX000", &format!("BFS failed: {e}")))?;

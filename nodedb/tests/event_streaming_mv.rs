@@ -20,9 +20,9 @@ fn incremental_count() {
     );
 
     // Each update passes &[1.0]; GroupState::update increments count by 1 per call.
-    state.update("group_a", &[1.0]);
-    state.update("group_a", &[1.0]);
-    state.update("group_b", &[1.0]);
+    state.update_with_time("group_a", &[1.0], 0);
+    state.update_with_time("group_a", &[1.0], 0);
+    state.update_with_time("group_b", &[1.0], 0);
 
     let results = state.read_results_with_status();
     assert_eq!(results.len(), 2);
@@ -61,9 +61,9 @@ fn incremental_sum_min_max() {
     );
 
     // Pass the same value to all three aggregate slots.
-    state.update("bucket", &[10.0, 10.0, 10.0]);
-    state.update("bucket", &[30.0, 30.0, 30.0]);
-    state.update("bucket", &[20.0, 20.0, 20.0]);
+    state.update_with_time("bucket", &[10.0, 10.0, 10.0], 0);
+    state.update_with_time("bucket", &[30.0, 30.0, 30.0], 0);
+    state.update_with_time("bucket", &[20.0, 20.0, 20.0], 0);
 
     let results = state.read_results_with_status();
     let bucket = results.iter().find(|r| r.0 == "bucket").unwrap();
@@ -88,9 +88,9 @@ fn incremental_avg() {
         }],
     );
 
-    state.update("g", &[10.0]);
-    state.update("g", &[20.0]);
-    state.update("g", &[30.0]);
+    state.update_with_time("g", &[10.0], 0);
+    state.update_with_time("g", &[20.0], 0);
+    state.update_with_time("g", &[30.0], 0);
 
     let results = state.read_results_with_status();
     let g = results.iter().find(|r| r.0 == "g").unwrap();
@@ -138,9 +138,9 @@ fn snapshot_and_restore() {
             input_expr: String::new(),
         }],
     );
-    state.update("g1", &[1.0]);
-    state.update("g1", &[1.0]);
-    state.update("g2", &[1.0]);
+    state.update_with_time("g1", &[1.0], 0);
+    state.update_with_time("g1", &[1.0], 0);
+    state.update_with_time("g2", &[1.0], 0);
 
     let snapshot = state.snapshot();
     assert_eq!(snapshot.len(), 2);

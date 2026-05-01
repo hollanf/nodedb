@@ -1,5 +1,6 @@
 //! Shape subscription identifier.
 
+use std::borrow::Borrow;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -47,6 +48,12 @@ impl ShapeId {
 impl fmt::Display for ShapeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl Borrow<str> for ShapeId {
+    fn borrow(&self) -> &str {
+        &self.0
     }
 }
 

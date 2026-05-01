@@ -178,7 +178,7 @@ pub(crate) async fn apply_array_op(
         user_roles: Vec::new(),
     };
 
-    let rx = state.tracker.register_oneshot(request_id);
+    let mut rx = state.tracker.register(request_id);
 
     let dispatch_result = match state.dispatcher.lock() {
         Ok(mut d) => d.dispatch(request),
@@ -198,7 +198,7 @@ pub(crate) async fn apply_array_op(
         return;
     }
 
-    let result = await_data_plane(rx, "array op").await;
+    let result = await_data_plane(async move { rx.recv().await.ok_or(()) }, "array op").await;
     match result {
         Ok(payload) => {
             // Record applied — authoritative idempotency entry.
@@ -276,7 +276,7 @@ async fn ensure_array_open(
         user_roles: Vec::new(),
     };
 
-    let open_rx = state.tracker.register_oneshot(open_request_id);
+    let mut open_rx = state.tracker.register(open_request_id);
 
     let dispatch_result = match state.dispatcher.lock() {
         Ok(mut d) => d.dispatch(open_request),
@@ -289,7 +289,9 @@ async fn ensure_array_open(
         });
     }
 
-    await_data_plane(open_rx, "OpenArray").await.map(|_| ())
+    await_data_plane(async move { open_rx.recv().await.ok_or(()) }, "OpenArray")
+        .await
+        .map(|_| ())
 }
 
 /// Payload extracted from a `ReplicatedWrite::ArraySchema` entry.

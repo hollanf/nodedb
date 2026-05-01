@@ -132,10 +132,8 @@ pub async fn backup_tenant(state: &Arc<SharedState>, tenant_id: u64) -> Result<B
         }
     }
 
-    // Encrypt the envelope if a backup KEK is configured; otherwise emit a
-    // one-time warning and produce a plaintext envelope. The warning is
-    // emitted unconditionally (not behind a once-cell) because backup is
-    // a rare, operator-driven operation — the per-call cost is negligible.
+    // A backup KEK must be configured; plaintext backup envelopes are no
+    // longer supported.
     let envelope_bytes = match &state.backup_kek {
         Some(kek) => writer
             .finalize_encrypted(kek)
@@ -143,12 +141,11 @@ pub async fn backup_tenant(state: &Arc<SharedState>, tenant_id: u64) -> Result<B
                 detail: format!("backup envelope encryption: {e}"),
             })?,
         None => {
-            tracing::warn!(
-                tenant_id,
-                "backup produced without encryption; configure [backup_encryption] \
-                 to encrypt backup envelopes at rest"
-            );
-            writer.finalize()
+            return Err(Error::Internal {
+                detail: "backup: no [backup_encryption] KEK configured; \
+                         plaintext backup envelopes are no longer supported"
+                    .into(),
+            });
         }
     };
     Ok(Bytes::from(envelope_bytes))

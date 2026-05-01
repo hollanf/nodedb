@@ -141,9 +141,6 @@ pub enum DocumentOp {
         /// Per-row surrogates (parallel to `documents`). When non-empty and
         /// same length as `documents`, the handler uses these for FTS indexing.
         /// `Surrogate::ZERO` entries are silently skipped by the FTS path.
-        /// Defaults to empty for backward-compat with older serialized plans.
-        #[serde(default)]
-        #[msgpack(default)]
         surrogates: Vec<nodedb_types::Surrogate>,
     },
 

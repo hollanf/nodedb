@@ -39,18 +39,21 @@ pub struct AuthApiKey {
     pub last_used_at: u64,
     /// Last used IP address.
     pub last_used_ip: String,
-    /// For key rotation: previous key ID that this key replaces.
-    /// Forward audit pointer on the new key. During the overlap window, both
-    /// old and new keys verify; after it, only the new key verifies.
+    // Key rotation overlap window: both old and new keys verify during the
+    // configured overlap period; old keys revoke when `superseded_at` is set
+    // and that timestamp elapses, or immediately when `overlap_hours == 0`
+    // (set `is_revoked = true` to avoid a clock-edge race at `now == superseded_at`).
+    //
+    // `replaces_key_id` — forward audit pointer on the new key.
+    // `superseded_at`   — deadline on the old key (`0` = not superseded yet).
+    // `superseded_by`   — reverse pointer on the old key.
+    // `is_valid()`      — single gate enforcing all three conditions.
+    /// Forward audit pointer on the new key: ID of the old key this key replaces.
     pub replaces_key_id: Option<String>,
-    /// Set on the old key when it is rotated out. Unix timestamp after which
-    /// verify() must reject this key. `0` means "not superseded". When
-    /// `rotate()` is called with `overlap_hours == 0`, the old key is marked
-    /// `is_revoked = true` instead, to avoid a clock-edge race at
-    /// `now == superseded_at`.
+    /// Deadline on the old key: Unix timestamp after which `verify()` must
+    /// reject this key. `0` means this key has not been superseded yet.
     pub superseded_at: u64,
-    /// Set on the old key when it is rotated out: key_id of the replacement.
-    /// Reverse pointer to the new key (mirrors `replaces_key_id`).
+    /// Reverse pointer on the old key: key_id of the replacement key.
     pub superseded_by: Option<String>,
 }
 

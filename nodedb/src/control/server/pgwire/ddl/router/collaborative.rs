@@ -55,10 +55,6 @@ pub(super) async fn dispatch(
         ));
     }
 
-    // Materialized sum is handled by the typed AST dispatcher
-    // (`ast::try_dispatch` -> `AlterCollectionOp::AddMaterializedSum`); this
-    // legacy string-prefix branch is no longer needed.
-
     // Period lock management.
     if upper.starts_with("ALTER COLLECTION ") && upper.contains("ADD PERIOD LOCK") {
         return Some(super::super::period_lock::add_period_lock(

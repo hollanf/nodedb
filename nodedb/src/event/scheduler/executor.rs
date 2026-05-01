@@ -458,9 +458,10 @@ async fn execute_job(
 
 /// Build the owner's identity for scheduled job execution (SECURITY DEFINER).
 ///
-/// The job runs with the schedule creator's privileges, not SYSTEM.
-/// If the owner is found in the credential store, use their actual roles.
-/// Falls back to superuser if not found (backward compatibility).
+/// SECURITY DEFINER semantics: scheduled jobs always run as superuser
+/// under the creator's username. The username drives audit attribution;
+/// privilege is fixed at superuser regardless of the creator's current
+/// role membership.
 fn scheduler_identity(tenant_id: TenantId, owner: &str) -> AuthenticatedIdentity {
     AuthenticatedIdentity {
         user_id: 0,

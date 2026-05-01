@@ -14,5 +14,5 @@ pub mod bfs;
 pub mod helpers;
 pub mod shortest_path;
 
-pub use bfs::{cross_core_bfs, cross_core_bfs_with_options};
+pub use bfs::cross_core_bfs_with_options;
 pub use shortest_path::cross_core_shortest_path;

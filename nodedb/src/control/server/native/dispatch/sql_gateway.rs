@@ -10,7 +10,7 @@ use crate::bridge::envelope::{Payload, Response, Status};
 use crate::control::gateway::GatewayErrorMap;
 use crate::control::gateway::core::QueryContext as GatewayQueryContext;
 use crate::control::planner::physical::PhysicalTask;
-use crate::control::server::dispatch_utils;
+use crate::control::server::{dispatch_utils, wal_dispatch};
 use crate::types::{Lsn, RequestId, TraceId};
 
 use super::DispatchCtx;
@@ -47,7 +47,7 @@ pub(super) async fn dispatch_task_via_gateway(
         }
         None => {
             // Boot fallback: no gateway yet, dispatch locally.
-            dispatch_utils::wal_append_if_write(&ctx.state.wal, tenant_id, vshard_id, &plan)?;
+            wal_dispatch::wal_append_if_write(&ctx.state.wal, tenant_id, vshard_id, &plan)?;
             dispatch_utils::dispatch_to_data_plane(
                 ctx.state,
                 tenant_id,

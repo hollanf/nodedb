@@ -60,7 +60,7 @@ pub async fn dispatch_async_with_source(
         user_roles: Vec::new(),
     };
 
-    let rx = state.tracker.register_oneshot(request_id);
+    let mut rx = state.tracker.register(request_id);
 
     match state.dispatcher.lock() {
         Ok(mut d) => d.dispatch(request).map_err(|e| crate::Error::Internal {
@@ -75,7 +75,7 @@ pub async fn dispatch_async_with_source(
     };
 
     // Await with timeout — yields the thread so the response poller can run.
-    let resp = tokio::time::timeout(timeout, rx)
+    let resp = tokio::time::timeout(timeout, async { rx.recv().await.ok_or(()) })
         .await
         .map_err(|_| crate::Error::Internal {
             detail: format!("dispatch timeout after {}ms", timeout.as_millis()),

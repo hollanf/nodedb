@@ -1,6 +1,4 @@
 //! Shared dispatch utilities used by both the pgwire and native endpoints.
-//!
-//! Re-exports from focused sub-modules for backward compatibility.
 
 use std::time::{Duration, Instant};
 
@@ -9,12 +7,6 @@ use crate::bridge::envelope::{PhysicalPlan, Priority, Request, Response};
 use crate::bridge::physical_plan::{DocumentOp, KvOp, TimeseriesOp};
 use crate::control::state::SharedState;
 use crate::types::{ReadConsistency, TenantId, TraceId, VShardId};
-
-pub use super::broadcast::{broadcast_count_to_all_cores, broadcast_raw, broadcast_to_all_cores};
-pub use super::graph_dispatch::{
-    cross_core_bfs, cross_core_bfs_with_options, cross_core_shortest_path,
-};
-pub use super::wal_dispatch::wal_append_if_write;
 
 #[derive(Debug)]
 pub(crate) enum DispatchCollectError {

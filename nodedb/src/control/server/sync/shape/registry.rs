@@ -58,7 +58,9 @@ impl ShapeRegistry {
             shape_id = %shape.shape_id,
             "shape subscribed"
         );
-        client.shapes.insert(shape.shape_id.clone(), shape);
+        client
+            .shapes
+            .insert(ShapeId::from_validated(shape.shape_id.clone()), shape);
         client.last_modified = Instant::now();
     }
 
@@ -217,7 +219,9 @@ impl ShapeRegistry {
                 tenant_id,
                 last_modified: Instant::now(),
             });
-            client.shapes.insert(shape.shape_id.clone(), shape);
+            client
+                .shapes
+                .insert(ShapeId::from_validated(shape.shape_id.clone()), shape);
         }
     }
 

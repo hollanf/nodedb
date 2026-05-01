@@ -100,7 +100,7 @@ pub async fn run_checkpoint_cycle(
                 user_roles: Vec::new(),
             };
 
-            let rx = tracker.register_oneshot(request_id);
+            let rx = tracker.register(request_id);
 
             if let Err(e) = disp.dispatch_to_core(core_id, request) {
                 warn!(
@@ -125,8 +125,8 @@ pub async fn run_checkpoint_cycle(
     let mut checkpoint_lsns: Vec<u64> = Vec::with_capacity(receivers.len());
     let mut failed_cores: Vec<usize> = Vec::new();
 
-    for (core_id, _request_id, rx) in receivers {
-        match tokio::time::timeout(timeout, rx).await {
+    for (core_id, _request_id, mut rx) in receivers {
+        match tokio::time::timeout(timeout, async { rx.recv().await.ok_or(()) }).await {
             Ok(Ok(response)) => {
                 if response.status == Status::Ok {
                     // Parse checkpoint LSN from payload (u64 LE).

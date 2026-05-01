@@ -98,19 +98,6 @@ impl RequestTracker {
         self.lock_pending().remove(id);
     }
 
-    /// Register and return a one-shot-style receiver that resolves on the first response.
-    ///
-    /// For backward compatibility with callers that expect a single response.
-    /// The returned future resolves when any response (partial or final) arrives.
-    /// For streaming, use `register()` directly.
-    pub fn register_oneshot(
-        &self,
-        id: RequestId,
-    ) -> impl std::future::Future<Output = Result<Response, ()>> {
-        let mut rx = self.register(id);
-        async move { rx.recv().await.ok_or(()) }
-    }
-
     /// Number of in-flight requests.
     pub fn in_flight(&self) -> usize {
         self.lock_pending().len()

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
@@ -657,8 +657,15 @@ async fn main() -> anyhow::Result<()> {
             );
         }
         Ok(None) => {
-            // Trust mode — no credentials needed.
-            info!(mode = ?auth_mode, "auth mode: trust (no authentication)");
+            // Trust mode — no credentials needed, but operators must opt in explicitly.
+            warn!("╔══════════════════════════════════════════════════════════════╗");
+            warn!("║  WARNING: NodeDB is running in TRUST mode.                  ║");
+            warn!("║  ALL connections are accepted WITHOUT credentials.           ║");
+            warn!("║  This is UNSAFE for any environment beyond local dev/CI.    ║");
+            warn!("║  Set auth.mode = \"password\" (or \"certificate\") to require   ║");
+            warn!("║  credentials. Trust mode must be an explicit operator       ║");
+            warn!("║  opt-in — it is never the NodeDB default.                   ║");
+            warn!("╚══════════════════════════════════════════════════════════════╝");
         }
         Err(e) => {
             return Err(e.into());
@@ -953,6 +960,14 @@ async fn main() -> anyhow::Result<()> {
     eprintln!("  Data Plane cores: {}", config.data_plane_cores);
     eprintln!("  Data directory  : {}", config.data_dir.display());
     eprintln!("  Auth mode       : {:?}", config.auth.mode);
+    if config.auth.mode == nodedb::config::auth::AuthMode::Trust {
+        eprintln!();
+        eprintln!("  ╔══════════════════════════════════════════════════════════════╗");
+        eprintln!("  ║  WARNING: TRUST MODE — connections accepted without         ║");
+        eprintln!("  ║  credentials. Unsafe outside local dev / CI.                ║");
+        eprintln!("  ║  Set auth.mode = \"password\" to require credentials.         ║");
+        eprintln!("  ╚══════════════════════════════════════════════════════════════╝");
+    }
     eprintln!();
     eprintln!("  Press Ctrl+C to stop.");
     eprintln!();

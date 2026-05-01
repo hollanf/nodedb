@@ -45,7 +45,7 @@ pub async fn delete_async(tenant_id: u64, name: String, shared: Arc<SharedState>
                 event_source: crate::event::EventSource::User,
                 user_roles: Vec::new(),
             };
-            let rx = shared.tracker.register_oneshot(request_id);
+            let rx = shared.tracker.register(request_id);
             if d.dispatch_to_core(core_id, request).is_err() {
                 shared.tracker.cancel(&request_id);
                 continue;
@@ -54,8 +54,8 @@ pub async fn delete_async(tenant_id: u64, name: String, shared: Arc<SharedState>
         }
     }
 
-    for (core_id, rx) in receivers {
-        match tokio::time::timeout(timeout, rx).await {
+    for (core_id, mut rx) in receivers {
+        match tokio::time::timeout(timeout, async { rx.recv().await.ok_or(()) }).await {
             Ok(Ok(resp)) if resp.status == Status::Ok => {
                 debug!(
                     tenant_id,

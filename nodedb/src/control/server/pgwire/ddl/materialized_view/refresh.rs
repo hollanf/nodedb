@@ -221,7 +221,7 @@ async fn dispatch_sql(
         .await
         .map_err(|e| sqlstate_error("42P20", &format!("plan '{sql}': {e}")))?;
     for task in tasks {
-        crate::control::server::dispatch_utils::wal_append_if_write(
+        crate::control::server::wal_dispatch::wal_append_if_write(
             &state.wal,
             tenant_id,
             task.vshard_id,

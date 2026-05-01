@@ -145,6 +145,8 @@ impl TestClusterNode {
             state.cluster_transport = Some(Arc::clone(&handle.transport));
             state.metadata_cache = Arc::clone(&handle.metadata_cache);
             state.group_watchers = Arc::clone(&handle.group_watchers);
+            // Fixed test KEK so backup tests produce encrypted envelopes.
+            state.backup_kek = Some(Arc::new([0x42u8; 32]));
         } else {
             return Err("SharedState already cloned before cluster wire-up".into());
         }

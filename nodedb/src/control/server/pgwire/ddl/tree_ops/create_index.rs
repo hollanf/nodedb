@@ -35,8 +35,8 @@ use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::{BatchEdge, GraphOp};
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::server::broadcast::broadcast_to_all_cores;
-use crate::control::server::dispatch_utils;
 use crate::control::server::pgwire::types::{sqlstate_error, text_field};
+use crate::control::server::{dispatch_utils, wal_dispatch};
 use crate::control::state::SharedState;
 use crate::types::{TraceId, VShardId};
 
@@ -186,7 +186,7 @@ pub async fn create_graph_index(
         let plan = PhysicalPlan::Graph(GraphOp::EdgePutBatch {
             edges: edges.clone(),
         });
-        if let Err(e) = dispatch_utils::wal_append_if_write(&state.wal, tenant_id, shard, &plan) {
+        if let Err(e) = wal_dispatch::wal_append_if_write(&state.wal, tenant_id, shard, &plan) {
             return surface_failure(
                 state,
                 tenant_id,

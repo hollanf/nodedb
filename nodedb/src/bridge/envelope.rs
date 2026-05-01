@@ -24,11 +24,6 @@ impl Payload {
         Self::Heap(Arc::from([].as_slice()))
     }
 
-    /// Create from Arc<[u8]> (backward compat).
-    pub fn from_arc(a: Arc<[u8]>) -> Self {
-        Self::Heap(a)
-    }
-
     /// Get the payload bytes.
     pub fn as_bytes(&self) -> &[u8] {
         match self {
@@ -350,7 +345,7 @@ mod tests {
             status: Status::Ok,
             attempt: 1,
             partial: false,
-            payload: Payload::from_arc(Arc::from(b"result".as_slice())),
+            payload: Payload::from_vec(b"result".to_vec()),
             watermark_lsn: Lsn::new(42),
             error_code: None,
         };

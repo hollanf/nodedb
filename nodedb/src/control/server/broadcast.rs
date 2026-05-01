@@ -59,7 +59,7 @@ pub async fn broadcast_to_all_cores(
             user_roles: Vec::new(),
         };
 
-        let rx = shared.tracker.register_oneshot(request_id);
+        let rx = shared.tracker.register(request_id);
         match shared.dispatcher.lock() {
             Ok(mut d) => d.dispatch_to_core(core_id, request)?,
             Err(p) => p.into_inner().dispatch_to_core(core_id, request)?,
@@ -74,10 +74,10 @@ pub async fn broadcast_to_all_cores(
     let mut had_error = false;
     let mut error_msg = String::new();
 
-    for rx in receivers {
+    for mut rx in receivers {
         let resp = tokio::time::timeout(
             Duration::from_secs(shared.tuning.network.default_deadline_secs),
-            rx,
+            async { rx.recv().await.ok_or(()) },
         )
         .await
         .map_err(|_| crate::Error::Dispatch {
@@ -181,7 +181,7 @@ pub async fn broadcast_count_to_all_cores(
             user_roles: Vec::new(),
         };
 
-        let rx = shared.tracker.register_oneshot(request_id);
+        let rx = shared.tracker.register(request_id);
         match shared.dispatcher.lock() {
             Ok(mut d) => d.dispatch_to_core(core_id, request)?,
             Err(p) => p.into_inner().dispatch_to_core(core_id, request)?,
@@ -194,10 +194,10 @@ pub async fn broadcast_count_to_all_cores(
     let mut had_error = false;
     let mut error_msg = String::new();
 
-    for rx in receivers {
+    for mut rx in receivers {
         let resp = tokio::time::timeout(
             Duration::from_secs(shared.tuning.network.default_deadline_secs),
-            rx,
+            async { rx.recv().await.ok_or(()) },
         )
         .await
         .map_err(|_| crate::Error::Dispatch {
@@ -280,7 +280,7 @@ pub async fn broadcast_raw(
             user_roles: Vec::new(),
         };
 
-        let rx = shared.tracker.register_oneshot(request_id);
+        let rx = shared.tracker.register(request_id);
         match shared.dispatcher.lock() {
             Ok(mut d) => d.dispatch_to_core(core_id, request)?,
             Err(p) => p.into_inner().dispatch_to_core(core_id, request)?,
@@ -289,10 +289,10 @@ pub async fn broadcast_raw(
     }
 
     let mut merged = Vec::new();
-    for rx in receivers {
+    for mut rx in receivers {
         let resp = tokio::time::timeout(
             std::time::Duration::from_secs(shared.tuning.network.default_deadline_secs),
-            rx,
+            async { rx.recv().await.ok_or(()) },
         )
         .await
         .map_err(|_| crate::Error::Dispatch {

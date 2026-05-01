@@ -2,12 +2,10 @@
 //!
 //! All shape types are defined in `nodedb-types::sync::shape` so that both
 //! Origin and NodeDB-Lite share identical definitions. This module
-//! re-exports them for backwards-compatible use within the Origin codebase.
+//! re-exports them for use within the Origin codebase.
 
+pub use nodedb_types::id::ShapeId;
 pub use nodedb_types::sync::shape::{ShapeDefinition, ShapeType};
-
-/// Shape ID type alias for backwards compatibility.
-pub type ShapeId = String;
 
 #[cfg(test)]
 mod tests {

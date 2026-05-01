@@ -8,10 +8,10 @@ use nodedb_sql::ddl_ast::GraphDirection;
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::GraphOp;
 use crate::control::security::identity::AuthenticatedIdentity;
-use crate::control::server::dispatch_utils;
 use crate::control::server::pgwire::types::sqlstate_error;
 use crate::control::state::SharedState;
 use crate::engine::graph::edge_store::Direction;
+use crate::engine::graph::traversal_options::GraphTraversalOptions;
 use crate::engine::graph::traversal_options::MAX_GRAPH_TRAVERSAL_DEPTH;
 use crate::types::TraceId;
 
@@ -51,8 +51,16 @@ pub async fn traverse(
     let dir = to_engine_direction(direction);
     let tenant_id = identity.tenant_id;
 
-    match dispatch_utils::cross_core_bfs(state, tenant_id, vec![start], edge_label, dir, depth)
-        .await
+    match crate::control::server::graph_dispatch::cross_core_bfs_with_options(
+        state,
+        tenant_id,
+        vec![start],
+        edge_label,
+        dir,
+        depth,
+        &GraphTraversalOptions::default(),
+    )
+    .await
     {
         Ok(resp) => payload_to_query_response(&resp.payload),
         Err(e) => Err(sqlstate_error("XX000", &e.to_string())),
@@ -80,7 +88,14 @@ pub async fn neighbors(
         rls_filters: Vec::new(),
     });
 
-    match dispatch_utils::broadcast_to_all_cores(state, tenant_id, plan, TraceId::ZERO).await {
+    match crate::control::server::broadcast::broadcast_to_all_cores(
+        state,
+        tenant_id,
+        plan,
+        TraceId::ZERO,
+    )
+    .await
+    {
         Ok(resp) => payload_to_query_response(&resp.payload),
         Err(e) => Err(sqlstate_error("XX000", &e.to_string())),
     }
@@ -109,7 +124,7 @@ pub async fn shortest_path(
     }
     let max_depth = clamp_depth(max_depth, "MAX_DEPTH")?;
     let tenant_id = identity.tenant_id;
-    match dispatch_utils::cross_core_shortest_path(
+    match crate::control::server::graph_dispatch::cross_core_shortest_path(
         state, tenant_id, src, dst, edge_label, max_depth,
     )
     .await

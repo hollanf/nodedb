@@ -60,7 +60,7 @@ pub(super) async fn dispatch_plan_with_trace(
         user_roles: Vec::new(),
     };
 
-    let rx = state.shared.tracker.register_oneshot(request_id);
+    let mut rx = state.shared.tracker.register(request_id);
 
     match state.shared.dispatcher.lock() {
         Ok(mut d) => d
@@ -74,7 +74,7 @@ pub(super) async fn dispatch_plan_with_trace(
 
     let resp = tokio::time::timeout(
         Duration::from_secs(state.shared.tuning.network.default_deadline_secs),
-        rx,
+        async { rx.recv().await.ok_or(()) },
     )
     .await
     .map_err(|_| ApiError::Internal("request timed out".into()))?

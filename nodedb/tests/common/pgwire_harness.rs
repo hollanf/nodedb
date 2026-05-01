@@ -61,7 +61,14 @@ impl TestServer {
             nodedb::types::TenantId::new(1),
             vec![nodedb::control::security::identity::Role::Superuser],
         );
-        let shared = SharedState::new_with_credentials(dispatcher, Arc::clone(&wal), credentials);
+        let mut shared =
+            SharedState::new_with_credentials(dispatcher, Arc::clone(&wal), credentials);
+        // Inject a fixed test KEK so backup tests produce encrypted envelopes.
+        // Deterministic 32-byte key — same value every test run.
+        if let Some(s) = Arc::get_mut(&mut shared) {
+            s.backup_kek = Some(Arc::new([0x42u8; 32]));
+        }
+        let shared = shared;
 
         // Data Plane core. Share the SharedState's array_catalog so DDL
         // mutations made by the SQL converter are visible to the handler

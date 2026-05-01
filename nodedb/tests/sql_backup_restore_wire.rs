@@ -16,6 +16,9 @@ use futures::StreamExt;
 use futures::stream;
 use nodedb_types::backup_envelope::{EnvelopeMeta, EnvelopeWriter, HEADER_LEN, MAGIC, TRAILER_LEN};
 
+/// Fixed test KEK injected into `TestServer::start()` via `pgwire_harness`.
+const TEST_KEK: [u8; 32] = [0x42u8; 32];
+
 const TENANT: u64 = 1;
 
 async fn drain_backup(server: &TestServer, tenant: u64) -> Result<Vec<u8>, String> {
@@ -148,8 +151,8 @@ async fn rejects_random_bytes() {
         .expect_err("must reject non-envelope bytes");
     let lower = err.to_lowercase();
     assert!(
-        lower.contains("invalid backup format"),
-        "expected generic invalid-format rejection, got: {err}"
+        lower.contains("invalid backup format") || lower.contains("unsupported envelope version"),
+        "expected generic invalid-format or version rejection, got: {err}"
     );
     assert!(
         !lower.contains("msgpack")
@@ -161,7 +164,12 @@ async fn rejects_random_bytes() {
 }
 
 #[tokio::test]
-async fn rejects_bad_magic() {
+async fn rejects_unsupported_envelope_version() {
+    // A plaintext (version 1) envelope must be rejected at the version-check
+    // gate now that plaintext envelopes are no longer accepted. The server
+    // must return a clear "unsupported envelope version" message rather than
+    // a generic format error, so operators know to re-take the backup with
+    // an encryption KEK configured.
     let server = TestServer::start().await;
     let mut writer = EnvelopeWriter::new(EnvelopeMeta {
         tenant_id: TENANT,
@@ -170,21 +178,22 @@ async fn rejects_bad_magic() {
         snapshot_watermark: 0,
     });
     writer.push_section(0, b"x".to_vec()).unwrap();
-    let mut bytes = writer.finalize();
-    bytes[0] = b'X'; // mutate magic
+    let bytes = writer.finalize(); // produces a version-1 plaintext envelope
     let err = push_restore(&server, TENANT, bytes, false)
         .await
         .unwrap_err();
     assert!(
-        err.to_lowercase().contains("invalid backup format"),
-        "expected magic rejection, got: {err}"
+        err.to_lowercase().contains("unsupported envelope version"),
+        "expected version-rejection message, got: {err}"
     );
 }
 
 #[tokio::test]
 async fn rejects_tenant_mismatch() {
     let server = TestServer::start().await;
-    // Backup tenant 1, hand-craft envelope claiming tenant 99.
+    // Backup tenant 1, hand-craft encrypted envelope claiming tenant 99.
+    // Must use finalize_encrypted so the path advances far enough to reach
+    // the tenant-mismatch gate (version-1 plaintext is now rejected earlier).
     let mut writer = EnvelopeWriter::new(EnvelopeMeta {
         tenant_id: 99,
         source_vshard_count: 1024,
@@ -192,7 +201,9 @@ async fn rejects_tenant_mismatch() {
         snapshot_watermark: 0,
     });
     writer.push_section(0, vec![]).unwrap();
-    let bytes = writer.finalize();
+    let bytes = writer
+        .finalize_encrypted(&TEST_KEK)
+        .expect("finalize_encrypted");
     let err = push_restore(&server, TENANT, bytes, false)
         .await
         .unwrap_err();
@@ -227,7 +238,7 @@ async fn rejects_unsupported_version() {
         .await
         .unwrap_err();
     assert!(
-        err.to_lowercase().contains("unsupported backup version"),
+        err.to_lowercase().contains("unsupported envelope version"),
         "expected version rejection, got: {err}"
     );
 }

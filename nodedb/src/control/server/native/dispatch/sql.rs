@@ -9,11 +9,11 @@ use crate::control::planner::physical::PhysicalTask;
 use crate::control::server::pgwire::session::TransactionState;
 use crate::data::executor::response_codec;
 
-use super::super::super::dispatch_utils;
 use super::pgwire_bridge::pgwire_result_to_native;
 use super::sql_gateway::dispatch_task_via_gateway;
 use super::transaction::{handle_begin, handle_commit, handle_rollback};
 use super::{DispatchCtx, error_to_native};
+use crate::control::server::broadcast::{broadcast_count_to_all_cores, broadcast_to_all_cores};
 
 /// Handle a SQL statement: transaction control, SET/SHOW, DDL, or DataFusion.
 pub(crate) async fn handle_sql(ctx: &DispatchCtx<'_>, seq: u64, sql: &str) -> NativeResponse {
@@ -219,7 +219,7 @@ async fn dispatch_task(ctx: &DispatchCtx<'_>, task: PhysicalTask) -> crate::Resu
             crate::bridge::physical_plan::DocumentOp::InsertSelect { .. }
         )
     ) {
-        return dispatch_utils::broadcast_count_to_all_cores(
+        return broadcast_count_to_all_cores(
             ctx.state,
             task.tenant_id,
             task.plan,
@@ -236,7 +236,7 @@ async fn dispatch_task(ctx: &DispatchCtx<'_>, task: PhysicalTask) -> crate::Resu
             crate::bridge::physical_plan::ArrayOp::DropArray { .. }
         )
     ) {
-        return dispatch_utils::broadcast_count_to_all_cores(
+        return broadcast_count_to_all_cores(
             ctx.state,
             task.tenant_id,
             task.plan,
@@ -248,13 +248,7 @@ async fn dispatch_task(ctx: &DispatchCtx<'_>, task: PhysicalTask) -> crate::Resu
 
     // Broadcast scans must fan-out to all cores regardless of gateway state.
     if task.plan.is_broadcast_scan() {
-        return dispatch_utils::broadcast_to_all_cores(
-            ctx.state,
-            task.tenant_id,
-            task.plan,
-            TraceId::ZERO,
-        )
-        .await;
+        return broadcast_to_all_cores(ctx.state, task.tenant_id, task.plan, TraceId::ZERO).await;
     }
 
     // All other tasks — point ops, writes, Raft-replicated writes — route

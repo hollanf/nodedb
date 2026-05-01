@@ -145,7 +145,7 @@ async fn query_collection_size(
         event_source: crate::event::EventSource::User,
         user_roles: Vec::new(),
     };
-    let rx = state.tracker.register_oneshot(request_id);
+    let mut rx = state.tracker.register(request_id);
     {
         let mut d = state.dispatcher.lock().unwrap_or_else(|p| p.into_inner());
         if d.dispatch_to_core(0, request).is_err() {
@@ -153,7 +153,10 @@ async fn query_collection_size(
             return None;
         }
     }
-    let resp = tokio::time::timeout(timeout, rx).await.ok()?.ok()?;
+    let resp = tokio::time::timeout(timeout, async { rx.recv().await.ok_or(()) })
+        .await
+        .ok()?
+        .ok()?;
     if resp.status != Status::Ok {
         return None;
     }

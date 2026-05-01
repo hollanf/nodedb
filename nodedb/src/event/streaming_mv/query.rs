@@ -119,9 +119,9 @@ mod tests {
             }],
         );
 
-        state.update("INSERT", &[1.0]);
-        state.update("INSERT", &[1.0]);
-        state.update("DELETE", &[1.0]);
+        state.update_with_time("INSERT", &[1.0], 0);
+        state.update_with_time("INSERT", &[1.0], 0);
+        state.update_with_time("DELETE", &[1.0], 0);
 
         let batch = mv_state_to_record_batch(&state).unwrap();
         assert_eq!(batch.num_rows(), 2);

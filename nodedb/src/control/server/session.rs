@@ -445,7 +445,7 @@ impl Session {
         };
 
         // Register for response routing before dispatching.
-        let rx = self.state.tracker.register_oneshot(request_id);
+        let mut rx = self.state.tracker.register(request_id);
 
         // Dispatch to Data Plane via SPSC.
         match self.state.dispatcher.lock() {
@@ -456,7 +456,7 @@ impl Session {
         // Await response from Data Plane (routed back via the response poller).
         let response = tokio::time::timeout(
             Duration::from_secs(self.state.tuning.network.default_deadline_secs),
-            rx,
+            async { rx.recv().await.ok_or(()) },
         )
         .await
         .map_err(|_| crate::Error::DeadlineExceeded { request_id })?

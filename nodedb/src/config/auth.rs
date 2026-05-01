@@ -557,6 +557,54 @@ mod tests {
         assert_eq!(cfg.mode, AuthMode::Password);
     }
 
+    /// Invariant: the default auth mode MUST NOT be Trust.
+    /// Trust requires an explicit operator opt-in.
+    #[test]
+    fn auth_default_is_not_trust() {
+        let cfg = AuthConfig::default();
+        assert_ne!(
+            cfg.mode,
+            AuthMode::Trust,
+            "default AuthMode must not be Trust; operators must opt in explicitly"
+        );
+    }
+
+    /// Loading a config that says nothing about auth must not result in Trust.
+    /// Only a config that explicitly sets mode = "trust" should yield Trust.
+    #[test]
+    fn auth_trust_requires_explicit_opt_in() {
+        // A config with no [auth] section at all → defaults → must not be Trust.
+        let empty_toml = "";
+        // AuthConfig is nested inside ServerConfig; parse a bare AuthConfig
+        // from empty TOML to exercise the serde Default path.
+        let parsed: AuthConfig = toml::from_str(empty_toml).unwrap_or_default();
+        assert_ne!(
+            parsed.mode,
+            AuthMode::Trust,
+            "omitting [auth] from config must not result in Trust mode"
+        );
+
+        // Explicit opt-in: mode = "trust" → must be Trust.
+        // All required AuthConfig fields must be present for toml::from_str to succeed.
+        let trust_toml = r#"
+mode = "trust"
+superuser_name = "nodedb"
+min_password_length = 8
+max_failed_logins = 5
+lockout_duration_secs = 300
+idle_timeout_secs = 3600
+max_connections_per_user = 0
+password_expiry_days = 0
+audit_retention_days = 0
+"#;
+        let trust_cfg: AuthConfig = toml::from_str(trust_toml).expect("trust toml parses");
+        assert_eq!(
+            trust_cfg.mode,
+            AuthMode::Trust,
+            "explicitly setting mode = \"trust\" must result in Trust mode"
+        );
+    }
+
     #[test]
     fn trust_mode_no_password_needed() {
         let cfg = AuthConfig {

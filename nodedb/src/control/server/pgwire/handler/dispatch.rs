@@ -38,7 +38,7 @@ impl NodeDbPgHandler {
                 crate::bridge::physical_plan::DocumentOp::InsertSelect { .. }
             )
         ) {
-            return crate::control::server::dispatch_utils::broadcast_count_to_all_cores(
+            return crate::control::server::broadcast::broadcast_count_to_all_cores(
                 &self.state,
                 task.tenant_id,
                 task.plan,
@@ -57,7 +57,7 @@ impl NodeDbPgHandler {
                 crate::bridge::physical_plan::ArrayOp::DropArray { .. }
             )
         ) {
-            return crate::control::server::dispatch_utils::broadcast_count_to_all_cores(
+            return crate::control::server::broadcast::broadcast_count_to_all_cores(
                 &self.state,
                 task.tenant_id,
                 task.plan,
@@ -69,7 +69,7 @@ impl NodeDbPgHandler {
 
         // Broadcast scans to all cores — data is distributed across cores.
         if task.plan.is_broadcast_scan() {
-            return crate::control::server::dispatch_utils::broadcast_to_all_cores(
+            return crate::control::server::broadcast::broadcast_to_all_cores(
                 &self.state,
                 task.tenant_id,
                 task.plan,
@@ -129,7 +129,7 @@ impl NodeDbPgHandler {
                         prefilter: None,
                     },
                 );
-                let right_data = crate::control::server::dispatch_utils::broadcast_raw(
+                let right_data = crate::control::server::broadcast::broadcast_raw(
                     &self.state,
                     task.tenant_id,
                     right_scan,
@@ -193,7 +193,7 @@ impl NodeDbPgHandler {
                         prefilter: None,
                     },
                 );
-                crate::control::server::dispatch_utils::broadcast_raw(
+                crate::control::server::broadcast::broadcast_raw(
                     &self.state,
                     task.tenant_id,
                     right_scan,
@@ -234,7 +234,7 @@ impl NodeDbPgHandler {
                     post_filters: post_filters.clone(),
                 },
             );
-            let mut resp = crate::control::server::dispatch_utils::broadcast_to_all_cores(
+            let mut resp = crate::control::server::broadcast::broadcast_to_all_cores(
                 &self.state,
                 task.tenant_id,
                 broadcast_plan,
@@ -390,7 +390,7 @@ impl NodeDbPgHandler {
             user_roles: Vec::new(),
         };
 
-        let rx = self.state.tracker.register_oneshot(request_id);
+        let mut rx = self.state.tracker.register(request_id);
 
         match self.state.dispatcher.lock() {
             Ok(mut d) => d.dispatch(request)?,
@@ -399,7 +399,7 @@ impl NodeDbPgHandler {
 
         tokio::time::timeout(
             std::time::Duration::from_secs(self.state.tuning.network.default_deadline_secs),
-            rx,
+            async { rx.recv().await.ok_or(()) },
         )
         .await
         .map_err(|_| crate::Error::DeadlineExceeded { request_id })?

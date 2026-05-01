@@ -17,14 +17,14 @@ pub struct HandshakeMsg {
     pub subscribed_shapes: Vec<String>,
     /// Client version string.
     pub client_version: String,
-    /// Lite instance identity (UUID v7). Empty for legacy clients.
+    /// Lite instance identity (UUID v7). Default empty for non-Lite peers.
     #[serde(default)]
     pub lite_id: String,
-    /// Monotonic epoch counter (incremented on every open). 0 for legacy clients.
+    /// Monotonic epoch counter (incremented on every open). Default 0 for non-Lite peers.
     #[serde(default)]
     pub epoch: u64,
     /// Wire format version. Server rejects connections with incompatible versions.
-    /// 0 = legacy client (pre-wire-version; treated as version 1).
+    /// Missing field deserializes to 0 and is rejected by the server explicitly.
     #[serde(default)]
     pub wire_version: u16,
 }

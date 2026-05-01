@@ -105,7 +105,7 @@ pub(super) async fn try_dispatch(
 
         NodedbStatement::DropIndex {
             if_exists: true, ..
-        } => None, // legacy handler has its own check
+        } => None,
 
         NodedbStatement::DropTrigger {
             name,
@@ -197,16 +197,30 @@ pub(super) async fn try_dispatch(
         }
 
         NodedbStatement::DropRlsPolicy {
-            if_exists: true, ..
+            name,
+            collection,
+            if_exists: true,
         } => {
-            // RLS policy existence check would need collection context;
-            // fall through to legacy handler which already handles this.
+            let tid = identity.tenant_id.as_u64();
+            if !state.rls.policy_exists(tid, collection, name) {
+                return Some(Ok(vec![Response::Execution(Tag::new("DROP RLS POLICY"))]));
+            }
             None
         }
 
         NodedbStatement::DropConsumerGroup {
-            if_exists: true, ..
-        } => None, // legacy handler
+            name,
+            stream,
+            if_exists: true,
+        } => {
+            let tid = identity.tenant_id.as_u64();
+            if state.group_registry.get(tid, stream, name).is_none() {
+                return Some(Ok(vec![Response::Execution(Tag::new(
+                    "DROP CONSUMER GROUP",
+                ))]));
+            }
+            None
+        }
 
         // ── Batch 1: typed dispatch (no raw_sql) ─────────────────
         NodedbStatement::GrantRole { role, username } => {

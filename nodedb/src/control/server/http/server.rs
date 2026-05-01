@@ -45,6 +45,8 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use tracing::info;
 
+use super::version::stamp_content_type;
+
 use crate::config::auth::AuthMode;
 use crate::control::state::SharedState;
 
@@ -52,15 +54,30 @@ use super::auth::AppState;
 use super::routes;
 
 /// Build the axum router with all endpoints.
+///
+/// JSON routes (all `/v1/` routes except SSE streams and the WebSocket
+/// endpoint) get `stamp_content_type` applied via `map_response` so every
+/// response carries `application/vnd.nodedb.v1+json; charset=utf-8` without
+/// per-handler boilerplate.
+///
+/// SSE and WebSocket routes are kept on a separate sub-router that does NOT
+/// carry the `map_response` layer — those handlers set their own
+/// `Content-Type` (text/event-stream, or the WS upgrade response).
 fn build_router(state: AppState) -> Router {
-    let router = Router::new()
-        // Probe routes — unversioned, always reachable (bypass startup gate).
-        .route("/healthz", get(routes::health::healthz))
-        .route("/health/live", get(routes::health::live))
-        .route("/health/ready", get(routes::health::ready))
-        .route("/health/drain", post(routes::health::drain))
-        .route("/metrics", get(routes::metrics::metrics))
-        // Versioned API routes.
+    // ── Streaming / non-JSON routes (no Content-Type stamp) ──────────────────
+    let streaming_routes = Router::new()
+        // WebSocket RPC — upgrade response, not JSON.
+        .route("/v1/ws", get(routes::ws_rpc::ws_handler))
+        // SSE CDC stream — text/event-stream.
+        .route("/v1/cdc/{collection}", get(routes::cdc::sse_stream))
+        // SSE named-stream events — text/event-stream.
+        .route(
+            "/v1/streams/{stream}/events",
+            get(routes::stream_sse::stream_events),
+        );
+
+    // ── JSON routes (Content-Type stamped to v1 vendor type) ─────────────────
+    let json_routes = Router::new()
         .route("/v1/query", post(routes::query::query))
         .route("/v1/query/stream", post(routes::query::query_ndjson))
         .route("/v1/status", get(routes::status::status))
@@ -93,47 +110,56 @@ fn build_router(state: AppState) -> Router {
             "/v1/collections/{name}/crdt/apply",
             post(routes::crdt::crdt_apply),
         )
-        .route("/v1/ws", get(routes::ws_rpc::ws_handler))
-        .route("/v1/cdc/{collection}", get(routes::cdc::sse_stream))
         .route("/v1/cdc/{collection}/poll", get(routes::cdc::poll_changes))
         .route(
             "/v1/streams/{stream}/poll",
             get(routes::stream_poll::poll_stream),
-        )
-        .route(
-            "/v1/streams/{stream}/events",
-            get(routes::stream_sse::stream_events),
         );
 
     #[cfg(feature = "promql")]
-    let router = router
-        .route(
-            "/v1/obsv/api/v1/query",
-            get(routes::promql::instant_query).post(routes::promql::instant_query),
-        )
-        .route(
-            "/v1/obsv/api/v1/query_range",
-            get(routes::promql::range_query).post(routes::promql::range_query),
-        )
-        .route("/v1/obsv/api/v1/series", get(routes::promql::series_query))
-        .route("/v1/obsv/api/v1/labels", get(routes::promql::label_names))
-        .route(
-            "/v1/obsv/api/v1/label/{name}/values",
-            get(routes::promql::label_values),
-        )
-        .route(
-            "/v1/obsv/api/v1/status/buildinfo",
-            get(routes::promql::buildinfo),
-        )
-        .route("/v1/obsv/api/v1/metadata", get(routes::promql::metadata))
-        .route("/v1/obsv/api/v1/write", post(routes::promql::remote_write))
-        .route("/v1/obsv/api/v1/read", post(routes::promql::remote_read))
-        .route(
-            "/v1/obsv/api/v1/annotations",
-            post(routes::promql::annotations),
-        );
+    {
+        json_routes = json_routes
+            .route(
+                "/v1/obsv/api/v1/query",
+                get(routes::promql::instant_query).post(routes::promql::instant_query),
+            )
+            .route(
+                "/v1/obsv/api/v1/query_range",
+                get(routes::promql::range_query).post(routes::promql::range_query),
+            )
+            .route("/v1/obsv/api/v1/series", get(routes::promql::series_query))
+            .route("/v1/obsv/api/v1/labels", get(routes::promql::label_names))
+            .route(
+                "/v1/obsv/api/v1/label/{name}/values",
+                get(routes::promql::label_values),
+            )
+            .route(
+                "/v1/obsv/api/v1/status/buildinfo",
+                get(routes::promql::buildinfo),
+            )
+            .route("/v1/obsv/api/v1/metadata", get(routes::promql::metadata))
+            .route("/v1/obsv/api/v1/write", post(routes::promql::remote_write))
+            .route("/v1/obsv/api/v1/read", post(routes::promql::remote_read))
+            .route(
+                "/v1/obsv/api/v1/annotations",
+                post(routes::promql::annotations),
+            );
+    }
 
-    router
+    // Stamp the v1 vendor Content-Type on every response from JSON routes.
+    let json_routes = json_routes.layer(axum::middleware::map_response(stamp_content_type));
+
+    // ── Probe routes (unversioned, always reachable) ──────────────────────────
+    let probe_routes = Router::new()
+        .route("/healthz", get(routes::health::healthz))
+        .route("/health/live", get(routes::health::live))
+        .route("/health/ready", get(routes::health::ready))
+        .route("/health/drain", post(routes::health::drain))
+        .route("/metrics", get(routes::metrics::metrics));
+
+    probe_routes
+        .merge(json_routes)
+        .merge(streaming_routes)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             startup_gate_middleware,

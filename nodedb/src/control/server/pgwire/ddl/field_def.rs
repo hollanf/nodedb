@@ -70,22 +70,24 @@ pub fn define_field(
             Ok(Some(mut coll)) => {
                 // Remove existing definition for this field if any.
                 coll.field_defs.retain(|f| f.name != field_name);
+
+                // `fields` is the canonical schema-structure source read by
+                // `pg_catalog/tables.rs`, `maintenance/analyze.rs`,
+                // `collection/describe.rs`, `collection/insert.rs`,
+                // `create/register.rs`, and `ilp_listener.rs`. `field_defs`
+                // carries field behavior (defaults, asserts, generated). Both
+                // must stay in sync.
+                let resolved_type = if def.field_type.is_empty() {
+                    "any".to_string()
+                } else {
+                    def.field_type.clone()
+                };
                 coll.field_defs.push(def);
 
-                // Also update the simple fields list for backward compat.
-                if !coll.fields.iter().any(|(n, _)| n == &field_name) {
-                    let ft = coll
-                        .field_defs
-                        .last()
-                        .map(|d| {
-                            if d.field_type.is_empty() {
-                                "any".to_string()
-                            } else {
-                                d.field_type.clone()
-                            }
-                        })
-                        .unwrap_or_else(|| "any".to_string());
-                    coll.fields.push((field_name.clone(), ft));
+                if let Some(entry) = coll.fields.iter_mut().find(|(n, _)| n == &field_name) {
+                    entry.1 = resolved_type;
+                } else {
+                    coll.fields.push((field_name.clone(), resolved_type));
                 }
 
                 if let Err(e) = catalog.put_collection(&coll) {

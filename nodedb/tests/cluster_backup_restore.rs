@@ -11,8 +11,11 @@ use bytes::Bytes;
 use common::cluster_harness::wait::wait_for;
 use futures::SinkExt;
 use futures::StreamExt;
-use nodedb_types::backup_envelope::{DEFAULT_MAX_TOTAL_BYTES, parse as parse_envelope};
+use nodedb_types::backup_envelope::{DEFAULT_MAX_TOTAL_BYTES, parse_encrypted as parse_envelope};
 use std::time::Duration;
+
+/// Fixed test KEK injected into cluster nodes via `cluster_harness`.
+const TEST_KEK: [u8; 32] = [0x42u8; 32];
 
 const TENANT: u64 = 1;
 
@@ -83,7 +86,7 @@ async fn three_node_backup_gathers_one_section_per_node() {
     let cluster = TestCluster::spawn_three().await.expect("cluster");
 
     let bytes = drain_backup(0, &cluster, TENANT).await;
-    let env = parse_envelope(&bytes, DEFAULT_MAX_TOTAL_BYTES).expect("parse envelope");
+    let env = parse_envelope(&bytes, DEFAULT_MAX_TOTAL_BYTES, &TEST_KEK).expect("parse envelope");
     assert_eq!(
         env.meta.tenant_id, TENANT,
         "envelope tenant id should match request"
@@ -241,7 +244,7 @@ async fn backup_envelope_carries_nonzero_snapshot_watermark() {
     }
 
     let bytes = drain_backup(0, &cluster, TENANT).await;
-    let env = parse_envelope(&bytes, DEFAULT_MAX_TOTAL_BYTES).expect("parse envelope");
+    let env = parse_envelope(&bytes, DEFAULT_MAX_TOTAL_BYTES, &TEST_KEK).expect("parse envelope");
 
     assert_ne!(
         env.meta.snapshot_watermark, 0,
@@ -273,7 +276,8 @@ async fn backup_watermark_advances_after_writes() {
         .unwrap_or_else(|e| panic!("insert a: {}", db_detail(&e)));
 
     let bytes_before = drain_backup(0, &cluster, TENANT).await;
-    let env_before = parse_envelope(&bytes_before, DEFAULT_MAX_TOTAL_BYTES).expect("parse before");
+    let env_before =
+        parse_envelope(&bytes_before, DEFAULT_MAX_TOTAL_BYTES, &TEST_KEK).expect("parse before");
 
     for i in 0..4 {
         cluster.nodes[0]
@@ -286,7 +290,8 @@ async fn backup_watermark_advances_after_writes() {
     }
 
     let bytes_after = drain_backup(0, &cluster, TENANT).await;
-    let env_after = parse_envelope(&bytes_after, DEFAULT_MAX_TOTAL_BYTES).expect("parse after");
+    let env_after =
+        parse_envelope(&bytes_after, DEFAULT_MAX_TOTAL_BYTES, &TEST_KEK).expect("parse after");
 
     assert!(
         env_after.meta.snapshot_watermark > env_before.meta.snapshot_watermark,

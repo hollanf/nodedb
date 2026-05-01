@@ -80,7 +80,7 @@ impl DataPlaneArrayExecutor {
             user_roles: Vec::new(),
         };
 
-        let rx = self.state.tracker.register_oneshot(request_id);
+        let mut rx = self.state.tracker.register(request_id);
 
         let dispatch_result = match self.state.dispatcher.lock() {
             Ok(mut d) => d.dispatch(request),
@@ -93,7 +93,9 @@ impl DataPlaneArrayExecutor {
             });
         }
 
-        match tokio::time::timeout(LOCAL_DISPATCH_TIMEOUT, rx).await {
+        match tokio::time::timeout(LOCAL_DISPATCH_TIMEOUT, async { rx.recv().await.ok_or(()) })
+            .await
+        {
             Ok(Ok(resp)) => Ok(resp),
             Ok(Err(_)) => Err(ClusterError::Storage {
                 detail: "array executor: response channel closed".into(),

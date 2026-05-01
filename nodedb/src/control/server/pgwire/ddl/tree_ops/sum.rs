@@ -14,9 +14,9 @@ use sonic_rs;
 
 use crate::bridge::envelope::PhysicalPlan;
 use crate::control::security::identity::AuthenticatedIdentity;
-use crate::control::server::dispatch_utils;
 use crate::control::server::pgwire::types::{sqlstate_error, text_field};
 use crate::control::state::SharedState;
+use crate::engine::graph::traversal_options::GraphTraversalOptions;
 use crate::types::{TraceId, VShardId};
 
 use super::parse::{extract_function_args, extract_number_after, json_to_decimal};
@@ -52,13 +52,14 @@ pub async fn tree_sum(
 
     // BFS traversal to get all descendant node IDs.
     let dir = crate::engine::graph::edge_store::Direction::Out;
-    let bfs_result = dispatch_utils::cross_core_bfs(
+    let bfs_result = crate::control::server::graph_dispatch::cross_core_bfs_with_options(
         state,
         tenant_id,
         vec![root_id.clone()],
         Some(graph_index),
         dir,
         max_depth,
+        &GraphTraversalOptions::default(),
     )
     .await
     .map_err(|e| sqlstate_error("XX000", &format!("BFS failed: {e}")))?;
@@ -126,7 +127,7 @@ pub async fn tree_sum(
                     system_as_of_ms: None,
                     valid_at_ms: None,
                 });
-            if let Ok(resp) = dispatch_utils::dispatch_to_data_plane(
+            if let Ok(resp) = crate::control::server::dispatch_utils::dispatch_to_data_plane(
                 state,
                 tenant_id,
                 coll_vshard,

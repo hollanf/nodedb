@@ -9,7 +9,7 @@ use pgwire::error::PgWireResult;
 use crate::bridge::envelope::PhysicalPlan;
 use crate::bridge::physical_plan::GraphOp;
 use crate::control::security::identity::AuthenticatedIdentity;
-use crate::control::server::dispatch_utils;
+use crate::control::server::broadcast;
 use crate::control::server::pgwire::types::{sqlstate_error, text_field};
 use crate::control::state::SharedState;
 use crate::data::executor::response_codec;
@@ -73,7 +73,7 @@ pub async fn algo(
     let tenant_id = identity.tenant_id;
     let plan = PhysicalPlan::Graph(GraphOp::Algo { algorithm, params });
 
-    match dispatch_utils::broadcast_to_all_cores(state, tenant_id, plan, TraceId::ZERO).await {
+    match broadcast::broadcast_to_all_cores(state, tenant_id, plan, TraceId::ZERO).await {
         Ok(resp) => algo_payload_to_query_response(&resp.payload, algorithm),
         Err(e) => Err(sqlstate_error("XX000", &e.to_string())),
     }

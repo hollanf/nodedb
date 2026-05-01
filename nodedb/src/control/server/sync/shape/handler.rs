@@ -28,7 +28,7 @@ pub struct ShapeSubscribeMsg {
 #[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct ShapeSnapshotMsg {
     /// Shape ID this snapshot belongs to.
-    pub shape_id: ShapeId,
+    pub shape_id: String,
     /// Initial dataset: serialized document rows matching the shape.
     /// Format: MessagePack `Vec<(doc_id, doc_bytes)>`.
     pub data: Vec<u8>,
@@ -43,7 +43,7 @@ pub struct ShapeSnapshotMsg {
 #[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct ShapeDeltaMsg {
     /// Shape ID this delta applies to.
-    pub shape_id: ShapeId,
+    pub shape_id: String,
     /// Collection affected.
     pub collection: String,
     /// Document ID affected.
@@ -59,7 +59,7 @@ pub struct ShapeDeltaMsg {
 /// ShapeUnsubscribe request (client → server, 0x23).
 #[derive(Debug, Clone, Serialize, Deserialize, ToMessagePack, FromMessagePack)]
 pub struct ShapeUnsubscribeMsg {
-    pub shape_id: ShapeId,
+    pub shape_id: String,
 }
 
 /// Initial snapshot data returned by the snapshot provider.
@@ -154,7 +154,7 @@ pub fn evaluate_and_generate_deltas(
         .into_iter()
         .filter_map(|(session_id, shape_id)| {
             let msg = ShapeDeltaMsg {
-                shape_id,
+                shape_id: shape_id.to_string(),
                 collection: collection.to_string(),
                 document_id: doc_id.to_string(),
                 operation: operation.to_string(),
@@ -189,7 +189,10 @@ impl ShapeCompactor {
     /// Record a delta sent to a session's shape subscription.
     /// Returns true if compaction should be triggered.
     pub fn record_delta(&mut self, session_id: &str, shape_id: &str) -> bool {
-        let key = (session_id.to_string(), shape_id.to_string());
+        let key = (
+            session_id.to_string(),
+            ShapeId::from_validated(shape_id.to_string()),
+        );
         let count = self.delta_counts.entry(key).or_insert(0);
         *count += 1;
         *count >= self.compact_threshold
@@ -197,7 +200,10 @@ impl ShapeCompactor {
 
     /// Reset the delta count after compaction.
     pub fn compaction_done(&mut self, session_id: &str, shape_id: &str) {
-        let key = (session_id.to_string(), shape_id.to_string());
+        let key = (
+            session_id.to_string(),
+            ShapeId::from_validated(shape_id.to_string()),
+        );
         self.delta_counts.remove(&key);
     }
 

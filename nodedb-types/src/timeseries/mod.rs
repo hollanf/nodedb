@@ -10,8 +10,7 @@ pub mod partition;
 pub mod series;
 pub mod sync;
 
-// Re-export all public types for backward compatibility.
-// Existing code uses `nodedb_types::timeseries::SeriesKey` etc.
+// Public API surface — flattened re-exports for callers that don't need the sub-module structure.
 pub use config::{ArchiveCompression, ConfigValidationError, TieredPartitionConfig};
 pub use continuous_agg::{AggFunction, AggregateExpr, ContinuousAggregateDef, RefreshPolicy};
 pub use ingest::{IngestResult, LogEntry, MetricSample, SymbolDictionary, TimeRange};
