@@ -140,15 +140,26 @@ async fn main() -> anyhow::Result<()> {
         Some(_) => {}
     }
 
+    let cluster_mode_str = if config.cluster.is_some() {
+        "cluster"
+    } else {
+        "single-node"
+    };
     info!(
         target: "boot",
         version = nodedb::version::VERSION,
-        git_commit = env!("NODEDB_GIT_COMMIT"),
-        build_date = env!("NODEDB_BUILD_DATE"),
+        git_commit = nodedb::version::GIT_COMMIT,
+        build_date = nodedb::version::BUILD_DATE,
+        build_profile = nodedb::version::BUILD_PROFILE,
+        rust_version = nodedb::version::RUST_VERSION,
         wire_format_version = nodedb::version::WIRE_FORMAT_VERSION,
         features = nodedb::version::features_str(),
-        host = %config.host,
+        host = %nodedb::version::hostname(),
+        pid = std::process::id(),
+        pgwire_port = config.ports.pgwire,
+        http_port = config.ports.http,
         native_port = config.ports.native,
+        cluster_mode = cluster_mode_str,
         cores = config.data_plane_cores,
         memory_limit = config.memory_limit,
         "nodedb starting",
@@ -944,33 +955,25 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Startup banner.
-    eprintln!();
-    eprintln!("  NodeDB v{}", env!("CARGO_PKG_VERSION"));
-    eprintln!("  ─────────────────────────────────────");
-    eprintln!("  Host            : {}", config.host);
-    eprintln!("  Native protocol : {}", config.native_addr());
-    eprintln!("  PostgreSQL wire : {}", config.pgwire_addr());
-    eprintln!("  HTTP API        : {}", config.http_addr());
-    if let Some(addr) = config.resp_addr() {
-        eprintln!("  RESP (KV)       : {addr}");
-    }
-    if let Some(addr) = config.ilp_addr() {
-        eprintln!("  ILP ingest      : {addr}");
-    }
-    eprintln!("  Data Plane cores: {}", config.data_plane_cores);
-    eprintln!("  Data directory  : {}", config.data_dir.display());
-    eprintln!("  Auth mode       : {:?}", config.auth.mode);
+    eprintln!(
+        "{}",
+        nodedb::version::format_banner(
+            config.ports.pgwire,
+            config.ports.http,
+            config.ports.native,
+            cluster_mode_str,
+            &config.data_dir.display().to_string(),
+            &format!("{:?}", config.auth.mode),
+        )
+    );
     if config.auth.mode == nodedb::config::auth::AuthMode::Trust {
-        eprintln!();
         eprintln!("  ╔══════════════════════════════════════════════════════════════╗");
         eprintln!("  ║  WARNING: TRUST MODE — connections accepted without         ║");
         eprintln!("  ║  credentials. Unsafe outside local dev / CI.                ║");
         eprintln!("  ║  Set auth.mode = \"password\" to require credentials.         ║");
         eprintln!("  ╚══════════════════════════════════════════════════════════════╝");
+        eprintln!();
     }
-    eprintln!();
-    eprintln!("  Press Ctrl+C to stop.");
-    eprintln!();
 
     // Handle Ctrl+C and SIGTERM with phased shutdown via ShutdownBus.
     //

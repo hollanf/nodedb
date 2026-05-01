@@ -62,6 +62,7 @@ pub fn parse_subcommand(args: &[String]) -> Result<Option<Subcommand>, String> {
             | "--help"
             | "-h"
             | "--version"
+            | "-V"
             | "version"
             | "migrate"
             | "backup"
@@ -79,7 +80,7 @@ pub fn parse_subcommand(args: &[String]) -> Result<Option<Subcommand>, String> {
         std::process::exit(0);
     }
 
-    if matches!(name, "--version" | "version") {
+    if matches!(name, "--version" | "-V" | "version") {
         return Ok(Some(Subcommand::PrintVersion));
     }
 
@@ -178,7 +179,7 @@ pub fn run_subcommand(cmd: Subcommand) -> i32 {
             }
         },
         Subcommand::PrintVersion => {
-            println!("nodedb {}", crate::version::VERSION);
+            print!("{}", format_version_block());
             0
         }
         Subcommand::NotImplemented { name } => {
@@ -187,6 +188,19 @@ pub fn run_subcommand(cmd: Subcommand) -> i32 {
             1
         }
     }
+}
+
+/// Returns the enriched version block printed by `--version` / `-V` / `version`.
+///
+/// Extracted as a pure function so unit tests can assert on the output without
+/// capturing stdout.
+pub(crate) fn format_version_block() -> String {
+    use crate::version::{
+        BUILD_DATE, BUILD_PROFILE, GIT_COMMIT, RUST_VERSION, VERSION, WIRE_FORMAT_VERSION,
+    };
+    format!(
+        "nodedb {VERSION}\ngit commit:    {GIT_COMMIT}\nbuild date:    {BUILD_DATE}\nbuild profile: {BUILD_PROFILE}\nrust version:  {RUST_VERSION}\nwire format:   {WIRE_FORMAT_VERSION}\n"
+    )
 }
 
 fn print_usage() {
@@ -370,6 +384,30 @@ mod tests {
             parse_subcommand(&args(&["/etc/nodedb/nodedb.toml"])).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn dash_capital_v_alias_for_version() {
+        assert_eq!(
+            parse_subcommand(&args(&["-V"])).unwrap(),
+            Some(Subcommand::PrintVersion)
+        );
+    }
+
+    #[test]
+    fn print_version_output_contains_enriched_fields() {
+        let block = format_version_block();
+        assert!(block.contains("git commit:"), "missing git commit label");
+        assert!(block.contains("build date:"), "missing build date label");
+        assert!(
+            block.contains("build profile:"),
+            "missing build profile label"
+        );
+        assert!(
+            block.contains("rust version:"),
+            "missing rust version label"
+        );
+        assert!(block.contains("wire format:"), "missing wire format label");
     }
 
     // No args → Ok(None)

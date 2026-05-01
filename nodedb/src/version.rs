@@ -7,6 +7,18 @@
 /// Current NodeDB version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Short git commit hash baked in at build time.
+pub const GIT_COMMIT: &str = env!("NODEDB_GIT_COMMIT");
+
+/// Build date in `YYYY-MM-DD` format.
+pub const BUILD_DATE: &str = env!("NODEDB_BUILD_DATE");
+
+/// Build profile: `"debug"` or `"release"`.
+pub const BUILD_PROFILE: &str = env!("NODEDB_BUILD_PROFILE");
+
+/// Rust toolchain version string (e.g. `"rustc 1.94.0 (…)"`).
+pub const RUST_VERSION: &str = env!("NODEDB_RUST_VERSION");
+
 /// Wire format version. Re-exported from `nodedb_types::wire_version`,
 /// which is the single source of truth shared with `nodedb-cluster`
 /// and any other crate that stamps or interprets the value.
@@ -64,6 +76,42 @@ pub fn hostname() -> String {
     // Find the null terminator.
     let nul_pos = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     String::from_utf8(buf[..nul_pos].to_vec()).unwrap_or_else(|_| "unknown".to_owned())
+}
+
+/// Returns the startup banner string.
+///
+/// All 11 fields are embedded so callers can assert or display a single value.
+/// Intended for both `eprintln!` at server boot and unit tests.
+pub fn format_banner(
+    pgwire_port: u16,
+    http_port: u16,
+    native_port: u16,
+    cluster_mode: &str,
+    data_dir: &str,
+    auth_mode: &str,
+) -> String {
+    let pid = std::process::id();
+    let host = hostname();
+    let mut out = String::with_capacity(512);
+    out.push('\n');
+    out.push_str(&format!("  NodeDB v{VERSION}\n"));
+    out.push_str("  ─────────────────────────────────────\n");
+    out.push_str(&format!("  git_commit          : {GIT_COMMIT}\n"));
+    out.push_str(&format!("  build_date          : {BUILD_DATE}\n"));
+    out.push_str(&format!("  build_profile       : {BUILD_PROFILE}\n"));
+    out.push_str(&format!("  rust_version        : {RUST_VERSION}\n"));
+    out.push_str(&format!("  wire_format_version : {WIRE_FORMAT_VERSION}\n"));
+    out.push_str("  ─────────────────────────────────────\n");
+    out.push_str(&format!("  hostname            : {host}\n"));
+    out.push_str(&format!("  pid                 : {pid}\n"));
+    out.push_str(&format!("  pgwire_port         : {pgwire_port}\n"));
+    out.push_str(&format!("  http_port           : {http_port}\n"));
+    out.push_str(&format!("  native_port         : {native_port}\n"));
+    out.push_str(&format!("  cluster_mode        : {cluster_mode}\n"));
+    out.push_str(&format!("  data_dir            : {data_dir}\n"));
+    out.push_str(&format!("  auth_mode           : {auth_mode}\n"));
+    out.push_str("\n  Press Ctrl+C to stop.\n");
+    out
 }
 
 /// Check if a remote node's wire version is compatible.
@@ -157,6 +205,63 @@ mod tests {
             !h.is_empty(),
             "hostname() must never return an empty string"
         );
+    }
+
+    #[test]
+    fn build_profile_is_debug_or_release() {
+        let p = BUILD_PROFILE;
+        assert!(
+            p == "debug" || p == "release",
+            "BUILD_PROFILE must be 'debug' or 'release', got '{p}'"
+        );
+    }
+
+    #[test]
+    fn rust_version_format() {
+        let v = RUST_VERSION;
+        assert!(
+            v.starts_with("rustc "),
+            "RUST_VERSION must start with 'rustc ', got '{v}'"
+        );
+    }
+
+    #[test]
+    fn format_banner_contains_all_required_fields() {
+        let banner = format_banner(5432, 8080, 7700, "single-node", "/data/nodedb", "password");
+
+        // version
+        assert!(banner.contains(VERSION), "missing version");
+        // git_commit
+        assert!(banner.contains(GIT_COMMIT), "missing git_commit");
+        // build_date
+        assert!(banner.contains(BUILD_DATE), "missing build_date");
+        // build_profile
+        assert!(banner.contains(BUILD_PROFILE), "missing build_profile");
+        // rust_version — first token "rustc" must appear
+        assert!(banner.contains("rustc"), "missing rust_version");
+        // wire_format_version
+        assert!(
+            banner.contains(&WIRE_FORMAT_VERSION.to_string()),
+            "missing wire_format_version"
+        );
+        // ports
+        assert!(banner.contains("5432"), "missing pgwire_port");
+        assert!(banner.contains("8080"), "missing http_port");
+        assert!(banner.contains("7700"), "missing native_port");
+        // cluster_mode
+        assert!(banner.contains("single-node"), "missing cluster_mode");
+        // pid
+        assert!(
+            banner.contains(&std::process::id().to_string()),
+            "missing pid"
+        );
+        // hostname
+        assert!(!hostname().is_empty(), "hostname must not be empty");
+        assert!(banner.contains(&hostname()), "missing hostname");
+        // data_dir
+        assert!(banner.contains("/data/nodedb"), "missing data_dir");
+        // auth_mode
+        assert!(banner.contains("password"), "missing auth_mode");
     }
 
     #[test]

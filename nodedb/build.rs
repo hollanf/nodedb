@@ -31,6 +31,28 @@ fn main() {
 
     let date = civil_from_days(secs / 86400);
     println!("cargo:rustc-env=NODEDB_BUILD_DATE={date}");
+
+    // --- build profile ---
+    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "unknown".to_owned());
+    println!("cargo:rustc-env=NODEDB_BUILD_PROFILE={profile}");
+
+    // --- rust version ---
+    let rust_version = Command::new("rustc")
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout).ok()
+            } else {
+                None
+            }
+        })
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_owned());
+
+    println!("cargo:rustc-env=NODEDB_RUST_VERSION={rust_version}");
 }
 
 /// Howard Hinnant's civil_from_days algorithm.
