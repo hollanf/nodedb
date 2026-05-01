@@ -297,4 +297,34 @@ mod tests {
         let err = SnapshotEngineId::from_u16(255).unwrap_err();
         assert!(matches!(err, SnapshotFramingError::UnknownEngineId(255)));
     }
+
+    /// Asserts `NDSN` magic at [0..4], SNAPSHOT_FORMAT_VERSION == 1 BE at [4..6],
+    /// and that the CRC at [8..12] covers the engine_id bytes plus payload.
+    #[test]
+    fn golden_raft_snapshot_frame_format() {
+        let payload = b"golden-payload";
+        let framed = encode_snapshot_chunk(SnapshotEngineId::KeyValue, payload);
+
+        // Magic at [0..4].
+        assert_eq!(&framed[0..4], b"NDSN", "magic mismatch");
+
+        // Format version at [4..6] BE.
+        let version = u16::from_be_bytes([framed[4], framed[5]]);
+        assert_eq!(version, SNAPSHOT_FORMAT_VERSION, "version mismatch");
+        assert_eq!(version, 1u16, "expected SNAPSHOT_FORMAT_VERSION == 1");
+
+        // Engine ID at [6..8].
+        let engine_id_raw = u16::from_be_bytes([framed[6], framed[7]]);
+        assert_eq!(engine_id_raw, SnapshotEngineId::KeyValue as u16);
+
+        // CRC at [8..12] BE covers engine_id bytes + payload.
+        let stored_crc = u32::from_be_bytes([framed[8], framed[9], framed[10], framed[11]]);
+        let engine_bytes = (SnapshotEngineId::KeyValue as u16).to_be_bytes();
+        let mut h = crc32c::crc32c(&engine_bytes);
+        h = crc32c::crc32c_append(h, payload);
+        assert_eq!(stored_crc, h, "CRC mismatch");
+
+        // Payload follows immediately after the 12-byte header (magic+version+engine_id+crc).
+        assert_eq!(&framed[12..], payload);
+    }
 }
