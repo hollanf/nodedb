@@ -24,9 +24,9 @@ pub async fn metadata(
                 "Active client connections",
             ),
             (
-                "nodedb_wal_fsync_latency_seconds",
-                "gauge",
-                "WAL fsync latency in seconds",
+                "nodedb_wal_fsync_seconds",
+                "histogram",
+                "WAL fsync latency distribution in seconds",
             ),
             ("nodedb_raft_apply_lag", "gauge", "Raft apply lag entries"),
             (

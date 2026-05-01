@@ -5,6 +5,22 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// WAL fsync latency bucket boundaries in microseconds.
+///
+/// WAL fsyncs are expected to complete in the sub-millisecond to low-millisecond
+/// range on NVMe. The finest granularity starts at 100µs.
+pub const WAL_FSYNC_BUCKETS_US: &[u64] = &[
+    100,       // 100µs
+    500,       // 500µs
+    1_000,     // 1ms
+    5_000,     // 5ms
+    10_000,    // 10ms
+    50_000,    // 50ms
+    100_000,   // 100ms
+    500_000,   // 500ms
+    1_000_000, // 1s
+];
+
 /// Default latency bucket boundaries in microseconds.
 ///
 /// Covers 10µs to 10s — suitable for database query latency.

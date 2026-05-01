@@ -11,11 +11,10 @@ impl SystemMetrics {
     /// Called by [`to_prometheus()`](Self::to_prometheus) — not directly by handlers.
     pub(in crate::control::metrics) fn prometheus_core(&self, out: &mut String) {
         // ── WAL ──
-        gauge_f64(
+        self.wal_fsync_seconds.write_prometheus(
             out,
-            "nodedb_wal_fsync_latency_seconds",
-            "WAL fsync latency in seconds",
-            self.wal_fsync_latency_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            "nodedb_wal_fsync_seconds",
+            "WAL fsync latency distribution in seconds",
         );
         counter(
             out,
@@ -95,11 +94,11 @@ impl SystemMetrics {
             "Compaction cycles completed",
             self.compaction_cycles.load(Ordering::Relaxed),
         );
-        gauge(
+        counter(
             out,
-            "nodedb_compaction_throughput_bytes_per_second",
-            "Compaction throughput bytes per second",
-            self.compaction_throughput_bytes_sec.load(Ordering::Relaxed),
+            "nodedb_compaction_bytes_total",
+            "Total bytes written by compaction (use rate() for throughput)",
+            self.compaction_bytes_total.load(Ordering::Relaxed),
         );
 
         // ── Auth ──
@@ -173,17 +172,15 @@ impl SystemMetrics {
             "Queries exceeding 100ms",
             self.slow_queries_total.load(Ordering::Relaxed),
         );
-        gauge_f64(
+        self.query_planning_seconds.write_prometheus(
             out,
             "nodedb_query_planning_seconds",
-            "Last query planning time in seconds",
-            self.query_planning_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            "Query planning latency distribution in seconds",
         );
-        gauge_f64(
+        self.query_execution_seconds.write_prometheus(
             out,
             "nodedb_query_execution_seconds",
-            "Last query execution time in seconds",
-            self.query_execution_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            "Query execution latency distribution in seconds",
         );
         self.query_latency.write_prometheus(
             out,

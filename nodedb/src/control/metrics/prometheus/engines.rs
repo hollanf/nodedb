@@ -29,11 +29,10 @@ impl SystemMetrics {
             "Vectors stored",
             self.vector_vectors_stored.load(Ordering::Relaxed),
         );
-        gauge_f64(
+        self.vector_query_seconds.write_prometheus(
             out,
-            "nodedb_vector_avg_latency_seconds",
-            "Vector search average latency in seconds",
-            self.vector_avg_latency_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            "nodedb_vector_query_seconds",
+            "Vector search latency distribution in seconds",
         );
 
         // ── Graph engine ──
@@ -109,11 +108,10 @@ impl SystemMetrics {
             "Full-text search indexes",
             self.fts_indexes.load(Ordering::Relaxed),
         );
-        gauge_f64(
+        self.fts_query_seconds.write_prometheus(
             out,
-            "nodedb_fts_avg_latency_seconds",
-            "Full-text search average latency in seconds",
-            self.fts_avg_latency_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            "nodedb_fts_query_seconds",
+            "Full-text search latency distribution in seconds",
         );
 
         // ── KV engine ──

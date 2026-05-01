@@ -81,10 +81,14 @@ pub async fn fetch_series_for_query(
                 "nodedb_active_connections",
                 sys.active_connections.load(Ordering::Relaxed) as f64,
             ),
-            (
-                "nodedb_wal_fsync_latency_seconds",
-                sys.wal_fsync_latency_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
-            ),
+            ("nodedb_wal_fsync_mean_seconds", {
+                let count = sys.wal_fsync_seconds.count();
+                if count > 0 {
+                    sys.wal_fsync_seconds.sum_us() as f64 / count as f64 / 1_000_000.0
+                } else {
+                    0.0
+                }
+            }),
             (
                 "nodedb_raft_apply_lag",
                 sys.raft_apply_lag.load(Ordering::Relaxed) as f64,

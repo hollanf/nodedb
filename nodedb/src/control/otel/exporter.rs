@@ -129,8 +129,15 @@ fn build_metrics_request(metrics: &SystemMetrics, node_id: u64) -> ExportMetrics
             now_ns,
         ),
         gauge_metric(
-            "nodedb_wal_fsync_latency_seconds",
-            metrics.wal_fsync_latency_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0,
+            "nodedb_wal_fsync_mean_seconds",
+            {
+                let count = metrics.wal_fsync_seconds.count();
+                if count > 0 {
+                    metrics.wal_fsync_seconds.sum_us() as f64 / count as f64 / 1_000_000.0
+                } else {
+                    0.0
+                }
+            },
             now_ns,
         ),
         gauge_metric(

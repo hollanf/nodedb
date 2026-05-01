@@ -7,14 +7,14 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::histogram::AtomicHistogram;
+use super::histogram::{AtomicHistogram, WAL_FSYNC_BUCKETS_US};
 use super::purge::PurgeMetrics;
 
 /// Core metrics collected across the system.
 #[derive(Debug, Default)]
 pub struct SystemMetrics {
     // ── WAL ──
-    pub wal_fsync_latency_micros: AtomicU64,
+    pub wal_fsync_seconds: AtomicHistogram,
     pub wal_fsync_count: AtomicU64,
     pub wal_segment_count: AtomicU64,
     pub wal_segment_bytes: AtomicU64,
@@ -33,7 +33,7 @@ pub struct SystemMetrics {
     // ── Compaction ──
     pub compaction_debt: AtomicU64,
     pub compaction_cycles: AtomicU64,
-    pub compaction_throughput_bytes_sec: AtomicU64,
+    pub compaction_bytes_total: AtomicU64,
 
     // ── Auth ──
     pub auth_failures: AtomicU64,
@@ -51,15 +51,15 @@ pub struct SystemMetrics {
     pub queries_total: AtomicU64,
     pub query_errors: AtomicU64,
     pub slow_queries_total: AtomicU64,
-    pub query_planning_micros: AtomicU64,
-    pub query_execution_micros: AtomicU64,
+    pub query_planning_seconds: AtomicHistogram,
+    pub query_execution_seconds: AtomicHistogram,
     pub query_latency: AtomicHistogram,
 
     // ── Per-engine operations ──
     pub vector_searches: AtomicU64,
     pub vector_collections: AtomicU64,
     pub vector_vectors_stored: AtomicU64,
-    pub vector_avg_latency_micros: AtomicU64,
+    pub vector_query_seconds: AtomicHistogram,
 
     pub graph_traversals: AtomicU64,
     pub graph_nodes: AtomicU64,
@@ -81,7 +81,7 @@ pub struct SystemMetrics {
 
     pub fts_searches: AtomicU64,
     pub fts_indexes: AtomicU64,
-    pub fts_avg_latency_micros: AtomicU64,
+    pub fts_query_seconds: AtomicHistogram,
 
     // ── KV engine ──
     pub kv_gets_total: AtomicU64,
@@ -143,14 +143,17 @@ pub struct SystemMetrics {
 
 impl SystemMetrics {
     pub fn new() -> Self {
-        Self::default()
+        // WAL fsync latency uses sub-millisecond buckets (100µs–1s range).
+        Self {
+            wal_fsync_seconds: AtomicHistogram::with_buckets(WAL_FSYNC_BUCKETS_US),
+            ..Self::default()
+        }
     }
 
     // ── WAL ──
 
     pub fn record_wal_fsync(&self, duration_us: u64) {
-        self.wal_fsync_latency_micros
-            .store(duration_us, Ordering::Relaxed);
+        self.wal_fsync_seconds.observe(duration_us);
         self.wal_fsync_count.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -189,10 +192,10 @@ impl SystemMetrics {
 
     // ── Compaction ──
 
-    pub fn update_compaction(&self, debt: u64, throughput_bps: u64) {
+    pub fn update_compaction(&self, debt: u64, bytes_written: u64) {
         self.compaction_debt.store(debt, Ordering::Relaxed);
-        self.compaction_throughput_bytes_sec
-            .store(throughput_bps, Ordering::Relaxed);
+        self.compaction_bytes_total
+            .fetch_add(bytes_written, Ordering::Relaxed);
     }
 
     pub fn record_compaction_cycle(&self) {
@@ -287,10 +290,8 @@ impl SystemMetrics {
     }
 
     pub fn record_query_timing(&self, planning_us: u64, execution_us: u64) {
-        self.query_planning_micros
-            .store(planning_us, Ordering::Relaxed);
-        self.query_execution_micros
-            .store(execution_us, Ordering::Relaxed);
+        self.query_planning_seconds.observe(planning_us);
+        self.query_execution_seconds.observe(execution_us);
     }
 
     pub fn record_query_by_engine(&self, engine: &str) {
@@ -311,8 +312,7 @@ impl SystemMetrics {
 
     pub fn record_vector_search(&self, latency_us: u64) {
         self.vector_searches.fetch_add(1, Ordering::Relaxed);
-        self.vector_avg_latency_micros
-            .store(latency_us, Ordering::Relaxed);
+        self.vector_query_seconds.observe(latency_us);
     }
 
     pub fn update_vector_stats(&self, collections: u64, vectors: u64) {
@@ -365,8 +365,7 @@ impl SystemMetrics {
 
     pub fn record_fts_search(&self, latency_us: u64) {
         self.fts_searches.fetch_add(1, Ordering::Relaxed);
-        self.fts_avg_latency_micros
-            .store(latency_us, Ordering::Relaxed);
+        self.fts_query_seconds.observe(latency_us);
     }
 
     pub fn update_fts_indexes(&self, count: u64) {
