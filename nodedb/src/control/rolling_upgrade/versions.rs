@@ -3,9 +3,9 @@
 //! See `view::ClusterVersionView` for the live-topology-derived
 //! feature-gate predicates.
 
-use crate::version::WIRE_FORMAT_VERSION;
-
 use super::view::ClusterVersionView;
+#[cfg(test)]
+use crate::version::WIRE_FORMAT_VERSION;
 
 /// Wire-format version that introduced the replicated catalog DDL
 /// path (`CatalogEntry` proposed via the metadata raft group).
@@ -43,21 +43,10 @@ pub const DESCRIPTOR_DRAIN_VERSION: u16 = 4;
 
 /// Check if a message from a remote node should be accepted.
 ///
-/// Accepts messages from the same version or one version behind
-/// (N-1). Rejects messages that are too new (upgrade this node)
-/// or too old (N-2+ spread is not supported).
+/// Accepts only messages with the exact current wire format version.
+/// Any other version is rejected (floor == ceiling; no rolling-upgrade window).
 pub fn accept_message(remote_version: u16) -> crate::Result<()> {
-    crate::version::check_wire_compatibility(remote_version)?;
-
-    if WIRE_FORMAT_VERSION.saturating_sub(remote_version) > 1 {
-        return Err(crate::Error::VersionCompat {
-            detail: format!(
-                "message version {remote_version} is more than one generation behind \
-                 {WIRE_FORMAT_VERSION}: N-2 not supported"
-            ),
-        });
-    }
-    Ok(())
+    crate::version::check_wire_compatibility(remote_version)
 }
 
 /// Determine if this node should operate in compatibility mode.
@@ -79,21 +68,14 @@ mod tests {
     }
 
     #[test]
-    fn accept_n_minus_1() {
-        if WIRE_FORMAT_VERSION > 1 {
-            assert!(accept_message(WIRE_FORMAT_VERSION - 1).is_ok());
-        }
-    }
-
-    #[test]
     fn reject_newer() {
         assert!(accept_message(WIRE_FORMAT_VERSION + 1).is_err());
     }
 
     #[test]
-    fn reject_n_minus_2() {
-        if WIRE_FORMAT_VERSION >= 2 {
-            assert!(accept_message(WIRE_FORMAT_VERSION - 2).is_err());
+    fn reject_older() {
+        if WIRE_FORMAT_VERSION > 0 {
+            assert!(accept_message(WIRE_FORMAT_VERSION - 1).is_err());
         }
     }
 }

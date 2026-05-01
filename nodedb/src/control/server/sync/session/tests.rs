@@ -109,23 +109,21 @@ fn delta_push_accepted_when_authenticated() {
 fn delta_push_rls_silent_rejection() {
     let mut session = make_authenticated_session();
 
+    use crate::control::security::predicate::{CompareOp, PredicateValue, RlsPredicate};
+
     let rls_store = RlsPolicyStore::new();
-    let filter = crate::bridge::scan_filter::ScanFilter {
+    let predicate = RlsPredicate::Compare {
         field: "status".into(),
-        op: "eq".into(),
-        value: nodedb_types::Value::String("active".into()),
-        clauses: Vec::new(),
-        expr: None,
+        op: CompareOp::Eq,
+        value: PredicateValue::Literal(serde_json::json!("active")),
     };
-    let predicate = zerompk::to_msgpack_vec(&vec![filter]).unwrap();
     rls_store
         .create_policy(RlsPolicy {
             name: "require_active".into(),
             collection: "orders".into(),
             tenant_id: 1,
             policy_type: PolicyType::Write,
-            predicate,
-            compiled_predicate: None,
+            compiled_predicate: Some(predicate),
             mode: crate::control::security::predicate::PolicyMode::default(),
             on_deny: Default::default(),
             enabled: true,

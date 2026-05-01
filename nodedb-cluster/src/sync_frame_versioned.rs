@@ -3,12 +3,6 @@
 //! `SyncFrame` lives in `nodedb-types` and cannot reference `nodedb-cluster`,
 //! so versioning wrappers for the sync wire layer are provided here instead.
 //!
-//! # Wire compat
-//!
-//! Raw (v1) `SyncFrame` bytes — `[msg_type: 1B][length: 4B LE][body: N bytes]`
-//! — do not start with a MessagePack fixarray marker (`0x92`) and will
-//! therefore fall through to the v1 fallback path in `decode_versioned_sync_frame`.
-//!
 //! # PhysicalPlan bridge wire exclusion
 //!
 //! The `bridge::physical_plan::wire` codec is NOT versioned here. It operates
@@ -35,11 +29,8 @@ pub fn encode_versioned_sync_frame(frame: &SyncFrame) -> Result<Vec<u8>> {
 
 /// Decode a versioned-envelope-wrapped [`SyncFrame`].
 ///
-/// Accepts both v2 versioned envelopes and raw v1 (pre-versioning) `SyncFrame`
-/// bytes; rejects envelopes with unsupported future version numbers.
-///
-/// The v1 fallback preserves wire compat with NodeDB-Lite and Origin peers
-/// running pre-versioning sync code.
+/// Requires a v2 versioned envelope; rejects bytes without the envelope marker
+/// and envelopes with unsupported future version numbers.
 pub fn decode_versioned_sync_frame(data: &[u8]) -> Result<SyncFrame> {
     let inner = unwrap_bytes_versioned(data).map_err(|e| ClusterError::Codec {
         detail: format!("SyncFrame versioned decode: {e}"),
@@ -72,16 +63,6 @@ mod tests {
         let frame = make_ping_frame();
         let encoded = encode_versioned_sync_frame(&frame).unwrap();
         let decoded = decode_versioned_sync_frame(&encoded).unwrap();
-        assert_eq!(frame.msg_type, decoded.msg_type);
-        assert_eq!(frame.body, decoded.body);
-    }
-
-    #[test]
-    fn sync_frame_v1_raw_fallback() {
-        // Simulate a pre-versioning peer: raw SyncFrame bytes (no outer envelope).
-        let frame = make_ping_frame();
-        let raw = frame.to_bytes();
-        let decoded = decode_versioned_sync_frame(&raw).unwrap();
         assert_eq!(frame.msg_type, decoded.msg_type);
         assert_eq!(frame.body, decoded.body);
     }

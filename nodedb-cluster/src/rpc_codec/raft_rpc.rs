@@ -182,7 +182,9 @@ mod tests {
 
     #[test]
     fn truncated_frame_rejected() {
-        let err = decode(&[1, 2, 3]).unwrap_err();
+        // Version byte 3 (RPC_FRAME_VERSION) passes version check; then header
+        // size check fires because we only have 3 bytes total.
+        let err = decode(&[3, 2, 3]).unwrap_err();
         assert!(err.to_string().contains("frame too short"), "{err}");
     }
 
@@ -202,7 +204,7 @@ mod tests {
     fn payload_too_large_rejected() {
         use super::super::header::MAX_RPC_PAYLOAD_SIZE;
         let mut frame = vec![0u8; HEADER_SIZE];
-        frame[0] = crate::wire::WIRE_VERSION as u8;
+        frame[0] = 3u8; // RPC_FRAME_VERSION
         frame[1] = RPC_APPEND_ENTRIES_REQ;
         let huge: u32 = MAX_RPC_PAYLOAD_SIZE + 1;
         frame[2..6].copy_from_slice(&huge.to_le_bytes());

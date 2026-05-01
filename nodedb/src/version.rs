@@ -3,7 +3,6 @@
 //! Follows semver: MAJOR.MINOR.PATCH.
 //! - MAJOR changes MAY break wire/disk compatibility.
 //! - MINOR changes MUST be backward compatible within the same MAJOR.
-//! - Rolling upgrades are supported for N-1 within the same MAJOR.
 
 /// Current NodeDB version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -12,15 +11,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// which is the single source of truth shared with `nodedb-cluster`
 /// and any other crate that stamps or interprets the value.
 ///
-/// Readers MUST reject messages with wire_version > their own. Readers
-/// SHOULD accept messages with wire_version == their own or one less
-/// (N-1).
+/// Readers MUST reject messages with wire_version != their own.
 pub use nodedb_types::wire_version::{MIN_WIRE_FORMAT_VERSION, WIRE_FORMAT_VERSION};
-
-/// Wire version assigned to legacy clients that send wire_version == 0.
-/// Must always equal MIN_WIRE_FORMAT_VERSION to prevent silent upgrades
-/// across breaking changes.
-pub const LEGACY_CLIENT_WIRE_VERSION: u16 = MIN_WIRE_FORMAT_VERSION;
 
 /// Returns a comma-separated list of non-default features compiled into this build.
 ///

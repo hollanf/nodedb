@@ -28,15 +28,12 @@ impl SyncSession {
         self.last_activity = Instant::now();
 
         // Wire format compatibility check: reject incompatible clients early.
-        let client_wire = if msg.wire_version == 0 {
-            crate::version::LEGACY_CLIENT_WIRE_VERSION
-        } else {
-            msg.wire_version
-        };
-        if let Err(e) = crate::version::check_wire_compatibility(client_wire) {
+        // Version 0 (missing field) falls through to check_wire_compatibility
+        // and is rejected cleanly as "too old".
+        if let Err(e) = crate::version::check_wire_compatibility(msg.wire_version) {
             warn!(
                 session = %self.session_id,
-                client_wire_version = client_wire,
+                client_wire_version = msg.wire_version,
                 error = %e,
                 "sync handshake rejected: incompatible wire version"
             );
@@ -208,5 +205,49 @@ impl SyncSession {
             "epoch tracker updated"
         );
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use nodedb_types::sync::wire::{HandshakeAckMsg, HandshakeMsg};
+
+    use crate::control::security::jwt::{JwtConfig, JwtValidator};
+    use crate::control::server::sync::session::state::SyncSession;
+
+    fn make_handshake(wire_version: u16) -> HandshakeMsg {
+        HandshakeMsg {
+            jwt_token: String::new(),
+            vector_clock: HashMap::new(),
+            subscribed_shapes: Vec::new(),
+            client_version: "test".into(),
+            lite_id: String::new(),
+            epoch: 0,
+            wire_version,
+        }
+    }
+
+    #[test]
+    fn handshake_rejects_wire_version_zero() {
+        let mut session = SyncSession::new("test-session".into());
+        let validator = JwtValidator::new(JwtConfig::default());
+        let msg = make_handshake(0);
+
+        let frame = session
+            .handle_handshake(&msg, &validator, HashMap::new(), None)
+            .expect("should return a frame");
+
+        let ack: HandshakeAckMsg = frame.decode_body().expect("should decode HandshakeAckMsg");
+        assert!(
+            !ack.success,
+            "wire_version=0 must be rejected, got success=true"
+        );
+        let error = ack.error.expect("error message must be present");
+        assert!(
+            error.contains("wire version") || error.contains("incompatible"),
+            "error message should mention wire version, got: {error}"
+        );
     }
 }

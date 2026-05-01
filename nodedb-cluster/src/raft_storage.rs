@@ -488,33 +488,6 @@ mod tests {
         assert_eq!(loaded[0], entry);
     }
 
-    /// Simulate bytes stored by a pre-versioning peer (raw zerompk, no
-    /// envelope) — decode_versioned falls back to v1 and succeeds.
-    #[test]
-    fn v1_fallback_raw_zerompk_decodes() {
-        let (s, _dir) = open_temp();
-
-        // Manually write a raw-zerompk entry into the redb table.
-        let entry = LogEntry {
-            term: 1,
-            index: 42,
-            data: b"raw".to_vec(),
-        };
-        let raw_bytes = zerompk::to_msgpack_vec(&entry).unwrap();
-        let key = index_key(42);
-
-        let write_txn = s.db.begin_write().unwrap();
-        {
-            let mut table = write_txn.open_table(ENTRIES).unwrap();
-            table.insert(key.as_slice(), raw_bytes.as_slice()).unwrap();
-        }
-        write_txn.commit().unwrap();
-
-        let loaded = s.load_entries_after(41).unwrap();
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0], entry);
-    }
-
     /// Bytes with the envelope marker but an unknown future version must
     /// return a Storage error, not silently decode as v1.
     #[test]
