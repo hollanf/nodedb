@@ -37,8 +37,7 @@ impl WalReader {
     ///
     /// If the file begins with a valid `WALP` preamble (16 bytes), it is
     /// consumed and stored for use as AAD during decryption. Files without a
-    /// preamble (unencrypted segments or legacy format) start reading from
-    /// offset 0 directly.
+    /// preamble (unencrypted segments) start reading from offset 0 directly.
     ///
     /// Automatically opens the companion double-write buffer file
     /// (`*.dwb`) if it exists alongside the WAL file.
@@ -166,7 +165,7 @@ impl WalReader {
 ///
 /// Returns `(Some(preamble), PREAMBLE_SIZE)` if a valid `WALP` preamble is
 /// found, or `(None, 0)` if the file does not start with the preamble magic
-/// (unencrypted or legacy segment — seek back to 0).
+/// (unencrypted segment — seek back to 0).
 fn try_read_preamble(file: &mut File) -> Result<(Option<SegmentPreamble>, u64)> {
     use std::io::Seek;
 

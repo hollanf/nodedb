@@ -18,10 +18,9 @@ pub const WAL_MAGIC: u32 = 0x5359_4E57; // "SYNW"
 /// bytes (covered by CRC32C) before the checksum, and bumps `HEADER_SIZE` to
 /// 50 bytes. Pre-release — no v1/v2/v3 readers supported.
 ///
-/// v5 widens `tenant_id` u32→u64, shifting `vshard_id`, `payload_len`,
-/// `reserved`, and `crc32c` by 4 bytes each. `HEADER_SIZE` is now 54 bytes.
-/// Pre-release — no v4 readers supported.
-pub const WAL_FORMAT_VERSION: u16 = 5;
+/// v1 is the initial shipped format with 54-byte headers (u64 tenant_id,
+/// u16 vshard_id, u32 payload_len, u16 reserved, u32 crc32c).
+pub const WAL_FORMAT_VERSION: u16 = 1;
 
 /// Maximum WAL record payload size (64 MiB). Distinct from cluster RPC's limit.
 pub const MAX_WAL_PAYLOAD_SIZE: usize = 64 * 1024 * 1024;

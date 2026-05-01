@@ -30,9 +30,7 @@ pub struct WalManager {
 impl WalManager {
     /// Open or create a segmented WAL at the given path.
     ///
-    /// The `path` argument is treated as the WAL directory for the segmented format.
-    /// If a legacy single-file WAL exists at this path, it is automatically migrated
-    /// to the segmented format (one-time, transparent).
+    /// The `path` argument is the WAL directory for the segmented format.
     pub fn open(path: &Path, use_direct_io: bool) -> crate::Result<Self> {
         Self::open_with_segment_size(path, use_direct_io, 0)
     }
@@ -76,19 +74,13 @@ impl WalManager {
         )
     }
 
-    /// Shared WAL open logic: migrate legacy path, resolve segment size, open.
+    /// Shared WAL open logic: resolve segment size, open.
     pub(super) fn open_internal(
         path: &Path,
         segment_target_size: u64,
         writer_config: WalWriterConfig,
     ) -> crate::Result<Self> {
-        let wal_dir = if path.is_file() {
-            let dir = path.with_extension("d");
-            nodedb_wal::segment::migrate_legacy_wal(path, &dir).map_err(crate::Error::Wal)?;
-            dir
-        } else {
-            path.to_path_buf()
-        };
+        let wal_dir = path.to_path_buf();
 
         let effective_target = if segment_target_size > 0 {
             segment_target_size

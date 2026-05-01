@@ -23,7 +23,6 @@
 pub mod atomic_io;
 pub mod discovery;
 pub mod meta;
-pub mod migration;
 pub mod truncate;
 
 pub use atomic_io::{
@@ -31,5 +30,4 @@ pub use atomic_io::{
 };
 pub use discovery::discover_segments;
 pub use meta::{DEFAULT_SEGMENT_TARGET_SIZE, SegmentMeta, segment_filename, segment_path};
-pub use migration::migrate_legacy_wal;
 pub use truncate::{TruncateResult, truncate_segments};
