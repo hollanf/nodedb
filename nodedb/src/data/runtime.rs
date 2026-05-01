@@ -176,6 +176,7 @@ pub fn spawn_core(
     quiesce: Option<Arc<crate::bridge::quiesce::CollectionQuiesce>>,
     hlc: Arc<nodedb_types::OrdinalClock>,
     array_catalog: crate::control::array_catalog::ArrayCatalogHandle,
+    quarantine_registry: Arc<crate::storage::quarantine::QuarantineRegistry>,
 ) -> std::io::Result<(JoinHandle<()>, EventFdNotifier)> {
     let data_dir = data_dir.to_path_buf();
 
@@ -223,6 +224,9 @@ pub fn spawn_core(
             if let Some(q) = quiesce {
                 core.set_quiesce(q);
             }
+
+            // 2b. Wire the quarantine registry for corrupt-segment detection.
+            core.set_quarantine_registry(quarantine_registry);
 
             // 2c. Apply compaction config.
             core.set_compaction_config(

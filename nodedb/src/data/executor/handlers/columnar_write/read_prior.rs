@@ -32,7 +32,18 @@ impl CoreLoop {
         // Segments are pushed in order starting at segment_id=1.
         let seg_idx = (loc.segment_id as usize).checked_sub(1)?;
         let seg_bytes = segs.get(seg_idx)?;
-        let reader = nodedb_columnar::SegmentReader::open(seg_bytes).ok()?;
+        let seg_id_str = loc.segment_id.to_string();
+        let reader = if let Some(reg) = &self.quarantine_registry {
+            crate::storage::quarantine::engines::open_segment_with_quarantine(
+                reg,
+                seg_bytes,
+                &engine_key.1,
+                &seg_id_str,
+            )
+            .ok()?
+        } else {
+            nodedb_columnar::SegmentReader::open(seg_bytes).ok()?
+        };
         let schema = engine.schema();
         let mut row = Vec::with_capacity(schema.columns.len());
         for col_idx in 0..schema.columns.len() {

@@ -64,12 +64,26 @@ impl CoreLoop {
         if let Some(segments) = self.columnar_flushed_segments.get(&key) {
             for (seg_idx, seg_bytes) in segments.iter().enumerate() {
                 let seg_id = seg_idx as u64 + 1;
-                let reader = nodedb_columnar::SegmentReader::open(seg_bytes).map_err(|e| {
-                    crate::Error::Storage {
+                let seg_id_str = seg_id.to_string();
+                let reader = if let Some(reg) = &self.quarantine_registry {
+                    crate::storage::quarantine::engines::open_segment_with_quarantine(
+                        reg,
+                        seg_bytes,
+                        collection,
+                        &seg_id_str,
+                    )
+                    .map_err(|e| crate::Error::Storage {
                         engine: "columnar".into(),
                         detail: format!("open segment for purge: {e}"),
-                    }
-                })?;
+                    })?
+                } else {
+                    nodedb_columnar::SegmentReader::open(seg_bytes).map_err(|e| {
+                        crate::Error::Storage {
+                            engine: "columnar".into(),
+                            detail: format!("open segment for purge: {e}"),
+                        }
+                    })?
+                };
                 let ts_col = reader
                     .read_column(ts_idx)
                     .map_err(|e| crate::Error::Storage {

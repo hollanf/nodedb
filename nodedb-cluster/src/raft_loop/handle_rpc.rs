@@ -82,11 +82,53 @@ impl<A: CommitApplier, P: PlanExecutor> RaftRpcHandler for RaftLoop<A, P> {
                 // `encode_snapshot_chunk` on the sender side and enforcement
                 // happens here automatically.
                 if !req.data.is_empty() {
-                    nodedb_raft::decode_snapshot_chunk(&req.data).map_err(|e| {
-                        crate::error::ClusterError::Codec {
-                            detail: format!("InstallSnapshot framing: {e}"),
+                    // Short-circuit immediately if this chunk has already been
+                    // quarantined after two consecutive CRC failures. Without
+                    // this check a quarantined chunk would re-attempt the
+                    // (always-failing) decode on every incoming RPC and never
+                    // surface a stable, operator-visible error.
+                    if let Some(ref hook) = self.snapshot_quarantine_hook
+                        && hook.is_quarantined(req.group_id, req.last_included_index)
+                    {
+                        return Err(crate::error::ClusterError::Codec {
+                            detail: format!(
+                                "InstallSnapshot chunk quarantined: group={} index={}",
+                                req.group_id, req.last_included_index
+                            ),
+                        });
+                    }
+
+                    match nodedb_raft::decode_snapshot_chunk(&req.data) {
+                        Ok(_) => {
+                            // Successful decode — reset any prior strike so a
+                            // single transient CRC error does not permanently
+                            // count against a healthy peer.
+                            if let Some(ref hook) = self.snapshot_quarantine_hook {
+                                hook.record_success(req.group_id, req.last_included_index);
+                            }
                         }
-                    })?;
+                        Err(e) => {
+                            let is_crc_class = matches!(
+                                e,
+                                nodedb_raft::snapshot_framing::SnapshotFramingError::CrcMismatch {
+                                    ..
+                                }
+                                    | nodedb_raft::snapshot_framing::SnapshotFramingError::Truncated(
+                                        _
+                                    )
+                            );
+                            if is_crc_class && let Some(ref hook) = self.snapshot_quarantine_hook {
+                                hook.record_failure(
+                                    req.group_id,
+                                    req.last_included_index,
+                                    &e.to_string(),
+                                );
+                            }
+                            return Err(crate::error::ClusterError::Codec {
+                                detail: format!("InstallSnapshot framing: {e}"),
+                            });
+                        }
+                    }
                 }
 
                 let last_included_index = req.last_included_index;

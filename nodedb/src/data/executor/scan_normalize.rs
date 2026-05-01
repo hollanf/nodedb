@@ -113,15 +113,28 @@ impl CoreLoop {
 
         // 1. Read from flushed segments (older rows drained from prior memtable flushes).
         if let Some(segments) = self.columnar_flushed_segments.get(&engine_key) {
-            for seg_bytes in segments {
+            for (seg_idx, seg_bytes) in segments.iter().enumerate() {
                 if results.len() >= limit {
                     break;
                 }
-                let reader = match nodedb_columnar::SegmentReader::open(seg_bytes) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "failed to open flushed columnar segment for scan");
-                        continue;
+                let seg_id = format!("{}", seg_idx as u64 + 1);
+                let reader = if let Some(ref reg) = self.quarantine_registry {
+                    match crate::storage::quarantine::engines::open_segment_with_quarantine(
+                        reg, seg_bytes, collection, &seg_id,
+                    ) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            tracing::warn!(error = %e, segment_id = %seg_id, collection, "failed to open flushed columnar segment for scan");
+                            continue;
+                        }
+                    }
+                } else {
+                    match nodedb_columnar::SegmentReader::open(seg_bytes) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "failed to open flushed columnar segment for scan");
+                            continue;
+                        }
                     }
                 };
                 let seg_row_count = reader.row_count() as usize;

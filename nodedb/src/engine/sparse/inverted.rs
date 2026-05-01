@@ -16,6 +16,8 @@ use std::sync::Arc;
 use redb::{Database, ReadableTable, WriteTransaction};
 use tracing::debug;
 
+use crate::storage::quarantine::QuarantineRegistry;
+
 use nodedb_fts::index::FtsIndex;
 use nodedb_types::{Surrogate, TenantId};
 
@@ -36,6 +38,13 @@ impl InvertedIndex {
         Ok(Self {
             inner: FtsIndex::new(backend),
         })
+    }
+
+    /// Install the quarantine registry for corrupt FTS segment detection.
+    ///
+    /// Called once by the server bootstrap after the registry is created.
+    pub fn set_quarantine_registry(&mut self, registry: Arc<QuarantineRegistry>) {
+        self.inner.backend_mut().set_quarantine_registry(registry);
     }
 
     /// Purge all inverted index entries for a tenant. Structural drop via

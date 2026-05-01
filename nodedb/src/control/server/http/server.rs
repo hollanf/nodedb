@@ -100,6 +100,10 @@ fn build_router(state: AppState) -> Router {
             get(routes::cluster_debug::leases::leases_debug),
         )
         .route(
+            "/v1/cluster/debug/quarantined-segments",
+            get(routes::cluster_debug::quarantined_segments::quarantined_segments),
+        )
+        .route(
             "/v1/auth/exchange-key",
             post(routes::auth_key::exchange_key),
         )

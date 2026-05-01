@@ -4,6 +4,7 @@
 use super::core::RedbFtsBackend;
 use super::shared::{MAX_SUBKEY, redb_err};
 use crate::engine::sparse::fts_redb::tables::SEGMENTS;
+use crate::storage::quarantine::engines::validate_fts_segment_bytes;
 
 pub(super) fn write(
     backend: &RedbFtsBackend,
@@ -41,10 +42,22 @@ pub(super) fn read(
     let table = read_txn
         .open_table(SEGMENTS)
         .map_err(|e| redb_err("open segments", e))?;
-    match table.get((tid, collection, segment_id)) {
-        Ok(Some(val)) => Ok(Some(val.value().to_vec())),
-        Ok(None) => Ok(None),
-        Err(e) => Err(redb_err("get segment", e)),
+    let bytes = match table.get((tid, collection, segment_id)) {
+        Ok(Some(val)) => val.value().to_vec(),
+        Ok(None) => return Ok(None),
+        Err(e) => return Err(redb_err("get segment", e)),
+    };
+
+    if let Some(reg) = &backend.quarantine_registry {
+        let validated =
+            validate_fts_segment_bytes(reg, bytes, collection, segment_id).map_err(|e| {
+                crate::Error::SegmentCorrupted {
+                    detail: e.to_string(),
+                }
+            })?;
+        Ok(Some(validated))
+    } else {
+        Ok(Some(bytes))
     }
 }
 

@@ -3,6 +3,8 @@
 //! main file under the 500-LOC ceiling while leaving the struct
 //! definition in one place.
 
+use std::sync::Arc;
+
 #[cfg(test)]
 use crate::types::TenantId;
 
@@ -83,6 +85,17 @@ impl CoreLoop {
     /// AES-256-GCM envelope and readers refuse to load plaintext segment files.
     pub fn set_ts_segment_kek(&mut self, kek: nodedb_wal::crypto::WalEncryptionKey) {
         self.ts_segment_kek = Some(kek);
+    }
+
+    /// Install the shared quarantine registry.
+    ///
+    /// Called once by the server bootstrap after `SharedState::open`.
+    pub fn set_quarantine_registry(
+        &mut self,
+        registry: std::sync::Arc<crate::storage::quarantine::QuarantineRegistry>,
+    ) {
+        self.inverted.set_quarantine_registry(Arc::clone(&registry));
+        self.quarantine_registry = Some(registry);
     }
 
     /// Set the last timeseries ingest timestamp (for testing idle flush).

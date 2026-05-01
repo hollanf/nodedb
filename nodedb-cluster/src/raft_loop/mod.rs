@@ -18,4 +18,4 @@ pub mod join;
 pub mod loop_core;
 pub mod tick;
 
-pub use loop_core::{CommitApplier, RaftLoop, VShardEnvelopeHandler};
+pub use loop_core::{CommitApplier, RaftLoop, SnapshotQuarantineHook, VShardEnvelopeHandler};

@@ -363,6 +363,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Create the quarantine registry before spawning cores so every core
+    // and SharedState share the same in-memory instance.
+    let quarantine_registry =
+        std::sync::Arc::new(nodedb::storage::quarantine::QuarantineRegistry::new());
+
     let mut core_handles = Vec::with_capacity(num_cores);
     let mut notifiers = Vec::with_capacity(num_cores);
     for (core_id, (data_side, event_producer)) in
@@ -383,6 +388,7 @@ async fn main() -> anyhow::Result<()> {
             Some(Arc::clone(&quiesce)),
             Arc::clone(&hlc),
             Arc::clone(&array_catalog),
+            Arc::clone(&quarantine_registry),
         )?;
         core_handles.push(handle);
         notifiers.push((core_id, notifier));
@@ -471,6 +477,12 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
+    }
+
+    // Replace SharedState's default quarantine registry with the pre-created
+    // instance shared across all Data Plane cores.
+    if let Some(state) = Arc::get_mut(&mut shared) {
+        state.quarantine_registry = Arc::clone(&quarantine_registry);
     }
 
     // Wire cluster handles into SharedState so that every code path

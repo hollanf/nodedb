@@ -606,4 +606,11 @@ pub struct SharedState {
     /// The 32-byte key is stored in an `Arc` to allow cheap clones across async
     /// task boundaries without copying the secret on each backup/restore call.
     pub backup_kek: Option<Arc<[u8; 32]>>,
+
+    /// In-process quarantine registry for corrupt segments.
+    ///
+    /// Shared across engine read wrappers (Data Plane) and the HTTP debug
+    /// endpoint. Engine read wrappers hold an `Arc` clone; the HTTP handler
+    /// reads via `SharedState`. Populated at startup with `Arc::new(QuarantineRegistry::new())`.
+    pub quarantine_registry: Arc<crate::storage::quarantine::QuarantineRegistry>,
 }

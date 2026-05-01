@@ -3,6 +3,7 @@ pub mod cold;
 pub mod cold_filter;
 pub mod cold_query;
 pub mod compaction;
+pub mod quarantine;
 pub mod segment;
 pub mod snapshot;
 pub mod snapshot_executor;

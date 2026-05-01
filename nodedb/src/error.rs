@@ -308,6 +308,14 @@ impl From<crate::control::security::jwt::JwtError> for Error {
     }
 }
 
+impl From<crate::storage::quarantine::engines::FtsOrQuarantine> for Error {
+    fn from(e: crate::storage::quarantine::engines::FtsOrQuarantine) -> Self {
+        Self::SegmentCorrupted {
+            detail: e.to_string(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // From<Error> for NodeDbError — the public API boundary conversion
 // ---------------------------------------------------------------------------

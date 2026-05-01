@@ -308,9 +308,20 @@ impl SegmentFooter {
         }
 
         let tail = &data[data.len() - 8..];
-        let footer_len =
-            u32::from_le_bytes(tail[0..4].try_into().expect("4 bytes from slice")) as usize;
-        let stored_crc = u32::from_le_bytes(tail[4..8].try_into().expect("4 bytes from slice"));
+        let footer_len = u32::from_le_bytes(tail[0..4].try_into().map_err(|_| {
+            crate::error::ColumnarError::Corruption {
+                segment_id: None,
+                reason: "footer length field: expected 4 bytes at segment tail - 8".into(),
+                offset: Some((data.len() - 8) as u64),
+            }
+        })?) as usize;
+        let stored_crc = u32::from_le_bytes(tail[4..8].try_into().map_err(|_| {
+            crate::error::ColumnarError::Corruption {
+                segment_id: None,
+                reason: "footer CRC field: expected 4 bytes at segment tail - 4".into(),
+                offset: Some((data.len() - 4) as u64),
+            }
+        })?);
 
         let footer_start = data.len().checked_sub(8 + footer_len).ok_or(
             crate::error::ColumnarError::TruncatedSegment {

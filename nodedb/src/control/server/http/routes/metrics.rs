@@ -183,6 +183,12 @@ pub async fn metrics(
     // SystemMetrics (if available): contention, subscriptions, WAL fsync, etc.
     if let Some(ref sys_metrics) = state.shared.system_metrics {
         output.push_str(&sys_metrics.to_prometheus());
+        // Active quarantine gauge sourced live from the registry.
+        let active = state.shared.quarantine_registry.active_counts();
+        crate::control::metrics::SystemMetrics::prometheus_segment_quarantine_active(
+            &mut output,
+            &active,
+        );
     }
 
     // Auth observability: method-specific counters, duration histograms, anomaly detection.

@@ -344,6 +344,13 @@ pub struct CoreLoop {
     /// When `Some`, `flush_ts_collection` writes SEGT-encrypted files; readers
     /// refuse to load plaintext segment files.
     pub(in crate::data::executor) ts_segment_kek: Option<nodedb_wal::crypto::WalEncryptionKey>,
+
+    /// Shared quarantine registry for corrupt segments.
+    ///
+    /// `Arc` is `Send + Sync` so it is safe to hold on a `!Send` core.
+    /// `None` until wired by the server bootstrap via `set_quarantine_registry`.
+    pub(in crate::data::executor) quarantine_registry:
+        Option<std::sync::Arc<crate::storage::quarantine::QuarantineRegistry>>,
 }
 
 impl CoreLoop {
@@ -477,6 +484,7 @@ impl CoreLoop {
             event_sequence: 0,
             quiesce: None,
             ts_segment_kek: None,
+            quarantine_registry: None,
         })
     }
 

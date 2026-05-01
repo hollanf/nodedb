@@ -84,7 +84,7 @@ pub use migration_executor::{
     MigrationExecutor, MigrationRequest, MigrationResult, MigrationSnapshot, MigrationTracker,
 };
 pub use multi_raft::{GroupStatus, MultiRaft};
-pub use raft_loop::{CommitApplier, RaftLoop, VShardEnvelopeHandler};
+pub use raft_loop::{CommitApplier, RaftLoop, SnapshotQuarantineHook, VShardEnvelopeHandler};
 pub use reachability::{
     NoopProber, ReachabilityDriver, ReachabilityDriverConfig, ReachabilityProber, TransportProber,
 };

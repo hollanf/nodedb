@@ -20,6 +20,45 @@ use crate::control::distributed_applier::{
 };
 use crate::control::state::SharedState;
 
+/// `nodedb`-side implementation of [`nodedb_cluster::SnapshotQuarantineHook`].
+///
+/// Bridges the cluster crate's trait to the in-process `QuarantineRegistry`.
+/// All snapshot chunks are keyed under collection `"_raft_snapshot"` with
+/// segment id `"group=<g>:index=<i>"`.
+struct RaftSnapshotQuarantineHook {
+    registry: Arc<crate::storage::quarantine::QuarantineRegistry>,
+}
+
+impl nodedb_cluster::SnapshotQuarantineHook for RaftSnapshotQuarantineHook {
+    fn is_quarantined(&self, group_id: u64, last_included_index: u64) -> bool {
+        let key = crate::storage::quarantine::SegmentKey {
+            engine: crate::storage::quarantine::QuarantineEngine::Raft,
+            collection: "_raft_snapshot".to_string(),
+            segment_id: format!("group={group_id}:index={last_included_index}"),
+        };
+        self.registry.is_quarantined(&key)
+    }
+
+    fn record_success(&self, group_id: u64, last_included_index: u64) {
+        let key = crate::storage::quarantine::SegmentKey {
+            engine: crate::storage::quarantine::QuarantineEngine::Raft,
+            collection: "_raft_snapshot".to_string(),
+            segment_id: format!("group={group_id}:index={last_included_index}"),
+        };
+        self.registry.record_success(&key);
+    }
+
+    fn record_failure(&self, group_id: u64, last_included_index: u64, error: &str) -> bool {
+        let key = crate::storage::quarantine::SegmentKey {
+            engine: crate::storage::quarantine::QuarantineEngine::Raft,
+            collection: "_raft_snapshot".to_string(),
+            segment_id: format!("group={group_id}:index={last_included_index}"),
+        };
+        // record_failure returns Err(SegmentQuarantined) on the second strike.
+        self.registry.record_failure(key, error, None).is_err()
+    }
+}
+
 /// Start the Raft event loop and RPC server.
 ///
 /// Must be called after `SharedState` is constructed (needs the WAL and
@@ -149,6 +188,10 @@ pub fn start_raft(
 
     let tick_interval = Duration::from_millis(transport_tuning.raft_tick_interval_ms);
 
+    let quarantine_hook = Arc::new(RaftSnapshotQuarantineHook {
+        registry: Arc::clone(&shared.quarantine_registry),
+    });
+
     let raft_loop = Arc::new(
         nodedb_cluster::RaftLoop::new(
             multi_raft,
@@ -160,7 +203,8 @@ pub fn start_raft(
         .with_metadata_applier(metadata_applier)
         .with_vshard_handler(vshard_handler)
         .with_tick_interval(tick_interval)
-        .with_group_watchers(handle.group_watchers.clone()),
+        .with_group_watchers(handle.group_watchers.clone())
+        .with_snapshot_quarantine_hook(quarantine_hook),
     );
 
     // Spawn cluster subsystems now that the loop owns `MultiRaft`.

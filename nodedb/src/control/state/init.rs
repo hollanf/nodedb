@@ -306,6 +306,7 @@ impl SharedState {
             gateway_invalidator: None,
             gateway: None,
             backup_kek: None,
+            quarantine_registry: Arc::new(crate::storage::quarantine::QuarantineRegistry::new()),
             shutdown: Arc::clone(&shutdown),
             loop_registry: Arc::clone(&loop_registry),
             startup: Arc::clone(&startup_gate),
@@ -466,6 +467,10 @@ impl SharedState {
         // it after `open()` returns by swapping via `Arc::get_mut`, installing
         // the real gate from the `StartupSequencer` it constructs.
         let startup_gate = crate::control::startup::StartupGate::pre_fired();
+        // Create system metrics up-front so the CDC router can register
+        // per-stream drop counters into the same registry that the HTTP
+        // /metrics endpoint reads.
+        let system_metrics = Arc::new(crate::control::metrics::SystemMetrics::new());
         let state = Arc::new(Self {
             dispatcher: Mutex::new(dispatcher),
             tracker: RequestTracker::new(),
@@ -549,7 +554,10 @@ impl SharedState {
                 4096,
             ),
             stream_registry: Arc::clone(&stream_registry),
-            cdc_router: Arc::new(crate::event::cdc::CdcRouter::new(stream_registry)),
+            cdc_router: Arc::new(
+                crate::event::cdc::CdcRouter::new(stream_registry)
+                    .with_metrics(Arc::clone(&system_metrics)),
+            ),
             group_registry,
             offset_store: Arc::new(crate::event::cdc::OffsetStore::open(
                 catalog_path.parent().unwrap_or(std::path::Path::new(".")),
@@ -644,7 +652,9 @@ impl SharedState {
             connections_accepted: AtomicU64::new(0),
             raft_propose_leader_change_retries: AtomicU64::new(0),
             request_id_counter: AtomicU64::new(1),
-            system_metrics: Some(Arc::new(crate::control::metrics::SystemMetrics::new())),
+            // Use the pre-created Arc so the CdcRouter (above) and this
+            // metrics endpoint share the same SystemMetrics registry.
+            system_metrics: Some(Arc::clone(&system_metrics)),
             retention_settings: Arc::new(std::sync::RwLock::new(
                 crate::config::server::RetentionSettings::default(),
             )),
@@ -674,6 +684,7 @@ impl SharedState {
             gateway_invalidator: None,
             gateway: None,
             backup_kek: None,
+            quarantine_registry: Arc::new(crate::storage::quarantine::QuarantineRegistry::new()),
             shutdown: Arc::clone(&shutdown),
             loop_registry: Arc::clone(&loop_registry),
             startup: Arc::clone(&startup_gate),

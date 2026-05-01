@@ -15,5 +15,6 @@
 pub mod catalog;
 pub mod guard;
 pub mod leases;
+pub mod quarantined_segments;
 pub mod raft;
 pub mod transport;

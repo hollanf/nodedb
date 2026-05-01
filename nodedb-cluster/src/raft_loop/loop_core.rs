@@ -39,6 +39,32 @@ pub trait CommitApplier: Send + Sync + 'static {
     fn apply_committed(&self, group_id: u64, entries: &[LogEntry]) -> u64;
 }
 
+/// Hook for quarantine integration on the Raft snapshot receive path.
+///
+/// `nodedb-cluster` cannot depend on `nodedb` (circular), so the host crate
+/// (`nodedb`) supplies an implementation backed by its `QuarantineRegistry`.
+/// Cluster-only tests leave the field `None`, which skips all quarantine
+/// accounting.
+///
+/// All methods take `(group_id, last_included_index)` as the snapshot identity.
+pub trait SnapshotQuarantineHook: Send + Sync + 'static {
+    /// Returns `true` if the chunk identified by `(group_id, index)` is
+    /// already in the quarantined state and should be rejected immediately
+    /// without attempting to decode it.
+    fn is_quarantined(&self, group_id: u64, last_included_index: u64) -> bool;
+
+    /// Called after a successful decode — resets the strike counter so a
+    /// single transient CRC error is not held against a healthy peer.
+    fn record_success(&self, group_id: u64, last_included_index: u64);
+
+    /// Called on a CRC-class decode failure.
+    ///
+    /// Returns `true` when the segment has just been quarantined (second
+    /// consecutive failure), and `false` on the first strike (caller should
+    /// surface the framing error and allow the peer to retry).
+    fn record_failure(&self, group_id: u64, last_included_index: u64, error: &str) -> bool;
+}
+
 /// Type-erased async handler for incoming `VShardEnvelope` messages.
 ///
 /// Receives raw envelope bytes, returns response bytes. Set by the main binary
@@ -122,6 +148,17 @@ pub struct RaftLoop<A: CommitApplier, P: PlanExecutor = NoopPlanExecutor> {
     /// per leadership acquisition. `AtomicBool` because [`super::tick::do_tick`]
     /// runs against `&self`.
     pub(super) prev_metadata_leader: std::sync::atomic::AtomicBool,
+
+    /// Optional quarantine hook for the snapshot receive path.
+    ///
+    /// When set (by the `nodedb` binary via `with_snapshot_quarantine_hook`),
+    /// the `InstallSnapshotRequest` handler checks whether the incoming chunk
+    /// is already quarantined, records successes to clear transient strikes, and
+    /// records consecutive failures to quarantine persistently.
+    ///
+    /// Cluster-only tests leave this as `None`, which disables all quarantine
+    /// accounting for snapshot chunks.
+    pub(super) snapshot_quarantine_hook: Option<Arc<dyn SnapshotQuarantineHook>>,
 }
 
 impl<A: CommitApplier> RaftLoop<A> {
@@ -150,11 +187,19 @@ impl<A: CommitApplier> RaftLoop<A> {
             loop_metrics: LoopMetrics::new("raft_tick_loop"),
             group_watchers: Arc::new(GroupAppliedWatchers::new()),
             prev_metadata_leader: std::sync::atomic::AtomicBool::new(false),
+            snapshot_quarantine_hook: None,
         }
     }
 }
 
 impl<A: CommitApplier, P: PlanExecutor> RaftLoop<A, P> {
+    /// Install the snapshot quarantine hook (mutable setter variant).
+    ///
+    /// Prefer `with_snapshot_quarantine_hook` on the builder chain unless you
+    /// need to set the hook after construction.
+    pub fn set_snapshot_quarantine_hook(&mut self, hook: Arc<dyn SnapshotQuarantineHook>) {
+        self.snapshot_quarantine_hook = Some(hook);
+    }
     /// Install a custom plan executor (for cluster mode — C-β path).
     pub fn with_plan_executor<P2: PlanExecutor>(self, executor: Arc<P2>) -> RaftLoop<A, P2> {
         RaftLoop {
@@ -173,6 +218,7 @@ impl<A: CommitApplier, P: PlanExecutor> RaftLoop<A, P> {
             loop_metrics: self.loop_metrics,
             group_watchers: self.group_watchers,
             prev_metadata_leader: self.prev_metadata_leader,
+            snapshot_quarantine_hook: self.snapshot_quarantine_hook,
         }
     }
 
@@ -184,6 +230,15 @@ impl<A: CommitApplier, P: PlanExecutor> RaftLoop<A, P> {
     /// fresh empty registry when not set.
     pub fn with_group_watchers(mut self, watchers: Arc<GroupAppliedWatchers>) -> Self {
         self.group_watchers = watchers;
+        self
+    }
+
+    /// Attach the snapshot quarantine hook (builder chain variant).
+    ///
+    /// The supplied implementation is called by the `InstallSnapshotRequest`
+    /// handler to check for, record, and short-circuit quarantined chunks.
+    pub fn with_snapshot_quarantine_hook(mut self, hook: Arc<dyn SnapshotQuarantineHook>) -> Self {
+        self.snapshot_quarantine_hook = Some(hook);
         self
     }
 

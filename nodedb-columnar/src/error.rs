@@ -52,6 +52,18 @@ pub enum ColumnarError {
     #[error("segment ID space exhausted: u64::MAX segments have been allocated")]
     SegmentIdExhausted,
 
+    /// Structural corruption detected while parsing a segment header or footer.
+    ///
+    /// `offset` is the byte position from the start of the segment where the
+    /// problem was detected. `segment_id` is `None` when the parse fails before
+    /// the id can be resolved (e.g. inside the footer itself).
+    #[error("segment corruption in {segment_id:?} at offset {offset:?}: {reason}")]
+    Corruption {
+        segment_id: Option<String>,
+        reason: String,
+        offset: Option<u64>,
+    },
+
     /// Segment is encrypted (starts with `SEGV`) but no KEK was supplied.
     #[error(
         "columnar segment is encrypted but no encryption key was provided; \

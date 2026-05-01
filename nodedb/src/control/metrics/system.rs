@@ -122,7 +122,12 @@ pub struct SystemMetrics {
     pub active_subscriptions: AtomicU64,
     pub active_listen_channels: AtomicU64,
     pub change_events_delivered: AtomicU64,
+    /// Global CDC drop counter (sum across all streams). Kept for backward
+    /// compatibility with existing dashboards that query this name without labels.
     pub change_events_dropped: AtomicU64,
+    /// Per-stream CDC drop counters. Key: `(tenant_id, stream_name)`.
+    /// Rendered as `nodedb_cdc_events_dropped_total{tenant="<id>",stream="<name>"}`.
+    pub cdc_events_dropped_by_stream: RwLock<HashMap<(u64, String), u64>>,
 
     // ── Checkpoints ──
     pub checkpoints: AtomicU64,
@@ -450,6 +455,23 @@ impl SystemMetrics {
         self.mmap_rss_bytes.store(bytes, Ordering::Relaxed);
     }
 
+    // ── CDC per-stream drops ──
+
+    /// Record `count` events evicted from a specific CDC stream buffer.
+    ///
+    /// Increments both the global `change_events_dropped` counter (backward
+    /// compatibility) and the per-stream labelled map used for Prometheus
+    /// `nodedb_cdc_events_dropped_total{tenant, stream}`.
+    pub fn record_cdc_stream_drop(&self, tenant_id: u64, stream_name: &str, count: u64) {
+        self.change_events_dropped
+            .fetch_add(count, Ordering::Relaxed);
+        let mut m = self
+            .cdc_events_dropped_by_stream
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        *m.entry((tenant_id, stream_name.to_string())).or_insert(0) += count;
+    }
+
     // ── Catalog sanity check ──
 
     /// Record the outcome of one registry's catalog sanity check.
@@ -484,8 +506,33 @@ impl SystemMetrics {
         self.prometheus_engines(&mut out);
         self.prometheus_catalog_sanity(&mut out);
         self.prometheus_shutdown_phases(&mut out);
+        self.prometheus_cdc_stream_drops(&mut out);
         self.purge.write_prometheus(&mut out);
         out
+    }
+
+    /// Emit `nodedb_cdc_events_dropped_total{tenant,stream}` labelled counters.
+    fn prometheus_cdc_stream_drops(&self, out: &mut String) {
+        use std::fmt::Write as _;
+        let m = self
+            .cdc_events_dropped_by_stream
+            .read()
+            .unwrap_or_else(|p| p.into_inner());
+        if m.is_empty() {
+            return;
+        }
+        let _ = out.write_str(
+            "# HELP nodedb_cdc_events_dropped_total CDC events dropped from stream buffers due to overflow\n\
+             # TYPE nodedb_cdc_events_dropped_total counter\n",
+        );
+        let mut pairs: Vec<_> = m.iter().collect();
+        pairs.sort_by(|a, b| a.0.cmp(b.0));
+        for ((tenant_id, stream_name), count) in pairs {
+            let _ = writeln!(
+                out,
+                r#"nodedb_cdc_events_dropped_total{{tenant="{tenant_id}",stream="{stream_name}"}} {count}"#
+            );
+        }
     }
 
     /// Emit `nodedb_shutdown_phase_duration_seconds{phase}` gauges.
@@ -533,6 +580,47 @@ impl SystemMetrics {
             let _ = writeln!(
                 out,
                 r#"nodedb_catalog_sanity_check_total{{registry="{registry}",outcome="{outcome}"}} {count}"#
+            );
+        }
+    }
+
+    /// Emit `nodedb_segments_quarantined_total{engine,collection}` counters and
+    /// `nodedb_segments_quarantined_active{engine,collection}` gauges from a
+    /// live registry snapshot.
+    ///
+    /// Called from the `/metrics` HTTP handler which has direct access to
+    /// `SharedState::quarantine_registry`. The `SystemMetrics` struct does not
+    /// hold a quarantine counter to avoid requiring a notification path between
+    /// the registry and the metrics store — the registry is the source of truth.
+    pub fn prometheus_segment_quarantine_active(
+        out: &mut String,
+        active_counts: &std::collections::HashMap<(String, String), u64>,
+    ) {
+        use std::fmt::Write as _;
+        if active_counts.is_empty() {
+            return;
+        }
+        let mut pairs: Vec<_> = active_counts.iter().collect();
+        pairs.sort_by(|a, b| a.0.cmp(b.0));
+        let _ = out.write_str(
+            "# HELP nodedb_segments_quarantined_active Currently-quarantined segment count per engine and collection\n\
+             # TYPE nodedb_segments_quarantined_active gauge\n",
+        );
+        for ((engine, collection), count) in &pairs {
+            let _ = writeln!(
+                out,
+                r#"nodedb_segments_quarantined_active{{engine="{engine}",collection="{collection}"}} {count}"#
+            );
+        }
+        // Emit total (same value per process run — quarantines are permanent within a run).
+        let _ = out.write_str(
+            "# HELP nodedb_segments_quarantined_total Cumulative segments quarantined due to repeated CRC failures\n\
+             # TYPE nodedb_segments_quarantined_total counter\n",
+        );
+        for ((engine, collection), count) in pairs {
+            let _ = writeln!(
+                out,
+                r#"nodedb_segments_quarantined_total{{engine="{engine}",collection="{collection}"}} {count}"#
             );
         }
     }

@@ -14,6 +14,7 @@ use nodedb_types::Surrogate;
 
 use super::shared::redb_err;
 use crate::engine::sparse::fts_redb::tables::{DOC_LENGTHS, INDEX_META, POSTINGS, SEGMENTS, STATS};
+use crate::storage::quarantine::QuarantineRegistry;
 
 /// Redb-backed FTS backend.
 ///
@@ -22,6 +23,9 @@ use crate::engine::sparse::fts_redb::tables::{DOC_LENGTHS, INDEX_META, POSTINGS,
 /// table schema, never by lexical-prefix ordering.
 pub struct RedbFtsBackend {
     pub(super) db: Arc<Database>,
+    /// Shared quarantine registry for corrupt FTS segment bytes.
+    /// `None` until wired by the server bootstrap.
+    pub(super) quarantine_registry: Option<Arc<QuarantineRegistry>>,
 }
 
 impl RedbFtsBackend {
@@ -47,12 +51,20 @@ impl RedbFtsBackend {
         }
         write_txn.commit().map_err(|e| redb_err("commit init", e))?;
 
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            quarantine_registry: None,
+        })
     }
 
     /// Access the underlying database.
     pub fn db(&self) -> &Database {
         &self.db
+    }
+
+    /// Install the quarantine registry.
+    pub fn set_quarantine_registry(&mut self, registry: Arc<QuarantineRegistry>) {
+        self.quarantine_registry = Some(registry);
     }
 }
 
