@@ -2,12 +2,20 @@
 //!
 //! Layout:
 //! ```text
-//! [schema_version: u32 LE]
+//! [magic: u32 LE = 0x5453_444E "NDST"]   bytes 0..4
+//! [format_version: u8 = 1]               byte 4
+//! [schema_version: u32 LE]               bytes 5..9
 //! [null_bitmap: ceil(N/8) bytes, bit=1 means NULL]
 //! [fixed_fields: concatenated, zeroed when null]
 //! [offset_table: (N_var + 1) × u32 LE]
 //! [variable_data: concatenated variable-length bytes]
 //! ```
+
+/// Magic bytes identifying a Binary Tuple: `"NDST"` in little-endian.
+pub const MAGIC: u32 = 0x5453_444E;
+
+/// Current Binary Tuple format version.
+pub const FORMAT_VERSION: u8 = 1;
 
 use nodedb_types::columnar::{ColumnType, StrictSchema};
 use nodedb_types::value::Value;
@@ -48,7 +56,8 @@ impl TupleEncoder {
             }
         }
 
-        let header_size = 4 + schema.null_bitmap_size();
+        // Header: magic(4) + format_version(1) + schema_version(4) + null_bitmap.
+        let header_size = 9 + schema.null_bitmap_size();
 
         Self {
             schema: schema.clone(),
@@ -77,11 +86,13 @@ impl TupleEncoder {
         let base_size = self.header_size + self.fixed_section_size + offset_table_size;
         let mut buf = vec![0u8; base_size];
 
-        // 1. Schema version.
-        buf[0..4].copy_from_slice(&self.schema.version.to_le_bytes());
+        // 1. Magic, format version, schema version.
+        buf[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+        buf[4] = FORMAT_VERSION;
+        buf[5..9].copy_from_slice(&self.schema.version.to_le_bytes());
 
         // 2. Null bitmap + fixed fields + type validation.
-        let bitmap_start = 4;
+        let bitmap_start = 9;
         let fixed_start = self.header_size;
 
         for (i, (col, val)) in self.schema.columns.iter().zip(values.iter()).enumerate() {
@@ -354,16 +365,19 @@ mod tests {
 
         let tuple = encoder.encode(&values).unwrap();
 
-        // Header: 4 (version) + 1 (null bitmap for 5 cols) = 5 bytes
-        assert_eq!(tuple[0], 1); // schema version low byte = 1
-        assert_eq!(tuple[1], 0); // version byte 1
-        assert_eq!(tuple[2], 0); // version byte 2
-        assert_eq!(tuple[3], 0); // version byte 3
-        assert_eq!(tuple[4], 0); // null bitmap: no nulls
+        // Header: magic(4) + format_version(1) + schema_version(4) + null_bitmap(1) = 10 bytes
+        // magic = 0x5453_444E "NDST" LE
+        assert_eq!(&tuple[0..4], &0x5453_444Eu32.to_le_bytes()); // magic
+        assert_eq!(tuple[4], 1); // format_version
+        assert_eq!(tuple[5], 1); // schema version low byte = 1
+        assert_eq!(tuple[6], 0); // schema version byte 1
+        assert_eq!(tuple[7], 0); // schema version byte 2
+        assert_eq!(tuple[8], 0); // schema version byte 3
+        assert_eq!(tuple[9], 0); // null bitmap: no nulls
 
         // Fixed section: Int64(8) + Decimal(16) + Bool(1) = 25 bytes
-        // Starting at offset 5
-        let id_bytes = &tuple[5..13];
+        // Starting at offset 10
+        let id_bytes = &tuple[10..18];
         assert_eq!(i64::from_le_bytes(id_bytes.try_into().unwrap()), 42);
     }
 
@@ -382,9 +396,9 @@ mod tests {
 
         let tuple = encoder.encode(&values).unwrap();
 
-        // Null bitmap: bit 2 (email) and bit 4 (active) set.
+        // Null bitmap at byte 9: bit 2 (email) and bit 4 (active) set.
         // Bit 2 = 0b00000100 = 4, bit 4 = 0b00010000 = 16. Combined = 20.
-        assert_eq!(tuple[4], 0b00010100);
+        assert_eq!(tuple[9], 0b00010100);
     }
 
     #[test]
@@ -438,8 +452,8 @@ mod tests {
 
         // Int64 → Float64 coercion should work.
         let tuple = encoder.encode(&[Value::Integer(42)]).unwrap();
-        // Header: 4 (version) + 1 (bitmap) = 5. Fixed: 8 bytes Float64.
-        let f = f64::from_le_bytes(tuple[5..13].try_into().unwrap());
+        // Header: magic(4)+format_version(1)+schema_version(4)+bitmap(1) = 10. Fixed: 8 bytes Float64.
+        let f = f64::from_le_bytes(tuple[10..18].try_into().unwrap());
         assert_eq!(f, 42.0);
     }
 
@@ -451,7 +465,7 @@ mod tests {
 
         let dt = NdbDateTime::from_micros(1_700_000_000_000_000);
         let tuple = encoder.encode(&[Value::NaiveDateTime(dt)]).unwrap();
-        let micros = i64::from_le_bytes(tuple[5..13].try_into().unwrap());
+        let micros = i64::from_le_bytes(tuple[10..18].try_into().unwrap());
         assert_eq!(micros, 1_700_000_000_000_000);
     }
 
@@ -463,7 +477,7 @@ mod tests {
 
         let dt = NdbDateTime::from_micros(1_700_000_000_000_000);
         let tuple = encoder.encode(&[Value::DateTime(dt)]).unwrap();
-        let micros = i64::from_le_bytes(tuple[5..13].try_into().unwrap());
+        let micros = i64::from_le_bytes(tuple[10..18].try_into().unwrap());
         assert_eq!(micros, 1_700_000_000_000_000);
     }
 
@@ -484,9 +498,9 @@ mod tests {
         let tuple = encoder.encode(&values).unwrap();
 
         // Tuple must be longer than just the header + fixed section.
-        // Header: 4 (version) + 1 (bitmap) = 5. Fixed: 8 (Int64). Offset table: 8 (2 entries × u32).
+        // Header: 10 bytes. Fixed: 8 (Int64). Offset table: 8 (2 entries × u32).
         // Variable data must be non-empty (MessagePack of the object).
-        let min_size = 5 + 8 + 8;
+        let min_size = 10 + 8 + 8;
         assert!(tuple.len() > min_size, "tuple should contain variable data");
 
         // Decode and verify the value roundtrips correctly.
@@ -505,8 +519,8 @@ mod tests {
         .unwrap();
         let encoder = TupleEncoder::new(&schema);
         let tuple = encoder.encode(&[Value::Integer(1), Value::Null]).unwrap();
-        // Null bitmap byte (index 4): bit 1 (column 1) should be set → 0b00000010 = 2.
-        assert_eq!(tuple[4] & 0b10, 0b10);
+        // Null bitmap byte (index 9): bit 1 (column 1) should be set → 0b00000010 = 2.
+        assert_eq!(tuple[9] & 0b10, 0b10);
     }
 
     #[test]
@@ -595,10 +609,54 @@ mod tests {
             Value::Float(3.0),
         ])];
         let tuple = encoder.encode(&vals).unwrap();
-        // Header: 5 bytes. Fixed: 12 bytes (3 × f32).
-        let f0 = f32::from_le_bytes(tuple[5..9].try_into().unwrap());
-        let f1 = f32::from_le_bytes(tuple[9..13].try_into().unwrap());
-        let f2 = f32::from_le_bytes(tuple[13..17].try_into().unwrap());
+        // Header: 10 bytes. Fixed: 12 bytes (3 × f32).
+        let f0 = f32::from_le_bytes(tuple[10..14].try_into().unwrap());
+        let f1 = f32::from_le_bytes(tuple[14..18].try_into().unwrap());
+        let f2 = f32::from_le_bytes(tuple[18..22].try_into().unwrap());
         assert_eq!((f0, f1, f2), (1.0, 2.0, 3.0));
+    }
+
+    /// Asserts NDST magic at [0..4], FORMAT_VERSION == 1 at [4], and
+    /// schema_version u32 at [5..9].
+    #[test]
+    fn golden_strict_tuple_format() {
+        let schema = crm_schema();
+        let encoder = TupleEncoder::new(&schema);
+        let values = vec![
+            Value::Integer(1),
+            Value::String("A".into()),
+            Value::String("a@b.com".into()),
+            Value::Decimal(rust_decimal::Decimal::ZERO),
+            Value::Bool(false),
+        ];
+        let tuple = encoder.encode(&values).unwrap();
+
+        // Magic at [0..4]: "NDST" LE = 0x5453_444E.
+        assert_eq!(
+            &tuple[0..4],
+            &0x5453_444Eu32.to_le_bytes(),
+            "magic mismatch"
+        );
+        assert_eq!(&tuple[0..4], b"NDST", "magic bytes mismatch");
+
+        // FORMAT_VERSION == 1 at [4].
+        assert_eq!(tuple[4], FORMAT_VERSION, "format_version mismatch");
+        assert_eq!(tuple[4], 1u8, "expected FORMAT_VERSION == 1");
+
+        // schema_version u32 LE at [5..9].
+        let schema_ver = u32::from_le_bytes([tuple[5], tuple[6], tuple[7], tuple[8]]);
+        assert_eq!(
+            schema_ver, 1u32,
+            "schema_version must be 1 for version-1 schema"
+        );
+
+        // null bitmap at [9]: no nulls → 0.
+        assert_eq!(tuple[9], 0u8, "expected no null bits");
+
+        // Tuple must be longer than the 10-byte header.
+        assert!(
+            tuple.len() > 10,
+            "tuple must contain fixed/variable data after header"
+        );
     }
 }

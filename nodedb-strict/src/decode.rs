@@ -5,6 +5,8 @@
 //! performance advantage over self-describing formats like MessagePack/BSON.
 
 use nodedb_types::columnar::{ColumnType, SchemaOps, StrictSchema};
+
+use crate::encode::{FORMAT_VERSION, MAGIC};
 use nodedb_types::datetime::NdbDateTime;
 use nodedb_types::value::Value;
 
@@ -50,7 +52,8 @@ impl TupleDecoder {
             }
         }
 
-        let header_size = 4 + schema.null_bitmap_size();
+        // Header: magic(4) + format_version(1) + schema_version(4) + null_bitmap.
+        let header_size = 9 + schema.null_bitmap_size();
 
         Self {
             schema: schema.clone(),
@@ -62,15 +65,32 @@ impl TupleDecoder {
         }
     }
 
-    /// Read the schema version from a tuple's header.
+    /// Read and validate the header, then return the schema version.
+    ///
+    /// Validates magic bytes at [0..4] and format version at [4] before
+    /// returning the schema version at [5..9].
     pub fn schema_version(&self, tuple: &[u8]) -> Result<u32, StrictError> {
-        if tuple.len() < 4 {
+        if tuple.len() < 9 {
             return Err(StrictError::TruncatedTuple {
-                expected: 4,
+                expected: 9,
                 got: tuple.len(),
             });
         }
-        Ok(u32::from_le_bytes([tuple[0], tuple[1], tuple[2], tuple[3]]))
+        let got_magic = u32::from_le_bytes([tuple[0], tuple[1], tuple[2], tuple[3]]);
+        if got_magic != MAGIC {
+            return Err(StrictError::InvalidMagic {
+                expected: MAGIC,
+                got: got_magic,
+            });
+        }
+        let got_version = tuple[4];
+        if got_version != FORMAT_VERSION {
+            return Err(StrictError::InvalidFormatVersion {
+                expected: FORMAT_VERSION,
+                got: got_version,
+            });
+        }
+        Ok(u32::from_le_bytes([tuple[5], tuple[6], tuple[7], tuple[8]]))
     }
 
     /// Check whether column `col_idx` is null in the given tuple.
@@ -78,7 +98,7 @@ impl TupleDecoder {
         self.check_bounds(col_idx)?;
         self.check_min_size(tuple)?;
 
-        let bitmap_byte = tuple[4 + col_idx / 8];
+        let bitmap_byte = tuple[9 + col_idx / 8];
         Ok(bitmap_byte & (1 << (col_idx % 8)) != 0)
     }
 
@@ -347,7 +367,7 @@ impl TupleDecoder {
     }
 
     fn is_null_unchecked(&self, tuple: &[u8], col_idx: usize) -> bool {
-        let bitmap_byte = tuple[4 + col_idx / 8];
+        let bitmap_byte = tuple[9 + col_idx / 8];
         bitmap_byte & (1 << (col_idx % 8)) != 0
     }
 }

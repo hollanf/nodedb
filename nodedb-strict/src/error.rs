@@ -39,4 +39,12 @@ pub enum StrictError {
         tuple_version: u16,
         reader_version: u16,
     },
+
+    /// Magic bytes at the start of the tuple do not match `MAGIC`.
+    #[error("invalid tuple magic: expected 0x{expected:08X}, got 0x{got:08X}")]
+    InvalidMagic { expected: u32, got: u32 },
+
+    /// Format version byte does not match `FORMAT_VERSION`.
+    #[error("unsupported tuple format version: expected {expected}, got {got}")]
+    InvalidFormatVersion { expected: u8, got: u8 },
 }
