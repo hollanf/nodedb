@@ -38,6 +38,12 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features --profile ci -- -D warnings
+      - name: Memory-governor gate
+        run: bash scripts/ci/check_governor_gate.sh
+      - name: Warm-storage ObjectStore gate
+        run: bash scripts/ci/check_warm_storage_gate.sh
+      - name: Format-path .expect() gate
+        run: bash scripts/ci/check_format_expects.sh
 
   test:
     name: Test
