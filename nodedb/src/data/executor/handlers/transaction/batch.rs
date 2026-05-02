@@ -5,9 +5,11 @@
 //! VectorInsert, EdgePut, EdgeDelete) are tracked for rollback on failure.
 //! CRDT deltas are accumulated in a scratch buffer and only applied on success.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
 use tracing::{debug, error, warn};
 
-use crate::bridge::envelope::{Response, Status};
+use crate::bridge::envelope::{ErrorCode, Response, Status};
 use crate::bridge::physical_plan::PhysicalPlan;
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
@@ -41,13 +43,38 @@ impl CoreLoop {
         let mut last_response = self.response_ok(task);
 
         for (i, plan) in plans.iter().enumerate() {
-            let result = self.execute_tx_sub_plan(
-                tid,
-                plan,
-                &mut undo_log,
-                &mut crdt_deltas,
-                &task.request.user_roles,
-            );
+            // Wrap the sub-apply + post-apply fail-point in catch_unwind so a
+            // panic (real or test-injected) routes through the typed-rollback
+            // arm below instead of unwinding past `undo_log`. Without this,
+            // a panic between sub-applies would drop the undo log without
+            // running rollback and leave the shard half-committed.
+            let user_roles = &task.request.user_roles;
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
+                let r = self.execute_tx_sub_plan(
+                    tid,
+                    plan,
+                    &mut undo_log,
+                    &mut crdt_deltas,
+                    user_roles,
+                );
+                crate::fail_point!("transaction_batch::between_subapply");
+                r
+            }));
+            let result = match outcome {
+                Ok(r) => r,
+                Err(payload) => {
+                    let detail = panic_payload_to_string(payload.as_ref());
+                    error!(
+                        core = self.core_id,
+                        plan_index = i,
+                        panic = %detail,
+                        "transaction sub-apply panicked; routing through rollback path"
+                    );
+                    Err(ErrorCode::Internal {
+                        detail: format!("panic in sub-apply at index {i}: {detail}"),
+                    })
+                }
+            };
 
             match result {
                 Ok(resp) => {
@@ -137,6 +164,11 @@ impl CoreLoop {
         // forward writes — return RollbackFailed so the client knows the shard needs
         // a restart to restore consistency via WAL replay. Never warn-and-continue.
         for (crdt_idx, (delta, peer_id)) in crdt_deltas.into_iter().enumerate() {
+            // Second crash-injection point — between forward-write commit and
+            // CRDT apply. WAL replay must roll the CRDT side forward (or roll
+            // forward writes back) to restore consistency.
+            crate::fail_point!("transaction_batch::between_crdt_delta");
+
             let tenant_id = crate::types::TenantId::new(tid);
             match self.get_crdt_engine(tenant_id) {
                 Ok(engine) => {
@@ -247,5 +279,18 @@ impl CoreLoop {
             watermark_lsn: self.watermark,
             error_code: None,
         }
+    }
+}
+
+/// Best-effort conversion of a panic payload to a human-readable string.
+/// Tries the two common payload types (`&'static str` and `String`); falls
+/// back to `"<non-string panic payload>"` for anything else.
+fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "<non-string panic payload>".to_string()
     }
 }
