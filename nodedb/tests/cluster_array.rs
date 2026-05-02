@@ -1,5 +1,5 @@
 //! End-to-end 3-node cluster integration tests for the distributed Array
-//! Engine (Tier 8.7).
+//! Engine.
 //!
 //! Every test in this file matches `binary(/cluster/)` in nextest.toml and
 //! therefore runs in the `cluster` test group (max-threads = 1,
@@ -16,7 +16,7 @@
 //! The "distributed" aspect of these tests is that cell data is stored
 //! across multiple vShards on different nodes (Hilbert-partitioned). The
 //! coordinator on the DDL node fans out to peer shards via the array RPC
-//! path and merges the results. This is what Tier 8.7 validates.
+//! path and merges the results.
 //!
 //! Tests:
 //!   1. `cluster_array_slice_spans_multiple_shards` — NDARRAY_SLICE fan-out

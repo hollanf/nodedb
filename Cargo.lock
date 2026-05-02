@@ -4289,6 +4289,7 @@ version = "0.0.6"
 dependencies = [
  "crc32c",
  "nodedb-codec",
+ "nodedb-mem",
  "nodedb-types",
  "nodedb-wal",
  "roaring",
@@ -4326,6 +4327,7 @@ dependencies = [
  "crc32c",
  "icu_segmenter",
  "lindera",
+ "nodedb-mem",
  "nodedb-types",
  "rust-stemmers",
  "serde",
@@ -4340,6 +4342,7 @@ dependencies = [
 name = "nodedb-graph"
 version = "0.0.6"
 dependencies = [
+ "nodedb-mem",
  "nodedb-types",
  "rkyv 0.8.15",
  "rmpv",
@@ -4405,6 +4408,7 @@ name = "nodedb-spatial"
 version = "0.0.6"
 dependencies = [
  "h3o",
+ "nodedb-mem",
  "nodedb-types",
  "nodedb-wal",
  "rand 0.9.4",
@@ -4478,6 +4482,7 @@ dependencies = [
  "libc",
  "memmap2",
  "nodedb-codec",
+ "nodedb-mem",
  "nodedb-types",
  "nodedb-wal",
  "rand 0.9.4",

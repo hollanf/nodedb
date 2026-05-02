@@ -1,8 +1,8 @@
 //! Per-engine undo entry application logic.
 //!
 //! Each `apply_undo_*` method handles one engine family's undo entries.
-//! All methods return `Err((entry_index, detail))` on fatal failure per
-//! the T5-A-01 rollback escalation contract.
+//! All methods return `Err((entry_index, detail))` on fatal failure so the
+//! caller can escalate to a typed `RollbackFailed` response.
 
 use tracing::error;
 

@@ -200,6 +200,12 @@ pub enum Error {
     #[error("memory budget exhausted for engine {engine}")]
     MemoryExhausted { engine: String },
 
+    /// Memory pressure at Emergency level — the named engine is over 95% budget.
+    /// The write is rejected; the caller must retry when pressure subsides.
+    /// Maps to SQLSTATE 53200 (out_of_memory / insufficient_resources).
+    #[error("backpressure: engine {engine} is at Emergency pressure; retry later")]
+    Backpressure { engine: nodedb_mem::EngineId },
+
     #[error("CRDT engine error: {0}")]
     Crdt(#[from] nodedb_crdt::CrdtError),
 
@@ -428,6 +434,7 @@ impl From<Error> for NodeDbError {
             Error::Codec { detail } => NodeDbError::codec(detail),
             Error::SegmentCorrupted { detail } => NodeDbError::segment_corrupted(detail),
             Error::MemoryExhausted { engine } => NodeDbError::memory_exhausted(engine),
+            Error::Backpressure { engine } => NodeDbError::memory_exhausted(engine.to_string()),
             Error::Crdt(crdt_err) => NodeDbError::internal(crdt_err),
             Error::Io(io_err) => NodeDbError::storage(io_err),
             Error::Config { detail } => NodeDbError::config(detail),

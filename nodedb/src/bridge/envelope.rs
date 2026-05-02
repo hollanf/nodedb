@@ -261,6 +261,7 @@ impl From<crate::Error> for ErrorCode {
             crate::Error::ConflictRetry { .. } => Self::ConflictRetry,
             crate::Error::FanOutExceeded { .. } => Self::FanOutExceeded,
             crate::Error::MemoryExhausted { .. } => Self::ResourcesExhausted,
+            crate::Error::Backpressure { .. } => Self::ResourcesExhausted,
             crate::Error::AppendOnlyViolation { collection, .. } => {
                 Self::AppendOnlyViolation { collection }
             }

@@ -107,8 +107,11 @@ impl CoreLoop {
         }
 
         // 2. CSR compaction: merge write buffers into dense arrays.
-        self.csr.compact_all();
-        stats.csr_compacted = true;
+        if let Err(e) = self.csr.compact_all() {
+            tracing::warn!(error = %e, "CSR compaction rejected by memory governor; skipping");
+        } else {
+            stats.csr_compacted = true;
+        }
 
         // 3. Dangling edge sweep.
         stats.edges_swept = self.sweep_dangling_edges();

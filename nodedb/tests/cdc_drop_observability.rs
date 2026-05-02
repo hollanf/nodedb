@@ -1,4 +1,4 @@
-//! Integration tests for T5-A-05: CDC drop observability.
+//! Integration tests for CDC drop observability.
 //!
 //! Covers:
 //! - `StreamBuffer::push` returns eviction count per call.

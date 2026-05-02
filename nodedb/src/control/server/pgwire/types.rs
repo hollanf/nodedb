@@ -60,6 +60,7 @@ pub fn error_to_sqlstate(err: &crate::Error) -> (&'static str, &'static str, Str
             ("ERROR", sqlstate::INSUFFICIENT_PRIVILEGE, err.to_string())
         }
         crate::Error::MemoryExhausted { .. } => ("ERROR", sqlstate::OUT_OF_MEMORY, err.to_string()),
+        crate::Error::Backpressure { .. } => ("ERROR", sqlstate::OUT_OF_MEMORY, err.to_string()),
         crate::Error::FanOutExceeded { .. } => {
             ("ERROR", sqlstate::STATEMENT_TOO_COMPLEX, err.to_string())
         }

@@ -24,11 +24,11 @@ impl CoreLoop {
         target_request_id: RequestId,
     ) -> Response {
         debug!(core = self.core_id, %target_request_id, "cancel");
-        if let Some(pos) = self
+        let pos = self
             .task_queue
             .iter()
-            .position(|t| t.request_id() == target_request_id)
-        {
+            .position(|t| t.request_id() == target_request_id);
+        if let Some(pos) = pos {
             self.task_queue.remove(pos);
         }
         self.response_ok(task)
@@ -221,7 +221,9 @@ impl CoreLoop {
         let spatial_checkpointed = self.checkpoint_spatial_indexes();
 
         // 4. Compact CSR write buffers into dense arrays for clean state.
-        self.csr.compact_all();
+        if let Err(e) = self.csr.compact_all() {
+            tracing::warn!(error = %e, "CSR compaction rejected by memory governor during snapshot; skipping");
+        }
 
         // 5. Record completed flushes in the checkpoint coordinator
         //    and advance the checkpoint LSN for WAL truncation safety.

@@ -64,6 +64,8 @@ impl CoreLoop {
 
                 if partition_dirs.len() <= 1 {
                     // Single partition — use io_uring batched reads on TPC core.
+                    let io_priority = Some(task.request.priority);
+                    let io_metrics: &crate::data::io::IoMetrics = &self.io_metrics;
                     for dir in &partition_dirs {
                         if let Some(part_result) = aggregate_partition(PartitionAggParams {
                             partition_dir: dir,
@@ -74,6 +76,8 @@ impl CoreLoop {
                             needed_columns,
                             bucket_interval_ms,
                             uring_reader: self.uring_reader.as_mut(),
+                            io_priority,
+                            io_metrics: Some(io_metrics),
                         }) {
                             merged.merge(&part_result);
                         }
@@ -113,6 +117,8 @@ impl CoreLoop {
                                             needed_columns: nc,
                                             bucket_interval_ms,
                                             uring_reader: None,
+                                            io_priority: None,
+                                            io_metrics: None,
                                         }) {
                                             local.merge(&r);
                                         }

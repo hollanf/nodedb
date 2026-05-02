@@ -1,4 +1,4 @@
-//! Integration tests for the corrupt-segment quarantine subsystem (T5-A-03).
+//! Integration tests for the corrupt-segment quarantine subsystem.
 //!
 //! Tests cover the registry's two-strike logic, startup-scan rebuild,
 //! per-engine open wrappers, and the HTTP/metrics snapshot surfaces.
