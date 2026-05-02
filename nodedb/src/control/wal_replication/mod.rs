@@ -9,7 +9,7 @@ pub mod decode;
 pub mod encode;
 pub mod types;
 
-pub use decode::from_replicated_entry;
+pub use decode::{decode_forwarded_plans, from_replicated_entry};
 pub use encode::to_replicated_entry;
 pub use types::{AsyncRaftProposer, RaftProposer, ReplicatedEntry, ReplicatedWrite};
 

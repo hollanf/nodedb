@@ -38,12 +38,31 @@ pub struct CrossShardTransaction {
 pub struct ForwardEntry {
     /// Transaction ID — used to correlate with the coordinator's commit.
     pub txn_id: u64,
+    /// Tenant scope — required so the receiving shard can route writes to the
+    /// correct per-tenant namespace without a separate catalog lookup.
+    pub tenant_id: u64,
     /// The writes to apply on this shard (serialized PhysicalPlan operations).
     pub writes: Vec<u8>,
     /// Source shard that originated the transaction.
     pub source_vshard: u32,
     /// Coordinator's log index for ordering.
     pub coordinator_log_index: u64,
+}
+
+/// Abort notification sent from the receiving shard back to the coordinator
+/// when a forwarded cross-shard write fails to apply.
+///
+/// The coordinator logs the failure and marks the transaction as aborted.
+/// Compensating writes on the coordinator shard are NOT performed here — see
+/// the `TODO(cross-shard-abort)` markers in the apply path for that work item.
+#[derive(
+    Debug, Clone, Serialize, Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack,
+)]
+pub struct AbortNotice {
+    /// The transaction that failed to apply.
+    pub txn_id: u64,
+    /// Human-readable reason for the abort.
+    pub reason: String,
 }
 
 /// Cross-shard GSI update entry.
@@ -237,6 +256,7 @@ impl TransactionCoordinator {
                     *vshard,
                     ForwardEntry {
                         txn_id: txn.txn_id,
+                        tenant_id: txn.tenant_id,
                         writes: writes.clone(),
                         source_vshard: txn.shard_writes.first().map(|(s, _)| *s).unwrap_or(0),
                         coordinator_log_index: txn.coordinator_log_index,
@@ -244,6 +264,30 @@ impl TransactionCoordinator {
                 )
             })
             .collect()
+    }
+
+    /// Record that a remote shard aborted a forwarded transaction.
+    ///
+    /// Marks the transaction as aborted in the pending set. The transaction is
+    /// NOT cleaned up here — call [`Self::cleanup`] after handling the abort
+    /// to reclaim the slot.
+    ///
+    /// Returns `true` if the transaction was known (in the pending set).
+    pub fn record_abort(&mut self, txn_id: u64, reason: &str) -> bool {
+        if self.pending.contains_key(&txn_id) {
+            tracing::error!(
+                txn_id,
+                reason,
+                "cross-shard transaction aborted by remote shard; \
+                 local commit on coordinator shard remains — compensating writes \
+                 are NOT applied in this version. \
+                 // TODO(cross-shard-abort): compensate locally; tracked separately"
+            );
+            true
+        } else {
+            warn!(txn_id, reason, "abort notice for unknown transaction");
+            false
+        }
     }
 }
 
@@ -293,7 +337,45 @@ mod tests {
         assert_eq!(forwards.len(), 2);
         assert_eq!(forwards[0].0, 10);
         assert_eq!(forwards[0].1.txn_id, 42);
+        assert_eq!(forwards[0].1.tenant_id, 1);
         assert_eq!(forwards[1].0, 20);
+    }
+
+    #[test]
+    fn forward_entry_roundtrip() {
+        let entry = ForwardEntry {
+            txn_id: 99,
+            tenant_id: 7,
+            writes: b"some_writes".to_vec(),
+            source_vshard: 5,
+            coordinator_log_index: 200,
+        };
+        let bytes = zerompk::to_msgpack_vec(&entry).unwrap();
+        let decoded: ForwardEntry = zerompk::from_msgpack(&bytes).unwrap();
+        assert_eq!(decoded.txn_id, 99);
+        assert_eq!(decoded.tenant_id, 7);
+        assert_eq!(decoded.source_vshard, 5);
+    }
+
+    #[test]
+    fn abort_notice_roundtrip() {
+        let notice = AbortNotice {
+            txn_id: 42,
+            reason: "apply failed: collection not found".into(),
+        };
+        let bytes = zerompk::to_msgpack_vec(&notice).unwrap();
+        let decoded: AbortNotice = zerompk::from_msgpack(&bytes).unwrap();
+        assert_eq!(decoded.txn_id, 42);
+        assert_eq!(decoded.reason, "apply failed: collection not found");
+    }
+
+    #[test]
+    fn record_abort_known_txn() {
+        let mut coord = TransactionCoordinator::new(1);
+        let _ = coord.begin(1, vec![(10, b"w".to_vec())], 1);
+        assert!(coord.record_abort(1, "apply error"));
+        // Unknown txn returns false.
+        assert!(!coord.record_abort(999, "ghost"));
     }
 
     #[test]

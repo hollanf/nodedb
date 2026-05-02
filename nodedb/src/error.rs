@@ -227,6 +227,18 @@ pub enum Error {
     #[error("internal error: {detail}")]
     Internal { detail: String },
 
+    /// A forwarded cross-shard transaction batch failed to apply on the receiving
+    /// shard. The transaction is in a half-committed state: the coordinator
+    /// shard's local writes are durable, but the remote shard rolled back.
+    ///
+    /// TODO(cross-shard-abort): compensate locally; tracked separately.
+    #[error("cross-shard transaction {txn_id} aborted on shard {source_vshard}: {reason}")]
+    CrossShardAborted {
+        txn_id: u64,
+        source_vshard: u32,
+        reason: String,
+    },
+
     /// DROP / PURGE refused because other catalog objects still
     /// reference the target. Operator must either drop them first or
     /// retry with `CASCADE`. `dependents` lists `(kind, name)` pairs.
@@ -462,6 +474,13 @@ impl From<Error> for NodeDbError {
                 depth,
             } => NodeDbError::internal(format!(
                 "cascade cycle / depth-limit ({depth}) exceeded on '{root}'"
+            )),
+            Error::CrossShardAborted {
+                txn_id,
+                source_vshard,
+                reason,
+            } => NodeDbError::internal(format!(
+                "cross-shard transaction {txn_id} aborted on shard {source_vshard}: {reason}"
             )),
         }
     }

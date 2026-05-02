@@ -129,13 +129,17 @@ pub fn start_raft(
         Arc::new(DataPlaneArrayExecutor::new(shared.clone()));
 
     // Build the VShardEnvelope handler closure. This is the single entry point
-    // for all incoming VShardEnvelope RPCs from peer nodes. Currently handles
-    // array shard opcodes; other engine targets return a typed error so callers
-    // know no handler is registered rather than silently timing out.
+    // for all incoming VShardEnvelope RPCs from peer nodes. Handles:
+    //   - Array shard opcodes (ArrayShard target)
+    //   - CrossShardAbort notifications (Forward target)
+    // Other engine targets return a typed error so callers know no handler is
+    // registered rather than silently timing out.
     let vshard_handler: nodedb_cluster::VShardEnvelopeHandler = {
         let executor = array_executor.clone();
+        let shared_for_vshard = Arc::clone(&shared);
         Arc::new(move |bytes: Vec<u8>| {
             let executor = executor.clone();
+            let shared = shared_for_vshard.clone();
             let fut: Pin<
                 Box<
                     dyn std::future::Future<Output = nodedb_cluster::error::Result<Vec<u8>>> + Send,
@@ -173,6 +177,17 @@ pub fn start_raft(
                             resp_payload,
                         );
                         Ok(resp_envelope.to_bytes())
+                    }
+
+                    // Cross-shard abort: a remote shard is notifying us that our
+                    // forwarded transaction failed to apply. Log and record.
+                    DispatchTarget::Forward
+                        if envelope.msg_type
+                            == nodedb_cluster::wire::VShardMessageType::CrossShardAbort =>
+                    {
+                        handle_incoming_abort_notice(&shared, &envelope.payload);
+                        // Fire-and-forget: no response payload needed.
+                        Ok(vec![])
                     }
 
                     other => Err(nodedb_cluster::error::ClusterError::Transport {
@@ -462,4 +477,36 @@ fn resolve_vshard_msg_type(
         .ok_or_else(|| nodedb_cluster::error::ClusterError::Codec {
             detail: format!("resolve_vshard_msg_type: unknown opcode {opcode}"),
         })
+}
+
+/// Handle an incoming `CrossShardAbort` notification on the coordinator node.
+///
+/// Decodes the `AbortNotice` payload and records the abort in a structured
+/// tracing span. There is no `TransactionCoordinator` instance accessible from
+/// the inbound vshard handler at this point — the coordinator state lives in
+/// the write path that initiated the transaction. The error is surfaced via the
+/// tracing span; callers that proposed the original transaction will observe
+/// the abort through the `CrossShardAborted` error returned by the Data Plane
+/// once the abort is propagated through the Raft apply chain.
+///
+/// // TODO(cross-shard-abort): wire abort back to the pending proposer once
+/// the coordinator state is shared between the write path and the inbound
+/// handler; tracked separately.
+fn handle_incoming_abort_notice(_shared: &std::sync::Arc<SharedState>, payload: &[u8]) {
+    match zerompk::from_msgpack::<nodedb_cluster::cross_shard_txn::AbortNotice>(payload) {
+        Ok(notice) => {
+            tracing::error!(
+                txn_id = notice.txn_id,
+                reason = %notice.reason,
+                "received CrossShardAbort from remote shard; transaction is in half-committed state. \
+                 // TODO(cross-shard-abort): compensate locally; tracked separately"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "received CrossShardAbort with malformed payload; ignoring"
+            );
+        }
+    }
 }

@@ -194,6 +194,29 @@ pub enum ReplicatedWrite {
     KvDropSortedIndex {
         index_name: String,
     },
+    /// A cross-shard forwarded transaction batch.
+    ///
+    /// When a Calvin-style coordinator commits a cross-shard transaction, it
+    /// replicates a `CrossShardForward` entry into each remote shard's Raft log.
+    /// The `plans_bytes` field is the MessagePack-encoded `Vec<PhysicalPlan>` for
+    /// the operations the remote shard must apply atomically.
+    ///
+    /// On apply, the receiving node decodes `plans_bytes` into a `TransactionBatch`
+    /// and dispatches it to the local Data Plane. If the apply fails, a
+    /// `CrossShardAbort` notification is sent back to the coordinator shard.
+    CrossShardForward {
+        txn_id: u64,
+        tenant_id: u64,
+        /// MessagePack-encoded `Vec<PhysicalPlan>` for this shard.
+        ///
+        /// Expected to be small (<1 MiB in normal use). Large transactions
+        /// should be split across multiple Calvin rounds at the coordinator
+        /// to keep Raft log entries within WAL segment limits and avoid
+        /// stalling replication.
+        plans_bytes: Vec<u8>,
+        source_vshard: u32,
+        coordinator_log_index: u64,
+    },
     /// An array CRDT op (Put or Delete) from a Lite peer, to be applied via
     /// the distributed applier on all replicas.
     ///

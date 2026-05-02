@@ -56,6 +56,9 @@ pub enum VShardMessageType {
     GsiForward = 22,
     /// Edge validation request.
     EdgeValidation = 23,
+    /// Abort notification: receiving shard tells the coordinator shard that a
+    /// forwarded cross-shard write failed to apply.
+    CrossShardAbort = 24,
 
     // ── Graph Algorithm BSP (Bulk Synchronous Parallel) ──
     /// Superstep barrier: coordinator tells all shards to begin iteration N.
@@ -229,6 +232,7 @@ impl VShardEnvelope {
             21 => VShardMessageType::CrossShardForward,
             22 => VShardMessageType::GsiForward,
             23 => VShardMessageType::EdgeValidation,
+            24 => VShardMessageType::CrossShardAbort,
             30 => VShardMessageType::GraphAlgoSuperstep,
             31 => VShardMessageType::GraphAlgoContributions,
             32 => VShardMessageType::GraphAlgoSuperstepAck,
