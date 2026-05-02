@@ -3,6 +3,7 @@ pub mod checkpoint;
 pub mod codec_build;
 pub mod codec_dispatch;
 pub mod lifecycle;
+pub mod lifecycle_reindex;
 pub mod payload_index;
 pub mod quantize;
 pub mod search;

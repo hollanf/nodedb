@@ -18,7 +18,7 @@ simd = []
 ivf = []
 # Full VectorCollection with segment lifecycle, mmap NVMe tier, background builder.
 # Implies simd + ivf. Also enables checkpoint encryption via nodedb-wal.
-collection = ["simd", "ivf", "dep:memmap2", "dep:libc", "dep:crc32c", "dep:nodedb-wal"]
+collection = ["simd", "ivf", "dep:memmap2", "dep:libc", "dep:crc32c", "dep:nodedb-wal", "dep:arc-swap"]
 # Retains ACORN-1 as a feature-flagged baseline for benchmarking against NaviX.
 # Off by default; not intended for production use.
 acorn-baseline = []
@@ -39,6 +39,7 @@ memmap2 = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 crc32c = { workspace = true, optional = true }
 nodedb-wal = { workspace = true, optional = true }
+arc-swap = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand = { workspace = true }

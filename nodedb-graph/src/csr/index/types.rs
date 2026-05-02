@@ -173,4 +173,19 @@ impl CsrIndex {
             ..Self::new()
         }
     }
+
+    /// Attach a memory governor to an existing `CsrIndex`.
+    ///
+    /// Used by the REINDEX path: a partition is rebuilt on a background thread
+    /// (without a governor since `MemoryGovernor` is `Arc<...>` but the thread
+    /// is independent), and on cutover the Data Plane installs the governor.
+    pub fn with_governor_attached(mut self, governor: Arc<MemoryGovernor>) -> Self {
+        self.governor = Some(governor);
+        self
+    }
+
+    /// Whether any edge in this index has a non-default (1.0) weight.
+    pub fn has_weighted_edges(&self) -> bool {
+        self.has_weights
+    }
 }

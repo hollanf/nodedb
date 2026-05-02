@@ -47,6 +47,19 @@ impl InvertedIndex {
         self.inner.backend_mut().set_quarantine_registry(registry);
     }
 
+    /// Shared access to the underlying redb FTS backend.
+    ///
+    /// Exposes the raw `FtsBackend` methods for maintenance operations such as
+    /// bulk postings snapshot and restore used by concurrent index rebuild.
+    pub fn backend(&self) -> &RedbFtsBackend {
+        self.inner.backend()
+    }
+
+    /// Mutable access to the underlying redb FTS backend.
+    pub fn backend_mut(&mut self) -> &mut RedbFtsBackend {
+        self.inner.backend_mut()
+    }
+
     /// Purge all inverted index entries for a tenant. Structural drop via
     /// tuple ranges on every FTS table.
     pub fn purge_tenant(&self, tid: TenantId) -> crate::Result<usize> {

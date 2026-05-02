@@ -61,6 +61,7 @@ zerompk = { workspace = true }
 rmpv = { workspace = true }
 rkyv = { workspace = true }
 roaring = { workspace = true }
+arc-swap = { workspace = true }
 memchr = { workspace = true }
 lexical-core = { workspace = true }
 rust-stemmers = { workspace = true }

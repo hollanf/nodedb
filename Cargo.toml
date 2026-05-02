@@ -153,6 +153,9 @@ roaring = "0.11"
 # Zero-copy serialization
 rkyv = { version = "0.8", features = ["alloc"] }
 
+# Atomic pointer swap for non-blocking index cutover
+arc-swap = "1"
+
 # Safe transmutation for f32/u8 slice casts
 bytemuck = { version = "1", features = ["derive"] }
 
