@@ -215,6 +215,83 @@ pub struct BalancedDef {
     pub amount_column: String,
 }
 
+/// A single item in a RETURNING projection list.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+pub struct ReturningItem {
+    /// The bare column name (e.g. `"id"` or `"stock"`).
+    pub name: String,
+    /// Optional alias (`RETURNING stock AS s` → `alias = Some("s")`).
+    pub alias: Option<String>,
+}
+
+/// The set of columns projected by a RETURNING clause.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+pub enum ReturningColumns {
+    /// `RETURNING *` — all fields in the collection.
+    Star,
+    /// `RETURNING col1, col2 [AS alias], ...`
+    Named(Vec<ReturningItem>),
+}
+
+/// Parsed representation of a RETURNING clause carried through the bridge.
+///
+/// Produced by the Control Plane's `strip_returning()` and injected into
+/// `PointUpdate`, `BulkUpdate`, `PointDelete`, and `BulkDelete` variants
+/// before crossing the SPSC bridge.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+pub struct ReturningSpec {
+    pub columns: ReturningColumns,
+}
+
+impl ReturningSpec {
+    /// Return the output column names (alias when present, else name).
+    pub fn output_names(&self) -> Option<Vec<String>> {
+        match &self.columns {
+            ReturningColumns::Star => None,
+            ReturningColumns::Named(items) => Some(
+                items
+                    .iter()
+                    .map(|item| item.alias.clone().unwrap_or_else(|| item.name.clone()))
+                    .collect(),
+            ),
+        }
+    }
+
+    /// Return the source column names (ignoring aliases) for field extraction.
+    pub fn source_names(&self) -> Option<Vec<String>> {
+        match &self.columns {
+            ReturningColumns::Star => None,
+            ReturningColumns::Named(items) => {
+                Some(items.iter().map(|item| item.name.clone()).collect())
+            }
+        }
+    }
+}
+
 /// Build state for a secondary index propagated from catalog to the Data
 /// Plane. Mirrors [`crate::control::security::catalog::IndexBuildState`]
 /// but lives in the bridge so the Data Plane doesn't depend on catalog types.

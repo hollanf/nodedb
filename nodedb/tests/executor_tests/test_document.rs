@@ -89,6 +89,7 @@ fn point_delete_removes() {
             document_id: "d1".into(),
             surrogate: nodedb_types::Surrogate::ZERO,
             pk_bytes: Vec::new(),
+            returning: None,
         }),
     );
 

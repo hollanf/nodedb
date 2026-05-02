@@ -107,6 +107,7 @@ fn to_physical_plan(
                 document_id: document_id.clone(),
                 surrogate,
                 pk_bytes,
+                returning: None,
             })
         }
         ReplicatedWrite::PointUpdate {
@@ -127,7 +128,7 @@ fn to_physical_plan(
                 surrogate,
                 pk_bytes,
                 updates: updates.clone(),
-                returning: false,
+                returning: None,
             })
         }
         ReplicatedWrite::VectorInsert {

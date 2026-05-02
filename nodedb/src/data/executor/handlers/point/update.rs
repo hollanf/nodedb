@@ -8,8 +8,10 @@
 use tracing::debug;
 
 use crate::bridge::envelope::{ErrorCode, Response};
-use crate::bridge::physical_plan::UpdateValue;
+use crate::bridge::physical_plan::{ReturningSpec, UpdateValue};
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::doc_format;
+use crate::data::executor::handlers::returning_rows;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::document::store::surrogate_to_doc_id;
 use nodedb_types::Surrogate;
@@ -24,7 +26,7 @@ impl CoreLoop {
         document_id: &str,
         surrogate: Surrogate,
         updates: &[(String, UpdateValue)],
-        returning: bool,
+        returning: Option<&ReturningSpec>,
     ) -> Response {
         let row_key = surrogate_to_doc_id(surrogate);
         let row_key = row_key.as_str();
@@ -33,7 +35,7 @@ impl CoreLoop {
             %collection,
             %document_id,
             fields = updates.len(),
-            returning,
+            has_returning = returning.is_some(),
             "point update"
         );
 
@@ -84,7 +86,7 @@ impl CoreLoop {
 
                 // Fast path: non-strict, no generated columns, all literal — merge at binary level.
                 let updated_bytes = if !is_strict && !has_generated && !has_expr {
-                    let base_mp = super::super::super::doc_format::json_to_msgpack(&current_bytes);
+                    let base_mp = doc_format::json_to_msgpack(&current_bytes);
                     let update_pairs: Vec<(&str, &[u8])> = updates
                         .iter()
                         .filter_map(|(field, v)| match v {
@@ -124,7 +126,7 @@ impl CoreLoop {
                             );
                         }
                     } else {
-                        match super::super::super::doc_format::decode_document(&current_bytes) {
+                        match doc_format::decode_document(&current_bytes) {
                             Some(v) => v,
                             None => {
                                 return self.response_error(
@@ -224,7 +226,7 @@ impl CoreLoop {
                             );
                         }
                     } else {
-                        super::super::super::doc_format::encode_to_msgpack(&doc)
+                        doc_format::encode_to_msgpack(&doc)
                     }
                 };
 
@@ -261,16 +263,26 @@ impl CoreLoop {
                             Some(&current_bytes),
                         );
 
-                        if returning {
+                        if let Some(spec) = returning {
+                            // Build the post-update document with id injected.
                             let with_id = nodedb_query::msgpack_scan::inject_str_field(
                                 &updated_bytes,
                                 "id",
                                 document_id,
                             );
-                            let mut payload = Vec::with_capacity(with_id.len() + 4);
-                            nodedb_query::msgpack_scan::write_array_header(&mut payload, 1);
-                            payload.extend_from_slice(&with_id);
-                            self.response_with_payload(task, payload)
+                            let doc = match doc_format::decode_document(&with_id) {
+                                Some(v) => v,
+                                None => serde_json::json!({"id": document_id}),
+                            };
+                            match returning_rows::build_rows_payload(spec, &[doc]) {
+                                Ok(payload) => self.response_with_payload(task, payload),
+                                Err(e) => self.response_error(
+                                    task,
+                                    ErrorCode::Internal {
+                                        detail: format!("RETURNING encode: {e}"),
+                                    },
+                                ),
+                            }
                         } else {
                             let mut payload = Vec::with_capacity(16);
                             nodedb_query::msgpack_scan::write_map_header(&mut payload, 1);

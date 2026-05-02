@@ -37,8 +37,7 @@ pub fn to_replicated_entry(
         PhysicalPlan::Document(DocumentOp::PointDelete {
             collection,
             document_id,
-            surrogate: _,
-            pk_bytes: _,
+            ..
         }) => ReplicatedWrite::PointDelete {
             collection: collection.clone(),
             document_id: document_id.clone(),

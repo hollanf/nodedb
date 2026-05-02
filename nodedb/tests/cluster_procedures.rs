@@ -92,6 +92,7 @@ fn tx_ctx_commit_yields_independent_tasks() {
             document_id: "t-1".into(),
             surrogate: nodedb_types::Surrogate::ZERO,
             pk_bytes: Vec::new(),
+            returning: None,
         }),
         post_set_op: nodedb::control::planner::physical::PostSetOp::None,
     });

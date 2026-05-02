@@ -56,8 +56,7 @@ pub fn wal_append_if_write_with_creds(
         PhysicalPlan::Document(DocumentOp::PointDelete {
             collection,
             document_id,
-            surrogate: _,
-            pk_bytes: _,
+            ..
         }) => {
             let entry = zerompk::to_msgpack_vec(&(collection, document_id)).map_err(|e| {
                 crate::Error::Serialization {

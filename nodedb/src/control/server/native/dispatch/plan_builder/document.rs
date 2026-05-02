@@ -138,6 +138,7 @@ pub(crate) fn build_point_delete(
                 document_id: doc_id,
                 surrogate,
                 pk_bytes,
+                returning: None,
             }))
         }
     }
@@ -233,7 +234,7 @@ pub(crate) fn build_update(
         surrogate,
         pk_bytes,
         updates,
-        returning: false,
+        returning: None,
     }))
 }
 
@@ -307,7 +308,7 @@ pub(crate) fn build_bulk_update(
         collection: collection.to_string(),
         filters,
         updates,
-        returning: false,
+        returning: None,
     }))
 }
 
@@ -325,6 +326,7 @@ pub(crate) fn build_bulk_delete(
     Ok(PhysicalPlan::Document(DocumentOp::BulkDelete {
         collection: collection.to_string(),
         filters,
+        returning: None,
     }))
 }
 

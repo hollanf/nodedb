@@ -6,5 +6,6 @@ pub mod types;
 pub use op::DocumentOp;
 pub use types::{
     BalancedDef, EnforcementOptions, GeneratedColumnSpec, MaterializedSumBinding, PeriodLockConfig,
-    RegisteredIndex, RegisteredIndexState, StorageMode, UpdateValue,
+    RegisteredIndex, RegisteredIndexState, ReturningColumns, ReturningItem, ReturningSpec,
+    StorageMode, UpdateValue,
 };

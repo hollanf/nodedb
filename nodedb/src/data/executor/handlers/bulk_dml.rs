@@ -6,8 +6,11 @@
 use tracing::{debug, warn};
 
 use crate::bridge::envelope::{ErrorCode, Response};
+use crate::bridge::physical_plan::ReturningSpec;
 use crate::bridge::scan_filter::ScanFilter;
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::doc_format;
+use crate::data::executor::handlers::returning_rows;
 use crate::data::executor::response_codec;
 use crate::data::executor::task::ExecutionTask;
 
@@ -59,7 +62,7 @@ impl CoreLoop {
                     // Strict: Binary Tuple → Value → MessagePack → matches_binary.
                     match super::super::strict_format::binary_tuple_to_json(value_bytes, schema) {
                         Some(doc) => {
-                            let msgpack = super::super::doc_format::encode_to_msgpack(&doc);
+                            let msgpack = doc_format::encode_to_msgpack(&doc);
                             filters.iter().all(|f| f.matches_binary(&msgpack))
                         }
                         None => false,
@@ -77,11 +80,12 @@ impl CoreLoop {
 
     /// Bulk update: scan documents matching filters, apply field updates.
     ///
-    /// When `returning` is false, returns affected row count as JSON:
+    /// When `returning` is `None`, returns affected row count as JSON:
     /// `{"affected": N}`.
     ///
-    /// When `returning` is true, returns a JSON array of the updated documents
-    /// (post-update state). If 0 rows match, returns `{"affected": 0}`.
+    /// When `returning` is `Some(spec)`, returns a `RowsPayload` with the
+    /// post-update documents projected per spec. If 0 rows match, returns
+    /// an empty `RowsPayload`.
     pub(in crate::data::executor) fn execute_bulk_update(
         &mut self,
         task: &ExecutionTask,
@@ -89,9 +93,9 @@ impl CoreLoop {
         collection: &str,
         filter_bytes: &[u8],
         updates: &[(String, crate::bridge::physical_plan::UpdateValue)],
-        returning: bool,
+        returning: Option<&ReturningSpec>,
     ) -> Response {
-        debug!(core = self.core_id, %collection, returning, "bulk update");
+        debug!(core = self.core_id, %collection, has_returning = returning.is_some(), "bulk update");
 
         // Reject direct updates to generated columns.
         let config_key = (crate::types::TenantId::new(tid), collection.to_string());
@@ -145,7 +149,7 @@ impl CoreLoop {
 
         // Apply updates to each matching document.
         let mut affected = 0u64;
-        let mut returned_docs: Vec<serde_json::Value> = if returning {
+        let mut returned_docs: Vec<serde_json::Value> = if returning.is_some() {
             Vec::with_capacity(matching_ids.len())
         } else {
             Vec::new()
@@ -164,7 +168,7 @@ impl CoreLoop {
                             None => continue,
                         }
                     } else {
-                        match super::super::doc_format::decode_document(&current_bytes) {
+                        match doc_format::decode_document(&current_bytes) {
                             Some(v) => v,
                             None => continue,
                         }
@@ -225,7 +229,7 @@ impl CoreLoop {
                             }
                         }
                     } else {
-                        super::super::doc_format::encode_to_msgpack(&doc)
+                        doc_format::encode_to_msgpack(&doc)
                     };
                     if self
                         .sparse
@@ -234,7 +238,7 @@ impl CoreLoop {
                     {
                         self.doc_cache.put(tid, collection, doc_id, &updated_bytes);
                         affected += 1;
-                        if returning {
+                        if returning.is_some() {
                             // Include document ID in the returned document.
                             if let Some(obj) = doc.as_object_mut() {
                                 obj.insert(
@@ -252,14 +256,13 @@ impl CoreLoop {
 
         debug!(core = self.core_id, %collection, affected, "bulk update complete");
 
-        if returning && affected > 0 {
-            let result = serde_json::Value::Array(returned_docs);
-            match response_codec::encode_json(&result) {
+        if let Some(spec) = returning {
+            match returning_rows::build_rows_payload(spec, &returned_docs) {
                 Ok(payload) => self.response_with_payload(task, payload),
                 Err(e) => self.response_error(
                     task,
                     ErrorCode::Internal {
-                        detail: e.to_string(),
+                        detail: format!("RETURNING encode: {e}"),
                     },
                 ),
             }
@@ -280,15 +283,17 @@ impl CoreLoop {
     /// Bulk delete: scan documents matching filters, delete all matches.
     ///
     /// Cascades to inverted index, secondary indexes, and graph edges.
-    /// Returns affected row count as JSON payload: `{"affected": N}`.
+    /// When `returning` is `None`, returns affected row count as JSON payload: `{"affected": N}`.
+    /// When `returning` is `Some(spec)`, returns a `RowsPayload` with the pre-deletion documents.
     pub(in crate::data::executor) fn execute_bulk_delete(
         &mut self,
         task: &ExecutionTask,
         tid: u64,
         collection: &str,
         filter_bytes: &[u8],
+        returning: Option<&ReturningSpec>,
     ) -> Response {
-        debug!(core = self.core_id, %collection, "bulk delete");
+        debug!(core = self.core_id, %collection, has_returning = returning.is_some(), "bulk delete");
 
         // Empty `filter_bytes` means "no WHERE clause" — match every row.
         let filters: Vec<ScanFilter> = if filter_bytes.is_empty() {
@@ -321,7 +326,27 @@ impl CoreLoop {
 
         // Delete each matching document with full cascade.
         let mut affected = 0u64;
+        let mut returned_docs: Vec<serde_json::Value> = if returning.is_some() {
+            Vec::with_capacity(matching_ids.len())
+        } else {
+            Vec::new()
+        };
         for doc_id in &matching_ids {
+            // Capture pre-deletion snapshot if RETURNING was requested.
+            let pre_delete_doc: Option<serde_json::Value> = if returning.is_some() {
+                self.sparse
+                    .get(tid, collection, doc_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|bytes| {
+                        let with_id =
+                            nodedb_query::msgpack_scan::inject_str_field(&bytes, "id", doc_id);
+                        doc_format::decode_document(&with_id)
+                    })
+            } else {
+                None
+            };
+
             if self
                 .sparse
                 .delete(tid, collection, doc_id)
@@ -367,19 +392,35 @@ impl CoreLoop {
                 self.mark_node_deleted(tid, doc_id);
                 self.doc_cache.invalidate(tid, collection, doc_id);
                 affected += 1;
+                if let Some(doc) = pre_delete_doc {
+                    returned_docs.push(doc);
+                }
             }
         }
 
         debug!(core = self.core_id, %collection, affected, "bulk delete complete");
-        let result = serde_json::json!({ "affected": affected });
-        match response_codec::encode_json(&result) {
-            Ok(payload) => self.response_with_payload(task, payload),
-            Err(e) => self.response_error(
-                task,
-                ErrorCode::Internal {
-                    detail: e.to_string(),
-                },
-            ),
+
+        if let Some(spec) = returning {
+            match returning_rows::build_rows_payload(spec, &returned_docs) {
+                Ok(payload) => self.response_with_payload(task, payload),
+                Err(e) => self.response_error(
+                    task,
+                    ErrorCode::Internal {
+                        detail: format!("RETURNING encode: {e}"),
+                    },
+                ),
+            }
+        } else {
+            let result = serde_json::json!({ "affected": affected });
+            match response_codec::encode_json(&result) {
+                Ok(payload) => self.response_with_payload(task, payload),
+                Err(e) => self.response_error(
+                    task,
+                    ErrorCode::Internal {
+                        detail: e.to_string(),
+                    },
+                ),
+            }
         }
     }
 }

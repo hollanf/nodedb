@@ -1,6 +1,6 @@
 use nodedb_types::{Surrogate, SurrogateBitmap};
 
-use super::types::{EnforcementOptions, RegisteredIndex, StorageMode, UpdateValue};
+use super::types::{EnforcementOptions, RegisteredIndex, ReturningSpec, StorageMode, UpdateValue};
 
 /// Document engine physical operations (schemaless + strict + DML).
 #[derive(
@@ -87,6 +87,10 @@ pub enum DocumentOp {
         surrogate: Surrogate,
         /// Raw primary-key bytes for follower WAL decode rebind.
         pk_bytes: Vec<u8>,
+        /// When `Some`, return the pre-deletion document projected per spec.
+        #[serde(default)]
+        #[msgpack(default)]
+        returning: Option<ReturningSpec>,
     },
 
     /// Point update: read-modify-write with field-level changes.
@@ -100,8 +104,10 @@ pub enum DocumentOp {
         pk_bytes: Vec<u8>,
         /// Field name → assignment RHS (literal bytes or row-scope expression).
         updates: Vec<(String, UpdateValue)>,
-        /// If true, return the post-update document as payload (for RETURNING clause).
-        returning: bool,
+        /// When `Some`, return the post-update document projected per spec.
+        #[serde(default)]
+        #[msgpack(default)]
+        returning: Option<ReturningSpec>,
     },
 
     /// Full collection scan with filtering, sorting, and pagination.
@@ -268,13 +274,19 @@ pub enum DocumentOp {
         collection: String,
         filters: Vec<u8>,
         updates: Vec<(String, UpdateValue)>,
-        /// If true, return updated documents as JSON array payload (for RETURNING clause).
-        returning: bool,
+        /// When `Some`, return updated documents projected per spec.
+        #[serde(default)]
+        #[msgpack(default)]
+        returning: Option<ReturningSpec>,
     },
 
     /// Bulk delete: scan + delete all matches.
     BulkDelete {
         collection: String,
         filters: Vec<u8>,
+        /// When `Some`, return pre-deletion documents projected per spec.
+        #[serde(default)]
+        #[msgpack(default)]
+        returning: Option<ReturningSpec>,
     },
 }

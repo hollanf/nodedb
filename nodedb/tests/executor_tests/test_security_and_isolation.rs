@@ -216,6 +216,7 @@ fn linearizability_delete_visibility() {
             document_id: "del1".into(),
             surrogate: nodedb_types::Surrogate::ZERO,
             pk_bytes: Vec::new(),
+            returning: None,
         }),
     );
 

@@ -85,8 +85,16 @@ impl CoreLoop {
                 collection,
                 document_id,
                 surrogate,
-                pk_bytes: _,
-            } => self.execute_point_delete(task, tid, collection, document_id, *surrogate),
+                returning,
+                ..
+            } => self.execute_point_delete(
+                task,
+                tid,
+                collection,
+                document_id,
+                *surrogate,
+                returning.as_ref(),
+            ),
 
             DocumentOp::PointUpdate {
                 collection,
@@ -102,7 +110,7 @@ impl CoreLoop {
                 document_id,
                 *surrogate,
                 updates,
-                *returning,
+                returning.as_ref(),
             ),
 
             DocumentOp::Scan {
@@ -176,12 +184,20 @@ impl CoreLoop {
                 filters,
                 updates,
                 returning,
-            } => self.execute_bulk_update(task, tid, collection, filters, updates, *returning),
+            } => self.execute_bulk_update(
+                task,
+                tid,
+                collection,
+                filters,
+                updates,
+                returning.as_ref(),
+            ),
 
             DocumentOp::BulkDelete {
                 collection,
                 filters,
-            } => self.execute_bulk_delete(task, tid, collection, filters),
+                returning,
+            } => self.execute_bulk_delete(task, tid, collection, filters, returning.as_ref()),
 
             DocumentOp::Upsert {
                 collection,

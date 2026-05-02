@@ -89,17 +89,6 @@ pub(crate) fn quote_identifier(name: &str) -> String {
     format!("\"{escaped}\"")
 }
 
-/// Decode a pgwire-decoded integer column as `u32`. Used by the
-/// `_system.dropped_collections` row decoder.
-pub(crate) fn value_as_u32(v: &Value) -> NodeDbResult<u32> {
-    match v {
-        Value::Integer(i) => Ok(*i as u32),
-        other => Err(NodeDbError::storage(format!(
-            "expected integer for u32 column, got {other:?}"
-        ))),
-    }
-}
-
 /// Decode a pgwire-decoded integer column as `u64`.
 pub(crate) fn value_as_u64(v: &Value) -> NodeDbResult<u64> {
     match v {

@@ -4,7 +4,10 @@
 use tracing::{debug, warn};
 
 use crate::bridge::envelope::{ErrorCode, Response};
+use crate::bridge::physical_plan::ReturningSpec;
 use crate::data::executor::core_loop::CoreLoop;
+use crate::data::executor::doc_format;
+use crate::data::executor::handlers::returning_rows;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::document::store::surrogate_to_doc_id;
 use nodedb_types::Surrogate;
@@ -17,6 +20,7 @@ impl CoreLoop {
         collection: &str,
         document_id: &str,
         surrogate: Surrogate,
+        returning: Option<&ReturningSpec>,
     ) -> Response {
         let row_key = surrogate_to_doc_id(surrogate);
         let row_key = row_key.as_str();
@@ -43,8 +47,7 @@ impl CoreLoop {
                         // this doc_id.
                         let config_key = (crate::types::TenantId::new(tid), collection.to_string());
                         if let Some(config) = self.doc_configs.get(&config_key)
-                            && let Some(doc) =
-                                super::super::super::doc_format::decode_document(&body)
+                            && let Some(doc) = doc_format::decode_document(&body)
                         {
                             for path in config.index_paths.clone() {
                                 for v in crate::engine::document::store::extract_index_values(
@@ -166,7 +169,40 @@ impl CoreLoop {
                     );
                 }
 
-                self.response_ok(task)
+                if let (Some(spec), Some(prior_bytes)) = (returning, prior.as_deref()) {
+                    // Decode the pre-deletion document and project per spec.
+                    let prior_with_id = nodedb_query::msgpack_scan::inject_str_field(
+                        prior_bytes,
+                        "id",
+                        document_id,
+                    );
+                    let doc = match doc_format::decode_document(&prior_with_id) {
+                        Some(v) => v,
+                        None => serde_json::json!({"id": document_id}),
+                    };
+                    match returning_rows::build_rows_payload(spec, &[doc]) {
+                        Ok(payload) => self.response_with_payload(task, payload),
+                        Err(e) => self.response_error(
+                            task,
+                            ErrorCode::Internal {
+                                detail: format!("RETURNING encode: {e}"),
+                            },
+                        ),
+                    }
+                } else if let Some(spec) = returning {
+                    // Row did not exist — return empty rows payload.
+                    match returning_rows::build_rows_payload(spec, &[]) {
+                        Ok(payload) => self.response_with_payload(task, payload),
+                        Err(e) => self.response_error(
+                            task,
+                            ErrorCode::Internal {
+                                detail: format!("RETURNING encode: {e}"),
+                            },
+                        ),
+                    }
+                } else {
+                    self.response_ok(task)
+                }
             }
             Err(e) => self.response_error(
                 task,

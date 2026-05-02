@@ -552,6 +552,22 @@ pub(super) struct GraphRagResult {
 
 /// Structured response for `ArrayOp::Slice`.
 ///
+/// Structured response for DML with RETURNING clause.
+///
+/// Carries one entry per affected row, with the projected column values.
+/// The Control Plane decodes this to build a multi-column pgwire QueryResponse
+/// (one pgwire field per entry in `columns`).
+#[derive(Serialize, serde::Deserialize, zerompk::ToMessagePack, zerompk::FromMessagePack)]
+#[msgpack(map)]
+pub(crate) struct RowsPayload {
+    /// Projected column names (output names, respecting AS aliases).
+    pub columns: Vec<String>,
+    /// One inner Vec per affected row; each inner Vec has one cell per
+    /// column in the same order as `columns`. `None` denotes SQL NULL
+    /// (missing field or JSON null); `Some` carries the TEXT representation.
+    pub rows: Vec<Vec<Option<String>>>,
+}
+
 /// Carries the row payload alongside a flag that signals whether the
 /// query's `system_as_of` cutoff fell below the oldest tile version on
 /// this shard, meaning history was truncated. The shape is identical for

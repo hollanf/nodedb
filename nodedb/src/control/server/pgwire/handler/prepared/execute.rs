@@ -124,11 +124,35 @@ impl NodeDbPgHandler {
         // Fix: when result_fields is non-empty, consume the single-field stream,
         // parse each JSON object, and re-encode with one pgwire field per
         // declared column.
-        if !stmt.result_fields.is_empty() {
+        //
+        // Exception: DML RETURNING responses are already shaped as multi-column
+        // RowsPayload by `payload_to_response(PlanKind::ReturningRows)`. Applying
+        // `reproject_response` on top would re-read the first column of each row
+        // as JSON (which is a plain field value, not a JSON object) and produce
+        // empty rows. Detect this by checking whether the response is already a
+        // multi-column QueryResponse whose column count matches the declared schema.
+        if !stmt.result_fields.is_empty() && !is_already_shaped(&result) {
             reproject_response(result, &stmt.result_fields).await
         } else {
             Ok(result)
         }
+    }
+}
+
+/// Return true when `response` is already a multi-column QueryResponse.
+///
+/// Used to skip `reproject_response` for DML RETURNING payloads that
+/// `payload_to_response(PlanKind::ReturningRows)` already shaped as one
+/// field per RETURNING column. Re-projecting them would treat each row's
+/// first column value as a JSON object and produce empty rows.
+///
+/// Single-column envelope responses (produced by the regular scan/document
+/// path) always have exactly one column named "document" or "result"; any
+/// response with two or more columns is already correctly shaped.
+fn is_already_shaped(response: &Response) -> bool {
+    match response {
+        Response::Query(qr) => qr.row_schema.len() >= 2,
+        _ => false,
     }
 }
 

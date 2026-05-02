@@ -349,7 +349,11 @@ pub(super) fn convert_update(
     assignments: &[(String, SqlExpr)],
     filters: &[Filter],
     target_keys: &[SqlValue],
-    returning: bool,
+    // The `returning` boolean from `SqlPlan::Update` is preserved here so
+    // the plan cache can distinguish RETURNING from non-RETURNING queries
+    // (different cache keys). The actual `ReturningSpec` is injected into
+    // the `PhysicalPlan` variants by `execute.rs` after planning.
+    _returning: bool,
     tenant_id: TenantId,
     ctx: &ConvertContext,
 ) -> crate::Result<Vec<PhysicalTask>> {
@@ -424,7 +428,7 @@ pub(super) fn convert_update(
                     surrogate,
                     pk_bytes,
                     updates: updates.clone(),
-                    returning,
+                    returning: None,
                 }),
                 post_set_op: PostSetOp::None,
             });
@@ -438,7 +442,7 @@ pub(super) fn convert_update(
                 collection: collection.into(),
                 filters: filter_bytes,
                 updates,
-                returning,
+                returning: None,
             }),
             post_set_op: PostSetOp::None,
         }])
@@ -489,6 +493,7 @@ pub(super) fn convert_delete(
                     document_id: pk_string,
                     surrogate,
                     pk_bytes,
+                    returning: None,
                 }),
                 post_set_op: PostSetOp::None,
             });
@@ -502,6 +507,7 @@ pub(super) fn convert_delete(
             plan: PhysicalPlan::Document(DocumentOp::BulkDelete {
                 collection: collection.into(),
                 filters: filter_bytes,
+                returning: None,
             }),
             post_set_op: PostSetOp::None,
         }])

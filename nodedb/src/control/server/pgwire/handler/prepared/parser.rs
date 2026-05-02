@@ -56,6 +56,14 @@ impl NodeDbQueryParser {
             }
         }
 
+        // Strip RETURNING from DML before passing to DataFusion. Retain the
+        // parsed spec so we can build result fields for Describe.
+        let (sql_stripped, returning_spec) =
+            match crate::control::server::pgwire::handler::returning::strip_returning(sql) {
+                Ok(pair) => pair,
+                Err(_) => return (param_types, Vec::new()),
+            };
+
         // Parse and plan to get collection info for result schema.
         //
         // The planner type-checks WHERE/projection expressions, which
@@ -64,11 +72,19 @@ impl NodeDbQueryParser {
         // structure, so substitute placeholders with NULL literals just
         // for this planning pass. Execution re-plans with real bound
         // values.
-        let sql_for_inference = substitute_placeholders_with_null(sql);
+        let sql_for_inference = substitute_placeholders_with_null(&sql_stripped);
         let plans = match nodedb_sql::plan_sql(&sql_for_inference, &catalog) {
             Ok(p) => p,
             Err(_) => return (param_types, Vec::new()),
         };
+
+        // When the original SQL had a RETURNING clause on a DML statement,
+        // build result fields from the collection schema and the RETURNING spec.
+        if let Some(spec) = returning_spec
+            && let Some(fields) = result_fields_for_returning(&spec, plans.first(), &catalog)
+        {
+            return (param_types, fields);
+        }
 
         // Infer result fields.
         //
@@ -350,6 +366,46 @@ fn count_placeholders(sql: &str) -> usize {
         }
     }
     max_idx
+}
+
+/// Build result `FieldInfo`s for a DML statement with a RETURNING clause.
+///
+/// Resolves the target collection from the DML plan, looks up its schema, and
+/// projects the RETURNING spec onto it. Returns `None` if the plan isn't a
+/// recognized DML type or the collection schema cannot be found.
+fn result_fields_for_returning(
+    spec: &crate::bridge::physical_plan::ReturningSpec,
+    plan: Option<&nodedb_sql::SqlPlan>,
+    catalog: &dyn nodedb_sql::SqlCatalog,
+) -> Option<Vec<FieldInfo>> {
+    use crate::bridge::physical_plan::{ReturningColumns, ReturningItem};
+    use pgwire::api::results::FieldFormat;
+
+    let collection = match plan? {
+        nodedb_sql::SqlPlan::Update { collection, .. } => collection.as_str(),
+        nodedb_sql::SqlPlan::Delete { collection, .. } => collection.as_str(),
+        _ => return None,
+    };
+
+    let info = catalog.get_collection(collection).ok().flatten()?;
+
+    let fields = match &spec.columns {
+        ReturningColumns::Star => columns_to_field_info(&info.columns),
+        ReturningColumns::Named(items) => items
+            .iter()
+            .map(|item: &ReturningItem| {
+                let display_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+                let pg_type = info
+                    .columns
+                    .iter()
+                    .find(|c| c.name == item.name)
+                    .map(|c| sql_data_type_to_pg(&c.data_type))
+                    .unwrap_or(Type::TEXT);
+                FieldInfo::new(display_name, None, None, pg_type, FieldFormat::Text)
+            })
+            .collect(),
+    };
+    Some(fields)
 }
 
 /// Infer result FieldInfo from a SqlPlan by looking up collection schema.

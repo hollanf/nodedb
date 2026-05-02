@@ -110,14 +110,13 @@ fn array_contains_filter() {
             collection: "products".into(),
             filters: filter_bytes,
             updates: vec![],
-            returning: true,
+            returning: None,
         }),
     );
 
-    let text = payload_json(&payload);
-    let docs: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
+    let val = payload_value(&payload);
     // p1 and p3 have "sale" tag.
-    assert_eq!(docs.len(), 2);
+    assert_eq!(val["affected"], 2);
 }
 
 #[test]
@@ -144,15 +143,13 @@ fn array_contains_all_filter() {
             collection: "products".into(),
             filters: filter_bytes,
             updates: vec![],
-            returning: true,
+            returning: None,
         }),
     );
 
-    let text = payload_json(&payload);
-    let docs: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
+    let val = payload_value(&payload);
     // Only p1 has both S and M.
-    assert_eq!(docs.len(), 1);
-    assert_eq!(docs[0]["name"], "T-Shirt");
+    assert_eq!(val["affected"], 1);
 }
 
 #[test]
@@ -179,14 +176,13 @@ fn array_overlap_filter() {
             collection: "products".into(),
             filters: filter_bytes,
             updates: vec![],
-            returning: true,
+            returning: None,
         }),
     );
 
-    let text = payload_json(&payload);
-    let docs: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
+    let val = payload_value(&payload);
     // p1 (sale), p3 (sale), p4 (premium).
-    assert_eq!(docs.len(), 3);
+    assert_eq!(val["affected"], 3);
 }
 
 #[test]
@@ -297,7 +293,7 @@ fn no_match_returns_zero() {
             collection: "products".into(),
             filters: filter_bytes,
             updates: vec![],
-            returning: false,
+            returning: None,
         }),
     );
 

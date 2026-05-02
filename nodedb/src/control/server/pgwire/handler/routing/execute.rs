@@ -156,7 +156,17 @@ impl NodeDbPgHandler {
             crate::control::server::session_auth::extract_and_apply_on_deny(sql, &mut auth_ctx);
 
         // Strip RETURNING clause before DataFusion planning.
-        let (clean_sql, has_returning) = super::super::returning::strip_returning(&clean_sql);
+        let (clean_sql, returning_spec) = super::super::returning::strip_returning(&clean_sql)
+            .map_err(|e| {
+                use super::super::super::types::error_to_sqlstate;
+                let (severity, code, message) = error_to_sqlstate(&e);
+                pgwire::error::PgWireError::UserError(Box::new(pgwire::error::ErrorInfo::new(
+                    severity.to_owned(),
+                    code.to_owned(),
+                    message,
+                )))
+            })?;
+        let has_returning = returning_spec.is_some();
 
         // Enforce general CHECK constraints for INSERT/UPDATE before planning.
         self.enforce_check_constraints_if_needed(&clean_sql, tenant_id)
@@ -251,6 +261,21 @@ impl NodeDbPgHandler {
                 .put_cached_plan(addr, &clean_sql, planned.clone(), versions);
 
             (planned, scope)
+        };
+
+        // Inject RETURNING spec into DML plans. The planner strips RETURNING
+        // from the SQL before DataFusion sees it; the spec is re-attached here
+        // so the Data Plane knows which columns to project and return.
+        let tasks = if let Some(ref spec) = returning_spec {
+            tasks
+                .into_iter()
+                .map(|mut task| {
+                    inject_returning_spec(&mut task.plan, spec.clone());
+                    task
+                })
+                .collect()
+        } else {
+            tasks
         };
 
         if tasks.is_empty() {
@@ -562,5 +587,33 @@ impl NodeDbPgHandler {
         } else {
             ReadConsistency::BoundedStaleness(std::time::Duration::from_secs(5))
         }
+    }
+}
+
+/// Inject a RETURNING spec into a DML physical plan variant.
+///
+/// Only `PointUpdate`, `BulkUpdate`, `PointDelete`, and `BulkDelete` are
+/// affected. All other plan variants are left unchanged.
+fn inject_returning_spec(
+    plan: &mut crate::bridge::envelope::PhysicalPlan,
+    spec: crate::bridge::physical_plan::ReturningSpec,
+) {
+    use crate::bridge::envelope::PhysicalPlan;
+    use crate::bridge::physical_plan::DocumentOp;
+
+    match plan {
+        PhysicalPlan::Document(DocumentOp::PointUpdate { returning, .. }) => {
+            *returning = Some(spec);
+        }
+        PhysicalPlan::Document(DocumentOp::BulkUpdate { returning, .. }) => {
+            *returning = Some(spec);
+        }
+        PhysicalPlan::Document(DocumentOp::PointDelete { returning, .. }) => {
+            *returning = Some(spec);
+        }
+        PhysicalPlan::Document(DocumentOp::BulkDelete { returning, .. }) => {
+            *returning = Some(spec);
+        }
+        _ => {}
     }
 }

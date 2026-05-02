@@ -146,6 +146,7 @@ fn classify_point_delete() {
         document_id: "doc-1".into(),
         surrogate: nodedb_types::Surrogate::ZERO,
         pk_bytes: Vec::new(),
+        returning: None,
     });
     let info = classify_dml_write(&plan).unwrap();
     assert_eq!(info.collection, "orders");
@@ -162,7 +163,7 @@ fn classify_point_update() {
         collection: "users".into(),
         document_id: "u-1".into(),
         updates: vec![],
-        returning: false,
+        returning: None,
         surrogate: nodedb_types::Surrogate::ZERO,
         pk_bytes: Vec::new(),
     });
@@ -179,6 +180,7 @@ fn classify_bulk_delete() {
     let plan = PhysicalPlan::Document(DocumentOp::BulkDelete {
         collection: "logs".into(),
         filters: vec![],
+        returning: None,
     });
     let info = classify_dml_write(&plan).unwrap();
     assert_eq!(info.collection, "logs");

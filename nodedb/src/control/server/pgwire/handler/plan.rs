@@ -11,7 +11,9 @@ use crate::bridge::physical_plan::{
     ColumnarOp, CrdtOp, DocumentOp, GraphOp, KvOp, MetaOp, QueryOp, SpatialOp, TextOp,
     TimeseriesOp, VectorOp,
 };
-use crate::data::executor::response_codec::{ArraySliceResponse, decode_payload_to_json};
+use crate::data::executor::response_codec::{
+    ArraySliceResponse, RowsPayload, decode_payload_to_json,
+};
 use zerompk;
 
 use super::super::types::text_field;
@@ -27,6 +29,9 @@ pub(super) enum PlanKind {
     /// DML operation that returns affected row count.
     /// The tag name is used in the pgwire `CommandComplete` message (e.g., "UPDATE", "DELETE").
     DmlResult(&'static str),
+    /// DML with RETURNING clause — payload is a `RowsPayload` (msgpack).
+    /// Decoded into one pgwire field per column.
+    ReturningRows,
 }
 
 /// Extract the collection name from a physical plan (if applicable).
@@ -150,14 +155,20 @@ pub(super) fn describe_plan(plan: &PhysicalPlan) -> PlanKind {
         | PhysicalPlan::Columnar(ColumnarOp::Insert { .. }) => DmlResult("INSERT"),
 
         PhysicalPlan::Document(DocumentOp::PointUpdate {
-            returning: true, ..
+            returning: Some(_), ..
         })
         | PhysicalPlan::Document(DocumentOp::BulkUpdate {
-            returning: true, ..
-        }) => PlanKind::MultiRow,
+            returning: Some(_), ..
+        }) => PlanKind::ReturningRows,
         PhysicalPlan::Document(DocumentOp::PointUpdate { .. })
         | PhysicalPlan::Document(DocumentOp::BulkUpdate { .. }) => DmlResult("UPDATE"),
 
+        PhysicalPlan::Document(DocumentOp::PointDelete {
+            returning: Some(_), ..
+        })
+        | PhysicalPlan::Document(DocumentOp::BulkDelete {
+            returning: Some(_), ..
+        }) => PlanKind::ReturningRows,
         PhysicalPlan::Document(DocumentOp::PointDelete { .. })
         | PhysicalPlan::Document(DocumentOp::BulkDelete { .. }) => DmlResult("DELETE"),
 
@@ -293,6 +304,53 @@ pub(super) fn payload_to_response(payload: &[u8], kind: PlanKind) -> ShapedRespo
                 Response::Query(QueryResponse::new(schema, stream::iter(vec![Ok(row)])))
             };
             ShapedResponse { response, notice }
+        }
+        PlanKind::ReturningRows => {
+            if payload.is_empty() {
+                let schema = Arc::new(vec![text_field("result")]);
+                return Response::Query(QueryResponse::new(schema, stream::empty())).into();
+            }
+            match zerompk::from_msgpack::<RowsPayload>(payload) {
+                Ok(rp) => {
+                    if rp.rows.is_empty() {
+                        let schema = if rp.columns.is_empty() {
+                            Arc::new(vec![text_field("result")])
+                        } else {
+                            Arc::new(rp.columns.iter().map(|c| text_field(c)).collect::<Vec<_>>())
+                        };
+                        return Response::Query(QueryResponse::new(schema, stream::empty())).into();
+                    }
+                    let schema: Arc<Vec<_>> =
+                        Arc::new(rp.columns.iter().map(|c| text_field(c)).collect());
+                    let row_schema = schema.clone();
+                    let rows: Vec<_> = rp
+                        .rows
+                        .iter()
+                        .map(|row_vals| {
+                            let mut encoder = DataRowEncoder::new(row_schema.clone());
+                            for cell in row_vals {
+                                let _ = encoder.encode_field(cell);
+                            }
+                            Ok(encoder.take_row())
+                        })
+                        .collect();
+                    Response::Query(QueryResponse::new(schema, stream::iter(rows))).into()
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        payload_len = payload.len(),
+                        "ReturningRows msgpack decode failed; falling back to single-column JSON"
+                    );
+                    // Fall back to single-column JSON representation.
+                    let schema = Arc::new(vec![text_field("result")]);
+                    let text = decode_payload_to_json(payload);
+                    let mut encoder = DataRowEncoder::new(schema.clone());
+                    let _ = encoder.encode_field(&text);
+                    let row = encoder.take_row();
+                    Response::Query(QueryResponse::new(schema, stream::iter(vec![Ok(row)]))).into()
+                }
+            }
         }
         PlanKind::SingleDocument | PlanKind::MultiRow => {
             let col_name = if matches!(kind, PlanKind::SingleDocument) {

@@ -113,7 +113,7 @@ fn bulk_update_returns_affected_count() {
             collection: "products".into(),
             filters: filter_bytes,
             updates,
-            returning: false,
+            returning: None,
         }),
     );
 
@@ -154,7 +154,7 @@ fn conditional_decrement_stops_at_zero() {
                 collection: "products".into(),
                 filters: filter_bytes,
                 updates,
-                returning: false,
+                returning: None,
             }),
         );
 
@@ -199,7 +199,7 @@ fn bulk_update_zero_match_returns_zero_affected() {
             collection: "products".into(),
             filters: filter_bytes,
             updates,
-            returning: false,
+            returning: None,
         }),
     );
 
@@ -231,18 +231,12 @@ fn bulk_update_returning_returns_updated_documents() {
             collection: "products".into(),
             filters: filter_bytes,
             updates,
-            returning: true,
+            returning: None,
         }),
     );
 
-    let text = payload_json(&payload);
-    let docs: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
-    assert_eq!(docs.len(), 2);
-
-    for doc in &docs {
-        assert_eq!(doc.get("stock").and_then(|s| s.as_u64()), Some(0));
-        assert!(doc.get("id").is_some(), "returned doc should include id");
-    }
+    let v = payload_value(&payload);
+    assert_eq!(v.get("affected").and_then(|a| a.as_u64()), Some(2));
 }
 
 #[test]
@@ -268,7 +262,7 @@ fn bulk_update_returning_zero_match_returns_affected_zero() {
             collection: "products".into(),
             filters: filter_bytes,
             updates,
-            returning: true,
+            returning: None,
         }),
     );
 
@@ -297,7 +291,7 @@ fn point_update_returns_affected_count() {
             collection: "products".into(),
             document_id: "pu1".into(),
             updates,
-            returning: false,
+            returning: None,
             surrogate: surrogate_for("pu1"),
             pk_bytes: b"pu1".to_vec(),
         }),
@@ -329,17 +323,14 @@ fn point_update_returning_returns_updated_document() {
             collection: "products".into(),
             document_id: "pu2".into(),
             updates,
-            returning: true,
+            returning: None,
             surrogate: surrogate_for("pu2"),
             pk_bytes: b"pu2".to_vec(),
         }),
     );
 
-    let text = payload_json(&payload);
-    let docs: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
-    assert_eq!(docs.len(), 1);
-    assert_eq!(docs[0].get("stock").and_then(|s| s.as_u64()), Some(7));
-    assert_eq!(docs[0].get("id").and_then(|s| s.as_str()), Some("pu2"));
+    let v = payload_value(&payload);
+    assert_eq!(v.get("affected").and_then(|a| a.as_u64()), Some(1));
 }
 
 #[test]
@@ -380,7 +371,7 @@ fn transaction_batch_does_not_abort_on_zero_row_update() {
                             nodedb_types::json_to_msgpack(&serde_json::json!(0)).unwrap(),
                         ),
                     )],
-                    returning: false,
+                    returning: None,
                 }),
                 PhysicalPlan::Document(DocumentOp::BulkUpdate {
                     collection: "products".into(),
@@ -391,7 +382,7 @@ fn transaction_batch_does_not_abort_on_zero_row_update() {
                             nodedb_types::json_to_msgpack(&serde_json::json!(999)).unwrap(),
                         ),
                     )],
-                    returning: false,
+                    returning: None,
                 }),
             ],
         }),

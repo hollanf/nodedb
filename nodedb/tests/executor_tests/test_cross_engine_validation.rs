@@ -366,6 +366,7 @@ fn document_indexes_consistent_after_simulated_crash() {
             document_id: "a1".into(),
             surrogate: nodedb_types::Surrogate::new(1),
             pk_bytes: b"a1".to_vec(),
+            returning: None,
         }),
     );
 
