@@ -138,6 +138,7 @@ fn restore_core_state(
 ) -> crate::Result<(u64, u64)> {
     let sparse_path = data_dir.join(format!("sparse/core-{core_id}.redb"));
     if let Some(parent) = sparse_path.parent() {
+        // no-objectstore: redb opens a local file directly; warm-tier blob is restored, this is the engine-state landing path.
         std::fs::create_dir_all(parent).map_err(crate::Error::Io)?;
     }
     let sparse = crate::engine::sparse::btree::SparseEngine::open(&sparse_path)?;
@@ -145,6 +146,7 @@ fn restore_core_state(
 
     let graph_path = data_dir.join(format!("graph/core-{core_id}.redb"));
     if let Some(parent) = graph_path.parent() {
+        // no-objectstore: redb opens a local file directly; engine-state landing path.
         std::fs::create_dir_all(parent).map_err(crate::Error::Io)?;
     }
     let edge_store = crate::engine::graph::edge_store::store::EdgeStore::open(&graph_path)?;
@@ -204,6 +206,7 @@ fn restore_vector_checkpoints(
     }
 
     let ckpt_dir = data_dir.join("vector-ckpt");
+    // no-objectstore: HNSW checkpoints are mmap'd locally for query hot path.
     std::fs::create_dir_all(&ckpt_dir).map_err(crate::Error::Io)?;
 
     let mut total_vectors = 0u64;
@@ -233,6 +236,7 @@ fn restore_crdt_checkpoints(
     }
 
     let ckpt_dir = data_dir.join("crdt-ckpt");
+    // no-objectstore: CRDT state lands in a local engine-owned directory.
     std::fs::create_dir_all(&ckpt_dir).map_err(crate::Error::Io)?;
 
     for snap in crdt_snapshots {

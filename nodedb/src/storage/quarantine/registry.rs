@@ -66,6 +66,7 @@ pub fn build_quarantine_store(
         .unwrap_or_else(|| data_dir.join("quarantine"));
 
     if config.endpoint.is_empty() {
+        // no-objectstore: bootstrap for the LocalFileSystem ObjectStore backend; the store cannot create its own root.
         std::fs::create_dir_all(&dir).map_err(crate::Error::Io)?;
         let store = LocalFileSystem::new_with_prefix(&dir).map_err(|e| crate::Error::Storage {
             engine: "quarantine".into(),
@@ -236,6 +237,7 @@ impl QuarantineRegistry {
                 "{}.quarantined.{quarantined_at_ms}",
                 path.extension().and_then(|s| s.to_str()).unwrap_or("seg")
             ));
+            // no-objectstore: in-place rename of a corrupted local segment file before its bytes are uploaded to the warm-tier ObjectStore archive.
             if let Err(e) = std::fs::rename(path, &new_path) {
                 tracing::error!(
                     engine = key.engine.as_str(),
@@ -403,6 +405,7 @@ impl QuarantineRegistry {
         dir: &Path,
         engine_key_from_filename: &dyn Fn(&str) -> Option<(String, String)>,
     ) {
+        // no-objectstore: legacy startup-only enumeration of pre-migration on-disk quarantine markers; new quarantines route through ObjectStore.
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
             Err(e) => {

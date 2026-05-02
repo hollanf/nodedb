@@ -97,6 +97,7 @@ fn build_object_store(
     label: &str,
 ) -> crate::Result<Arc<dyn ObjectStore>> {
     if endpoint.is_empty() {
+        // no-objectstore: bootstrap for the LocalFileSystem ObjectStore backend; the store cannot create its own root.
         std::fs::create_dir_all(local_dir).map_err(crate::Error::Io)?;
         let store =
             LocalFileSystem::new_with_prefix(local_dir).map_err(|e| crate::Error::Storage {
