@@ -181,6 +181,86 @@ pub fn write_encrypted_segment(
     Ok(())
 }
 
+/// Encrypt segment data into a self-describing byte envelope (no file I/O).
+///
+/// Equivalent to `write_encrypted_segment` but returns the full envelope
+/// bytes instead of writing to disk. Used by object-store upload paths where
+/// the caller manages persistence.
+pub fn encrypt_segment_bytes(
+    data: &[u8],
+    footer: &SegmentFooter,
+    key: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+) -> crate::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    if let Some(key) = key {
+        let fresh_key = key.with_fresh_epoch().map_err(crate::Error::Wal)?;
+        let epoch = *fresh_key.epoch();
+        let preamble = SegmentPreamble::new_seg(epoch);
+        let preamble_bytes = preamble.to_bytes();
+        let ciphertext = fresh_key
+            .encrypt_aad(footer.min_lsn.as_u64(), &preamble_bytes, data)
+            .map_err(|e| crate::Error::Storage {
+                engine: "segment".into(),
+                detail: format!("segment encryption failed: {e}"),
+            })?;
+        out.extend_from_slice(&preamble_bytes);
+        out.extend_from_slice(&ciphertext);
+    } else {
+        out.extend_from_slice(data);
+    }
+    out.extend_from_slice(&footer.to_bytes());
+    Ok(out)
+}
+
+/// Decrypt a segment byte envelope (no file I/O).
+///
+/// Equivalent to `read_encrypted_segment` but operates on an in-memory byte
+/// slice. Used by object-store download paths.
+pub fn decrypt_segment_bytes(
+    raw: &[u8],
+    key: Option<&nodedb_wal::crypto::WalEncryptionKey>,
+) -> crate::Result<Vec<u8>> {
+    if let Some(key) = key {
+        let min_len = PREAMBLE_SIZE + nodedb_wal::crypto::AUTH_TAG_SIZE + FOOTER_SIZE;
+        if raw.len() < min_len {
+            return Err(crate::Error::SegmentCorrupted {
+                detail: "encrypted segment envelope too small".into(),
+            });
+        }
+        let preamble_bytes: [u8; PREAMBLE_SIZE] = raw[..PREAMBLE_SIZE]
+            .try_into()
+            .expect("slice is PREAMBLE_SIZE bytes");
+        let preamble =
+            SegmentPreamble::from_bytes(&preamble_bytes, &SEG_PREAMBLE_MAGIC).map_err(|e| {
+                crate::Error::SegmentCorrupted {
+                    detail: format!("invalid segment preamble: {e}"),
+                }
+            })?;
+        let footer_bytes: [u8; FOOTER_SIZE] = raw[raw.len() - FOOTER_SIZE..]
+            .try_into()
+            .expect("slice is FOOTER_SIZE bytes");
+        let footer = SegmentFooter::from_bytes(&footer_bytes)?;
+        let ciphertext = &raw[PREAMBLE_SIZE..raw.len() - FOOTER_SIZE];
+        key.decrypt_aad(
+            preamble.epoch(),
+            footer.min_lsn.as_u64(),
+            &preamble_bytes,
+            ciphertext,
+        )
+        .map_err(|e| crate::Error::Storage {
+            engine: "segment".into(),
+            detail: format!("segment decryption failed: {e}"),
+        })
+    } else {
+        if raw.len() < FOOTER_SIZE {
+            return Err(crate::Error::SegmentCorrupted {
+                detail: "envelope too small".into(),
+            });
+        }
+        Ok(raw[..raw.len() - FOOTER_SIZE].to_vec())
+    }
+}
+
 /// Read and decrypt a segment file's data portion.
 ///
 /// For encrypted segments, reads the 16-byte `SEGP` preamble at the start of
