@@ -5,6 +5,7 @@ mod env;
 mod observability;
 mod retention;
 pub mod scheduler;
+mod snapshot_storage;
 mod tls;
 
 pub use checkpoint::CheckpointSettings;
@@ -17,6 +18,7 @@ pub use observability::{
 };
 pub use retention::RetentionSettings;
 pub use scheduler::{CronTimezone, SchedulerConfig};
+pub use snapshot_storage::{QuarantineStorageSettings, SnapshotStorageSettings};
 pub use tls::{BackupEncryptionSettings, EncryptionSettings, TlsSettings};
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -165,6 +167,18 @@ pub struct ServerConfig {
     #[serde(default)]
     pub cold_storage: Option<ColdStorageSettings>,
 
+    /// Snapshot storage configuration.
+    /// Controls where warm-tier snapshots are persisted. When absent, defaults
+    /// to local filesystem at `{data_dir}/snapshots`.
+    #[serde(default)]
+    pub snapshot_storage: Option<SnapshotStorageSettings>,
+
+    /// Quarantine storage configuration.
+    /// Controls where corrupt-segment archives are stored. When absent, defaults
+    /// to local filesystem at `{data_dir}/quarantine`.
+    #[serde(default)]
+    pub quarantine_storage: Option<QuarantineStorageSettings>,
+
     /// Performance tuning knobs for engines, query execution, WAL, bridge,
     /// network, and cluster transport. All fields have sensible defaults;
     /// override selectively via the `[tuning]` TOML section.
@@ -208,6 +222,8 @@ impl Default for ServerConfig {
             retention: RetentionSettings::default(),
             cluster: None,
             cold_storage: None,
+            snapshot_storage: None,
+            quarantine_storage: None,
             tuning: TuningConfig::default(),
             observability: ObservabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
