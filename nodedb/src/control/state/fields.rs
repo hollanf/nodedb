@@ -480,6 +480,18 @@ pub struct SharedState {
     /// L2 cold storage client (None when not configured).
     pub cold_storage: Option<Arc<crate::storage::cold::ColdStorage>>,
 
+    /// Warm-tier snapshot object store.
+    ///
+    /// Always present — defaults to `LocalFileSystem` at `{data_dir}/snapshots`
+    /// when no explicit `[snapshot_storage]` config is provided.
+    pub snapshot_storage: Arc<dyn object_store::ObjectStore>,
+
+    /// Quarantine archive object store.
+    ///
+    /// Always present — defaults to `LocalFileSystem` at `{data_dir}/quarantine`
+    /// when no explicit `[quarantine_storage]` config is provided.
+    pub quarantine_storage: Arc<dyn object_store::ObjectStore>,
+
     /// Hybrid Logical Clock used by the metadata applier to stamp
     /// `modification_hlc` on every persisted `Stored*` descriptor.
     /// Single instance per node; the applier calls `update(remote)`

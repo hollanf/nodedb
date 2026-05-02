@@ -546,6 +546,55 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Initialise snapshot storage — always constructed, defaults to local FS.
+    {
+        let snap_cfg = config
+            .snapshot_storage
+            .as_ref()
+            .map(|s| s.to_snapshot_storage_config())
+            .unwrap_or_else(
+                nodedb::config::server::SnapshotStorageSettings::default_storage_config,
+            );
+        match nodedb::storage::snapshot_writer::build_snapshot_store(&snap_cfg, &config.data_dir) {
+            Ok(store) => {
+                if let Some(state) = Arc::get_mut(&mut shared) {
+                    state.snapshot_storage = store;
+                    info!("snapshot storage initialised");
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "snapshot storage init failed — aborting startup");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Initialise quarantine storage — always constructed, defaults to local FS.
+    {
+        let q_cfg = config
+            .quarantine_storage
+            .as_ref()
+            .map(|s| s.to_quarantine_storage_config())
+            .unwrap_or_else(
+                nodedb::config::server::QuarantineStorageSettings::default_storage_config,
+            );
+        match nodedb::storage::quarantine::registry::build_quarantine_store(
+            &q_cfg,
+            &config.data_dir,
+        ) {
+            Ok(store) => {
+                if let Some(state) = Arc::get_mut(&mut shared) {
+                    state.quarantine_storage = store;
+                    info!("quarantine storage initialised");
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "quarantine storage init failed — aborting startup");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Wire memory governor into SharedState for observability.
     if let Some(state) = Arc::get_mut(&mut shared) {
         state.governor = Some(Arc::clone(&governor));
