@@ -129,9 +129,10 @@ pub(super) fn apply_hnsw(
         };
         coll.replace_sealed(vec![new_seg]);
         info!(
+            target: "nodedb::reindex",
             core = core.core_id,
             collection = %collection_key,
-            "HNSW cutover: sealed replaced with rebuilt single segment"
+            "atomic_cutover",
         );
     }
 }

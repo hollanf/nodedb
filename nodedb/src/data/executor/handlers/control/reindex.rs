@@ -221,44 +221,67 @@ impl CoreLoop {
         tenant_id: TenantId,
         collection_key: &str,
     ) -> Result<(), String> {
-        let key = (tenant_id, collection_key.to_string());
-        let coll = match self.vector_collections.get(&key) {
-            Some(c) => c,
-            None => return Ok(()), // nothing to rebuild
-        };
+        // Vector collections are stored under two key forms depending on how
+        // they were inserted:
+        //   - Bare:             (tenant, "coll")             — BatchInsert / native
+        //   - Field-qualified:  (tenant, "coll:field_name")  — SQL INSERT, DirectUpsert
+        //
+        // Collect all matching keys so field-indexed collections (the common
+        // case from SQL DDL) are rebuilt correctly.
+        let field_prefix = format!("{collection_key}:");
 
-        let dim = coll.dim();
-        let params = coll.hnsw_params();
+        let matching_keys: Vec<(TenantId, String)> = self
+            .vector_collections
+            .keys()
+            .filter(|(t, k)| {
+                *t == tenant_id && (k.as_str() == collection_key || k.starts_with(&field_prefix))
+            })
+            .cloned()
+            .collect();
 
-        // Extract all live vectors from sealed segments.
-        let mut vectors: Vec<Vec<f32>> = Vec::new();
-        for sealed in coll.sealed_segments() {
-            for id in 0..sealed.index.len() as u32 {
-                if !sealed.index.is_deleted(id)
-                    && let Some(v) = sealed.index.get_vector(id)
-                {
+        if matching_keys.is_empty() {
+            return Ok(()); // no vector index for this collection; nothing to rebuild
+        }
+
+        for key in matching_keys {
+            let coll = match self.vector_collections.get(&key) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            let dim = coll.dim();
+            let params = coll.hnsw_params();
+
+            // Extract all live vectors from sealed segments.
+            let mut vectors: Vec<Vec<f32>> = Vec::new();
+            for sealed in coll.sealed_segments() {
+                for id in 0..sealed.index.len() as u32 {
+                    if !sealed.index.is_deleted(id)
+                        && let Some(v) = sealed.index.get_vector(id)
+                    {
+                        vectors.push(v.to_vec());
+                    }
+                }
+            }
+            // Also include live vectors from the growing flat index.
+            let growing = coll.growing_flat();
+            for id in 0..growing.len() as u32 {
+                if let Some(v) = growing.get_vector(id) {
                     vectors.push(v.to_vec());
                 }
             }
-        }
-        // Also include live vectors from the growing flat index.
-        let growing = coll.growing_flat();
-        for id in 0..growing.len() as u32 {
-            if let Some(v) = growing.get_vector(id) {
-                vectors.push(v.to_vec());
-            }
-        }
 
-        let (tx, rx) = mpsc::sync_channel::<Result<RebuildOutput, String>>(1);
-        std::thread::spawn(move || {
-            let _ = tx.send(rebuild_hnsw_thread(vectors, dim, params));
-        });
+            let (tx, rx) = mpsc::sync_channel::<Result<RebuildOutput, String>>(1);
+            std::thread::spawn(move || {
+                let _ = tx.send(rebuild_hnsw_thread(vectors, dim, params));
+            });
 
-        self.pending_reindex.push(PendingReindex {
-            tenant_id,
-            collection_key: collection_key.to_string(),
-            rx,
-        });
+            self.pending_reindex.push(PendingReindex {
+                tenant_id,
+                collection_key: key.1,
+                rx,
+            });
+        }
         Ok(())
     }
 
