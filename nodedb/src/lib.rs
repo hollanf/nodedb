@@ -6,6 +6,7 @@ pub mod data;
 pub mod engine;
 pub mod error;
 pub mod event;
+pub mod fail_point;
 pub mod memory;
 pub mod query;
 pub mod storage;

@@ -161,3 +161,6 @@ otel = ["dep:prost", "dep:flate2", "dep:tonic"]
 grafana = []
 monitoring = ["promql", "otel", "grafana"]
 kafka = ["dep:rdkafka"]
+# Enables crash-injection points used by recovery tests. Off by default; tests
+# that exercise the framework opt in via `--features failpoints`.
+failpoints = []
