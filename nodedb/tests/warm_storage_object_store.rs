@@ -170,6 +170,133 @@ async fn quarantine_record_and_rebuild_in_memory() {
     assert_eq!(snap[0].segment_id, "seg7");
 }
 
+// ── Snapshot bytes round-trip through InMemory ObjectStore ──────────────────
+//
+// Verifies that create_base_snapshot writes the expected objects into InMemory
+// (manifest + per-core .snap blobs), and that execute_restore consumes those
+// bytes and materialises the engine state into a fresh data directory —
+// including sparse documents, a vector checkpoint file, and a CRDT checkpoint
+// file.
+
+#[tokio::test]
+async fn snapshot_bytes_roundtrip_write_and_restore() {
+    use futures::TryStreamExt;
+    use nodedb::data::snapshot::{CoreSnapshot, CrdtSnapshot, HnswSnapshot, KvPair};
+    use nodedb::storage::snapshot_executor::execute_restore;
+    use nodedb::storage::snapshot_writer::create_base_snapshot;
+
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+
+    // Build a CoreSnapshot with one sparse document, one HNSW index, and one
+    // CRDT state — enough content to verify all restore paths are exercised.
+    let hnsw_bytes = vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02];
+    let crdt_bytes = vec![0xAB, 0xCD, 0xEF];
+
+    let snap = CoreSnapshot {
+        watermark: 99,
+        sparse_documents: vec![KvPair {
+            key: "1:testcoll:row1".into(),
+            value: b"payload-a".to_vec(),
+        }],
+        sparse_indexes: vec![],
+        edges: vec![],
+        hnsw_indexes: vec![HnswSnapshot {
+            tenant_id: 1,
+            collection: "embeddings".into(),
+            checkpoint_bytes: hnsw_bytes.clone(),
+        }],
+        crdt_snapshots: vec![CrdtSnapshot {
+            tenant_id: 1,
+            peer_id: 42,
+            snapshot_bytes: crdt_bytes.clone(),
+        }],
+    };
+
+    let snap_bytes = snap.to_bytes().unwrap();
+    let (meta, prefix) = create_base_snapshot(&store, vec![(0, snap_bytes)], "test-node", None)
+        .await
+        .unwrap();
+
+    // ── Verify object-store objects ──────────────────────────────────────────
+    // The manifest and exactly one core .snap blob must be present.
+    use object_store::path::Path as OPath;
+    let list_prefix = OPath::from(format!("{prefix}/"));
+    let objects: Vec<_> = store.list(Some(&list_prefix)).try_collect().await.unwrap();
+
+    assert_eq!(
+        objects.len(),
+        2,
+        "expected manifest + 1 core blob, got {}: {:?}",
+        objects.len(),
+        objects
+            .iter()
+            .map(|o| o.location.as_ref())
+            .collect::<Vec<_>>()
+    );
+
+    let paths: Vec<&str> = objects.iter().map(|o| o.location.as_ref()).collect();
+    assert!(
+        paths.iter().any(|p| p.ends_with("manifest.msgpack")),
+        "manifest.msgpack missing"
+    );
+    assert!(
+        paths.iter().any(|p| p.ends_with("core-0.snap")),
+        "core-0.snap missing"
+    );
+
+    // All objects must be non-empty.
+    for obj in &objects {
+        assert!(obj.size > 0, "object {} is empty", obj.location);
+    }
+
+    // ── Execute restore into a fresh data directory ──────────────────────────
+    let dir = tempfile::tempdir().unwrap();
+    let data_dir = dir.path().join("restored");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    let result = execute_restore(&data_dir, &prefix, &store, &store, &[])
+        .await
+        .unwrap();
+
+    assert_eq!(result.snapshot_id, meta.snapshot_id);
+    assert_eq!(result.cores_restored, 1);
+    assert_eq!(result.documents_restored, 1);
+    assert_eq!(result.vectors_restored, 1);
+    assert_eq!(result.wal_records_replayed, 0);
+
+    // ── Verify sparse engine state ───────────────────────────────────────────
+    let sparse_path = data_dir.join("sparse/core-0.redb");
+    assert!(
+        sparse_path.exists(),
+        "sparse redb file must exist after restore"
+    );
+    let sparse = nodedb::engine::sparse::btree::SparseEngine::open(&sparse_path).unwrap();
+    assert!(
+        sparse.get_raw("1:testcoll:row1").unwrap().is_some(),
+        "sparse document must be readable after restore"
+    );
+
+    // ── Verify HNSW checkpoint file ──────────────────────────────────────────
+    let ckpt_dir = data_dir.join("vector-ckpt");
+    let hnsw_ckpt = ckpt_dir.join("1:embeddings:emb.ckpt");
+    assert!(
+        hnsw_ckpt.exists(),
+        "HNSW checkpoint file must exist after restore"
+    );
+    let on_disk = std::fs::read(&hnsw_ckpt).unwrap();
+    assert_eq!(on_disk, hnsw_bytes, "HNSW checkpoint bytes must match");
+
+    // ── Verify CRDT checkpoint file ──────────────────────────────────────────
+    let crdt_dir = data_dir.join("crdt-ckpt");
+    let crdt_ckpt = crdt_dir.join("tenant-1.ckpt");
+    assert!(
+        crdt_ckpt.exists(),
+        "CRDT checkpoint file must exist after restore"
+    );
+    let on_disk_crdt = std::fs::read(&crdt_ckpt).unwrap();
+    assert_eq!(on_disk_crdt, crdt_bytes, "CRDT checkpoint bytes must match");
+}
+
 // ── Quarantine: rebuild with multiple engines and keys ───────────────────────
 
 #[tokio::test]
