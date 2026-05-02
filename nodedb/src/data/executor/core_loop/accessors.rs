@@ -79,6 +79,29 @@ impl CoreLoop {
         self.array_segment_kek = Some(kek);
     }
 
+    /// Returns the current SPSC drain batch size.
+    ///
+    /// Useful for observability and integration-level pressure tests that
+    /// verify the governor correctly throttles the read depth.
+    pub fn spsc_read_depth(&self) -> usize {
+        self.spsc_read_depth
+    }
+
+    /// Returns whether new SPSC reads are suspended due to Emergency pressure.
+    ///
+    /// Useful for observability and integration-level pressure tests that
+    /// verify the governor correctly gates the drain path.
+    pub fn pressure_suspend_reads(&self) -> bool {
+        self.pressure_suspend_reads
+    }
+
+    /// Returns the configured baseline SPSC drain depth (the value restored
+    /// after pressure normalizes).  Exposed so integration tests can assert
+    /// throttled depths relative to the baseline without hard-coding the value.
+    pub fn spsc_read_depth_normal() -> usize {
+        crate::data::executor::core_loop::pressure::SPSC_READ_DEPTH_NORMAL
+    }
+
     /// Install the encryption key for timeseries columnar segment files.
     ///
     /// When set, `flush_ts_collection` wraps each output file in a `SEGT`
