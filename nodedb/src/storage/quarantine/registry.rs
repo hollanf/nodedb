@@ -24,9 +24,72 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::RwLock;
 
+use object_store::ObjectStore;
+use object_store::aws::AmazonS3Builder;
+use object_store::local::LocalFileSystem;
+
 use super::error::QuarantineError;
+
+/// Configuration for the quarantine archive storage layer.
+#[derive(Debug, Clone)]
+pub struct QuarantineStorageConfig {
+    /// S3-compatible endpoint URL. Empty = local filesystem.
+    pub endpoint: String,
+    /// Bucket name.
+    pub bucket: String,
+    /// Prefix path within the bucket.
+    pub prefix: String,
+    /// Access key (empty = IAM role / instance credentials).
+    pub access_key: String,
+    /// Secret key.
+    pub secret_key: String,
+    /// Region.
+    pub region: String,
+    /// Local directory for quarantine storage (used when endpoint is empty).
+    pub local_dir: Option<PathBuf>,
+}
+
+/// Build an `ObjectStore` from a `QuarantineStorageConfig`.
+///
+/// When `endpoint` is empty, uses `LocalFileSystem` backed by `local_dir`
+/// (or `data_dir/quarantine` if `local_dir` is unset).
+pub fn build_quarantine_store(
+    config: &QuarantineStorageConfig,
+    data_dir: &Path,
+) -> crate::Result<Arc<dyn ObjectStore>> {
+    let dir = config
+        .local_dir
+        .clone()
+        .unwrap_or_else(|| data_dir.join("quarantine"));
+
+    if config.endpoint.is_empty() {
+        std::fs::create_dir_all(&dir).map_err(crate::Error::Io)?;
+        let store = LocalFileSystem::new_with_prefix(&dir).map_err(|e| crate::Error::Storage {
+            engine: "quarantine".into(),
+            detail: format!("local quarantine storage init: {e}"),
+        })?;
+        Ok(Arc::new(store))
+    } else {
+        let mut builder = AmazonS3Builder::new()
+            .with_endpoint(&config.endpoint)
+            .with_bucket_name(&config.bucket)
+            .with_region(&config.region)
+            .with_allow_http(config.endpoint.starts_with("http://"));
+        if !config.access_key.is_empty() {
+            builder = builder
+                .with_access_key_id(&config.access_key)
+                .with_secret_access_key(&config.secret_key);
+        }
+        let s3 = builder.build().map_err(|e| crate::Error::Storage {
+            engine: "quarantine".into(),
+            detail: format!("S3 quarantine client init: {e}"),
+        })?;
+        Ok(Arc::new(s3))
+    }
+}
 
 /// Identifies an engine kind, used as a label in metrics and HTTP.
 ///
@@ -248,17 +311,92 @@ impl QuarantineRegistry {
         }
     }
 
-    /// Rebuild the registry from files with the `.quarantined.<ts>` pattern in
-    /// the given segment directory.
+    /// Rebuild the registry by scanning an object store for keys matching the
+    /// `.quarantined.<ts>` pattern.
     ///
-    /// Called at startup for each engine's data directory. Each matching file
-    /// represents a previously quarantined segment. The segment is immediately
-    /// inserted as fully quarantined (strikes = 2) so reads against it return
+    /// Called at startup. Each matching object key represents a previously
+    /// quarantined segment. The segment is immediately inserted as fully
+    /// quarantined (strikes = 2) so reads against it return
     /// `SegmentQuarantined` without a retry.
     ///
-    /// `engine_key_from_filename` maps the filename stem to `(collection,
-    /// segment_id)` using the engine-specific naming convention. If the mapping
-    /// returns `None` (unrecognised file), the file is skipped.
+    /// `engine_key_from_filename` maps a key name (the final path component)
+    /// to `(collection, segment_id)` using the engine-specific naming
+    /// convention. If the mapping returns `None` (unrecognised key), it is
+    /// skipped.
+    pub async fn rebuild_from_store(
+        &self,
+        engine: QuarantineEngine,
+        store: &Arc<dyn ObjectStore>,
+        engine_key_from_filename: &(dyn Fn(&str) -> Option<(String, String)> + Send + Sync),
+    ) {
+        use futures::TryStreamExt;
+
+        let objects: Vec<_> = match store.list(None).try_collect().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "quarantine rebuild: cannot list object store");
+                return;
+            }
+        };
+
+        for obj in objects {
+            // Use only the final component of the object path as the filename.
+            let key_str = obj.location.as_ref();
+            let fname_str = key_str.rsplit('/').next().unwrap_or(key_str);
+
+            if !fname_str.contains(".quarantined.") {
+                continue;
+            }
+
+            let (collection, segment_id) = match engine_key_from_filename(fname_str) {
+                Some(pair) => pair,
+                None => {
+                    tracing::warn!(
+                        file = fname_str,
+                        engine = engine.as_str(),
+                        "quarantine rebuild: cannot parse filename, skipping"
+                    );
+                    continue;
+                }
+            };
+
+            let quarantined_at_ms = fname_str
+                .rsplit('.')
+                .next()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+
+            let key = SegmentKey {
+                engine,
+                collection,
+                segment_id,
+            };
+            // Record the object store key path as a local path string for
+            // compatibility with the existing `QuarantineInfo` shape. Operators
+            // can locate the file via the object store path.
+            let quarantined_path = PathBuf::from(obj.location.as_ref());
+            let mut write = self.entries.write().unwrap_or_else(|p| p.into_inner());
+            write.insert(
+                key,
+                QuarantineRecord {
+                    strikes: 2,
+                    first_seen_ms: quarantined_at_ms,
+                    last_error: "rebuilt from object store on startup".to_string(),
+                    quarantine_info: Some(QuarantineInfo {
+                        quarantined_path,
+                        quarantined_at_ms,
+                    }),
+                },
+            );
+        }
+    }
+
+    /// Rebuild the registry from files with the `.quarantined.<ts>` pattern in
+    /// the given local filesystem directory.
+    ///
+    /// This is a convenience wrapper for local-filesystem deployments where
+    /// the quarantine directory lives on-disk. For remote object store
+    /// deployments use `rebuild_from_store`.
     pub fn rebuild_from_dir(
         &self,
         engine: QuarantineEngine,
@@ -278,7 +416,6 @@ impl QuarantineRegistry {
                 Some(s) => s,
                 None => continue,
             };
-            // Pattern: `<stem>.quarantined.<ts>` — any file containing ".quarantined."
             if !fname_str.contains(".quarantined.") {
                 continue;
             }
@@ -293,7 +430,6 @@ impl QuarantineRegistry {
                     continue;
                 }
             };
-            // Parse the timestamp from the suffix.
             let quarantined_at_ms = fname_str
                 .rsplit('.')
                 .next()
@@ -464,13 +600,11 @@ mod tests {
     #[test]
     fn rebuild_from_dir_restores_quarantine() {
         let tmp = tempfile::tempdir().unwrap();
-        // Create a fake quarantined file.
         let ts = 1_700_000_000_000u64;
         std::fs::write(tmp.path().join(format!("seg5.quarantined.{ts}")), b"").unwrap();
 
         let reg = QuarantineRegistry::new();
         reg.rebuild_from_dir(QuarantineEngine::Columnar, tmp.path(), &|fname| {
-            // "seg5.quarantined.<ts>" -> ("default", "seg5")
             let stem = fname.split(".quarantined.").next()?;
             Some(("default".to_string(), stem.to_string()))
         });
@@ -479,6 +613,35 @@ mod tests {
         let err = reg.record_failure(k, "crc", None).unwrap_err();
         assert!(
             matches!(err, QuarantineError::SegmentQuarantined { quarantined_at_unix_ms, .. } if quarantined_at_unix_ms == ts)
+        );
+    }
+
+    #[tokio::test]
+    async fn rebuild_from_store_restores_quarantine() {
+        use object_store::ObjectStoreExt;
+        use object_store::memory::InMemory;
+        use object_store::path::Path as ObjectPath;
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let ts = 1_700_000_000_111u64;
+        let key_path = ObjectPath::from(format!("seg6.quarantined.{ts}"));
+        store
+            .put(&key_path, object_store::PutPayload::from(b"".as_ref()))
+            .await
+            .unwrap();
+
+        let reg = QuarantineRegistry::new();
+        reg.rebuild_from_store(QuarantineEngine::Columnar, &store, &|fname| {
+            let stem = fname.split(".quarantined.").next()?;
+            Some(("default".to_string(), stem.to_string()))
+        })
+        .await;
+
+        let k = key(QuarantineEngine::Columnar, "default", "seg6");
+        let err = reg.record_failure(k, "crc", None).unwrap_err();
+        assert!(
+            matches!(err, QuarantineError::SegmentQuarantined { quarantined_at_unix_ms, .. } if quarantined_at_unix_ms == ts),
+            "expected ts={ts} but got: {err}"
         );
     }
 }

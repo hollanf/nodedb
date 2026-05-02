@@ -3,7 +3,7 @@
 //! ## Restore flow
 //!
 //! 1. Validate the restore plan via `dry_run_restore()`.
-//! 2. For each core, load its `CoreSnapshot` from the snapshot directory.
+//! 2. For each core, load its `CoreSnapshot` from the object store.
 //! 3. Apply the snapshot to the core's engines (redb, HNSW, CRDT).
 //! 4. Replay WAL records from `snapshot_lsn` to `target_lsn`.
 //!
@@ -15,7 +15,10 @@
 //! any records between the snapshot and the crash point.
 
 use std::path::Path;
+use std::sync::Arc;
 
+use object_store::path::Path as ObjectPath;
+use object_store::{ObjectStore, ObjectStoreExt, PutPayload};
 use tracing::{info, warn};
 
 use crate::data::snapshot::{CoreSnapshot, KvPair};
@@ -41,20 +44,26 @@ pub struct RestoreResult {
 
 /// Execute a snapshot restore.
 ///
-/// Restores engine state from a snapshot directory, then replays WAL records
-/// from the snapshot LSN to rebuild any writes that occurred after the snapshot.
+/// Restores engine state from a snapshot in the object store, then writes a
+/// restore marker so the normal startup path replays WAL records from the
+/// snapshot LSN forward.
 ///
 /// `data_dir` is the server's data directory (where engine files live).
-/// `snap_dir` is the snapshot directory to restore from.
+/// `prefix` is the snapshot object-store prefix (e.g. `"snap-000001-lsn…"`).
+/// `snapshot_store` is the object store holding the snapshot objects.
+/// `restore_store` is the object store holding the restore marker (same as
+///   `snapshot_store` in practice; passed separately for flexibility).
 /// `wal_records` are all available WAL records (already loaded by the caller).
 ///
 /// This is an **offline operation** — must not be called while serving traffic.
-pub fn execute_restore(
+pub async fn execute_restore(
     data_dir: &Path,
-    snap_dir: &Path,
+    prefix: &str,
+    snapshot_store: &Arc<dyn ObjectStore>,
+    restore_store: &Arc<dyn ObjectStore>,
     wal_records: &[nodedb_wal::WalRecord],
 ) -> crate::Result<RestoreResult> {
-    let manifest = load_manifest(snap_dir)?;
+    let manifest = load_manifest(snapshot_store, prefix).await?;
     let snapshot_lsn = manifest.meta.end_lsn.as_u64();
 
     info!(
@@ -67,9 +76,8 @@ pub fn execute_restore(
     let mut total_docs = 0u64;
     let mut total_vectors = 0u64;
 
-    // Restore each core's state.
     for core_id in 0..manifest.num_cores {
-        let core_snap = load_core_snapshot(snap_dir, core_id, None)?;
+        let core_snap = load_core_snapshot(snapshot_store, prefix, core_id, None).await?;
         let (docs, vectors) = restore_core_state(data_dir, core_id, &core_snap)?;
         total_docs += docs;
         total_vectors += vectors;
@@ -83,7 +91,6 @@ pub fn execute_restore(
         );
     }
 
-    // Replay WAL records after the snapshot LSN.
     let wal_to_replay: Vec<_> = wal_records
         .iter()
         .filter(|r| r.header.lsn > snapshot_lsn)
@@ -96,10 +103,7 @@ pub fn execute_restore(
             from_lsn = snapshot_lsn + 1,
             "replaying WAL records after snapshot"
         );
-        // WAL replay is handled by the normal startup path (CoreLoop::replay_vector_wal
-        // and the per-record replay in the event loop). We write a marker file so the
-        // startup code knows to replay from this LSN.
-        write_restore_marker(data_dir, snapshot_lsn)?;
+        write_restore_marker(restore_store, snapshot_lsn).await?;
     }
 
     let result = RestoreResult {
@@ -132,7 +136,6 @@ fn restore_core_state(
     core_id: usize,
     snap: &CoreSnapshot,
 ) -> crate::Result<(u64, u64)> {
-    // Restore sparse engine (documents + indexes).
     let sparse_path = data_dir.join(format!("sparse/core-{core_id}.redb"));
     if let Some(parent) = sparse_path.parent() {
         std::fs::create_dir_all(parent).map_err(crate::Error::Io)?;
@@ -140,7 +143,6 @@ fn restore_core_state(
     let sparse = crate::engine::sparse::btree::SparseEngine::open(&sparse_path)?;
     restore_sparse_data(&sparse, &snap.sparse_documents, &snap.sparse_indexes)?;
 
-    // Restore edge store.
     let graph_path = data_dir.join(format!("graph/core-{core_id}.redb"));
     if let Some(parent) = graph_path.parent() {
         std::fs::create_dir_all(parent).map_err(crate::Error::Io)?;
@@ -148,34 +150,23 @@ fn restore_core_state(
     let edge_store = crate::engine::graph::edge_store::store::EdgeStore::open(&graph_path)?;
     restore_edge_data(&edge_store, &snap.edges)?;
 
-    // Restore vector indexes by writing checkpoint files.
-    // The normal startup path (load_vector_checkpoints) will load these.
     let vectors = restore_vector_checkpoints(data_dir, core_id, &snap.hnsw_indexes)?;
-
-    // Restore CRDT snapshots by writing checkpoint files.
-    // The normal startup path will import these.
     restore_crdt_checkpoints(data_dir, core_id, &snap.crdt_snapshots)?;
 
     Ok((snap.sparse_documents.len() as u64, vectors))
 }
 
-/// Restore sparse engine documents and indexes from snapshot data.
 fn restore_sparse_data(
     sparse: &crate::engine::sparse::btree::SparseEngine,
     documents: &[KvPair],
     indexes: &[KvPair],
 ) -> crate::Result<()> {
-    // Batch insert documents. We write directly using the raw key/value
-    // pairs from the snapshot (they include the tenant:collection:id prefix).
     for kv in documents {
         sparse.put_raw(&kv.key, &kv.value)?;
     }
-
-    // Batch insert index entries.
     for kv in indexes {
         sparse.put_raw(&kv.key, &kv.value)?;
     }
-
     if !documents.is_empty() {
         info!(
             documents = documents.len(),
@@ -183,12 +174,9 @@ fn restore_sparse_data(
             "sparse engine data restored"
         );
     }
-
     Ok(())
 }
 
-/// Restore edge store data from snapshot. Reverse index is rebuilt
-/// automatically from the forward records via `put_edge_raw`.
 fn restore_edge_data(
     edge_store: &crate::engine::graph::edge_store::store::EdgeStore,
     edges: &[crate::data::snapshot::TenantKvPair],
@@ -200,17 +188,12 @@ fn restore_edge_data(
             &kv.value,
         )?;
     }
-
     if !edges.is_empty() {
         info!(edges = edges.len(), "edge store data restored");
     }
-
     Ok(())
 }
 
-/// Write vector checkpoint files from snapshot data.
-///
-/// Writes `.ckpt` files that `load_vector_checkpoints()` will pick up on startup.
 fn restore_vector_checkpoints(
     data_dir: &Path,
     _core_id: usize,
@@ -228,24 +211,18 @@ fn restore_vector_checkpoints(
         let key = format!("{}:{}:emb", idx.tenant_id, idx.collection);
         let ckpt_path = ckpt_dir.join(format!("{key}.ckpt"));
         let tmp_path = ckpt_dir.join(format!("{key}.ckpt.tmp"));
-
         nodedb_wal::segment::atomic_write_fsync(&tmp_path, &ckpt_path, &idx.checkpoint_bytes)
             .map_err(crate::Error::Wal)?;
-
-        // Count vectors from checkpoint size (rough estimate: each vector
-        // is ~3 KiB at 768-dim FP32, but we don't parse the checkpoint here).
-        total_vectors += 1; // At minimum, one collection restored.
+        total_vectors += 1;
     }
 
     info!(
         collections = hnsw_indexes.len(),
         "vector checkpoints restored"
     );
-
     Ok(total_vectors)
 }
 
-/// Write CRDT checkpoint files from snapshot data.
 fn restore_crdt_checkpoints(
     data_dir: &Path,
     _core_id: usize,
@@ -261,22 +238,32 @@ fn restore_crdt_checkpoints(
     for snap in crdt_snapshots {
         let ckpt_path = ckpt_dir.join(format!("tenant-{}.ckpt", snap.tenant_id));
         let tmp_path = ckpt_dir.join(format!("tenant-{}.ckpt.tmp", snap.tenant_id));
-
         nodedb_wal::segment::atomic_write_fsync(&tmp_path, &ckpt_path, &snap.snapshot_bytes)
             .map_err(crate::Error::Wal)?;
     }
 
     info!(tenants = crdt_snapshots.len(), "CRDT checkpoints restored");
-
     Ok(())
 }
 
-/// Write a restore marker file that tells the startup code to replay
-/// WAL records only from the given LSN forward.
-fn write_restore_marker(data_dir: &Path, snapshot_lsn: u64) -> crate::Result<()> {
-    let marker_path = data_dir.join("restore_from_lsn");
-    std::fs::write(&marker_path, snapshot_lsn.to_string().as_bytes()).map_err(crate::Error::Io)?;
-    info!(snapshot_lsn, path = %marker_path.display(), "restore marker written");
+/// Write a restore marker to the object store that tells the startup code to
+/// replay WAL records only from the given LSN forward.
+///
+/// Key: `restore_from_lsn`
+async fn write_restore_marker(
+    store: &Arc<dyn ObjectStore>,
+    snapshot_lsn: u64,
+) -> crate::Result<()> {
+    let marker_key = ObjectPath::from("restore_from_lsn");
+    let bytes = snapshot_lsn.to_string().into_bytes();
+    store
+        .put(&marker_key, PutPayload::from(bytes))
+        .await
+        .map_err(|e| crate::Error::Storage {
+            engine: "snapshot".into(),
+            detail: format!("write restore marker: {e}"),
+        })?;
+    info!(snapshot_lsn, "restore marker written");
     Ok(())
 }
 
@@ -284,17 +271,15 @@ fn write_restore_marker(data_dir: &Path, snapshot_lsn: u64) -> crate::Result<()>
 ///
 /// Called during startup. Returns the LSN to replay from, or `None` if
 /// no restore marker exists (normal startup).
-pub fn read_restore_marker(data_dir: &Path) -> Option<u64> {
-    let marker_path = data_dir.join("restore_from_lsn");
-    if !marker_path.exists() {
-        return None;
-    }
-
-    let content = std::fs::read_to_string(&marker_path).ok()?;
+pub async fn read_restore_marker(store: &Arc<dyn ObjectStore>) -> Option<u64> {
+    let marker_key = ObjectPath::from("restore_from_lsn");
+    let result = store.get(&marker_key).await.ok()?;
+    let bytes = result.bytes().await.ok()?;
+    let content = std::str::from_utf8(&bytes).ok()?;
     let lsn = content.trim().parse::<u64>().ok()?;
 
     // Delete the marker after reading — it's a one-time signal.
-    if let Err(e) = std::fs::remove_file(&marker_path) {
+    if let Err(e) = store.delete(&marker_key).await {
         warn!(error = %e, "failed to delete restore marker");
     }
 
@@ -309,31 +294,32 @@ pub fn read_restore_marker(data_dir: &Path) -> Option<u64> {
 mod tests {
     use super::*;
     use crate::data::snapshot::CoreSnapshot;
+    use object_store::memory::InMemory;
 
-    #[test]
-    fn restore_marker_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
-
-        // No marker initially.
-        assert!(read_restore_marker(dir.path()).is_none());
-
-        // Write marker.
-        write_restore_marker(dir.path(), 42).unwrap();
-
-        // Read and consume.
-        assert_eq!(read_restore_marker(dir.path()), Some(42));
-
-        // Consumed — should be gone.
-        assert!(read_restore_marker(dir.path()).is_none());
+    fn in_memory_store() -> Arc<dyn ObjectStore> {
+        Arc::new(InMemory::new())
     }
 
-    #[test]
-    fn end_to_end_snapshot_restore() {
+    #[tokio::test]
+    async fn restore_marker_roundtrip() {
+        let store = in_memory_store();
+
+        assert!(read_restore_marker(&store).await.is_none());
+
+        write_restore_marker(&store, 42).await.unwrap();
+        assert_eq!(read_restore_marker(&store).await, Some(42));
+
+        // Consumed — should be gone.
+        assert!(read_restore_marker(&store).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn end_to_end_snapshot_restore() {
+        let store = in_memory_store();
         let dir = tempfile::tempdir().unwrap();
         let data_dir = dir.path().join("data");
         std::fs::create_dir_all(&data_dir).unwrap();
 
-        // Create a snapshot with some sparse data.
         let snap = CoreSnapshot {
             watermark: 50,
             sparse_documents: vec![
@@ -354,19 +340,19 @@ mod tests {
 
         let snap_bytes = snap.to_bytes().unwrap();
         let core_snaps = vec![(0, snap_bytes)];
-        let (meta, snap_dir) = crate::storage::snapshot_writer::create_base_snapshot(
-            &data_dir, core_snaps, "test", None,
-        )
-        .unwrap();
+        let (meta, prefix) =
+            crate::storage::snapshot_writer::create_base_snapshot(&store, core_snaps, "test", None)
+                .await
+                .unwrap();
 
-        // Restore from the snapshot (no WAL records to replay).
-        let result = execute_restore(&data_dir, &snap_dir, &[]).unwrap();
+        let result = execute_restore(&data_dir, &prefix, &store, &store, &[])
+            .await
+            .unwrap();
         assert_eq!(result.snapshot_id, meta.snapshot_id);
         assert_eq!(result.cores_restored, 1);
         assert_eq!(result.documents_restored, 2);
         assert_eq!(result.wal_records_replayed, 0);
 
-        // Verify sparse engine has the restored data.
         let sparse_path = data_dir.join("sparse/core-0.redb");
         let sparse = crate::engine::sparse::btree::SparseEngine::open(&sparse_path).unwrap();
         assert!(sparse.get_raw("1:docs:d1").unwrap().is_some());
