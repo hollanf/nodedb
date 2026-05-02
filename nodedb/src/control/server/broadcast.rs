@@ -473,6 +473,12 @@ pub async fn broadcast_register_to_all_cores(
         }
     }
 
+    tracing::info!(
+        target: "nodedb::schema_barrier",
+        num_cores,
+        tenant = tenant_id.as_u64(),
+        "schema_version_barrier_acquired",
+    );
     Ok(())
 }
 
