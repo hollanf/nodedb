@@ -608,9 +608,15 @@ pub(super) async fn try_dispatch(
                     balanced_raw: balanced_raw.as_deref(),
                 },
             );
-            if result.is_ok() {
-                dispatch_register_by_name(state, identity, name).await;
-            }
+            let result = match result {
+                Ok(resp) => dispatch_register_by_name(state, identity, name)
+                    .await
+                    .map(|()| resp)
+                    .map_err(|e| {
+                        super::super::super::types::sqlstate_error("XX000", &e.to_string())
+                    }),
+                Err(e) => Err(e),
+            };
             Some(result)
         }
 
@@ -636,9 +642,15 @@ pub(super) async fn try_dispatch(
                 },
             )
             .await;
-            if result.is_ok() {
-                dispatch_register_by_name(state, identity, name).await;
-            }
+            let result = match result {
+                Ok(resp) => dispatch_register_by_name(state, identity, name)
+                    .await
+                    .map(|()| resp)
+                    .map_err(|e| {
+                        super::super::super::types::sqlstate_error("XX000", &e.to_string())
+                    }),
+                Err(e) => Err(e),
+            };
             Some(result)
         }
 
@@ -659,6 +671,21 @@ pub(super) async fn try_dispatch(
         NodedbStatement::AlterRole { name, sub_op } => {
             Some(alter_role_typed(state, identity, name, sub_op))
         }
+
+        NodedbStatement::Reindex {
+            collection,
+            index_name,
+            concurrent,
+        } => Some(
+            super::super::maintenance::handle_reindex(
+                state,
+                identity,
+                collection,
+                index_name.as_deref(),
+                *concurrent,
+            )
+            .await,
+        ),
 
         // All other variants fall through to legacy dispatch.
         _ => None,

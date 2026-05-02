@@ -1,70 +1,80 @@
-//! `REINDEX INDEX name` / `REINDEX TABLE collection` — rebuild indexes.
+//! `REINDEX [CONCURRENTLY] collection` — rebuild indexes.
 //!
-//! Dispatches a MetaOp::Checkpoint to the Data Plane via the distributed
-//! maintenance helper, which forces index structures to be rebuilt.
+//! Grammar:
+//!   REINDEX [INDEX <name>] [CONCURRENTLY] <collection>
+//!
+//! Non-concurrent path: dispatches `MetaOp::Checkpoint` (existing semantics).
+//! Concurrent path: dispatches `MetaOp::RebuildIndex { concurrent: true }` to
+//! every core and awaits the cross-core ACK barrier before returning.
+//!
+//! The grammar is parsed once by `nodedb_sql::ddl_ast::parse` into
+//! `NodedbStatement::Reindex { .. }`; this handler receives the already-parsed
+//! fields and never re-tokenises the SQL string.
 
 use pgwire::api::results::{Response, Tag};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 
+use crate::bridge::physical_plan::MetaOp;
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::control::state::SharedState;
+use crate::types::TraceId;
 
-/// Handle `REINDEX INDEX name` or `REINDEX TABLE collection`.
-pub fn handle_reindex(
+/// Execute a parsed `REINDEX [INDEX name] [CONCURRENTLY] collection` statement.
+pub async fn handle_reindex(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
-    parts: &[&str],
+    collection: &str,
+    index_name: Option<&str>,
+    concurrent: bool,
 ) -> PgWireResult<Vec<Response>> {
-    if parts.len() < 3 {
+    let collection = collection.to_lowercase();
+    let index_name = index_name.map(str::to_lowercase);
+    let tenant_id = identity.tenant_id;
+
+    // Verify the collection exists.
+    if let Some(catalog) = state.credentials.catalog()
+        && catalog
+            .get_collection(tenant_id.as_u64(), &collection)
+            .ok()
+            .flatten()
+            .is_none()
+    {
         return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
             "ERROR".to_owned(),
-            "42601".to_owned(),
-            "syntax: REINDEX INDEX <name> or REINDEX TABLE <collection>".to_owned(),
+            "42P01".to_owned(),
+            format!("collection \"{collection}\" does not exist"),
         ))));
     }
 
-    let target_type = parts[1].to_uppercase();
-    let target_name = parts[2].to_lowercase();
-    let tenant_id = identity.tenant_id;
-
-    match target_type.as_str() {
-        "INDEX" => {
-            super::distributed::dispatch_maintenance_to_all_cores(
-                state,
-                tenant_id,
-                crate::bridge::physical_plan::MetaOp::Checkpoint,
-            );
-            tracing::info!(index = %target_name, "REINDEX INDEX dispatched");
-        }
-        "TABLE" => {
-            if let Some(catalog) = state.credentials.catalog()
-                && catalog
-                    .get_collection(tenant_id.as_u64(), &target_name)
-                    .ok()
-                    .flatten()
-                    .is_none()
-            {
-                return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                    "ERROR".to_owned(),
-                    "42P01".to_owned(),
-                    format!("collection \"{target_name}\" does not exist"),
-                ))));
-            }
-
-            super::distributed::dispatch_maintenance_to_all_cores(
-                state,
-                tenant_id,
-                crate::bridge::physical_plan::MetaOp::Checkpoint,
-            );
-            tracing::info!(collection = %target_name, "REINDEX TABLE dispatched");
-        }
-        _ => {
-            return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+    if concurrent {
+        // Concurrent path: broadcast to all cores and await per-core ACK.
+        let plan = crate::bridge::envelope::PhysicalPlan::Meta(MetaOp::RebuildIndex {
+            collection: collection.clone(),
+            index_name,
+            concurrent: true,
+        });
+        let trace_id = TraceId::generate();
+        crate::control::server::broadcast::broadcast_register_to_all_cores(
+            state, tenant_id, plan, trace_id,
+        )
+        .await
+        .map_err(|e| {
+            PgWireError::UserError(Box::new(ErrorInfo::new(
                 "ERROR".to_owned(),
-                "42601".to_owned(),
-                "syntax: REINDEX INDEX <name> or REINDEX TABLE <collection>".to_owned(),
-            ))));
-        }
+                "XX000".to_owned(),
+                format!("REINDEX CONCURRENTLY failed: {e}"),
+            )))
+        })?;
+
+        tracing::info!(
+            %collection,
+            concurrent = true,
+            "REINDEX CONCURRENTLY dispatched and acknowledged by all cores"
+        );
+    } else {
+        // Non-concurrent path: fire-and-forget (same as legacy Checkpoint).
+        super::distributed::dispatch_maintenance_to_all_cores(state, tenant_id, MetaOp::Checkpoint);
+        tracing::info!(%collection, concurrent = false, "REINDEX dispatched");
     }
 
     Ok(vec![Response::Execution(Tag::new("REINDEX"))])

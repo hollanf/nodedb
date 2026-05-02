@@ -110,6 +110,8 @@ pub enum NodedbStatement {
     },
     Reindex {
         collection: String,
+        index_name: Option<String>,
+        concurrent: bool,
     },
 
     // ── Trigger ──────────────────────────────────────────────────

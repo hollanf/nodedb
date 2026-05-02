@@ -52,11 +52,7 @@ pub(super) async fn dispatch(
             state, identity, parts,
         ));
     }
-    if upper.starts_with("REINDEX ") {
-        return Some(super::super::maintenance::handle_reindex(
-            state, identity, parts,
-        ));
-    }
+    // REINDEX is fully dispatched via typed AST (ast.rs).
     if upper.starts_with("SHOW STORAGE ") {
         return Some(super::super::maintenance::handle_show_storage(
             state, identity, parts,

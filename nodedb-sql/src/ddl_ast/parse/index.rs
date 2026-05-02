@@ -33,11 +33,66 @@ pub(super) fn try_parse(
             return Ok(Some(NodedbStatement::ShowIndexes { collection }));
         }
         if upper.starts_with("REINDEX ") {
-            let collection = match parts.get(1) {
+            // Grammar: REINDEX [INDEX <name>] [CONCURRENTLY] <collection>
+            //
+            // Parsing strategy: walk parts starting at index 1.
+            // Optional INDEX <name> occupies positions 1-2; optional CONCURRENTLY
+            // is anywhere before the final token; the last token is the collection.
+            let mut offset = 1usize;
+            let mut index_name: Option<String> = None;
+            let mut concurrent = false;
+
+            // Skip optional TABLE keyword for backwards compat (REINDEX TABLE <coll>)
+            if parts
+                .get(offset)
+                .map(|p| p.eq_ignore_ascii_case("TABLE"))
+                .unwrap_or(false)
+            {
+                offset += 1;
+            }
+
+            // Consume optional INDEX <name>. The name is required when INDEX is
+            // present and must not be the CONCURRENTLY keyword.
+            if parts
+                .get(offset)
+                .map(|p| p.eq_ignore_ascii_case("INDEX"))
+                .unwrap_or(false)
+            {
+                offset += 1;
+                let name = parts.get(offset).ok_or_else(|| SqlError::Parse {
+                    detail: "REINDEX INDEX requires an index name".to_string(),
+                })?;
+                if name.eq_ignore_ascii_case("CONCURRENTLY") {
+                    return Err(SqlError::Parse {
+                        detail: "REINDEX INDEX requires an index name before CONCURRENTLY"
+                            .to_string(),
+                    });
+                }
+                index_name = Some(name.to_lowercase());
+                offset += 1;
+            }
+
+            // Consume optional CONCURRENTLY
+            if parts
+                .get(offset)
+                .map(|p| p.eq_ignore_ascii_case("CONCURRENTLY"))
+                .unwrap_or(false)
+            {
+                concurrent = true;
+                offset += 1;
+            }
+
+            // Remaining token is the collection name
+            let collection = match parts.get(offset) {
                 None => return Ok(None),
-                Some(s) => s.to_string(),
+                Some(s) => s.to_lowercase(),
             };
-            return Ok(Some(NodedbStatement::Reindex { collection }));
+
+            return Ok(Some(NodedbStatement::Reindex {
+                collection,
+                index_name,
+                concurrent,
+            }));
         }
         Ok(None)
     })()
