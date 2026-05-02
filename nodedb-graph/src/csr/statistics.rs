@@ -6,10 +6,13 @@
 //! optimization (most selective label first).
 
 use std::collections::HashMap;
+use std::mem::size_of;
 
+use nodedb_mem::EngineId;
 use serde::{Deserialize, Serialize};
 
 use super::CsrIndex;
+use crate::GraphError;
 
 /// Per-label edge statistics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,10 +58,15 @@ impl CsrIndex {
     ///
     /// O(V + E) — iterates all nodes and edges once. Intended for query
     /// planning, not hot-path execution.
-    pub fn compute_statistics(&self) -> GraphStatistics {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::MemoryBudget`] if a memory governor is installed
+    /// and the degree-array working set would exceed the `Graph` engine budget.
+    pub fn compute_statistics(&self) -> Result<GraphStatistics, GraphError> {
         let n = self.node_count();
         if n == 0 {
-            return GraphStatistics {
+            return Ok(GraphStatistics {
                 node_count: 0,
                 edge_count: 0,
                 label_count: 0,
@@ -79,8 +87,16 @@ impl CsrIndex {
                     p95: 0,
                     p99: 0,
                 },
-            };
+            });
         }
+
+        // Reserve memory for the two degree-distribution scratch arrays.
+        let degree_bytes = 2 * n * size_of::<usize>();
+        let _degree_guard = self
+            .governor
+            .as_ref()
+            .map(|g| g.reserve(EngineId::Graph, degree_bytes))
+            .transpose()?;
 
         // Per-label counters.
         let mut label_edge_count: HashMap<u32, usize> = HashMap::new();
@@ -88,7 +104,9 @@ impl CsrIndex {
         let mut label_targets: HashMap<u32, std::collections::HashSet<u32>> = HashMap::new();
 
         // Degree arrays.
+        // no-governor: cold statistics scan; degree arrays parallel to node count, governed at stats call site
         let mut out_degrees: Vec<usize> = Vec::with_capacity(n);
+        // no-governor: cold statistics scan; degree arrays parallel to node count, governed at stats call site
         let mut in_degrees: Vec<usize> = Vec::with_capacity(n);
 
         let mut total_edges = 0usize;
@@ -128,14 +146,14 @@ impl CsrIndex {
             );
         }
 
-        GraphStatistics {
+        Ok(GraphStatistics {
             node_count: n,
             edge_count: total_edges,
             label_count: label_edge_count.len(),
             label_stats,
             out_degree_histogram: compute_histogram(&out_degrees),
             in_degree_histogram: compute_histogram(&in_degrees),
-        }
+        })
     }
 
     /// Get the edge count for a specific label. O(E) unless cached.
@@ -211,7 +229,7 @@ mod tests {
     #[test]
     fn statistics_empty_graph() {
         let csr = CsrIndex::new();
-        let stats = csr.compute_statistics();
+        let stats = csr.compute_statistics().unwrap();
         assert_eq!(stats.node_count, 0);
         assert_eq!(stats.edge_count, 0);
         assert_eq!(stats.label_count, 0);
@@ -223,9 +241,9 @@ mod tests {
         csr.add_edge("a", "KNOWS", "b").unwrap();
         csr.add_edge("b", "KNOWS", "c").unwrap();
         csr.add_edge("a", "LIKES", "c").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
-        let stats = csr.compute_statistics();
+        let stats = csr.compute_statistics().unwrap();
         assert_eq!(stats.node_count, 3);
         assert_eq!(stats.edge_count, 3);
         assert_eq!(stats.label_count, 2);
@@ -246,9 +264,9 @@ mod tests {
         csr.add_edge("a", "L", "c").unwrap();
         csr.add_edge("a", "L", "d").unwrap();
         csr.add_edge("b", "L", "c").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
-        let stats = csr.compute_statistics();
+        let stats = csr.compute_statistics().unwrap();
         assert_eq!(stats.out_degree_histogram.min, 0);
         assert_eq!(stats.out_degree_histogram.max, 3);
         assert!(stats.out_degree_histogram.avg > 0.0);
@@ -260,7 +278,7 @@ mod tests {
         csr.add_edge("a", "KNOWS", "b").unwrap();
         csr.add_edge("b", "KNOWS", "c").unwrap();
         csr.add_edge("a", "LIKES", "c").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         assert_eq!(csr.label_edge_count("KNOWS"), 2);
         assert_eq!(csr.label_edge_count("LIKES"), 1);
@@ -273,7 +291,7 @@ mod tests {
         csr.add_edge("a", "KNOWS", "b").unwrap();
         csr.add_edge("b", "KNOWS", "c").unwrap();
         csr.add_edge("a", "LIKES", "c").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let sel_knows = csr.label_selectivity("KNOWS");
         let sel_likes = csr.label_selectivity("LIKES");
@@ -287,9 +305,9 @@ mod tests {
     fn statistics_serde_roundtrip() {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "KNOWS", "b").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
-        let stats = csr.compute_statistics();
+        let stats = csr.compute_statistics().unwrap();
         let json = sonic_rs::to_string(&stats).unwrap();
         let parsed: GraphStatistics = sonic_rs::from_str(&json).unwrap();
         assert_eq!(parsed.node_count, stats.node_count);
@@ -301,7 +319,7 @@ mod tests {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "KNOWS", "b").unwrap();
         // Don't compact — edges in buffer.
-        let stats = csr.compute_statistics();
+        let stats = csr.compute_statistics().unwrap();
         assert_eq!(stats.edge_count, 1);
         assert_eq!(stats.label_stats["KNOWS"].edge_count, 1);
     }

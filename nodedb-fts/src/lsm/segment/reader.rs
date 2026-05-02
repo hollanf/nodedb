@@ -105,6 +105,7 @@ fn decode_term_blocks(buf: &[u8]) -> Vec<PostingBlock> {
     }
     let num_blocks = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
     let mut pos = 4;
+    // no-governor: cold segment decode; num_blocks read from segment header, governed at compaction call site
     let mut blocks = Vec::with_capacity(num_blocks);
 
     for _ in 0..num_blocks {

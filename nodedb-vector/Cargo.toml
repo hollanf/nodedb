@@ -26,6 +26,7 @@ acorn-baseline = []
 [dependencies]
 nodedb-types = { workspace = true }
 nodedb-codec = { workspace = true }
+nodedb-mem = { workspace = true }
 serde = { workspace = true }
 zerompk = { workspace = true }
 rkyv = { workspace = true }

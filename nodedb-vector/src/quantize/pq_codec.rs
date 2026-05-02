@@ -85,8 +85,19 @@ impl VectorCodec for PqCodec {
     }
 
     /// Prepare the query by precomputing the M×K asymmetric distance table.
+    ///
+    /// The `VectorCodec` trait does not propagate errors.  A `PqCodec` used
+    /// via this trait path is created by `PqCodec::train` which sets no
+    /// governor; `build_distance_table` therefore always returns `Ok` here.
+    /// If a governor is attached and its budget is exhausted the caller that
+    /// constructed the codec is responsible for handling the error — this impl
+    /// panics with a descriptive message so the budget violation is never
+    /// silently ignored.
     fn prepare_query(&self, q: &[f32]) -> Self::Query {
-        let distance_table = self.build_distance_table(q);
+        let distance_table = self.build_distance_table(q).expect(
+            "PqCodec::prepare_query: build_distance_table failed; \
+                     if a governor is attached ensure it has sufficient budget",
+        );
         PqQuery {
             distance_table,
             raw: q.to_vec(),
@@ -116,8 +127,12 @@ impl VectorCodec for PqCodec {
     /// its nearest centroids, and the distance is computed in FP32.
     #[inline]
     fn fast_symmetric_distance(&self, q: &Self::Quantized, v: &Self::Quantized) -> f32 {
-        let dq_a = self.decode(packed_bits_of(q));
-        let dq_b = self.decode(packed_bits_of(v));
+        let dq_a = self
+            .decode(packed_bits_of(q))
+            .expect("PqCodec::fast_symmetric_distance: decode failed");
+        let dq_b = self
+            .decode(packed_bits_of(v))
+            .expect("PqCodec::fast_symmetric_distance: decode failed");
         dq_a.iter()
             .zip(dq_b.iter())
             .map(|(&a, &b)| {

@@ -114,6 +114,12 @@ impl<B: FtsBackend> FtsIndex<B> {
         }
 
         // Fallback: exhaustive BM25 scoring reading directly from the backend.
+        #[cfg(feature = "governor")]
+        let _term_postings_guard = self.governor.as_ref().and_then(|gov| {
+            let bytes = num_query_terms
+                * (std::mem::size_of::<Vec<Posting>>() + std::mem::size_of::<bool>());
+            gov.reserve(nodedb_mem::EngineId::Fts, bytes).ok()
+        });
         let mut term_postings: Vec<(Vec<Posting>, bool)> = Vec::with_capacity(num_query_terms);
         for (i, token) in query_tokens.iter().enumerate() {
             let postings = self.backend.read_postings(tid, collection, token)?;
@@ -219,6 +225,8 @@ impl<B: FtsBackend> FtsIndex<B> {
             collection,
             self.memtable(),
             query_tokens,
+            #[cfg(feature = "governor")]
+            self.governor.as_ref(),
         )?;
 
         let mut results = Vec::new();
@@ -248,6 +256,8 @@ impl<B: FtsBackend> FtsIndex<B> {
             collection,
             self.memtable(),
             query_tokens,
+            #[cfg(feature = "governor")]
+            self.governor.as_ref(),
         ) {
             Ok(tb) => tb,
             Err(_) => return 0,

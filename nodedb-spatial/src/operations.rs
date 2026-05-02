@@ -109,6 +109,7 @@ fn buffer_point(lng: f64, lat: f64, meters: f64, segments: usize) -> Geometry {
     let dlat = meters / 110_540.0;
     let dlng = meters / (111_320.0 * lat.to_radians().cos().max(0.001));
 
+    // no-governor: cold buffer geometry; segments is a fixed constant (default 32), geometry build path
     let mut ring = Vec::with_capacity(segments + 1);
     for i in 0..segments {
         let angle = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
@@ -191,6 +192,7 @@ fn buffer_linestring(line: &[[f64; 2]], meters: f64, segments: usize) -> Geometr
 
 /// Buffer a polygon by offsetting each vertex outward.
 fn buffer_polygon(rings: &[Vec<[f64; 2]>], meters: f64, _segments: usize) -> Geometry {
+    // no-governor: cold polygon buffer; ring count bounded by input geometry, geometry transform path
     let mut new_rings = Vec::with_capacity(rings.len());
 
     for (ring_idx, ring) in rings.iter().enumerate() {
@@ -203,6 +205,7 @@ fn buffer_polygon(rings: &[Vec<[f64; 2]>], meters: f64, _segments: usize) -> Geo
         let sign = if is_exterior { 1.0 } else { -1.0 };
         let offset_m = meters * sign;
 
+        // no-governor: cold ring offset; ring.len() = vertex count, geometry transform path
         let mut new_ring = Vec::with_capacity(ring.len());
         let n = if ring.first() == ring.last() {
             ring.len() - 1

@@ -288,6 +288,7 @@ impl SegmentFooter {
         let footer_len = footer_msgpack.len() as u32;
         let footer_crc = crc32c::crc32c(&footer_msgpack);
 
+        // no-governor: cold footer serialize; fixed overhead (msgpack + 8-byte trailer), governed at write call site
         let mut buf = Vec::with_capacity(footer_msgpack.len() + 8);
         buf.extend_from_slice(&footer_msgpack);
         buf.extend_from_slice(&footer_len.to_le_bytes());

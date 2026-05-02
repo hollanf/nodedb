@@ -20,6 +20,7 @@ pub fn unpack(data: &[u8], bit_width: u8, num_values: usize) -> Vec<u32> {
     if num_values == 0 || bit_width == 0 {
         return vec![0; num_values];
     }
+    // no-governor: hot-path SIMD unpack; bounded by block size (≤128 values)
     let mut out = Vec::with_capacity(num_values);
 
     #[cfg(target_arch = "x86_64")]

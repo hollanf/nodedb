@@ -40,6 +40,7 @@ pub(super) fn encode_validity_bitmap(valid: &[bool]) -> Vec<u8> {
 /// Prepend a validity bitmap to compressed data.
 pub(super) fn prepend_validity(valid: &[bool], compressed: &[u8]) -> Vec<u8> {
     let bitmap = encode_validity_bitmap(valid);
+    // no-governor: cold validity prepend; combines bitmap + compressed sizes, governed at column encode call site
     let mut result = Vec::with_capacity(bitmap.len() + compressed.len());
     result.extend_from_slice(&bitmap);
     result.extend_from_slice(compressed);

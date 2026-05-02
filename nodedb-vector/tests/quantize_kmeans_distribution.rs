@@ -42,7 +42,7 @@ fn clustered_with_duplicates() -> Vec<Vec<f32>> {
 
 fn unique_centroid_count(codec: &PqCodec, vectors: &[Vec<f32>]) -> usize {
     let refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
-    let codes = codec.encode_batch(&refs);
+    let codes = codec.encode_batch(&refs).expect("encode_batch");
     let m = codec.m;
     // Per-subspace unique centroid indices used across the batch.
     let mut min_unique = usize::MAX;
@@ -84,7 +84,9 @@ fn pq_distance_table_separates_duplicates_from_outliers() {
     let codec = PqCodec::train(&refs, 4, 2, 16, 20);
 
     let query = [0.0f32, 0.0, 0.0, 0.0];
-    let table = codec.build_distance_table(&query);
+    let table = codec
+        .build_distance_table(&query)
+        .expect("build_distance_table");
 
     let dup_code = codec.encode(&vecs[0]); // duplicate cluster
     let outlier_code = codec.encode(&vecs[195]); // outlier cluster

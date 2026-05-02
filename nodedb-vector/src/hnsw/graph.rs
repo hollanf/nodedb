@@ -329,6 +329,7 @@ impl HnswIndex {
         }
         self.ensure_mutable_neighbors();
 
+        // no-governor: cold compaction id-remap; scales with node count, governed at compaction call site
         let mut id_map: Vec<u32> = Vec::with_capacity(self.nodes.len());
         let mut new_id = 0u32;
         for node in &self.nodes {
@@ -340,6 +341,7 @@ impl HnswIndex {
             }
         }
 
+        // no-governor: cold compaction node drain; same compaction budget as id_map above
         let mut new_nodes: Vec<Node> = Vec::with_capacity(new_id as usize);
         for node in self.nodes.drain(..) {
             if node.deleted {

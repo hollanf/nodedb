@@ -97,6 +97,7 @@ impl DocIdMap {
         let count = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
         let mut pos = 4;
         let mut forward = HashMap::with_capacity(count);
+        // no-governor: cold doc-id map parse; count from segment header, governed at open call site
         let mut reverse = Vec::with_capacity(count);
 
         for i in 0..count {

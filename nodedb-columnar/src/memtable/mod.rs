@@ -126,6 +126,7 @@ impl ColumnarMemtable {
         if row_idx >= self.row_count {
             return None;
         }
+        // no-governor: hot-path per-row fetch; bounded by column count (schema width, typically small)
         let mut row = Vec::with_capacity(self.columns.len());
         for col in &self.columns {
             row.push(col.get_value(row_idx));
@@ -244,6 +245,7 @@ impl Iterator for MemtableRowIter<'_> {
         if self.current >= self.row_count {
             return None;
         }
+        // no-governor: hot-path Iterator::next per-row; bounded by column count (schema width, typically small)
         let mut row = Vec::with_capacity(self.columns.len());
         for col in self.columns {
             row.push(col.get_value(self.current));

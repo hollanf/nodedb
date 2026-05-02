@@ -11,11 +11,26 @@ use crate::block::{CompactPosting, PostingBlock, into_blocks};
 
 use super::segment::reader::SegmentReader;
 
+#[cfg(feature = "governor")]
+use std::sync::Arc;
+
+#[cfg(feature = "governor")]
+use nodedb_mem::{EngineId, MemoryGovernor};
+
 /// Merge multiple segments into a single set of per-term PostingBlocks.
 ///
 /// The result is a sorted list of `(term, blocks)` suitable for
 /// `segment::writer::build_from_blocks`.
-pub fn merge_segments(segments: &[SegmentReader]) -> Vec<(String, Vec<PostingBlock>)> {
+///
+/// When `governor` is `Some`, the `Vec::with_capacity` for the result is
+/// budgeted via [`MemoryGovernor::reserve`] before the allocation.
+/// If the budget is exceeded the allocation still proceeds — the governor
+/// serves as an accounting and backpressure signal; callers that need hard
+/// rejection should check pressure before dispatching the operation.
+pub fn merge_segments(
+    segments: &[SegmentReader],
+    #[cfg(feature = "governor")] governor: Option<&Arc<MemoryGovernor>>,
+) -> Vec<(String, Vec<PostingBlock>)> {
     // Collect all unique terms across all segments.
     let mut all_terms = BTreeSet::new();
     for seg in segments {
@@ -23,6 +38,13 @@ pub fn merge_segments(segments: &[SegmentReader]) -> Vec<(String, Vec<PostingBlo
             all_terms.insert(entry.term.clone());
         }
     }
+
+    #[cfg(feature = "governor")]
+    let _result_guard = governor.and_then(|gov| {
+        let bytes = all_terms.len()
+            * (std::mem::size_of::<String>() + std::mem::size_of::<Vec<PostingBlock>>());
+        gov.reserve(EngineId::Fts, bytes).ok()
+    });
 
     let mut result = Vec::with_capacity(all_terms.len());
 
@@ -131,7 +153,11 @@ mod tests {
         let r1 = SegmentReader::open(seg1).expect("seg1 must be valid");
         let r2 = SegmentReader::open(seg2).expect("seg2 must be valid");
 
-        let merged = merge_segments(&[r1, r2]);
+        let merged = merge_segments(
+            &[r1, r2],
+            #[cfg(feature = "governor")]
+            None,
+        );
         let terms: Vec<&str> = merged.iter().map(|(t, _)| t.as_str()).collect();
         assert!(terms.contains(&"hello"));
         assert!(terms.contains(&"world"));

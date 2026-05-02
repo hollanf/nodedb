@@ -203,6 +203,7 @@ impl PostingBlock {
         pos += doc_count;
 
         // Position data.
+        // no-governor: cold block decode; doc_count from block header (≤ 128), fixed-tiny in practice
         let mut positions = Vec::with_capacity(doc_count);
         for _ in 0..doc_count {
             if pos + 2 > buf.len() {

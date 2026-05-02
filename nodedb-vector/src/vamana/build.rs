@@ -179,6 +179,7 @@ fn compute_medoid<C: VectorCodec>(
 /// sampler. Not statistically uniform, but deterministic and cheap.
 fn uniform_sample(n: usize, count: usize, seed: u64) -> Vec<usize> {
     let mut state = seed.max(1);
+    // no-governor: cold sampling helper; count ≤ num_workers (small constant)
     let mut out = Vec::with_capacity(count);
     let mut seen = std::collections::HashSet::new();
 
@@ -196,6 +197,7 @@ fn uniform_sample(n: usize, count: usize, seed: u64) -> Vec<usize> {
 
 /// Generate R distinct random neighbors for node `i` from `[0, n)`.
 fn random_r_neighbors(i: usize, n: usize, r: usize, state: &mut u64) -> Vec<usize> {
+    // no-governor: cold init of random neighbors; bounded by r (graph degree ≤ 32)
     let mut out = Vec::with_capacity(r);
     let mut seen = std::collections::HashSet::new();
     seen.insert(i);

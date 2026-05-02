@@ -24,6 +24,7 @@ pub fn flush_to_segment(
 
     // Phase 1: Encode posting blocks for each term, collect byte offsets.
     let mut posting_data = Vec::new();
+    // no-governor: cold segment write; dict_entries count = unique terms, governed at write call site
     let mut dict_entries = Vec::with_capacity(sorted_terms.len());
 
     for (term, postings) in &sorted_terms {
@@ -96,6 +97,7 @@ pub fn build_from_blocks(
     term_blocks: &[(String, Vec<PostingBlock>)],
 ) -> Result<Vec<u8>, SegmentError> {
     let mut posting_data = Vec::new();
+    // no-governor: cold segment write from pre-blocked data; governed at compaction/parallel-build call site
     let mut dict_entries = Vec::with_capacity(term_blocks.len());
 
     for (term, blocks) in term_blocks {

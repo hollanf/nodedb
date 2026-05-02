@@ -9,6 +9,12 @@ use crate::backend::FtsBackend;
 use super::merge;
 use super::segment::{reader::SegmentReader, writer};
 
+#[cfg(feature = "governor")]
+use std::sync::Arc;
+
+#[cfg(feature = "governor")]
+use nodedb_mem::{EngineId, MemoryGovernor};
+
 /// Compaction configuration.
 #[derive(Debug, Clone, Copy)]
 pub struct CompactionConfig {
@@ -59,27 +65,87 @@ pub fn needs_compaction(segments: &[SegmentMeta], config: &CompactionConfig) -> 
 /// Result of a compaction: new segment bytes and ids of merged (to-remove) segments.
 pub type CompactionResult = (Vec<u8>, Vec<String>);
 
+/// Errors from `compact_level` — wraps the backend error and, when the
+/// `governor` feature is enabled, budget exhaustion.
+#[derive(Debug)]
+pub enum CompactError<E> {
+    /// Underlying backend storage error.
+    Backend(E),
+    /// Memory budget exhausted (only produced when `governor` feature is active).
+    #[cfg(feature = "governor")]
+    Budget(nodedb_mem::MemError),
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for CompactError<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompactError::Backend(e) => write!(f, "compaction backend error: {e}"),
+            #[cfg(feature = "governor")]
+            CompactError::Budget(e) => write!(f, "compaction budget exhausted: {e}"),
+        }
+    }
+}
+
+/// Helper for converting a `CompactError` to `Backend` variant.
+impl<E> CompactError<E> {
+    pub(crate) fn backend(e: E) -> Self {
+        CompactError::Backend(e)
+    }
+}
+
 /// Perform compaction: merge all segments at `level` into one segment at `level + 1`.
 ///
 /// Returns the merged segment bytes and the ids of segments that were merged
 /// (which should be removed from storage after the new segment is written).
+///
+/// When `governor` is `Some`, each `Vec::with_capacity` allocation is budgeted
+/// via [`MemoryGovernor::reserve`]. If the budget is exhausted the function
+/// returns [`CompactError::Budget`] before allocating.
 pub fn compact_level<B: FtsBackend>(
     backend: &B,
     tid: u64,
     collection: &str,
     segments: &[SegmentMeta],
     level: u32,
-) -> Result<Option<CompactionResult>, B::Error> {
+    #[cfg(feature = "governor")] governor: Option<&Arc<MemoryGovernor>>,
+) -> Result<Option<CompactionResult>, CompactError<B::Error>> {
     let to_merge: Vec<&SegmentMeta> = segments.iter().filter(|s| s.level == level).collect();
     if to_merge.len() < 2 {
         return Ok(None);
     }
 
+    #[cfg(feature = "governor")]
+    let _readers_guard = if let Some(gov) = governor {
+        let bytes = to_merge.len() * std::mem::size_of::<SegmentReader>();
+        Some(
+            gov.reserve(EngineId::Fts, bytes)
+                .map_err(CompactError::Budget)?,
+        )
+    } else {
+        None
+    };
+
+    // no-governor: governed by _readers_guard via gov.reserve above; cfg(feature="governor") block outside 5-line window
     let mut readers = Vec::with_capacity(to_merge.len());
+
+    #[cfg(feature = "governor")]
+    let _ids_guard = if let Some(gov) = governor {
+        let bytes = to_merge.len() * std::mem::size_of::<String>();
+        Some(
+            gov.reserve(EngineId::Fts, bytes)
+                .map_err(CompactError::Budget)?,
+        )
+    } else {
+        None
+    };
+
+    // no-governor: governed by _ids_guard via gov.reserve above; cfg(feature="governor") block outside 5-line window
     let mut merged_ids = Vec::with_capacity(to_merge.len());
 
     for meta in &to_merge {
-        if let Some(data) = backend.read_segment(tid, collection, &meta.segment_id)?
+        if let Some(data) = backend
+            .read_segment(tid, collection, &meta.segment_id)
+            .map_err(CompactError::backend)?
             && let Ok(reader) = SegmentReader::open(data)
         {
             readers.push(reader);
@@ -91,7 +157,11 @@ pub fn compact_level<B: FtsBackend>(
         return Ok(None);
     }
 
-    let merged_term_blocks = merge::merge_segments(&readers);
+    let merged_term_blocks = merge::merge_segments(
+        &readers,
+        #[cfg(feature = "governor")]
+        governor,
+    );
     let new_segment = writer::build_from_blocks(&merged_term_blocks)
         .expect("compaction produced a term longer than u16::MAX — data invariant violated");
 

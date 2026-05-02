@@ -15,6 +15,9 @@
 //! `"weight"` edge property at insertion time. Unweighted edges default to 1.0.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use nodedb_mem::MemoryGovernor;
 
 use crate::csr::dense_array::DenseArray;
 
@@ -105,6 +108,15 @@ pub struct CsrIndex {
     /// every `LocalNodeId` this index produces; cross-partition use is
     /// caught by comparing tags at API boundaries.
     pub(crate) partition_tag: u32,
+
+    /// Optional memory governor for budget tracking.
+    ///
+    /// When `None`, all memory operations proceed without budget enforcement
+    /// (the behavior for NodeDB-Lite / WASM deployments that have no governor).
+    /// When `Some`, `compact()`, `checkpoint_to_bytes()`, and `compute_statistics()`
+    /// reserve bytes against `EngineId::Graph` before allocating and release them
+    /// on drop via `BudgetGuard`.
+    pub(crate) governor: Option<Arc<MemoryGovernor>>,
 }
 
 impl Default for CsrIndex {
@@ -142,6 +154,23 @@ impl CsrIndex {
             access_counts: Vec::new(),
             query_epoch: 0,
             partition_tag: crate::csr::local_node_id::next_partition_tag(),
+            governor: None,
+        }
+    }
+
+    /// Create a new `CsrIndex` wired to a memory governor.
+    ///
+    /// Subsequent calls to `compact()`, `checkpoint_to_bytes()`, and
+    /// `compute_statistics()` will reserve bytes against `EngineId::Graph`
+    /// before allocating and return `Err(GraphError::MemoryBudget(_))` if
+    /// the budget is exhausted.
+    ///
+    /// Use `CsrIndex::new()` when deploying without a governor (NodeDB-Lite,
+    /// WASM, or tests that do not need budget enforcement).
+    pub fn with_governor(governor: Arc<MemoryGovernor>) -> Self {
+        Self {
+            governor: Some(governor),
+            ..Self::new()
         }
     }
 }

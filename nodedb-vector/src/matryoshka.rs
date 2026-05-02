@@ -146,6 +146,7 @@ where
     // original iterator again.
     let mut coarse_heap: BinaryHeap<HeapEntry> = BinaryHeap::with_capacity(pool_size + 1);
     // Store owned copies of the surviving vectors for rerank.
+    // no-governor: search pool_size bounded by ef_search (small, typically ≤ 200); hot query path
     let mut survivor_vecs: Vec<Vec<f32>> = Vec::with_capacity(pool_size);
 
     for (id, vec) in candidates {

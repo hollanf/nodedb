@@ -1,9 +1,13 @@
 //! Vector engine error types.
 
+use nodedb_mem::MemError;
+
 /// Errors from vector index operations.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum VectorError {
+    #[error("memory budget exhausted: {0}")]
+    BudgetExhausted(#[from] MemError),
     #[error("vector dimension mismatch: expected {expected}, got {got}")]
     DimensionMismatch { expected: usize, got: usize },
     #[error("unsupported HNSW checkpoint version {found}; expected {expected}")]
@@ -27,4 +31,7 @@ pub enum VectorError {
     /// AES-256-GCM encryption/decryption or envelope framing of a checkpoint failed.
     #[error("vector checkpoint encryption error: {detail}")]
     CheckpointEncryptionError { detail: String },
+    /// I/O error from segment file operations (open, mmap, metadata).
+    #[error("vector segment I/O error: {0}")]
+    SegmentIo(#[from] std::io::Error),
 }

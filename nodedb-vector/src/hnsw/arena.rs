@@ -44,7 +44,9 @@ impl BeamSearchArena {
     /// allocating.
     pub fn new(initial_capacity: usize) -> Self {
         Self {
+            // no-governor: hot-path search arena; reused across queries via reset(), instrument cost exceeds benefit
             candidates: Vec::with_capacity(initial_capacity),
+            // no-governor: hot-path search arena; reused across queries via reset(), instrument cost exceeds benefit
             results: Vec::with_capacity(initial_capacity),
             visited: HashSet::with_capacity(initial_capacity * 4),
         }

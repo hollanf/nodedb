@@ -13,6 +13,7 @@ impl VectorCollection {
     /// codec-dispatch index.
     pub(crate) fn gather_all_vectors_fp32(&self) -> Vec<Vec<f32>> {
         let total = self.len();
+        // no-governor: gather is called once per codec-dispatch training cycle; vectors already live in memory
         let mut out = Vec::with_capacity(total);
 
         for i in 0..self.growing.len() as u32 {

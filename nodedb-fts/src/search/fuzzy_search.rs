@@ -39,6 +39,8 @@ impl<B: FtsBackend> FtsIndex<B> {
                 collection,
                 self.memtable(),
                 &tokens,
+                #[cfg(feature = "governor")]
+                self.governor.as_ref(),
             )?;
             if !term_blocks.is_empty() && term_blocks[0].df > 0 {
                 let mut postings = Vec::new();

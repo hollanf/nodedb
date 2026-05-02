@@ -20,6 +20,8 @@
 //! - `{collection}\x00{field}\x00rtree` → serialized R-tree entries
 //! - `{collection}\x00{field}\x00meta`  → SpatialIndexMeta
 
+#[cfg(feature = "governor")]
+use nodedb_mem;
 use nodedb_types::BoundingBox;
 use serde::{Deserialize, Serialize};
 use zerompk::{FromMessagePack, ToMessagePack};
@@ -153,7 +155,12 @@ impl RTree {
             .map_err(|e| RTreeCheckpointError::RkyvSerialize(e.to_string()))?;
 
         // Build inner plaintext: magic + version + rkyv payload.
-        let mut inner = Vec::with_capacity(RTREE_RKYV_MAGIC.len() + 1 + rkyv_bytes.len());
+        let inner_len = RTREE_RKYV_MAGIC.len() + 1 + rkyv_bytes.len();
+        #[cfg(feature = "governor")]
+        let _guard = self
+            .governor()
+            .and_then(|gov| gov.reserve(nodedb_mem::EngineId::Spatial, inner_len).ok());
+        let mut inner = Vec::with_capacity(inner_len);
         inner.extend_from_slice(RTREE_RKYV_MAGIC);
         inner.push(RTREE_FORMAT_VERSION);
         inner.extend_from_slice(&rkyv_bytes);
@@ -238,6 +245,7 @@ impl RTree {
 ///
 /// Format: `{collection}\0{field}\0rtree`
 pub fn rtree_storage_key(collection: &str, field: &str) -> Vec<u8> {
+    // no-governor: fixed-tiny storage key; bounded by collection+field name lengths (cold path)
     let mut key = Vec::with_capacity(collection.len() + field.len() + 8);
     key.extend_from_slice(collection.as_bytes());
     key.push(0);
@@ -251,6 +259,7 @@ pub fn rtree_storage_key(collection: &str, field: &str) -> Vec<u8> {
 ///
 /// Format: `{collection}\0{field}\0meta`
 pub fn meta_storage_key(collection: &str, field: &str) -> Vec<u8> {
+    // no-governor: fixed-tiny storage key; bounded by collection+field name lengths (cold path)
     let mut key = Vec::with_capacity(collection.len() + field.len() + 7);
     key.extend_from_slice(collection.as_bytes());
     key.push(0);
@@ -309,6 +318,19 @@ pub enum RTreeCheckpointError {
     #[cfg(feature = "encryption")]
     #[error("spatial checkpoint decryption failed: {0}")]
     DecryptionFailed(String),
+    /// Memory governor rejected the allocation.
+    #[cfg(feature = "governor")]
+    #[error("spatial checkpoint memory budget exhausted: {0}")]
+    BudgetExhausted(String),
+}
+
+// ── Error conversions ──────────────────────────────────────────────────────
+
+#[cfg(feature = "governor")]
+impl From<nodedb_mem::MemError> for RTreeCheckpointError {
+    fn from(e: nodedb_mem::MemError) -> Self {
+        RTreeCheckpointError::BudgetExhausted(e.to_string())
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────

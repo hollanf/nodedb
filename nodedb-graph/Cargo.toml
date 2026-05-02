@@ -11,6 +11,7 @@ homepage.workspace = true
 
 [dependencies]
 nodedb-types = { workspace = true }
+nodedb-mem = { workspace = true }
 serde = { workspace = true }
 rmpv = { workspace = true }
 zerompk = { workspace = true }

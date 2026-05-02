@@ -5,8 +5,12 @@
 //! Used by both Origin (via redb storage) and Lite (via embedded checkpoint).
 
 use std::collections::HashMap;
+use std::mem::size_of;
+
+use nodedb_mem::EngineId;
 
 use super::index::CsrIndex;
+use crate::GraphError;
 
 /// Magic header for rkyv-serialized CSR snapshots (6 bytes).
 const RKYV_MAGIC: &[u8; 6] = b"RKCS2\0";
@@ -46,7 +50,12 @@ struct CsrSnapshotRkyv {
 
 impl CsrIndex {
     /// Serialize the index to rkyv bytes (with magic header) for storage.
-    pub fn checkpoint_to_bytes(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::MemoryBudget`] if a memory governor is installed
+    /// and the serialization buffer would exceed the `Graph` engine budget.
+    pub fn checkpoint_to_bytes(&self) -> Result<Vec<u8>, GraphError> {
         let snapshot = CsrSnapshotRkyv {
             nodes: self.id_to_node.clone(),
             labels: self.id_to_label.clone(),
@@ -67,11 +76,17 @@ impl CsrIndex {
         };
         let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&snapshot)
             .expect("CSR rkyv serialization should not fail");
-        let mut buf = Vec::with_capacity(RKYV_MAGIC.len() + 1 + rkyv_bytes.len());
+        let buf_capacity = RKYV_MAGIC.len() + 1 + rkyv_bytes.len();
+        let _budget_guard = self
+            .governor
+            .as_ref()
+            .map(|g| g.reserve(EngineId::Graph, buf_capacity * size_of::<u8>()))
+            .transpose()?;
+        let mut buf = Vec::with_capacity(buf_capacity);
         buf.extend_from_slice(RKYV_MAGIC);
         buf.push(CSR_FORMAT_VERSION);
         buf.extend_from_slice(&rkyv_bytes);
-        buf
+        Ok(buf)
     }
 
     /// Restore an index from a checkpoint snapshot.
@@ -219,6 +234,9 @@ impl CsrIndex {
             access_counts,
             query_epoch: 0,
             partition_tag: crate::csr::local_node_id::next_partition_tag(),
+            // Checkpoint restore creates an ungoverned index; callers that
+            // need budget enforcement should call `set_governor` afterwards.
+            governor: None,
         })
     }
 
@@ -281,6 +299,8 @@ impl CsrIndex {
             access_counts,
             query_epoch: 0,
             partition_tag: crate::csr::local_node_id::next_partition_tag(),
+            // Checkpoint restore creates an ungoverned index.
+            governor: None,
         }
     }
 }
@@ -295,9 +315,9 @@ mod tests {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "KNOWS", "b").unwrap();
         csr.add_edge("b", "KNOWS", "c").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
-        let bytes = csr.checkpoint_to_bytes();
+        let bytes = csr.checkpoint_to_bytes().expect("no governor, cannot fail");
         let restored = CsrIndex::from_checkpoint(&bytes)
             .expect("roundtrip")
             .unwrap();
@@ -316,9 +336,9 @@ mod tests {
         csr.add_edge_weighted("a", "R", "b", 2.5).unwrap();
         csr.add_edge_weighted("b", "R", "c", 7.0).unwrap();
         csr.add_edge("c", "R", "d").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
-        let bytes = csr.checkpoint_to_bytes();
+        let bytes = csr.checkpoint_to_bytes().expect("no governor, cannot fail");
         let restored = CsrIndex::from_checkpoint(&bytes)
             .expect("roundtrip")
             .unwrap();
@@ -333,7 +353,7 @@ mod tests {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
         // Don't compact — edges in buffer.
-        let bytes = csr.checkpoint_to_bytes();
+        let bytes = csr.checkpoint_to_bytes().expect("no governor, cannot fail");
         let restored = CsrIndex::from_checkpoint(&bytes)
             .expect("roundtrip")
             .unwrap();
@@ -344,7 +364,7 @@ mod tests {
     fn golden_header_layout() {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "KNOWS", "b").unwrap();
-        let bytes = csr.checkpoint_to_bytes();
+        let bytes = csr.checkpoint_to_bytes().expect("no governor, cannot fail");
         // Magic at bytes[0..6].
         assert_eq!(&bytes[0..6], b"RKCS2\0");
         // Version byte at bytes[6].
@@ -357,7 +377,7 @@ mod tests {
     fn version_mismatch_returns_error() {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "KNOWS", "b").unwrap();
-        let mut bytes = csr.checkpoint_to_bytes();
+        let mut bytes = csr.checkpoint_to_bytes().expect("no governor, cannot fail");
         // Corrupt the version byte to an unsupported value.
         bytes[6] = 0;
         match CsrIndex::from_checkpoint(&bytes) {

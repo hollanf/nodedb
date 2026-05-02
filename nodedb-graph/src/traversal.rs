@@ -455,7 +455,7 @@ mod tests {
             csr.add_edge(&format!("n{i}"), "NEXT", &format!("n{}", i + 1))
                 .unwrap();
         }
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let result = csr.traverse_bfs(
             &["n0"],

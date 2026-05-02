@@ -814,6 +814,7 @@ impl ColumnData {
         let row_count = col.len();
         let mut dictionary: Vec<String> = Vec::new();
         let mut reverse: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        // no-governor: cold memtable dictionary encode; row_count = memtable size, governed at flush call site
         let mut ids: Vec<u32> = Vec::with_capacity(row_count);
 
         for i in 0..row_count {

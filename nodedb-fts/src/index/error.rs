@@ -8,6 +8,9 @@ use thiserror::Error;
 
 use nodedb_types::Surrogate;
 
+#[cfg(feature = "governor")]
+use nodedb_mem::MemError;
+
 /// Maximum `Surrogate` value that can be safely indexed.
 ///
 /// FTS posting blocks store doc IDs as `u32` on disk (delta-encoded, bitpacked).
@@ -68,6 +71,14 @@ pub enum FtsIndexError<E: std::fmt::Display> {
     /// errors at the public API boundary.
     #[error("FTS segment error: {0}")]
     Segment(crate::lsm::segment::error::SegmentError),
+
+    /// Memory budget exhausted for the FTS engine.
+    ///
+    /// The operation requires more memory than the engine's remaining budget
+    /// allows. Callers should backpressure, spill, or reject the request.
+    #[cfg(feature = "governor")]
+    #[error("FTS memory budget exhausted: {0}")]
+    BudgetExhausted(MemError),
 }
 
 impl<E: std::fmt::Display> From<crate::lsm::segment::error::SegmentError> for FtsIndexError<E> {
@@ -86,5 +97,12 @@ impl<E: std::fmt::Display> FtsIndexError<E> {
     /// Wrap a backend error.
     pub(crate) fn backend(e: E) -> Self {
         Self::Backend(e)
+    }
+}
+
+#[cfg(feature = "governor")]
+impl<E: std::fmt::Display> From<MemError> for FtsIndexError<E> {
+    fn from(e: MemError) -> Self {
+        Self::BudgetExhausted(e)
     }
 }

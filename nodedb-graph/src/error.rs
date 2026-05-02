@@ -6,6 +6,7 @@
 //! boundaries reproduce the same class of bug as the one being fixed —
 //! loud, typed errors only.
 
+use nodedb_mem::MemError;
 use thiserror::Error;
 
 /// Hard upper bound on the number of distinct edge labels an individual
@@ -47,4 +48,10 @@ pub enum GraphError {
          collection must be sharded to accept more nodes"
     )]
     NodeOverflow { used: usize },
+
+    /// The memory governor rejected a reservation for a graph operation.
+    ///
+    /// Callers should apply backpressure and retry after memory is released.
+    #[error("graph memory budget rejected: {0}")]
+    MemoryBudget(#[from] MemError),
 }

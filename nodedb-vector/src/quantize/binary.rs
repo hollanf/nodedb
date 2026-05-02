@@ -28,6 +28,7 @@ pub fn encode(vector: &[f32]) -> Vec<u8> {
 /// Returns `ceil(dim/8) * N` bytes.
 pub fn encode_batch(vectors: &[&[f32]], dim: usize) -> Vec<u8> {
     let bytes_per = dim.div_ceil(8);
+    // no-governor: cold batch binary encode; governed at segment build call site
     let mut out = Vec::with_capacity(bytes_per * vectors.len());
     for v in vectors {
         out.extend(encode(v));

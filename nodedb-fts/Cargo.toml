@@ -11,6 +11,7 @@ homepage.workspace = true
 
 [features]
 default = []
+governor = ["dep:nodedb-mem"]
 lang-ja = ["dep:lindera"]
 # lang-zh currently falls back to CJK bigrams. The previous dictionary-based
 # implementation pulled jieba-rs → include-flate → libflate → yanked core2,
@@ -24,6 +25,7 @@ lang-all = ["lang-cjk", "lang-th", "lang-detect"]
 
 [dependencies]
 nodedb-types = { workspace = true }
+nodedb-mem = { workspace = true, optional = true }
 serde = { workspace = true }
 zerompk = { workspace = true }
 rust-stemmers = { workspace = true }

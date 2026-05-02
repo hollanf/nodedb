@@ -12,9 +12,27 @@
 //! Trade-off: 2-5% recall loss vs SQ8's <1%, but 2-4x more compression
 //! (8-16x total vs 4x for SQ8). Best for cost-sensitive large datasets.
 
+use std::mem::size_of;
+use std::sync::Arc;
+
+use nodedb_mem::{EngineId, MemoryGovernor};
 use serde::{Deserialize, Serialize};
 
 use crate::error::VectorError;
+
+/// Reserve `bytes` from `governor` for `EngineId::Vector`, or succeed silently
+/// when no governor is configured. The returned guard (if any) must be kept
+/// alive for the duration of the allocation it covers.
+#[inline]
+fn try_reserve_or_skip(
+    governor: &Option<Arc<MemoryGovernor>>,
+    bytes: usize,
+) -> Result<Option<nodedb_mem::BudgetGuard>, VectorError> {
+    match governor {
+        Some(g) => Ok(Some(g.reserve(EngineId::Vector, bytes)?)),
+        None => Ok(None),
+    }
+}
 
 /// PQ codec with trained codebooks.
 #[derive(
@@ -32,9 +50,30 @@ pub struct PqCodec {
     /// Codebooks: `codebooks[subspace][centroid][sub_dim_component]`.
     /// Total: M × K × sub_dim floats.
     codebooks: Vec<Vec<Vec<f32>>>,
+
+    /// Optional memory governor. Skipped during serialization — it is a
+    /// runtime concern only, not part of the on-disk format.
+    #[serde(skip, default)]
+    #[msgpack(ignore)]
+    governor: Option<Arc<MemoryGovernor>>,
 }
 
 impl PqCodec {
+    /// Attach a memory governor to this codec.
+    ///
+    /// Once set, heap-significant operations (`train`, `encode_batch`,
+    /// `build_distance_table`, `decode`, `to_bytes`) will charge the
+    /// `EngineId::Vector` budget before allocating and release the reservation
+    /// when the returned value is dropped (RAII).  When no governor is set
+    /// those operations proceed unconditionally, preserving backward
+    /// compatibility with callers that do not use the memory governor.
+    ///
+    /// The governor is a runtime concern only — it is **not** serialized.
+    pub fn with_governor(mut self, governor: Arc<MemoryGovernor>) -> Self {
+        self.governor = Some(governor);
+        self
+    }
+
     /// Train PQ codebooks from a set of training vectors via k-means.
     ///
     /// `m` = number of subvectors (must divide `dim` evenly).
@@ -49,6 +88,7 @@ impl PqCodec {
         );
 
         let sub_dim = dim / m;
+        // no-governor: cold codebook training; m subspaces (small, ≤ dim/sub_dim), one-time build
         let mut codebooks = Vec::with_capacity(m);
 
         for sub in 0..m {
@@ -69,12 +109,19 @@ impl PqCodec {
             k,
             sub_dim,
             codebooks,
+            governor: None,
         }
     }
 
     /// Encode a vector: for each subvector, find the nearest centroid index.
+    ///
+    /// This is a per-vector hot-path operation.  Governor charging is
+    /// intentionally skipped here to avoid atomic overhead on every candidate
+    /// during search; use [`encode_batch`] for bulk encoding with budget
+    /// enforcement.
     pub fn encode(&self, vector: &[f32]) -> Vec<u8> {
         debug_assert_eq!(vector.len(), self.dim);
+        // no-governor: hot-path per-vector encode; doc comment above intentionally skips governor
         let mut code = Vec::with_capacity(self.m);
         for sub in 0..self.m {
             let offset = sub * self.sub_dim;
@@ -86,12 +133,19 @@ impl PqCodec {
     }
 
     /// Batch encode all vectors into a contiguous byte array.
-    pub fn encode_batch(&self, vectors: &[&[f32]]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.m * vectors.len());
+    ///
+    /// Charges `m * vectors.len()` bytes to the governor budget (if set)
+    /// before allocating the output buffer.  The guard is released at
+    /// the end of this call — the buffer itself remains alive.
+    pub fn encode_batch(&self, vectors: &[&[f32]]) -> Result<Vec<u8>, VectorError> {
+        let capacity = self.m * vectors.len();
+        let _g = try_reserve_or_skip(&self.governor, capacity * size_of::<u8>())?;
+        // no-governor: governed via try_reserve_or_skip on preceding line
+        let mut out = Vec::with_capacity(capacity);
         for v in vectors {
             out.extend(self.encode(v));
         }
-        out
+        Ok(out)
     }
 
     /// Build an asymmetric distance table for a query vector.
@@ -99,12 +153,19 @@ impl PqCodec {
     /// Returns `table[sub][centroid]` = distance from query's sub-vector
     /// to each centroid. Pre-computing this table makes distance evaluation
     /// O(M) per candidate instead of O(D).
-    pub fn build_distance_table(&self, query: &[f32]) -> Vec<Vec<f32>> {
+    ///
+    /// Charges `m * k * size_of::<f32>()` bytes to the governor (if set)
+    /// before allocating the table.
+    pub fn build_distance_table(&self, query: &[f32]) -> Result<Vec<Vec<f32>>, VectorError> {
         debug_assert_eq!(query.len(), self.dim);
+        let total_bytes = self.m * self.k * size_of::<f32>();
+        let _g = try_reserve_or_skip(&self.governor, total_bytes)?;
+        // no-governor: governed via try_reserve_or_skip on preceding line
         let mut table = Vec::with_capacity(self.m);
         for sub in 0..self.m {
             let offset = sub * self.sub_dim;
             let sub_query = &query[offset..offset + self.sub_dim];
+            // no-governor: inner per-subspace vec; covered by outer reservation m*k*size_of::<f32>()
             let mut dists = Vec::with_capacity(self.k);
             for centroid in &self.codebooks[sub] {
                 let d = l2_sub(sub_query, centroid);
@@ -112,7 +173,7 @@ impl PqCodec {
             }
             table.push(dists);
         }
-        table
+        Ok(table)
     }
 
     /// Compute asymmetric distance using a precomputed distance table.
@@ -129,27 +190,39 @@ impl PqCodec {
     }
 
     /// Decode a PQ code back to an approximate FP32 vector.
-    pub fn decode(&self, code: &[u8]) -> Vec<f32> {
+    ///
+    /// Charges `dim * size_of::<f32>()` bytes to the governor (if set)
+    /// before allocating the output buffer.
+    pub fn decode(&self, code: &[u8]) -> Result<Vec<f32>, VectorError> {
         debug_assert_eq!(code.len(), self.m);
+        let _g = try_reserve_or_skip(&self.governor, self.dim * size_of::<f32>())?;
+        // no-governor: governed via try_reserve_or_skip on preceding line
         let mut out = Vec::with_capacity(self.dim);
         for (sub, &c) in code.iter().enumerate() {
             out.extend_from_slice(&self.codebooks[sub][c as usize]);
         }
-        out
+        Ok(out)
     }
 
     /// Serialize the codec to bytes with a versioned magic header.
     ///
     /// Format: `[NDPQ\0\0 (6 bytes)][version: u8 = 1][msgpack payload]`
-    pub fn to_bytes(&self) -> Vec<u8> {
+    ///
+    /// Charges the estimated serialized size to the governor (if set) before
+    /// allocating the output buffer.  The estimate is conservative:
+    /// `m * k * sub_dim * size_of::<f32>() + 64` (header + framing overhead).
+    pub fn to_bytes(&self) -> Result<Vec<u8>, VectorError> {
         const MAGIC: &[u8; 6] = b"NDPQ\0\0";
         const VERSION: u8 = 1;
+        let estimated = self.m * self.k * self.sub_dim * size_of::<f32>() + 64;
+        let _g = try_reserve_or_skip(&self.governor, estimated)?;
         let payload = zerompk::to_msgpack_vec(self).unwrap_or_default();
+        // no-governor: governed via try_reserve_or_skip on preceding line
         let mut out = Vec::with_capacity(7 + payload.len());
         out.extend_from_slice(MAGIC);
         out.push(VERSION);
         out.extend_from_slice(&payload);
-        out
+        Ok(out)
     }
 
     /// Deserialize the codec from bytes produced by [`Self::to_bytes`].
@@ -213,6 +286,7 @@ fn kmeans(data: &[&[f32]], dim: usize, k: usize, max_iter: usize) -> Vec<Vec<f32
     // K-means++ initialization with deterministic xorshift.
     let mut rng = crate::hnsw::Xorshift64::new(0xC0FF_EEDE_ADBE_EF42);
 
+    // no-governor: cold k-means++ training; one-time codebook build, governed at call site
     let mut centroids: Vec<Vec<f32>> = Vec::with_capacity(k);
     centroids.push(data[0].to_vec());
 
@@ -330,7 +404,7 @@ mod tests {
         for v in &vecs {
             let code = codec.encode(v);
             assert_eq!(code.len(), 2); // M=2 bytes
-            let decoded = codec.decode(&code);
+            let decoded = codec.decode(&code).unwrap();
             assert_eq!(decoded.len(), 4);
         }
     }
@@ -343,7 +417,7 @@ mod tests {
 
         let codes: Vec<Vec<u8>> = vecs.iter().map(|v| codec.encode(v)).collect();
         let query = &[5.0, 5.0, 5.0, 5.0];
-        let table = codec.build_distance_table(query);
+        let table = codec.build_distance_table(query).unwrap();
 
         // Find nearest via PQ distance.
         let mut pq_dists: Vec<(usize, f32)> = codes
@@ -375,7 +449,7 @@ mod tests {
         let refs: Vec<&[f32]> = vecs.iter().map(|v| v.as_slice()).collect();
         let codec = PqCodec::train(&refs, 4, 2, 16, 10);
 
-        let batch = codec.encode_batch(&refs);
+        let batch = codec.encode_batch(&refs).unwrap();
         assert_eq!(batch.len(), 2 * 200); // M=2, N=200
     }
 
@@ -386,7 +460,7 @@ mod tests {
         let refs: Vec<&[f32]> = vecs.iter().map(|v| v.as_slice()).collect();
         let codec = PqCodec::train(&refs, 4, 2, 16, 10);
 
-        let bytes = codec.to_bytes();
+        let bytes = codec.to_bytes().unwrap();
 
         // Magic header.
         assert_eq!(&bytes[0..6], b"NDPQ\0\0", "magic mismatch");

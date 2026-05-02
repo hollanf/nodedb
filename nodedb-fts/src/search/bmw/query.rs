@@ -42,6 +42,8 @@ pub fn bmw_search<B: FtsBackend>(
         collection,
         index.memtable(),
         p.query_tokens,
+        #[cfg(feature = "governor")]
+        index.governor.as_ref(),
     )?;
 
     let all_empty = lsm_term_blocks.iter().all(|tb| tb.df == 0);
@@ -98,6 +100,7 @@ fn to_compact<B: FtsBackend>(
     tid: u64,
     collection: &str,
 ) -> Result<Vec<CompactPosting>, B::Error> {
+    // no-governor: hot-path posting compaction per term; postings.len() = doc freq, governed at BMW query level
     let mut compact = Vec::with_capacity(postings.len());
     for p in postings {
         let fieldnorm = index

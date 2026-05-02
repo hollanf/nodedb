@@ -10,16 +10,28 @@ use super::memtable::Memtable;
 use super::merge::merge_term_postings;
 use super::segment::reader::SegmentReader;
 
+#[cfg(feature = "governor")]
+use std::sync::Arc;
+
+#[cfg(feature = "governor")]
+use nodedb_mem::{EngineId, MemoryGovernor};
+
 /// Collect posting lists for a set of query tokens by merging across
 /// the active memtable and all immutable segments.
 ///
 /// Returns per-term `TermBlocks` ready for BMW scoring.
+///
+/// When `governor` is `Some`, the `Vec::with_capacity` for `term_blocks_list`
+/// is budgeted via [`MemoryGovernor::reserve`] before the allocation.
+/// If the budget is exhausted the allocation still proceeds — the governor
+/// serves as an accounting and backpressure signal.
 pub fn collect_merged_term_blocks<B: FtsBackend>(
     backend: &B,
     tid: u64,
     collection: &str,
     memtable: &Memtable,
     query_tokens: &[String],
+    #[cfg(feature = "governor")] governor: Option<&Arc<MemoryGovernor>>,
 ) -> Result<Vec<TermBlocks>, B::Error> {
     let seg_ids = backend.list_segments(tid, collection)?;
     let mut readers: Vec<SegmentReader> = Vec::new();
@@ -30,6 +42,12 @@ pub fn collect_merged_term_blocks<B: FtsBackend>(
             readers.push(reader);
         }
     }
+
+    #[cfg(feature = "governor")]
+    let _term_blocks_guard = governor.and_then(|gov| {
+        let bytes = query_tokens.len() * std::mem::size_of::<TermBlocks>();
+        gov.reserve(EngineId::Fts, bytes).ok()
+    });
 
     let mut term_blocks_list = Vec::with_capacity(query_tokens.len());
 
@@ -144,7 +162,16 @@ mod tests {
         mt.insert(&memtable_key(T, "col", "hello"), cp(1, 1));
 
         let tokens = vec!["hello".to_string()];
-        let term_blocks = collect_merged_term_blocks(&backend, T, "col", &mt, &tokens).unwrap();
+        let term_blocks = collect_merged_term_blocks(
+            &backend,
+            T,
+            "col",
+            &mt,
+            &tokens,
+            #[cfg(feature = "governor")]
+            None,
+        )
+        .unwrap();
 
         assert_eq!(term_blocks.len(), 1);
         assert_eq!(term_blocks[0].df, 2);
@@ -162,7 +189,16 @@ mod tests {
 
         let mt = Memtable::new(MemtableConfig::default());
         let tokens = vec!["hello".to_string()];
-        let term_blocks = collect_merged_term_blocks(&backend, T, "col", &mt, &tokens).unwrap();
+        let term_blocks = collect_merged_term_blocks(
+            &backend,
+            T,
+            "col",
+            &mt,
+            &tokens,
+            #[cfg(feature = "governor")]
+            None,
+        )
+        .unwrap();
 
         assert_eq!(term_blocks.len(), 1);
         assert_eq!(term_blocks[0].df, 2);
@@ -184,7 +220,16 @@ mod tests {
         mt.insert(&memtable_key(T, "col", "hello"), cp(3, 1));
 
         let tokens = vec!["hello".to_string()];
-        let term_blocks = collect_merged_term_blocks(&backend, T, "col", &mt, &tokens).unwrap();
+        let term_blocks = collect_merged_term_blocks(
+            &backend,
+            T,
+            "col",
+            &mt,
+            &tokens,
+            #[cfg(feature = "governor")]
+            None,
+        )
+        .unwrap();
 
         assert_eq!(term_blocks.len(), 1);
         assert_eq!(term_blocks[0].df, 3);
@@ -196,7 +241,16 @@ mod tests {
         let mt = Memtable::new(MemtableConfig::default());
 
         let tokens = vec!["nonexistent".to_string()];
-        let term_blocks = collect_merged_term_blocks(&backend, T, "col", &mt, &tokens).unwrap();
+        let term_blocks = collect_merged_term_blocks(
+            &backend,
+            T,
+            "col",
+            &mt,
+            &tokens,
+            #[cfg(feature = "governor")]
+            None,
+        )
+        .unwrap();
 
         assert_eq!(term_blocks.len(), 1);
         assert_eq!(term_blocks[0].df, 0);

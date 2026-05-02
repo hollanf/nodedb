@@ -8,6 +8,7 @@
 //! never silently dropped.
 
 use crate::distance::{DistanceMetric, distance};
+use crate::error::VectorError;
 use crate::hnsw::SearchResult;
 
 use super::lifecycle::VectorCollection;
@@ -45,13 +46,13 @@ fn quantized_search(
     top_k: usize,
     ef: usize,
     metric: DistanceMetric,
-) -> Vec<SearchResult> {
+) -> Result<Vec<SearchResult>, VectorError> {
     let rerank_k = top_k.saturating_mul(3).max(20);
     let hnsw_candidates = seg.index.search(query, rerank_k, ef);
 
     // Phase 1: rank candidates by quantized distance.
     let mut scored: Vec<(u32, f32)> = if let Some((codec, codes)) = &seg.pq {
-        let table = codec.build_distance_table(query);
+        let table = codec.build_distance_table(query)?;
         let m = codec.m;
         hnsw_candidates
             .into_iter()
@@ -112,7 +113,7 @@ fn quantized_search(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     reranked.truncate(top_k);
-    reranked
+    Ok(reranked)
 }
 
 impl VectorCollection {
@@ -169,7 +170,13 @@ impl VectorCollection {
         // Search sealed segments.
         for seg in &self.sealed {
             let results = if seg.pq.is_some() || seg.sq8.is_some() {
-                quantized_search(seg, query, top_k, ef, self.params.metric)
+                match quantized_search(seg, query, top_k, ef, self.params.metric) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "quantized_search budget exhausted; skipping segment");
+                        seg.index.search(query, top_k, ef)
+                    }
+                }
             } else {
                 seg.index.search(query, top_k, ef)
             };
@@ -252,7 +259,13 @@ impl VectorCollection {
 
         for seg in &self.sealed {
             let results = if seg.pq.is_some() || seg.sq8.is_some() {
-                quantized_search(seg, query, top_k, ef, metric)
+                match quantized_search(seg, query, top_k, ef, metric) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "quantized_search budget exhausted; skipping segment");
+                        seg.index.search(query, top_k, ef)
+                    }
+                }
             } else {
                 seg.index.search(query, top_k, ef)
             };

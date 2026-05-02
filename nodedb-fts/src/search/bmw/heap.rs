@@ -25,6 +25,7 @@ impl TopKHeap {
     /// Create a new heap with the given capacity (k).
     pub fn new(k: usize) -> Self {
         Self {
+            // no-governor: top-k heap; bounded by k (query limit, small), hot search path
             data: Vec::with_capacity(k),
             capacity: k,
         }

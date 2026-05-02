@@ -99,6 +99,7 @@ impl<'a> LirePatcher<'a> {
         // Collect the node IDs that will be assigned to freshly inserted nodes
         // so we can measure neighborhood overlap after each insert.
         // The HNSW appends nodes sequentially, so the new id = len() before insert.
+        // no-governor: structural drift-tracking vec; scales with fresh delta count, compaction governed upstream
         let mut overlap_fractions: Vec<f32> = Vec::with_capacity(fresh.len());
         // Track the set of recently-patched node ids for overlap estimation.
         let mut patched_ids: std::collections::HashSet<u32> =

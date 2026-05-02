@@ -98,6 +98,7 @@ impl DeleteBitmap {
 
     /// Serialize the bitmap to bytes for persistence.
     pub fn to_bytes(&self) -> Result<Vec<u8>, ColumnarError> {
+        // no-governor: cold bitmap serialization; size = roaring bitmap serialized_size, governed at checkpoint
         let mut buf = Vec::with_capacity(self.inner.serialized_size());
         self.inner
             .serialize_into(&mut buf)

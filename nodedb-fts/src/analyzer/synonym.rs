@@ -33,6 +33,7 @@ impl SynonymMap {
     /// synonym expansions. Duplicates are preserved (BM25 handles
     /// term frequency naturally).
     pub fn expand(&self, tokens: &[String]) -> Vec<String> {
+        // no-governor: hot-path per-query token expansion; bounded by tokens.len()*2 (small for typical queries)
         let mut expanded = Vec::with_capacity(tokens.len() * 2);
         for token in tokens {
             expanded.push(token.clone());

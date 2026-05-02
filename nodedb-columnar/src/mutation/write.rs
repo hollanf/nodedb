@@ -27,6 +27,7 @@ impl MutationEngine {
     /// [`Self::insert_if_absent`].
     pub fn insert(&mut self, values: &[Value]) -> Result<MutationResult, ColumnarError> {
         let pk_bytes = self.extract_pk_bytes(values)?;
+        // no-governor: fixed-tiny 2-element WAL record vec per insert
         let mut wal_records = Vec::with_capacity(2);
 
         // Bitemporal collections preserve every version of a PK: each
@@ -80,6 +81,7 @@ impl MutationEngine {
         surrogate: Surrogate,
     ) -> Result<MutationResult, ColumnarError> {
         let pk_bytes = self.extract_pk_bytes(values)?;
+        // no-governor: fixed-tiny 2-element WAL record vec per insert
         let mut wal_records = Vec::with_capacity(2);
 
         let bitemporal = self.schema.is_bitemporal();

@@ -12,6 +12,7 @@ pub fn encode(values: &[u32]) -> Vec<u32> {
     if values.is_empty() {
         return Vec::new();
     }
+    // no-governor: hot-path codec delta encode; scales with posting list len, governed by block size (≤128)
     let mut deltas = Vec::with_capacity(values.len());
     deltas.push(values[0]);
     for i in 1..values.len() {
@@ -27,6 +28,7 @@ pub fn decode(deltas: &[u32]) -> Vec<u32> {
     if deltas.is_empty() {
         return Vec::new();
     }
+    // no-governor: hot-path codec delta decode; bounded by block size (≤128 docs)
     let mut values = Vec::with_capacity(deltas.len());
     values.push(deltas[0]);
     for i in 1..deltas.len() {

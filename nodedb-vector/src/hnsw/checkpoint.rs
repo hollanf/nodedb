@@ -58,6 +58,7 @@ impl HnswIndex {
         };
         let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&snapshot)
             .expect("HNSW rkyv serialization should not fail");
+        // no-governor: cold checkpoint serialize; fixed header + rkyv payload, governed at checkpoint call site
         let mut buf = Vec::with_capacity(HNSW_RKYV_MAGIC.len() + 1 + rkyv_bytes.len());
         buf.extend_from_slice(HNSW_RKYV_MAGIC);
         buf.push(HNSW_FORMAT_VERSION);

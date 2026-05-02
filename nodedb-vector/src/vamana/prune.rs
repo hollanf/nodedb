@@ -37,6 +37,7 @@ pub fn alpha_prune(
 ) -> Vec<u32> {
     // Working copy so we can mark candidates as pruned without sorting again.
     let active: Vec<(u32, f32)> = candidate_distances.to_vec();
+    // no-governor: hot-path pruning; bounded by r (graph degree ≤ 32), cost exceeds benefit
     let mut result: Vec<u32> = Vec::with_capacity(r);
 
     // Boolean "dropped" flags parallel to `active`.

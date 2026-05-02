@@ -2,13 +2,17 @@
 
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
+
+use nodedb_mem::{BudgetGuard, EngineId, MemoryGovernor};
 
 use super::format::{
     FOOTER_SIZE, FORMAT_VERSION, HEADER_SIZE, MAGIC, VectorSegmentCodec, VectorSegmentDropPolicy,
     test_hooks, vec_pad,
 };
 use super::writer::write_segment;
+use crate::error::VectorError;
 
 /// Memory-mapped vector segment file (v2 NDVS format).
 ///
@@ -30,6 +34,9 @@ pub struct MmapVectorSegment {
     sid_offset: usize,
     drop_policy: VectorSegmentDropPolicy,
     madvise_state: Option<libc::c_int>,
+    /// RAII budget guard for the mmap region.  Held for the lifetime of the
+    /// mapping; released automatically on `Drop` alongside `munmap`.
+    _budget_guard: Option<BudgetGuard>,
 }
 
 impl MmapVectorSegment {
@@ -96,9 +103,66 @@ impl MmapVectorSegment {
         }
         let base = base as *const u8;
 
-        Self::validate_and_build(fd, base, file_size, path, policy).inspect_err(|_e| {
+        Self::validate_and_build(fd, base, file_size, path, policy, None).inspect_err(|_e| {
             unsafe { libc::munmap(base as *mut libc::c_void, file_size) };
         })
+    }
+
+    /// Open an existing segment with a memory governor.
+    ///
+    /// Reserves `file_size` bytes in the `EngineId::Vector` budget before
+    /// mapping the file.  Returns `VectorError::BudgetExhausted` if the
+    /// governor rejects the reservation.  The reservation is released
+    /// automatically when the segment is dropped (RAII via `BudgetGuard`).
+    pub fn open_with_governor(
+        path: &Path,
+        governor: &Arc<MemoryGovernor>,
+    ) -> Result<Self, VectorError> {
+        Self::open_with_governor_and_policy(path, governor, VectorSegmentDropPolicy::default())
+    }
+
+    /// Open an existing segment with a memory governor and explicit drop policy.
+    pub fn open_with_governor_and_policy(
+        path: &Path,
+        governor: &Arc<MemoryGovernor>,
+        policy: VectorSegmentDropPolicy,
+    ) -> Result<Self, VectorError> {
+        let fd = std::fs::OpenOptions::new().read(true).open(path)?;
+        let file_size = fd.metadata()?.len() as usize;
+
+        let budget_guard = governor.reserve(EngineId::Vector, file_size)?;
+
+        let min_size = HEADER_SIZE + FOOTER_SIZE;
+        if file_size < min_size {
+            // budget_guard dropped here → bytes returned to budget
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("segment file too small: {file_size} < {min_size} bytes"),
+            )
+            .into());
+        }
+
+        let base = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                file_size,
+                libc::PROT_READ,
+                libc::MAP_PRIVATE,
+                fd.as_raw_fd(),
+                0,
+            )
+        };
+        if base == libc::MAP_FAILED {
+            // budget_guard dropped here → bytes returned to budget
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let base = base as *const u8;
+
+        Self::validate_and_build(fd, base, file_size, path, policy, Some(budget_guard))
+            .map_err(VectorError::from)
+            .inspect_err(|_| {
+                unsafe { libc::munmap(base as *mut libc::c_void, file_size) };
+            })
     }
 
     // ── Validation ────────────────────────────────────────────────────────────
@@ -109,6 +173,7 @@ impl MmapVectorSegment {
         file_size: usize,
         path: &Path,
         policy: VectorSegmentDropPolicy,
+        budget_guard: Option<BudgetGuard>,
     ) -> std::io::Result<Self> {
         // Validate magic + format version.
         let header = unsafe { std::slice::from_raw_parts(base, HEADER_SIZE) };
@@ -254,6 +319,7 @@ impl MmapVectorSegment {
             sid_offset,
             drop_policy: policy,
             madvise_state,
+            _budget_guard: budget_guard,
         })
     }
 

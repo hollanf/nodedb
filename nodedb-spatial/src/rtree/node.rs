@@ -55,6 +55,7 @@ impl Node {
     pub fn new_leaf() -> Self {
         Self {
             kind: NodeKind::Leaf {
+                // no-governor: structural per-node R-tree leaf; LEAF_CAPACITY is a small fixed constant
                 entries: Vec::with_capacity(LEAF_CAPACITY),
             },
             bbox: BoundingBox::new(
@@ -70,6 +71,7 @@ impl Node {
     pub fn new_internal(level: u32) -> Self {
         Self {
             kind: NodeKind::Internal {
+                // no-governor: structural per-node R-tree internal; INTERNAL_CAPACITY is a small fixed constant
                 children: Vec::with_capacity(INTERNAL_CAPACITY),
             },
             bbox: BoundingBox::new(

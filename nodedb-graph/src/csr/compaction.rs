@@ -1,6 +1,7 @@
 //! CSR compaction: merges the mutable write buffer into dense arrays.
 
 use super::index::CsrIndex;
+use crate::GraphError;
 
 impl CsrIndex {
     /// Merge the mutable buffer into the dense CSR arrays.
@@ -8,7 +9,12 @@ impl CsrIndex {
     /// Called during idle periods. Rebuilds the contiguous offset/target/label
     /// (and weight) arrays from scratch (buffer + surviving dense edges).
     /// The old arrays are dropped, freeing memory. O(E) where E = total edges.
-    pub fn compact(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::MemoryBudget`] if a memory governor is installed
+    /// and the dense-array allocation would exceed the `Graph` engine budget.
+    pub fn compact(&mut self) -> Result<(), GraphError> {
         let n = self.id_to_node.len();
         let mut new_out_edges: Vec<Vec<(u32, u32)>> = vec![Vec::new(); n];
         let mut new_in_edges: Vec<Vec<(u32, u32)>> = vec![Vec::new(); n];
@@ -104,15 +110,16 @@ impl CsrIndex {
         }
 
         // Build new dense arrays.
-        let (out_offsets, out_targets, out_labels) = Self::build_dense(&new_out_edges);
-        let (in_offsets, in_targets, in_labels) = Self::build_dense(&new_in_edges);
+        let governor = self.governor.as_ref();
+        let out = Self::build_dense(&new_out_edges, governor)?;
+        let in_ = Self::build_dense(&new_in_edges, governor)?;
 
-        self.out_offsets = out_offsets;
-        self.out_targets = out_targets.into();
-        self.out_labels = out_labels.into();
-        self.in_offsets = in_offsets;
-        self.in_targets = in_targets.into();
-        self.in_labels = in_labels.into();
+        self.out_offsets = out.offsets;
+        self.out_targets = out.targets.into();
+        self.out_labels = out.labels.into();
+        self.in_offsets = in_.offsets;
+        self.in_targets = in_.targets.into();
+        self.in_labels = in_.labels.into();
 
         // Build weight arrays (flatten per-node vecs into contiguous array).
         if self.has_weights {
@@ -148,5 +155,6 @@ impl CsrIndex {
             }
         }
         self.deleted_edges.clear();
+        Ok(())
     }
 }

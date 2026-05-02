@@ -147,6 +147,7 @@ pub fn ring_edges(ring: &[[f64; 2]]) -> Vec<([f64; 2], [f64; 2])> {
     if ring.len() < 2 {
         return Vec::new();
     }
+    // no-governor: hot-path ring edge extraction; ring.len() = vertex count, predicate path
     let mut edges = Vec::with_capacity(ring.len());
     for i in 0..ring.len() - 1 {
         edges.push((ring[i], ring[i + 1]));

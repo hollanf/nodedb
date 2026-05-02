@@ -68,7 +68,11 @@ pub fn merge_worker_segments(worker_segments: Vec<Vec<u8>>) -> Vec<u8> {
             .expect("build_from_blocks on empty input must not fail");
     }
 
-    let merged_term_blocks = merge::merge_segments(&readers);
+    let merged_term_blocks = merge::merge_segments(
+        &readers,
+        #[cfg(feature = "governor")]
+        None,
+    );
     writer::build_from_blocks(&merged_term_blocks)
         .expect("merge produced a term exceeding u16::MAX bytes — data invariant violated")
 }
@@ -83,6 +87,7 @@ pub fn partition_doc_range(total_docs: u32, num_workers: u32) -> Vec<(u32, u32)>
     }
     let chunk = total_docs / num_workers;
     let remainder = total_docs % num_workers;
+    // no-governor: cold partition helper; bounded by num_workers (small constant, typically ≤ CPU count)
     let mut ranges = Vec::with_capacity(num_workers as usize);
     let mut start = 0;
     for i in 0..num_workers {

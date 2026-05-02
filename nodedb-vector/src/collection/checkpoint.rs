@@ -152,7 +152,7 @@ impl VectorCollection {
                 .iter()
                 .map(|s| {
                     let (pq_bytes, pq_codes) = match &s.pq {
-                        Some((codec, codes)) => (Some(codec.to_bytes()), Some(codes.clone())),
+                        Some((codec, codes)) => (codec.to_bytes().ok(), Some(codes.clone())),
                         None => (None, None),
                     };
                     // Only serialize SQ8 when PQ is absent — a segment never carries both.
@@ -297,6 +297,7 @@ impl VectorCollection {
             }
         }
 
+        // no-governor: cold restore path; segment count bounded by collection config
         let mut sealed = Vec::with_capacity(snap.sealed_segments.len());
         for ss in &snap.sealed_segments {
             if let Some(index) = HnswIndex::from_checkpoint(&ss.hnsw_bytes).ok().flatten() {

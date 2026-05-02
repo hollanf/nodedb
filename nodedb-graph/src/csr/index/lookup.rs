@@ -5,8 +5,21 @@
 //! use panics at the boundary. Crate-internal iteration over dense
 //! ranges uses raw `u32` via `dense_out_edges` / `dense_in_edges`.
 
+use std::mem::size_of;
+use std::sync::Arc;
+
+use nodedb_mem::{EngineId, MemoryGovernor};
+
 use super::types::{CsrIndex, Direction};
+use crate::GraphError;
 use crate::csr::LocalNodeId;
+
+/// Contiguous CSR adjacency arrays produced by [`CsrIndex::build_dense`].
+pub(crate) struct DenseAdjacency {
+    pub(crate) offsets: Vec<u32>,
+    pub(crate) targets: Vec<u32>,
+    pub(crate) labels: Vec<u32>,
+}
 
 impl CsrIndex {
     /// Partition tag assigned at construction. Embedded in every
@@ -166,9 +179,22 @@ impl CsrIndex {
     // ── Internal helpers ──
 
     /// Build contiguous offset/target/label arrays from per-node edge lists.
-    pub(crate) fn build_dense(edges: &[Vec<(u32, u32)>]) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::MemoryBudget`] if `governor` is `Some` and the
+    /// reservation for the three output arrays exceeds the `Graph` engine budget.
+    pub(crate) fn build_dense(
+        edges: &[Vec<(u32, u32)>],
+        governor: Option<&Arc<MemoryGovernor>>,
+    ) -> Result<DenseAdjacency, GraphError> {
         let n = edges.len();
         let total: usize = edges.iter().map(|e| e.len()).sum();
+        // Reserve budget for offsets (n+1 u32s), targets (total u32s), labels (total u32s).
+        let reserve_bytes = (n + 1 + 2 * total) * size_of::<u32>();
+        let _budget_guard = governor
+            .map(|g| g.reserve(EngineId::Graph, reserve_bytes))
+            .transpose()?;
         let mut offsets = Vec::with_capacity(n + 1);
         let mut targets = Vec::with_capacity(total);
         let mut labels = Vec::with_capacity(total);
@@ -184,7 +210,11 @@ impl CsrIndex {
         }
         offsets.push(offset);
 
-        (offsets, targets, labels)
+        Ok(DenseAdjacency {
+            offsets,
+            targets,
+            labels,
+        })
     }
 
     /// Check if a specific edge exists in the dense CSR.

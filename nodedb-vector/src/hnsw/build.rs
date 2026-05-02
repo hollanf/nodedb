@@ -112,6 +112,7 @@ fn select_neighbors_heuristic(
     candidates: &[Candidate],
     m: usize,
 ) -> Vec<Candidate> {
+    // no-governor: hot-path neighbor selection; bounded by m (graph degree ≤ 32)
     let mut selected: Vec<Candidate> = Vec::with_capacity(m);
 
     for candidate in candidates {

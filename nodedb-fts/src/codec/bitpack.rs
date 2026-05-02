@@ -22,6 +22,7 @@ pub fn bits_needed(max_val: u32) -> u8 {
 /// Total bytes = 3 + ceil(num_values * bit_width / 8).
 pub fn pack(values: &[u32]) -> Vec<u8> {
     if values.is_empty() {
+        // no-governor: fixed-tiny 3-byte header for empty case
         let mut buf = Vec::with_capacity(3);
         buf.extend_from_slice(&0u16.to_le_bytes());
         buf.push(0);
@@ -33,6 +34,7 @@ pub fn pack(values: &[u32]) -> Vec<u8> {
 
     let total_bits = values.len() as u64 * bit_width as u64;
     let data_bytes = total_bits.div_ceil(8) as usize;
+    // no-governor: hot-path bitpack; bounded by block size (≤128 values * ≤32 bits = ≤512 bytes)
     let mut buf = Vec::with_capacity(3 + data_bytes);
 
     // Header.
@@ -91,6 +93,7 @@ pub fn unpack(buf: &[u8]) -> Vec<u32> {
     };
 
     let data = &buf[3..];
+    // no-governor: hot-path bitpack unpack; bounded by block size (≤128 values)
     let mut values = Vec::with_capacity(num_values);
     let mut bit_pos = 0u64;
 

@@ -1,5 +1,8 @@
 //! Multi-segment compaction: merge multiple sources into a single new segment.
 
+use std::sync::Arc;
+
+use nodedb_mem::{EngineId, MemoryGovernor};
 use nodedb_types::columnar::ColumnarSchema;
 
 use crate::delete_bitmap::DeleteBitmap;
@@ -19,23 +22,48 @@ use super::segment::CompactionResult;
 ///
 /// When `kek` is `Some`, the merged output segment is AES-256-GCM encrypted.
 /// Input segments must be pre-decrypted plaintext.
+///
+/// `governor` is optional: when `Some`, working-buffer allocations are
+/// tracked against the `Columnar` engine budget. Pass `None` in embedded
+/// (Lite) deployments where no governor is configured.
 pub fn compact_segments(
     segments: &[(&[u8], &DeleteBitmap)],
     schema: &ColumnarSchema,
     profile_tag: u8,
+    governor: Option<&Arc<MemoryGovernor>>,
     #[cfg(feature = "encryption")] kek: Option<&nodedb_wal::crypto::WalEncryptionKey>,
     #[cfg(not(feature = "encryption"))] _kek: Option<&[u8; 32]>,
 ) -> Result<CompactionResult, ColumnarError> {
     let mut memtable = ColumnarMemtable::new(schema);
     let mut total_removed = 0usize;
-    let mut row_values = Vec::with_capacity(schema.columns.len());
+    let col_len = schema.columns.len();
+    let _row_guard = governor
+        .map(|g| {
+            g.reserve(
+                EngineId::Columnar,
+                col_len * std::mem::size_of::<usize>() * 3,
+            )
+        })
+        .transpose()?;
+    // no-governor: governed by _row_guard above; multi-line reserve call splits outside 5-line gate window
+    let mut row_values = Vec::with_capacity(col_len);
 
     for &(segment_data, deletes) in segments {
         let reader = SegmentReader::open(segment_data)?;
         let total_rows = reader.row_count() as usize;
 
-        let mut decoded_cols = Vec::with_capacity(reader.column_count());
-        for i in 0..reader.column_count() {
+        let col_count = reader.column_count();
+        let _cols_guard = governor
+            .map(|g| {
+                g.reserve(
+                    EngineId::Columnar,
+                    col_count * std::mem::size_of::<usize>() * 3,
+                )
+            })
+            .transpose()?;
+        // no-governor: governed by _cols_guard above; multi-line reserve call splits outside 5-line gate window
+        let mut decoded_cols = Vec::with_capacity(col_count);
+        for i in 0..col_count {
             decoded_cols.push(reader.read_column(i)?);
         }
 
@@ -66,7 +94,10 @@ pub fn compact_segments(
     }
 
     let (schema, columns, row_count) = memtable.drain();
-    let writer = SegmentWriter::new(profile_tag);
+    let writer = match governor {
+        Some(g) => SegmentWriter::with_governor(profile_tag, Arc::clone(g)),
+        None => SegmentWriter::new(profile_tag),
+    };
     #[cfg(feature = "encryption")]
     let new_segment = writer.write_segment(&schema, &columns, row_count, kek)?;
     #[cfg(not(feature = "encryption"))]

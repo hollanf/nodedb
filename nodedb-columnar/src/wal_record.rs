@@ -102,6 +102,7 @@ pub fn encode_row_for_wal(
 ) -> Result<Vec<u8>, crate::error::ColumnarError> {
     use nodedb_types::value::Value;
 
+    // no-governor: WAL encode per row; rough estimate, hot write path where instrument cost exceeds benefit
     let mut buf = Vec::with_capacity(values.len() * 10); // Rough estimate.
 
     for value in values {
@@ -294,6 +295,7 @@ pub fn decode_row_from_wal(
                         MAX_FIELD_LEN / 4
                     )));
                 }
+                // no-governor: WAL decode inner array; bounded by MAX_FIELD_LEN/4 guard above
                 let mut arr = Vec::with_capacity(count);
                 for _ in 0..count {
                     let fb = read_slice(data, &mut cursor, 4, "vector f32")?;

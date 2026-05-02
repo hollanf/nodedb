@@ -129,6 +129,7 @@ fn sutherland_hodgman(subject: &[[f64; 2]], clip: &[[f64; 2]]) -> Vec<[f64; 2]> 
         let edge_end = clip_edges[(i + 1) % n];
 
         let input = output;
+        // no-governor: hot-path Sutherland-Hodgman clip; polygon vertex count bounded by input (typically small)
         output = Vec::with_capacity(input.len());
 
         let m = input.len();

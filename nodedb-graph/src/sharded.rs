@@ -34,6 +34,7 @@ use std::collections::hash_map::{Entry, Iter, IterMut};
 
 use nodedb_types::TenantId;
 
+use crate::GraphError;
 use crate::csr::CsrIndex;
 
 /// Per-tenant partitioned CSR index.
@@ -131,10 +132,17 @@ impl ShardedCsrIndex {
 
     /// Compact every partition. Mirrors `CsrIndex::compact` but across
     /// the full set — maintenance handlers call this once per core.
-    pub fn compact_all(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`GraphError::MemoryBudget`] encountered if any
+    /// partition has a memory governor installed and the budget is exhausted.
+    /// Partitions already compacted before the error are not rolled back.
+    pub fn compact_all(&mut self) -> Result<(), GraphError> {
         for (_tid, part) in self.iter_mut() {
-            part.compact();
+            part.compact()?;
         }
+        Ok(())
     }
 
     /// Replace an existing partition (or install a new one) with the
@@ -224,7 +232,10 @@ mod tests {
             .get_or_create(tid(42))
             .add_edge("alice", "knows", "bob")
             .unwrap();
-        sharded.get_or_create(tid(42)).compact();
+        sharded
+            .get_or_create(tid(42))
+            .compact()
+            .expect("no governor, cannot fail");
 
         let part = sharded.partition(tid(42)).unwrap();
         let alice_id = part.node_id("alice").expect("alice must be present");
@@ -297,7 +308,7 @@ mod tests {
         }
         // Pre-compact: edges live in the write buffer. `compact_all`
         // merges them into the dense CSR arrays for every partition.
-        sharded.compact_all();
+        sharded.compact_all().expect("no governor, cannot fail");
         for t in 1..=3 {
             let part = sharded.partition(tid(t)).unwrap();
             assert_eq!(part.edge_count(), 1);

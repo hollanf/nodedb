@@ -60,7 +60,7 @@ fn compact_merges_buffer_into_dense() {
     csr.add_edge("b", "L", "c").unwrap();
     assert_eq!(csr.neighbors("a", None, Direction::Out).len(), 1);
 
-    csr.compact();
+    csr.compact().expect("no governor, cannot fail");
     assert!(csr.buffer_out.iter().all(|b| b.is_empty()));
     assert_eq!(csr.neighbors("a", None, Direction::Out).len(), 1);
     assert_eq!(csr.neighbors("b", None, Direction::Out).len(), 1);
@@ -71,12 +71,12 @@ fn compact_handles_deletes() {
     let mut csr = CsrIndex::new();
     csr.add_edge("a", "L", "b").unwrap();
     csr.add_edge("a", "L", "c").unwrap();
-    csr.compact();
+    csr.compact().expect("no governor, cannot fail");
 
     csr.remove_edge("a", "L", "b");
     assert_eq!(csr.neighbors("a", None, Direction::Out).len(), 1);
 
-    csr.compact();
+    csr.compact().expect("no governor, cannot fail");
     assert_eq!(csr.neighbors("a", None, Direction::Out).len(), 1);
     assert_eq!(csr.neighbors("a", None, Direction::Out)[0].1, "c");
 }
@@ -101,9 +101,9 @@ fn edge_count() {
 #[test]
 fn checkpoint_roundtrip() {
     let mut csr = make_csr();
-    csr.compact();
+    csr.compact().expect("no governor, cannot fail");
 
-    let bytes = csr.checkpoint_to_bytes();
+    let bytes = csr.checkpoint_to_bytes().expect("no governor, cannot fail");
     assert!(!bytes.is_empty());
 
     let restored = CsrIndex::from_checkpoint(&bytes)
@@ -370,7 +370,7 @@ fn edge_label_ids_survive_compaction() {
         .map(|i| csr.label_id(&format!("L_{i}")).expect("label present"))
         .collect();
 
-    csr.compact();
+    csr.compact().expect("no governor, cannot fail");
 
     for (i, &id) in before.iter().enumerate() {
         let after_id = csr

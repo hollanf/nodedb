@@ -85,4 +85,8 @@ pub enum ColumnarError {
     /// AES-256-GCM decryption of the segment payload failed.
     #[error("columnar segment decryption failed: {0}")]
     DecryptionFailed(String),
+
+    /// Memory budget exhausted or global ceiling exceeded.
+    #[error("memory budget exhausted: {0}")]
+    BudgetExhausted(#[from] nodedb_mem::MemError),
 }

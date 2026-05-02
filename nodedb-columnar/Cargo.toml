@@ -15,6 +15,7 @@ encryption = ["dep:nodedb-wal"]
 [dependencies]
 nodedb-types = { workspace = true }
 nodedb-codec = { workspace = true }
+nodedb-mem = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -58,6 +58,7 @@ impl FlatNeighborStore {
     /// Build from per-node neighbor lists (owned data).
     pub fn from_nested(neighbors: &[Vec<Vec<u32>>]) -> Self {
         let num_nodes = neighbors.len();
+        // no-governor: cold flat-neighbor build from nested structure; one-time index construction
         let mut starts = Vec::with_capacity(num_nodes + 1);
         let mut offsets = Vec::new();
         let mut data = Vec::new();
@@ -130,9 +131,11 @@ impl FlatNeighborStore {
 
     /// Materialize back into per-node Vec<Vec<u32>>.
     pub fn to_nested(&self, num_nodes: usize) -> Vec<Vec<Vec<u32>>> {
+        // no-governor: cold materialize back to nested; used at compaction/checkpoint only
         let mut result = Vec::with_capacity(num_nodes);
         for i in 0..num_nodes {
             let nl = self.num_layers(i as u32);
+            // no-governor: inner per-node layers vec; bounded by max HNSW levels (≤ log2(N) ≈ 16)
             let mut layers = Vec::with_capacity(nl);
             for l in 0..nl {
                 layers.push(self.neighbors_at(i as u32, l).to_vec());

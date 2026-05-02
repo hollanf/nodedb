@@ -242,7 +242,7 @@ mod tests {
         csr.add_edge_weighted("b", "R", "c", 7.0).unwrap();
         csr.add_edge("c", "R", "d").unwrap();
 
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         assert!(csr.has_weights());
         assert_eq!(csr.edge_weight("a", "R", "b"), Some(2.5));
@@ -269,7 +269,7 @@ mod tests {
         let mut csr = CsrIndex::new();
         csr.add_edge_weighted("a", "R", "b", 2.5).unwrap();
         csr.add_edge_weighted("a", "R", "c", 7.0).unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let edges: Vec<(u32, LocalNodeId, f64)> =
             csr.iter_out_edges_weighted(csr.local(0)).collect();

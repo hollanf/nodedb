@@ -86,6 +86,7 @@ impl Sq8Codec {
     /// Quantize a single FP32 vector to INT8.
     pub fn quantize(&self, vector: &[f32]) -> Vec<u8> {
         debug_assert_eq!(vector.len(), self.dim);
+        // no-governor: hot-path per-vector quantize; dim-bounded, instrument cost exceeds benefit
         let mut out = Vec::with_capacity(self.dim);
         for ((&v, &min), (&max, &inv_scale)) in vector
             .iter()
@@ -103,6 +104,7 @@ impl Sq8Codec {
     ///
     /// Returns `dim * N` bytes laid out as `[v0_d0, v0_d1, ..., v1_d0, ...]`.
     pub fn quantize_batch(&self, vectors: &[&[f32]]) -> Vec<u8> {
+        // no-governor: cold batch quantize; governed at segment build call site
         let mut out = Vec::with_capacity(self.dim * vectors.len());
         for v in vectors {
             out.extend(self.quantize(v));
@@ -113,6 +115,7 @@ impl Sq8Codec {
     /// Dequantize INT8 back to FP32 (lossy reconstruction).
     pub fn dequantize(&self, quantized: &[u8]) -> Vec<f32> {
         debug_assert_eq!(quantized.len(), self.dim);
+        // no-governor: hot-path per-vector dequantize; dim-bounded, instrument cost exceeds benefit
         let mut out = Vec::with_capacity(self.dim);
         for ((&q, &min), &scale) in quantized
             .iter()
@@ -185,6 +188,7 @@ impl Sq8Codec {
     /// Format: `[NDSQ\0\0 (6 bytes)][version: u8 = 1][msgpack payload]`
     pub fn to_bytes(&self) -> Vec<u8> {
         let payload = zerompk::to_msgpack_vec(self).unwrap_or_default();
+        // no-governor: cold serialization; fixed header + msgpack payload, governed at checkpoint call site
         let mut out = Vec::with_capacity(7 + payload.len());
         out.extend_from_slice(MAGIC);
         out.push(SQ8_FORMAT_VERSION);

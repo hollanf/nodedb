@@ -168,6 +168,7 @@ impl VectorCollection {
         vectors: &[&[f32]],
         document_surrogate: Surrogate,
     ) -> Vec<u32> {
+        // no-governor: hot-path per multi-vector insert; caller-level budget governs the vectors themselves
         let mut ids = Vec::with_capacity(vectors.len());
         for &v in vectors {
             let id = self.insert(v.to_vec());
@@ -279,6 +280,7 @@ impl VectorCollection {
         self.next_segment_id += 1;
 
         let count = self.growing.len();
+        // no-governor: cold segment-seal path; vectors are already in memory, no new budget needed
         let mut vectors = Vec::with_capacity(count);
         for i in 0..count as u32 {
             if let Some(v) = self.growing.get_vector(i) {
@@ -402,6 +404,7 @@ impl VectorCollection {
             // Two-phase: remove old entries first, then insert new ones
             // so we don't clobber a freshly-remapped entry with a later
             // tombstone removal.
+            // no-governor: cold compaction remap; structural per-segment, outer compaction governs budget
             let mut new_entries: Vec<(u32, Surrogate)> = Vec::with_capacity(global_keys.len());
             for old_global in &global_keys {
                 let surrogate = self.surrogate_map.remove(old_global);

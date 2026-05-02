@@ -55,6 +55,7 @@ impl VectorCollection {
         let dim = index.dim();
         let n = index.len();
 
+        // no-governor: cold SQ8 training; slices borrow already-live vector data, no new heap
         let mut refs: Vec<&[f32]> = Vec::with_capacity(n);
         for i in 0..n {
             if !index.is_deleted(i as u32)
@@ -69,6 +70,7 @@ impl VectorCollection {
 
         let codec = Sq8Codec::calibrate(&refs, dim);
 
+        // no-governor: cold SQ8 quantize-all; governed at segment build call site
         let mut data = Vec::with_capacity(dim * n);
         for i in 0..n {
             if let Some(v) = index.get_vector(i as u32) {
@@ -88,6 +90,7 @@ impl VectorCollection {
             return None;
         }
         let n = index.len();
+        // no-governor: cold PQ training; vectors copied for k-means, governed at segment build call site
         let mut refs: Vec<Vec<f32>> = Vec::with_capacity(n);
         for i in 0..n {
             if !index.is_deleted(i as u32)
@@ -102,7 +105,7 @@ impl VectorCollection {
         let refs_slices: Vec<&[f32]> = refs.iter().map(|v| v.as_slice()).collect();
         let k = 256usize.min(refs.len());
         let codec = PqCodec::train(&refs_slices, dim, pq_m, k, 20);
-        let codes = codec.encode_batch(&refs_slices);
+        let codes = codec.encode_batch(&refs_slices).ok()?;
         Some((codec, codes))
     }
 }

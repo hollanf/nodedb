@@ -76,6 +76,7 @@ impl IvfPqIndex {
         self.centroids = kmeans_centroids(vectors, self.dim, n_cells, 20);
         self.cells = vec![Vec::new(); self.centroids.len()];
 
+        // no-governor: cold IVF training; residuals built once during index build, governed at call site
         let mut residuals: Vec<Vec<f32>> = Vec::with_capacity(vectors.len());
         for v in vectors {
             let cell = self.nearest_centroid(v);
@@ -153,7 +154,13 @@ impl IvfPqIndex {
                 .zip(&self.centroids[cell_idx])
                 .map(|(q, c)| q - c)
                 .collect();
-            let table = pq.build_distance_table(&residual_query);
+            let table = match pq.build_distance_table(&residual_query) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(error = %e, "IVF PQ build_distance_table budget exhausted; skipping cell");
+                    continue;
+                }
+            };
 
             for (id, code) in &self.cells[cell_idx] {
                 let dist = pq.asymmetric_distance(&table, code);

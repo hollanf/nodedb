@@ -151,6 +151,7 @@ pub fn write_term_entry(buf: &mut Vec<u8>, entry: &TermDictEntry) -> Result<(), 
 /// Returns `None` if the buffer is malformed (used internally where the caller
 /// already checked the CRC and header; `None` here means structural corruption).
 pub fn parse_term_dict(buf: &[u8], num_terms: u32) -> Option<Vec<TermDictEntry>> {
+    // no-governor: cold term dict parse; num_terms from segment header, governed at open call site
     let mut entries = Vec::with_capacity(num_terms as usize);
     let mut pos = 0;
     for _ in 0..num_terms {
