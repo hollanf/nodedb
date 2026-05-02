@@ -12,6 +12,7 @@ use nodedb::control::server::pgwire::listener::PgListener;
 use nodedb::control::state::SharedState;
 use nodedb::data::executor::core_loop::CoreLoop;
 use nodedb::event::{EventPlane, create_event_bus};
+use nodedb::types::TenantId;
 use nodedb::wal::WalManager;
 
 /// A running test server with a connected pgwire client.
@@ -26,10 +27,10 @@ pub struct TestServer {
     _conn_handle: tokio::task::JoinHandle<()>,
     shutdown_bus: nodedb::control::shutdown::ShutdownBus,
     poller_shutdown_tx: tokio::sync::watch::Sender<bool>,
-    core_stop_tx: std::sync::mpsc::Sender<()>,
+    core_stop_txs: Vec<std::sync::mpsc::Sender<()>>,
     _pg_handle: tokio::task::JoinHandle<()>,
     _poller_handle: tokio::task::JoinHandle<()>,
-    _core_handle: tokio::task::JoinHandle<()>,
+    _core_handles: Vec<tokio::task::JoinHandle<()>>,
     _event_plane: EventPlane,
     _dir: tempfile::TempDir,
 }
@@ -74,30 +75,36 @@ impl TestServer {
         // mutations made by the SQL converter are visible to the handler
         // (without this, CP and DP would each carry independent catalogs
         // and `OpenArray` post-DROP-and-recreate would see stale state).
-        let data_side = data_sides.into_iter().next().unwrap();
-        let core_dir = dir.path().to_path_buf();
-        let event_producer = event_producers.into_iter().next().unwrap();
-        let core_array_catalog = shared.array_catalog.clone();
-        let (core_stop_tx, core_stop_rx) = std::sync::mpsc::channel::<()>();
-        let core_handle = tokio::task::spawn_blocking(move || {
-            let mut core = CoreLoop::open_with_array_catalog(
-                0,
-                data_side.request_rx,
-                data_side.response_tx,
-                &core_dir,
-                std::sync::Arc::new(nodedb_types::OrdinalClock::new()),
-                core_array_catalog,
-            )
-            .unwrap();
-            core.set_event_producer(event_producer);
-            while matches!(
-                core_stop_rx.try_recv(),
-                Err(std::sync::mpsc::TryRecvError::Empty)
-            ) {
-                core.tick();
-                std::thread::sleep(Duration::from_millis(1));
-            }
-        });
+        let mut core_stop_txs = Vec::new();
+        let mut core_handles = Vec::new();
+        for (idx, (data_side, event_producer)) in
+            data_sides.into_iter().zip(event_producers).enumerate()
+        {
+            let core_dir = dir.path().to_path_buf();
+            let core_array_catalog = shared.array_catalog.clone();
+            let (core_stop_tx, core_stop_rx) = std::sync::mpsc::channel::<()>();
+            let core_handle = tokio::task::spawn_blocking(move || {
+                let mut core = CoreLoop::open_with_array_catalog(
+                    idx,
+                    data_side.request_rx,
+                    data_side.response_tx,
+                    &core_dir,
+                    std::sync::Arc::new(nodedb_types::OrdinalClock::new()),
+                    core_array_catalog,
+                )
+                .unwrap();
+                core.set_event_producer(event_producer);
+                while matches!(
+                    core_stop_rx.try_recv(),
+                    Err(std::sync::mpsc::TryRecvError::Empty)
+                ) {
+                    core.tick();
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            });
+            core_stop_txs.push(core_stop_tx);
+            core_handles.push(core_handle);
+        }
 
         // Response poller.
         let shared_poller = Arc::clone(&shared);
@@ -178,10 +185,155 @@ impl TestServer {
             _conn_handle: conn_handle,
             shutdown_bus,
             poller_shutdown_tx,
-            core_stop_tx,
+            core_stop_txs,
             _pg_handle: pg_handle,
             _poller_handle: poller_handle,
-            _core_handle: core_handle,
+            _core_handles: core_handles,
+            _event_plane: event_plane,
+            _dir: dir,
+        }
+    }
+
+    /// Spawn an N-core NodeDB server and connect via pgwire.
+    ///
+    /// All N cores receive Register dispatches and are covered by the
+    /// cross-core schema visibility barrier.  Use this variant in tests
+    /// that verify schema changes are visible on every core before DDL
+    /// returns success.
+    pub async fn start_multicores(num_cores: usize) -> Self {
+        assert!(num_cores >= 1, "num_cores must be at least 1");
+        let dir = tempfile::tempdir().unwrap();
+        let wal_path = dir.path().join("test.wal");
+        let wal = Arc::new(WalManager::open_for_testing(&wal_path).unwrap());
+
+        let (dispatcher, data_sides) = Dispatcher::new(num_cores, 64);
+        let (event_producers, event_consumers) = create_event_bus(num_cores);
+
+        let catalog_path = dir.path().join("system.redb");
+        let credentials = Arc::new(
+            nodedb::control::security::credential::store::CredentialStore::open(&catalog_path)
+                .unwrap(),
+        );
+        let _ = credentials.create_user(
+            "nodedb",
+            "nodedb",
+            TenantId::new(1),
+            vec![nodedb::control::security::identity::Role::Superuser],
+        );
+        let mut shared =
+            SharedState::new_with_credentials(dispatcher, Arc::clone(&wal), credentials);
+        if let Some(s) = Arc::get_mut(&mut shared) {
+            s.backup_kek = Some(Arc::new([0x42u8; 32]));
+        }
+        let shared = shared;
+
+        let mut core_stop_txs = Vec::new();
+        let mut core_handles = Vec::new();
+        for (idx, (data_side, event_producer)) in
+            data_sides.into_iter().zip(event_producers).enumerate()
+        {
+            let core_dir = dir.path().to_path_buf();
+            let core_array_catalog = shared.array_catalog.clone();
+            let (core_stop_tx, core_stop_rx) = std::sync::mpsc::channel::<()>();
+            let core_handle = tokio::task::spawn_blocking(move || {
+                let mut core = CoreLoop::open_with_array_catalog(
+                    idx,
+                    data_side.request_rx,
+                    data_side.response_tx,
+                    &core_dir,
+                    std::sync::Arc::new(nodedb_types::OrdinalClock::new()),
+                    core_array_catalog,
+                )
+                .unwrap();
+                core.set_event_producer(event_producer);
+                while matches!(
+                    core_stop_rx.try_recv(),
+                    Err(std::sync::mpsc::TryRecvError::Empty)
+                ) {
+                    core.tick();
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            });
+            core_stop_txs.push(core_stop_tx);
+            core_handles.push(core_handle);
+        }
+
+        let shared_poller = Arc::clone(&shared);
+        let (poller_shutdown_tx, mut poller_shutdown_rx) = tokio::sync::watch::channel(false);
+        let poller_handle = tokio::spawn(async move {
+            loop {
+                shared_poller.poll_and_route_responses();
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(1)) => {}
+                    _ = poller_shutdown_rx.changed() => break,
+                }
+            }
+        });
+
+        let watermark_store =
+            Arc::new(nodedb::event::watermark::WatermarkStore::open(dir.path()).unwrap());
+        let trigger_dlq = Arc::new(std::sync::Mutex::new(
+            nodedb::event::trigger::TriggerDlq::open(dir.path()).unwrap(),
+        ));
+        let event_plane = EventPlane::spawn(
+            event_consumers,
+            Arc::clone(&wal),
+            watermark_store,
+            Arc::clone(&shared),
+            trigger_dlq,
+            Arc::clone(&shared.cdc_router),
+            Arc::clone(&shared.shutdown),
+        );
+
+        let pg_listener = PgListener::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let pg_addr = pg_listener.local_addr();
+
+        let (shutdown_bus, _) =
+            nodedb::control::shutdown::ShutdownBus::new(Arc::clone(&shared.shutdown));
+        let shared_pg = Arc::clone(&shared);
+        let test_startup_gate = Arc::clone(&shared.startup);
+        let bus_pg = shutdown_bus.clone();
+        let pg_handle = tokio::spawn(async move {
+            pg_listener
+                .run(
+                    shared_pg,
+                    AuthMode::Trust,
+                    None,
+                    Arc::new(tokio::sync::Semaphore::new(128)),
+                    test_startup_gate,
+                    bus_pg,
+                )
+                .await
+                .unwrap();
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let conn_str = format!(
+            "host=127.0.0.1 port={} user=nodedb dbname=nodedb",
+            pg_addr.port()
+        );
+        let (client, connection) = tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)
+            .await
+            .expect("pgwire connect failed");
+
+        let conn_handle = tokio::spawn(async move {
+            let _ = connection.await;
+        });
+
+        Self {
+            client,
+            pg_port: pg_addr.port(),
+            shared,
+            _conn_handle: conn_handle,
+            shutdown_bus,
+            poller_shutdown_tx,
+            core_stop_txs,
+            _pg_handle: pg_handle,
+            _poller_handle: poller_handle,
+            _core_handles: core_handles,
             _event_plane: event_plane,
             _dir: dir,
         }
@@ -291,6 +443,8 @@ impl Drop for TestServer {
     fn drop(&mut self) {
         self.shutdown_bus.initiate();
         let _ = self.poller_shutdown_tx.send(true);
-        let _ = self.core_stop_tx.send(());
+        for tx in &self.core_stop_txs {
+            let _ = tx.send(());
+        }
     }
 }

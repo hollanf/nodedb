@@ -4,4 +4,6 @@
 
 pub mod convert;
 pub mod crdt;
+pub mod reindex;
+mod reindex_apply;
 pub mod snapshot;
