@@ -18,48 +18,48 @@
 mod common;
 use common::pgwire_harness::TestServer;
 
-/// OID must survive a drop+recreate cycle.
+/// OID must survive two drop+recreate cycles.
+///
+/// Two cycles guards against a class of bugs where the OID is correct on
+/// first recreate but drifts on the second (e.g. a counter-based scheme
+/// silently shadowing the hash). With a stable hash, all three reads
+/// must produce the same value.
 #[tokio::test]
 async fn oid_stable_across_drop_and_recreate() {
     let srv = TestServer::start().await;
 
+    let read_oid = async |label: &str| -> String {
+        let rows = srv
+            .query_text("SELECT oid FROM pg_class WHERE relname = 'oid_stable_test'")
+            .await
+            .unwrap_or_else(|e| panic!("query pg_class {label}: {e}"));
+        assert_eq!(rows.len(), 1, "expected one pg_class row {label}");
+        rows.into_iter().next().unwrap()
+    };
+
     srv.exec("CREATE COLLECTION oid_stable_test (id INTEGER PRIMARY KEY, val TEXT)")
         .await
         .expect("create collection");
-
-    let before = srv
-        .query_text("SELECT oid FROM pg_class WHERE relname = 'oid_stable_test'")
-        .await
-        .expect("query pg_class before drop");
-    assert_eq!(
-        before.len(),
-        1,
-        "expected exactly one pg_class row before drop"
-    );
+    let oid_first = read_oid("after first create").await;
 
     srv.exec("DROP COLLECTION oid_stable_test")
         .await
-        .expect("drop collection");
-
+        .expect("drop 1");
     srv.exec("CREATE COLLECTION oid_stable_test (id INTEGER PRIMARY KEY, val TEXT)")
         .await
-        .expect("recreate collection");
+        .expect("recreate 1");
+    let oid_second = read_oid("after recreate 1").await;
 
-    let after = srv
-        .query_text("SELECT oid FROM pg_class WHERE relname = 'oid_stable_test'")
+    srv.exec("DROP COLLECTION oid_stable_test")
         .await
-        .expect("query pg_class after recreate");
-    assert_eq!(
-        after.len(),
-        1,
-        "expected exactly one pg_class row after recreate"
-    );
+        .expect("drop 2");
+    srv.exec("CREATE COLLECTION oid_stable_test (id INTEGER PRIMARY KEY, val TEXT)")
+        .await
+        .expect("recreate 2");
+    let oid_third = read_oid("after recreate 2").await;
 
-    assert_eq!(
-        before[0], after[0],
-        "OID changed across drop+recreate: before={}, after={}",
-        before[0], after[0]
-    );
+    assert_eq!(oid_first, oid_second, "OID drifted on first recreate");
+    assert_eq!(oid_second, oid_third, "OID drifted on second recreate");
 }
 
 /// Two collections with different names must have different OIDs.
