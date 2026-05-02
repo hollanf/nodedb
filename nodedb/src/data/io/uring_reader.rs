@@ -24,8 +24,11 @@
 
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
+use std::time::Instant;
 
 use super::aligned_buf::{ALIGNMENT, AlignedBuf};
+use super::io_metrics::{IoMetrics, TIER_CRITICAL, TIER_HIGH, TIER_LOW};
+use crate::bridge::envelope::Priority;
 
 /// Queue depth for the io_uring instance.
 const QUEUE_DEPTH: u32 = 64;
@@ -236,6 +239,36 @@ impl UringReader {
         }
 
         results
+    }
+
+    /// Priority-aware variant of [`read_files`].
+    ///
+    /// Identical to `read_files` but records IO wait time in `metrics`
+    /// under the bucket corresponding to `priority`:
+    ///
+    /// - `Background` / `Normal` → `TIER_LOW`
+    /// - `High`                  → `TIER_HIGH`
+    /// - `Critical`              → `TIER_CRITICAL`
+    ///
+    /// The wait clock starts just before the first SQE submission and stops
+    /// after all CQEs are reaped.  File open + buffer setup time is included
+    /// because it reflects the total latency seen by the caller.
+    pub fn read_files_with_priority(
+        &mut self,
+        paths: &[&Path],
+        priority: Priority,
+        metrics: &IoMetrics,
+    ) -> Vec<Vec<u8>> {
+        let tier = match priority {
+            Priority::Background | Priority::Normal => TIER_LOW,
+            Priority::High => TIER_HIGH,
+            Priority::Critical => TIER_CRITICAL,
+        };
+        let t0 = Instant::now();
+        let result = self.read_files(paths);
+        let wait_ns = t0.elapsed().as_nanos() as u64;
+        metrics.record_wait(tier, wait_ns);
+        result
     }
 }
 

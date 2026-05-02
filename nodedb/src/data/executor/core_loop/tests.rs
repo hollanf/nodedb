@@ -147,7 +147,11 @@ fn cancel_removes_pending_task() {
             },
         })
         .unwrap();
-    assert_eq!(core.tick(), 2);
+    // Cancel runs at Critical priority and is drained before the Normal-priority
+    // target. The cancel removes id=10 from the queue, so only the Cancel itself
+    // is processed in this tick (no response is emitted for the cancelled task).
+    assert_eq!(core.tick(), 1);
+    assert_eq!(core.pending_count(), 0);
 }
 
 #[test]

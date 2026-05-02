@@ -4,11 +4,12 @@
 //! Control Plane, Data Plane handlers, and the HTTP metrics endpoint.
 
 use std::collections::HashMap;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
 use super::histogram::{AtomicHistogram, WAL_FSYNC_BUCKETS_US};
 use super::purge::PurgeMetrics;
+use crate::data::io::IoMetrics;
 
 /// Core metrics collected across the system.
 #[derive(Debug, Default)]
@@ -129,6 +130,16 @@ pub struct SystemMetrics {
     /// Rendered as `nodedb_cdc_events_dropped_total{tenant="<id>",stream="<name>"}`.
     pub cdc_events_dropped_by_stream: RwLock<HashMap<(u64, String), u64>>,
 
+    // ── Backpressure ──
+    /// Per-engine Critical-pressure fire count.
+    /// Key: engine name string (e.g. "vector", "columnar").
+    /// Rendered as `nodedb_backpressure_critical_total{engine="..."}`.
+    pub backpressure_critical_by_engine: RwLock<HashMap<String, u64>>,
+    /// Per-engine Emergency-pressure fire count.
+    /// Key: engine name string.
+    /// Rendered as `nodedb_backpressure_emergency_total{engine="..."}`.
+    pub backpressure_emergency_by_engine: RwLock<HashMap<String, u64>>,
+
     // ── Checkpoints ──
     pub checkpoints: AtomicU64,
 
@@ -144,6 +155,14 @@ pub struct SystemMetrics {
     /// Gauge: phase name → last observed drain duration in milliseconds.
     /// Updated once per phase transition during graceful shutdown.
     pub shutdown_phase_durations_ms: RwLock<HashMap<String, u64>>,
+
+    // ── IO priority scheduler ──
+    /// Per-priority IO queue-depth and wait-latency metrics.
+    ///
+    /// Shared `Arc` is cloned into each `CoreLoop` at startup so the Data
+    /// Plane can update counters without crossing the plane boundary.
+    /// The Prometheus handler reads from here.
+    pub io_metrics: Arc<IoMetrics>,
 }
 
 impl SystemMetrics {
@@ -499,6 +518,70 @@ impl SystemMetrics {
         m.insert(phase.to_string(), duration_ms);
     }
 
+    /// Increment the Critical-pressure counter for the given engine.
+    ///
+    /// Called by the Data Plane pressure check on every Critical-branch fire.
+    pub fn record_backpressure_critical(&self, engine: &str) {
+        let mut m = self
+            .backpressure_critical_by_engine
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        *m.entry(engine.to_string()).or_insert(0) += 1;
+    }
+
+    /// Increment the Emergency-pressure counter for the given engine.
+    ///
+    /// Called by the Data Plane pressure check on every Emergency-branch fire.
+    pub fn record_backpressure_emergency(&self, engine: &str) {
+        let mut m = self
+            .backpressure_emergency_by_engine
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        *m.entry(engine.to_string()).or_insert(0) += 1;
+    }
+
+    /// Emit `nodedb_backpressure_critical_total{engine}` and
+    /// `nodedb_backpressure_emergency_total{engine}` counters.
+    fn prometheus_backpressure(&self, out: &mut String) {
+        use std::fmt::Write as _;
+        let critical = self
+            .backpressure_critical_by_engine
+            .read()
+            .unwrap_or_else(|p| p.into_inner());
+        let emergency = self
+            .backpressure_emergency_by_engine
+            .read()
+            .unwrap_or_else(|p| p.into_inner());
+        if !critical.is_empty() {
+            let _ = out.write_str(
+                "# HELP nodedb_backpressure_critical_total Write handlers that entered Critical-pressure flush path\n\
+                 # TYPE nodedb_backpressure_critical_total counter\n",
+            );
+            let mut pairs: Vec<_> = critical.iter().collect();
+            pairs.sort_by(|a, b| a.0.cmp(b.0));
+            for (engine, count) in pairs {
+                let _ = writeln!(
+                    out,
+                    r#"nodedb_backpressure_critical_total{{engine="{engine}"}} {count}"#
+                );
+            }
+        }
+        if !emergency.is_empty() {
+            let _ = out.write_str(
+                "# HELP nodedb_backpressure_emergency_total Write handlers rejected by Emergency-pressure\n\
+                 # TYPE nodedb_backpressure_emergency_total counter\n",
+            );
+            let mut pairs: Vec<_> = emergency.iter().collect();
+            pairs.sort_by(|a, b| a.0.cmp(b.0));
+            for (engine, count) in pairs {
+                let _ = writeln!(
+                    out,
+                    r#"nodedb_backpressure_emergency_total{{engine="{engine}"}} {count}"#
+                );
+            }
+        }
+    }
+
     /// Serialize all metrics as Prometheus text format 0.0.4.
     pub fn to_prometheus(&self) -> String {
         let mut out = String::with_capacity(8192);
@@ -507,7 +590,9 @@ impl SystemMetrics {
         self.prometheus_catalog_sanity(&mut out);
         self.prometheus_shutdown_phases(&mut out);
         self.prometheus_cdc_stream_drops(&mut out);
+        self.prometheus_backpressure(&mut out);
         self.purge.write_prometheus(&mut out);
+        self.io_metrics.write_prometheus(&mut out);
         out
     }
 

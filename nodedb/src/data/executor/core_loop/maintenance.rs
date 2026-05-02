@@ -15,7 +15,12 @@ impl CoreLoop {
     }
 
     /// Set shared system metrics reference (called after open, before event loop).
+    ///
+    /// Also adopts the `io_metrics` Arc from `SystemMetrics` so the core's
+    /// priority-queue gauges and wait histograms are visible to the Prometheus
+    /// handler without crossing the plane boundary.
     pub fn set_metrics(&mut self, metrics: Arc<crate::control::metrics::SystemMetrics>) {
+        self.io_metrics = Arc::clone(&metrics.io_metrics);
         self.metrics = Some(metrics);
     }
 

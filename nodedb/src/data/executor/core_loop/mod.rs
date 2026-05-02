@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -6,6 +6,7 @@ use nodedb_bridge::buffer::{Consumer, Producer};
 
 use crate::bridge::dispatch::{BridgeRequest, BridgeResponse};
 use crate::control::array_catalog::ArrayCatalogHandle;
+use crate::data::io::IoMetrics;
 use crate::engine::array::{ArrayEngine, ArrayEngineConfig};
 use crate::engine::crdt::tenant_state::TenantCrdtEngine;
 use crate::engine::graph::edge_store::EdgeStore;
@@ -18,18 +19,20 @@ use crate::types::{Lsn, TenantId};
 use nodedb_graph::ShardedCsrIndex;
 use nodedb_types::OrdinalClock;
 
-use super::task::ExecutionTask;
-
 mod accessors;
 mod bitemporal_time;
 pub(in crate::data::executor) mod deferred;
 mod event_emit;
 mod graph_partition;
 mod maintenance;
+pub(in crate::data::executor) mod pressure;
+pub(in crate::data::executor) mod priority_queues;
 mod response;
 #[cfg(test)]
 pub(crate) mod tests;
 mod tick;
+
+use priority_queues::PriorityQueues;
 
 /// Per-core event loop for the Data Plane.
 ///
@@ -50,8 +53,23 @@ pub struct CoreLoop {
     /// SPSC channel: sends responses to Control Plane.
     pub(crate) response_tx: Producer<BridgeResponse>,
 
-    /// Pending tasks ordered by priority then arrival.
-    pub(crate) task_queue: VecDeque<ExecutionTask>,
+    /// Three-tier priority task queue (Critical / High / Low).
+    ///
+    /// Drain budget per 14-slot cycle: 8 Critical : 4 High : 2 Low.
+    /// Empty tiers donate unused slots to the next lower tier.
+    pub(crate) task_queue: PriorityQueues,
+
+    /// Position within the current 14-slot drain cycle.
+    /// Passed by mutable reference to `PriorityQueues::pop_next` so the
+    /// ratio is maintained across multiple calls inside a single `tick()`.
+    pub(crate) drain_cycle: usize,
+
+    /// Per-priority IO queue-depth and wait-latency metrics.
+    ///
+    /// Shared via `Arc` with the Control Plane Prometheus handler so the
+    /// HTTP endpoint can read live values without crossing the plane boundary
+    /// through `SystemMetrics`.
+    pub(crate) io_metrics: Arc<IoMetrics>,
 
     /// Current watermark LSN for this core's shard data.
     pub(crate) watermark: Lsn,
@@ -302,6 +320,22 @@ pub struct CoreLoop {
     /// Memory governor for per-engine budget enforcement.
     pub(in crate::data::executor) governor: Option<Arc<nodedb_mem::MemoryGovernor>>,
 
+    /// Current SPSC drain batch size, adjusted by memory pressure.
+    ///
+    /// Normal: 64.  Critical: halved (floor 1).  Emergency: 0 (new reads
+    /// suspended until pressure clears).  Restored with hysteresis after
+    /// `PRESSURE_NORMAL_HYSTERESIS` consecutive Normal/Warning iterations.
+    pub(crate) spsc_read_depth: usize,
+
+    /// When `true` the core loop does not drain new SPSC requests.
+    /// Set on Emergency pressure; cleared when pressure drops to Critical
+    /// or below (then normal hysteresis restores `spsc_read_depth`).
+    pub(crate) pressure_suspend_reads: bool,
+
+    /// Consecutive ticks at Normal/Warning pressure since last Critical/Emergency
+    /// transition. Used for hysteresis before restoring `spsc_read_depth`.
+    pub(crate) pressure_normal_ticks: u32,
+
     /// Per-collection jemalloc arena registry.
     ///
     /// Shared with the Control Plane for stats queries. Vector-primary
@@ -411,7 +445,9 @@ impl CoreLoop {
             core_id,
             request_rx,
             response_tx,
-            task_queue: VecDeque::with_capacity(256),
+            task_queue: PriorityQueues::new(),
+            drain_cycle: 0,
+            io_metrics: Arc::new(IoMetrics::new()),
             watermark: Lsn::ZERO,
             sparse,
             crdt_engines: HashMap::new(),
@@ -478,6 +514,9 @@ impl CoreLoop {
             columnar_segment_kek: None,
             array_segment_kek: None,
             governor: None,
+            spsc_read_depth: crate::data::executor::core_loop::pressure::SPSC_READ_DEPTH_NORMAL,
+            pressure_suspend_reads: false,
+            pressure_normal_ticks: 0,
             collection_arena_registry: None,
             metrics: None,
             event_producer: None,

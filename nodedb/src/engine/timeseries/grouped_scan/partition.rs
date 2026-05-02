@@ -13,7 +13,9 @@ use super::super::columnar_segment::ColumnarSegmentReader;
 use super::super::grouped_filter;
 use super::strategies::dispatch_grouping;
 use super::types::{GroupedAggResult, resolve_schema};
+use crate::bridge::envelope::Priority;
 use crate::bridge::scan_filter::ScanFilter;
+use crate::data::io::IoMetrics;
 
 /// Aggregate from a columnar memtable with GROUP BY + optional time_bucket.
 pub fn aggregate_memtable(
@@ -91,6 +93,12 @@ pub struct PartitionAggParams<'a> {
     pub needed_columns: &'a [String],
     pub bucket_interval_ms: i64,
     pub uring_reader: Option<&'a mut crate::data::io::uring_reader::UringReader>,
+    /// Priority of the originating request, forwarded to `UringReader` for
+    /// per-tier IO wait metrics.  `None` when the caller does not have
+    /// `UringReader` access (e.g. parallel fallback threads).
+    pub io_priority: Option<Priority>,
+    /// IO metrics sink.  `None` when `uring_reader` is `None`.
+    pub io_metrics: Option<&'a IoMetrics>,
 }
 
 /// Aggregate from a sealed disk partition with GROUP BY + optional time_bucket.
@@ -129,15 +137,17 @@ pub fn aggregate_partition(p: PartitionAggParams<'_>) -> Option<GroupedAggResult
         .as_ref()
         .is_some_and(|sb| !sb.is_empty() && sb.len() < total_blocks);
 
-    let col_data: Vec<Option<ColumnData>> = read_partition_columns(
-        p.partition_dir,
-        &schema.columns,
-        p.needed_columns,
-        &meta,
+    let col_data: Vec<Option<ColumnData>> = read_partition_columns(ReadPartitionColumnsParams {
+        partition_dir: p.partition_dir,
+        schema_columns: &schema.columns,
+        needed_columns: p.needed_columns,
+        meta: &meta,
         use_block_read,
-        surviving_blocks.as_deref(),
-        p.uring_reader,
-    );
+        surviving_blocks: surviving_blocks.as_deref(),
+        uring_reader: p.uring_reader,
+        io_priority: p.io_priority,
+        io_metrics: p.io_metrics,
+    });
 
     // When block-level read was used, row_count is the number of
     // decoded rows (only surviving blocks), not the partition total.
@@ -267,19 +277,34 @@ pub fn aggregate_partition(p: PartitionAggParams<'_>) -> Option<GroupedAggResult
     Some(result)
 }
 
+struct ReadPartitionColumnsParams<'a> {
+    partition_dir: &'a Path,
+    schema_columns: &'a [(String, super::super::columnar_memtable::ColumnType)],
+    needed_columns: &'a [String],
+    meta: &'a nodedb_types::timeseries::PartitionMeta,
+    use_block_read: bool,
+    surviving_blocks: Option<&'a [usize]>,
+    uring_reader: Option<&'a mut crate::data::io::uring_reader::UringReader>,
+    io_priority: Option<Priority>,
+    io_metrics: Option<&'a IoMetrics>,
+}
+
 /// Read column data for a partition, using io_uring when available.
 ///
 /// With `uring_reader`: batch-reads all needed `.col` files in parallel
 /// via io_uring, then decodes each. Without: fadvise + sequential std::fs::read.
-fn read_partition_columns(
-    partition_dir: &Path,
-    schema_columns: &[(String, super::super::columnar_memtable::ColumnType)],
-    needed_columns: &[String],
-    meta: &nodedb_types::timeseries::PartitionMeta,
-    use_block_read: bool,
-    surviving_blocks: Option<&[usize]>,
-    uring_reader: Option<&mut crate::data::io::uring_reader::UringReader>,
-) -> Vec<Option<ColumnData>> {
+fn read_partition_columns(p: ReadPartitionColumnsParams<'_>) -> Vec<Option<ColumnData>> {
+    let ReadPartitionColumnsParams {
+        partition_dir,
+        schema_columns,
+        needed_columns,
+        meta,
+        use_block_read,
+        surviving_blocks,
+        uring_reader,
+        io_priority,
+        io_metrics,
+    } = p;
     // Determine which schema columns are actually needed.
     let needed_indices: Vec<usize> = schema_columns
         .iter()
@@ -340,7 +365,12 @@ fn read_partition_columns(
         .collect();
     let path_refs: Vec<&Path> = col_paths.iter().map(|p| p.as_path()).collect();
 
-    let raw_buffers = reader.read_files(&path_refs);
+    let raw_buffers = match (io_priority, io_metrics) {
+        (Some(priority), Some(metrics)) => {
+            reader.read_files_with_priority(&path_refs, priority, metrics)
+        }
+        _ => reader.read_files(&path_refs),
+    };
 
     // Decode each raw buffer into ColumnData.
     let mut decoded: HashMap<usize, ColumnData> = HashMap::new();
