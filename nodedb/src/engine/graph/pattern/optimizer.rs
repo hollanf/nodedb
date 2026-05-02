@@ -155,7 +155,7 @@ mod tests {
             csr.add_edge(&format!("p{i}"), "CREATED", &format!("doc{i}"))
                 .unwrap();
         }
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
         csr
     }
 

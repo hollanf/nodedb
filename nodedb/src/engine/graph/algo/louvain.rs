@@ -230,7 +230,7 @@ mod tests {
         ] {
             csr.add_edge(s, "L", d).unwrap();
         }
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, &AlgoParams::default());
         assert_eq!(batch.len(), 6);
@@ -267,7 +267,7 @@ mod tests {
         ] {
             csr.add_edge(s, "L", d).unwrap();
         }
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, &AlgoParams::default());
         let json = batch.to_json().unwrap();
@@ -289,7 +289,7 @@ mod tests {
     fn louvain_single_node() {
         let mut csr = CsrIndex::new();
         csr.add_node("solo").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
         let batch = run(&csr, &AlgoParams::default());
         assert_eq!(batch.len(), 1);
     }

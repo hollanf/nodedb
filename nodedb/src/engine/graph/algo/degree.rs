@@ -56,7 +56,7 @@ mod tests {
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("a", "L", "c").unwrap();
         csr.add_edge("a", "L", "d").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, &AlgoParams::default());
         let json = batch.to_json().unwrap();
@@ -82,7 +82,7 @@ mod tests {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("a", "L", "c").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let params = AlgoParams {
             direction: Some("OUT".into()),
@@ -115,7 +115,7 @@ mod tests {
     fn degree_single_node() {
         let mut csr = CsrIndex::new();
         csr.add_node("solo").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
         let batch = run(&csr, &AlgoParams::default());
         assert_eq!(batch.len(), 1);
     }

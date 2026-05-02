@@ -105,7 +105,7 @@ mod tests {
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("b", "L", "c").unwrap();
         csr.add_edge("c", "L", "a").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr);
         assert_eq!(batch.len(), 3);
@@ -129,7 +129,7 @@ mod tests {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("c", "L", "d").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr);
         assert_eq!(batch.len(), 4);
@@ -156,7 +156,7 @@ mod tests {
         // a -> b (only outbound). WCC should still put them in same component.
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr);
         let json = batch.to_json().unwrap();
@@ -179,7 +179,7 @@ mod tests {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_node("isolated").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr);
         assert_eq!(batch.len(), 3);
@@ -215,7 +215,7 @@ mod tests {
         csr.add_edge("b", "L", "c").unwrap();
         csr.add_edge("c", "L", "d").unwrap();
         csr.add_edge("d", "L", "e").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr);
         let json = batch.to_json().unwrap();

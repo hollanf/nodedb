@@ -131,7 +131,7 @@ mod tests {
         csr.add_edge("b", "L", "a").unwrap();
         csr.add_edge("c", "L", "b").unwrap();
         csr.add_edge("a", "L", "c").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, &AlgoParams::default());
         assert_eq!(batch.len(), 3);
@@ -172,7 +172,7 @@ mod tests {
         ] {
             csr.add_edge(s, "L", d).unwrap();
         }
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(
             &csr,
@@ -205,7 +205,7 @@ mod tests {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_node("isolated").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, &AlgoParams::default());
         assert_eq!(batch.len(), 3);
@@ -225,7 +225,7 @@ mod tests {
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("b", "L", "c").unwrap();
         csr.add_edge("c", "L", "a").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let params = AlgoParams::default();
         let r1 = run(&csr, &params).to_json().unwrap();

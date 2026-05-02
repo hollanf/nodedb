@@ -57,7 +57,9 @@ pub fn rebuild_sharded_from_store_as_of(
         })?;
     }
 
-    sharded.compact_all();
+    if let Err(e) = sharded.compact_all() {
+        tracing::warn!(error = %e, "CSR compaction rejected by memory governor during rebuild; skipping");
+    }
     Ok(sharded)
 }
 

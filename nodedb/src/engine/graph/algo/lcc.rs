@@ -196,7 +196,7 @@ mod tests {
         csr.add_edge("b", "L", "a").unwrap();
         csr.add_edge("c", "L", "b").unwrap();
         csr.add_edge("a", "L", "c").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, DEFAULT_HIGH_DEGREE_THRESHOLD, DEFAULT_SAMPLE_PAIRS);
         assert_eq!(batch.len(), 3);
@@ -222,7 +222,7 @@ mod tests {
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("a", "L", "c").unwrap();
         csr.add_edge("a", "L", "d").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, DEFAULT_HIGH_DEGREE_THRESHOLD, DEFAULT_SAMPLE_PAIRS);
         let json = batch.to_json().unwrap();
@@ -243,7 +243,7 @@ mod tests {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("b", "L", "c").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, DEFAULT_HIGH_DEGREE_THRESHOLD, DEFAULT_SAMPLE_PAIRS);
         let json = batch.to_json().unwrap();
@@ -274,7 +274,7 @@ mod tests {
     fn lcc_single_node() {
         let mut csr = CsrIndex::new();
         csr.add_node("lonely").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, DEFAULT_HIGH_DEGREE_THRESHOLD, DEFAULT_SAMPLE_PAIRS);
         assert_eq!(batch.len(), 1);
@@ -293,7 +293,7 @@ mod tests {
         csr.add_edge("b", "L", "c").unwrap();
         csr.add_edge("b", "L", "d").unwrap();
         csr.add_edge("c", "L", "d").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, DEFAULT_HIGH_DEGREE_THRESHOLD, DEFAULT_SAMPLE_PAIRS);
         let json = batch.to_json().unwrap();

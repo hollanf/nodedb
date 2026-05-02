@@ -145,7 +145,7 @@ mod tests {
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("b", "L", "c").unwrap();
         csr.add_edge("c", "L", "d").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, &AlgoParams::default());
         let json = batch.to_json().unwrap();
@@ -182,7 +182,7 @@ mod tests {
         ] {
             csr.add_edge(s, "L", d).unwrap();
         }
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, &AlgoParams::default());
         let json = batch.to_json().unwrap();
@@ -204,7 +204,7 @@ mod tests {
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("a", "L", "c").unwrap();
         csr.add_edge("a", "L", "d").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, &AlgoParams::default());
         let json = batch.to_json().unwrap();
@@ -230,7 +230,7 @@ mod tests {
             csr.add_edge(&format!("n{i}"), "L", &format!("n{}", i + 1))
                 .unwrap();
         }
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let params = AlgoParams {
             sample_size: Some(5),

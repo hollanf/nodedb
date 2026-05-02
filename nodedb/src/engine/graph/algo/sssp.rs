@@ -123,7 +123,7 @@ mod tests {
         csr.add_edge_weighted("a", "R", "b", 2.0).unwrap();
         csr.add_edge_weighted("b", "R", "c", 3.0).unwrap();
         csr.add_edge_weighted("a", "R", "c", 10.0).unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
         csr
     }
 
@@ -161,7 +161,7 @@ mod tests {
         let mut csr = CsrIndex::new();
         csr.add_edge_weighted("a", "R", "b", 1.0).unwrap();
         csr.add_node("island").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let params = AlgoParams {
             source_node: Some("a".into()),
@@ -182,7 +182,7 @@ mod tests {
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("b", "L", "c").unwrap();
         csr.add_edge("c", "L", "d").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let params = AlgoParams {
             source_node: Some("a".into()),
@@ -213,7 +213,7 @@ mod tests {
     fn sssp_missing_source_in_nonempty_graph() {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let params = AlgoParams {
             source_node: Some("nonexistent".into()),
@@ -227,7 +227,7 @@ mod tests {
     fn sssp_no_source_param() {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let params = AlgoParams::default();
         let result = run(&csr, &params);
@@ -238,7 +238,7 @@ mod tests {
     fn sssp_single_node() {
         let mut csr = CsrIndex::new();
         csr.add_node("solo").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let params = AlgoParams {
             source_node: Some("solo".into()),
@@ -272,7 +272,7 @@ mod tests {
         csr.add_edge_weighted("a", "R", "c", 4.0).unwrap();
         csr.add_edge_weighted("b", "R", "d", 2.0).unwrap();
         csr.add_edge_weighted("c", "R", "d", 1.0).unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let params = AlgoParams {
             source_node: Some("a".into()),
@@ -291,7 +291,7 @@ mod tests {
     fn sssp_rejects_negative_weights() {
         let mut csr = CsrIndex::new();
         csr.add_edge_weighted("a", "R", "b", -1.0).unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let params = AlgoParams {
             source_node: Some("a".into()),

@@ -58,7 +58,7 @@ impl CsrSnapshot {
     /// **Important**: This compacts the live CSR first to merge all buffer
     /// edges into the dense arrays. The snapshot only contains dense data.
     pub fn from_csr(csr: &mut CsrIndex) -> Self {
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
         Self::snapshot_dense(csr)
     }
 
@@ -118,7 +118,7 @@ impl CsrSnapshot {
             })?;
         }
 
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
         Ok(Self::snapshot_dense(&csr))
     }
 

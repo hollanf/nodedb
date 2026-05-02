@@ -158,7 +158,7 @@ mod tests {
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("b", "L", "c").unwrap();
         csr.add_edge("c", "L", "d").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(
             &csr,
@@ -180,7 +180,7 @@ mod tests {
         for (s, d) in &[("a", "b"), ("b", "c"), ("c", "a")] {
             csr.add_edge(s, "L", d).unwrap();
         }
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(
             &csr,
@@ -205,7 +205,7 @@ mod tests {
         csr.add_edge("b", "L", "c").unwrap();
         csr.add_edge("c", "L", "d").unwrap();
         csr.add_edge("d", "L", "e").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         // Approximate should give a reasonable result.
         let batch = run(&csr, &AlgoParams::default());
@@ -227,7 +227,7 @@ mod tests {
     fn diameter_single_node() {
         let mut csr = CsrIndex::new();
         csr.add_node("solo").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(
             &csr,

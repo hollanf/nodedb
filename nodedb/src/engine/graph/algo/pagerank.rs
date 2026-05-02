@@ -106,7 +106,7 @@ mod tests {
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("b", "L", "c").unwrap();
         csr.add_edge("c", "L", "a").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
         csr
     }
 
@@ -132,7 +132,7 @@ mod tests {
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("a", "L", "c").unwrap();
         csr.add_edge("a", "L", "d").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let params = AlgoParams {
             max_iterations: Some(50),
@@ -166,7 +166,7 @@ mod tests {
     fn pagerank_single_node() {
         let mut csr = CsrIndex::new();
         csr.add_node("lonely").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, &AlgoParams::default());
         assert_eq!(batch.len(), 1);
@@ -177,7 +177,7 @@ mod tests {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_node("c").unwrap(); // dangling
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(&csr, &AlgoParams::default());
         assert_eq!(batch.len(), 3);

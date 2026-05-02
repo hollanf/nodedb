@@ -134,7 +134,7 @@ mod tests {
         ] {
             csr.add_edge(s, "L", d).unwrap();
         }
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
         csr
     }
 
@@ -172,7 +172,7 @@ mod tests {
         let mut csr = CsrIndex::new();
         csr.add_edge("a", "L", "b").unwrap();
         csr.add_edge("b", "L", "c").unwrap();
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(
             &csr,
@@ -203,7 +203,7 @@ mod tests {
         ] {
             csr.add_edge(s, "L", d).unwrap();
         }
-        csr.compact();
+        csr.compact().expect("no governor, cannot fail");
 
         let batch = run(
             &csr,
