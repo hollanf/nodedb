@@ -2,6 +2,7 @@
 
 use crate::bridge::envelope::Response;
 use crate::bridge::physical_plan::DocumentOp;
+use nodedb_mem;
 
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
@@ -9,6 +10,31 @@ use crate::data::executor::task::ExecutionTask;
 impl CoreLoop {
     pub(super) fn dispatch_document(&mut self, task: &ExecutionTask, op: &DocumentOp) -> Response {
         let tid = task.request.tenant_id.as_u64();
+        // Pressure guard for write operations.
+        let is_write = matches!(
+            op,
+            DocumentOp::PointPut { .. }
+                | DocumentOp::PointInsert { .. }
+                | DocumentOp::PointUpdate { .. }
+                | DocumentOp::PointDelete { .. }
+                | DocumentOp::BatchInsert { .. }
+                | DocumentOp::BulkUpdate { .. }
+                | DocumentOp::BulkDelete { .. }
+                | DocumentOp::Upsert { .. }
+                | DocumentOp::InsertSelect { .. }
+                | DocumentOp::BackfillIndex { .. }
+        );
+        if is_write {
+            if let Some(r) =
+                self.check_engine_pressure(task, nodedb_mem::EngineId::DocumentSchemaless)
+            {
+                return r;
+            }
+            // FTS indexing is a side effect of every document write.
+            if let Some(r) = self.check_engine_pressure(task, nodedb_mem::EngineId::Fts) {
+                return r;
+            }
+        }
         match op {
             DocumentOp::PointGet {
                 collection,

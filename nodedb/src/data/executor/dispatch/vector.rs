@@ -2,6 +2,7 @@
 
 use crate::bridge::envelope::Response;
 use crate::bridge::physical_plan::VectorOp;
+use nodedb_mem;
 
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
@@ -9,6 +10,19 @@ use crate::data::executor::task::ExecutionTask;
 impl CoreLoop {
     pub(super) fn dispatch_vector(&mut self, task: &ExecutionTask, op: &VectorOp) -> Response {
         let tid = task.request.tenant_id.as_u64();
+        // Pressure guard for all write operations.
+        let is_write = matches!(
+            op,
+            VectorOp::Insert { .. }
+                | VectorOp::BatchInsert { .. }
+                | VectorOp::SparseInsert { .. }
+                | VectorOp::MultiVectorInsert { .. }
+                | VectorOp::DirectUpsert { .. }
+        );
+        if is_write && let Some(r) = self.check_engine_pressure(task, nodedb_mem::EngineId::Vector)
+        {
+            return r;
+        }
         match op {
             VectorOp::Insert {
                 collection,

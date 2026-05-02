@@ -2,6 +2,7 @@
 
 use crate::bridge::envelope::Response;
 use crate::bridge::physical_plan::GraphOp;
+use nodedb_mem;
 
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
@@ -9,6 +10,17 @@ use crate::data::executor::task::ExecutionTask;
 impl CoreLoop {
     pub(super) fn dispatch_graph(&mut self, task: &ExecutionTask, op: &GraphOp) -> Response {
         let tid = task.request.tenant_id.as_u64();
+        // Pressure guard for write operations.
+        let is_write = matches!(
+            op,
+            GraphOp::EdgePut { .. }
+                | GraphOp::EdgePutBatch { .. }
+                | GraphOp::EdgeDelete { .. }
+                | GraphOp::EdgeDeleteBatch { .. }
+        );
+        if is_write && let Some(r) = self.check_engine_pressure(task, nodedb_mem::EngineId::Graph) {
+            return r;
+        }
         match op {
             GraphOp::EdgePut {
                 collection,

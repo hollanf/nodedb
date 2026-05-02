@@ -7,6 +7,7 @@ use nodedb_array::types::ArrayId;
 
 use crate::bridge::envelope::{ErrorCode, Response};
 use crate::bridge::physical_plan::ArrayOp;
+use nodedb_mem;
 
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::dispatch::array::aggregate::AggParams;
@@ -19,6 +20,11 @@ impl CoreLoop {
         task: &ExecutionTask,
         op: &ArrayOp,
     ) -> Response {
+        // Pressure guard for write operations.
+        let is_write = matches!(op, ArrayOp::Put { .. } | ArrayOp::Delete { .. });
+        if is_write && let Some(r) = self.check_engine_pressure(task, nodedb_mem::EngineId::Array) {
+            return r;
+        }
         match op {
             ArrayOp::OpenArray {
                 array_id,
