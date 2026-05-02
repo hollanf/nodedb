@@ -25,47 +25,54 @@ use super::enforcement::{build_generated_column_specs, find_materialized_sum_bin
 /// collection creation (leader-side pgwire path). Looks up the
 /// just-created collection from catalog and parses the FIELDS
 /// clause from `parts` for index paths.
+///
+/// Returns an error if any Data Plane core fails to acknowledge the
+/// registration — the caller must not return DDL success to the client
+/// until every core has applied the new schema.
 pub async fn dispatch_register_if_needed(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
     parts: &[&str],
     sql: &str,
-) {
+) -> crate::Result<()> {
     let name = parts.get(2).map(|s| s.to_lowercase()).unwrap_or_default();
     let tenant_id = identity.tenant_id;
 
     let Some(catalog) = state.credentials.catalog() else {
-        return;
+        return Ok(());
     };
     let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u64(), &name) else {
-        return;
+        return Ok(());
     };
     let (fields, _serial_fields) =
         super::super::super::schema_validation::parse_fields_clause(parts);
     let mut indexes = derive_auto_indexes(fields.iter().map(|(n, _)| n.as_str()));
     extend_with_catalog_indexes(&mut indexes, &coll);
     let _ = sql; // Reserved for future CRDT detection from SQL.
-    dispatch_register_from_stored_inner(state, tenant_id, &coll, indexes).await;
+    dispatch_register_from_stored_inner(state, tenant_id, &coll, indexes).await
 }
 
 /// Typed leader-side entry point: dispatch `DocumentOp::Register`
 /// after collection creation when the collection name is known but
 /// no raw SQL parts are available (typed AST path).
+///
+/// Returns an error if any Data Plane core fails to acknowledge the
+/// registration.
 pub async fn dispatch_register_by_name(
     state: &SharedState,
     identity: &AuthenticatedIdentity,
     name: &str,
-) {
+) -> crate::Result<()> {
     let tenant_id = identity.tenant_id;
     let Some(catalog) = state.credentials.catalog() else {
-        return;
+        return Ok(());
     };
     let Ok(Some(coll)) = catalog.get_collection(tenant_id.as_u64(), name) else {
-        return;
+        return Ok(());
     };
     let mut indexes = derive_auto_indexes(coll.fields.iter().map(|(n, _)| n.as_str()));
     extend_with_catalog_indexes(&mut indexes, &coll);
-    dispatch_register_from_stored_inner(state, tenant_id, &coll, indexes).await;
+    dispatch_register_from_stored_inner(state, tenant_id, &coll, indexes).await
 }
 
 /// Applier-side entry point: dispatch `DocumentOp::Register` using
@@ -75,11 +82,18 @@ pub async fn dispatch_register_by_name(
 /// `SystemCatalog` redb, so every follower's Data Plane knows
 /// about the collection before the first cross-node INSERT
 /// arrives.
-pub async fn dispatch_register_from_stored(state: &SharedState, coll: &StoredCollection) {
+///
+/// Returns an error if any Data Plane core fails to acknowledge the
+/// registration — the post-apply hook must not bump the applied-index
+/// watcher until every core carries the new schema.
+pub async fn dispatch_register_from_stored(
+    state: &SharedState,
+    coll: &StoredCollection,
+) -> crate::Result<()> {
     let tenant_id = crate::types::TenantId::new(coll.tenant_id);
     let mut indexes = derive_auto_indexes(coll.fields.iter().map(|(n, _)| n.as_str()));
     extend_with_catalog_indexes(&mut indexes, coll);
-    dispatch_register_from_stored_inner(state, tenant_id, coll, indexes).await;
+    dispatch_register_from_stored_inner(state, tenant_id, coll, indexes).await
 }
 
 /// Per-field auto-derived indexes (schemaless default: each declared field
@@ -139,10 +153,10 @@ async fn dispatch_register_from_stored_inner(
     tenant_id: crate::types::TenantId,
     coll: &StoredCollection,
     indexes: Vec<crate::bridge::physical_plan::RegisteredIndex>,
-) {
+) -> crate::Result<()> {
     let name = coll.name.clone();
     let Some(catalog) = state.credentials.catalog() else {
-        return;
+        return Ok(());
     };
 
     // Determine storage mode from collection type — exhaustive
@@ -203,7 +217,6 @@ async fn dispatch_register_from_stored_inner(
         generated_columns: build_generated_column_specs(coll),
     };
 
-    let vshard = crate::types::VShardId::from_collection(&name);
     let plan = crate::bridge::envelope::PhysicalPlan::Document(
         crate::bridge::physical_plan::DocumentOp::Register {
             collection: name.clone(),
@@ -215,19 +228,11 @@ async fn dispatch_register_from_stored_inner(
         },
     );
 
-    if let Err(e) = crate::control::server::dispatch_utils::dispatch_to_data_plane(
+    crate::control::server::broadcast::broadcast_register_to_all_cores(
         state,
         tenant_id,
-        vshard,
         plan,
         TraceId::ZERO,
     )
     .await
-    {
-        tracing::warn!(
-            %name,
-            error = %e,
-            "failed to dispatch Register to Data Plane (non-fatal)"
-        );
-    }
 }

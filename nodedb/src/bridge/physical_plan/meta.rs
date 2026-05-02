@@ -223,4 +223,26 @@ pub enum MetaOp {
     /// Query a single series from a collection's last-value cache.
     /// Returns JSON-serialized `Option<(i64, f64)>` — (ts, value).
     QueryLastValue { collection: String, series_id: u64 },
+
+    /// Rebuild all indexes (HNSW, FTS LSM, graph CSR) for a collection
+    /// on this core in a shadow-build + atomic-swap manner.
+    ///
+    /// When `concurrent = true`, the build proceeds without blocking query
+    /// handling: a background OS thread performs the rebuild and the Data
+    /// Plane polls for completion on subsequent ticks, only swapping the
+    /// live index in at cutover.  When `concurrent = false` the rebuild
+    /// runs inline (same semantics as the legacy Checkpoint path).
+    ///
+    /// `index_name` narrows the rebuild to a single named index when set;
+    /// `None` rebuilds all index types for the collection.
+    ///
+    /// Returns `Response::Ok` on successful cutover, or a typed error if:
+    /// - another rebuild is already in progress for this collection
+    ///   (`ErrorCode::Conflict`), or
+    /// - the shadow build fails (`ErrorCode::Internal`).
+    RebuildIndex {
+        collection: String,
+        index_name: Option<String>,
+        concurrent: bool,
+    },
 }

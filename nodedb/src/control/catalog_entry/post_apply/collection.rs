@@ -32,14 +32,26 @@ pub fn put_owner_sync(stored: &StoredCollection, shared: Arc<SharedState>) {
 /// for `PutCollection` — it completes synchronously before the applied-index
 /// watcher bumps, making it part of the applied-index contract.
 pub async fn put_async(stored: StoredCollection, shared: Arc<SharedState>) {
-    crate::control::server::pgwire::ddl::collection::create::dispatch_register_from_stored(
+    match crate::control::server::pgwire::ddl::collection::create::dispatch_register_from_stored(
         &shared, &stored,
     )
-    .await;
-    debug!(
-        collection = %stored.name,
-        "catalog_entry: Register dispatched to local Data Plane"
-    );
+    .await
+    {
+        Ok(()) => {
+            debug!(
+                collection = %stored.name,
+                "catalog_entry: Register dispatched to all Data Plane cores"
+            );
+        }
+        Err(e) => {
+            tracing::error!(
+                collection = %stored.name,
+                error = %e,
+                "catalog_entry: Register barrier failed — one or more Data Plane cores \
+                 did not acknowledge the schema update; this node may serve stale schema"
+            );
+        }
+    }
 }
 
 /// Synchronous half of `PurgeCollection` post-apply: remove the

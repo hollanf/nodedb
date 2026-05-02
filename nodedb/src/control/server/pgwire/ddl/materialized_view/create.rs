@@ -138,7 +138,9 @@ pub async fn create_materialized_view(
         }
         // Register the target with this node's Data Plane so writes
         // encode correctly and scans can find the collection.
-        super::super::collection::dispatch_register_from_stored(state, &target).await;
+        super::super::collection::dispatch_register_from_stored(state, &target)
+            .await
+            .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     }
 
     tracing::info!(

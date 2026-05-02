@@ -103,6 +103,21 @@ impl CoreLoop {
         self.last_ts_ingest = value;
     }
 
+    /// Test accessor: schema version for a strict-mode collection in `doc_configs`.
+    ///
+    /// Returns `None` if the collection is not registered on this core or is not
+    /// in strict (Binary Tuple) storage mode.  Used by schema-visibility barrier
+    /// integration tests to confirm every core has applied a schema ALTER.
+    #[cfg(test)]
+    pub fn schema_version_for_collection(&self, tid: u64, collection: &str) -> Option<u32> {
+        let key = (TenantId::new(tid), collection.to_string());
+        let config = self.doc_configs.get(&key)?;
+        match &config.storage_mode {
+            crate::bridge::physical_plan::StorageMode::Strict { schema } => Some(schema.version),
+            crate::bridge::physical_plan::StorageMode::Schemaless => None,
+        }
+    }
+
     /// Test accessor: row count in a columnar memtable.
     #[cfg(test)]
     pub fn columnar_memtable_row_count(&self, tid: u64, collection: &str) -> u64 {

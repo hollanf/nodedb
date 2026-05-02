@@ -310,7 +310,8 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
             | MetaOp::UnregisterCollection { .. }
             | MetaOp::UnregisterMaterializedView { .. }
             | MetaOp::QueryCollectionSize { .. }
-            | MetaOp::AlterArray { .. },
+            | MetaOp::AlterArray { .. }
+            | MetaOp::RebuildIndex { .. },
         ) => Permission::Admin,
 
         // KV engine: read operations.

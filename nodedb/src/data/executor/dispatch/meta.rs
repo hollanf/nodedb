@@ -124,6 +124,18 @@ impl CoreLoop {
             | MetaOp::TemporalPurgeArray { .. }) => self.dispatch_temporal_purge(task, op),
 
             MetaOp::RawResponse { payload } => self.response_with_payload(task, payload.clone()),
+
+            MetaOp::RebuildIndex {
+                collection,
+                index_name,
+                concurrent,
+            } => self.execute_rebuild_index(
+                task,
+                tid,
+                collection,
+                index_name.as_deref(),
+                *concurrent,
+            ),
         }
     }
 }

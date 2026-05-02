@@ -98,7 +98,9 @@ pub async fn alter_collection_alter_column_type(
             .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     }
 
-    super::super::create::dispatch_register_from_stored(state, &updated).await;
+    super::super::create::dispatch_register_from_stored(state, &updated)
+        .await
+        .map_err(|e| sqlstate_error("XX000", &e.to_string()))?;
     state.schema_version.bump();
 
     state.audit_record(

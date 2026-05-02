@@ -120,6 +120,7 @@ impl CoreLoop {
     /// Prometheus endpoint reflects the post-tick state.
     pub fn tick(&mut self) -> usize {
         self.poll_build_completions();
+        self.poll_pending_reindex();
         // Adjust SPSC read depth based on current memory pressure.
         self.apply_spsc_pressure();
         self.drain_requests();

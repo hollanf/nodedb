@@ -385,6 +385,16 @@ pub struct CoreLoop {
     /// `None` until wired by the server bootstrap via `set_quarantine_registry`.
     pub(in crate::data::executor) quarantine_registry:
         Option<std::sync::Arc<crate::storage::quarantine::QuarantineRegistry>>,
+
+    /// In-flight concurrent index rebuilds, polled each tick.
+    ///
+    /// Each entry is a `(collection_key, receiver)` pair.  The receiver
+    /// yields a `RebuildResult` once the background OS thread finishes
+    /// the shadow build.  Only one rebuild per collection may be in
+    /// progress at a time; `execute_rebuild_index` returns
+    /// `ErrorCode::Conflict` when a second is attempted.
+    pub(in crate::data::executor) pending_reindex:
+        Vec<crate::data::executor::handlers::control::reindex::PendingReindex>,
 }
 
 impl CoreLoop {
@@ -524,6 +534,7 @@ impl CoreLoop {
             quiesce: None,
             ts_segment_kek: None,
             quarantine_registry: None,
+            pending_reindex: Vec::new(),
         })
     }
 

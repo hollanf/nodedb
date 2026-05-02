@@ -35,10 +35,11 @@ pub async fn broadcast_to_all_cores(
     trace_id: TraceId,
 ) -> crate::Result<Response> {
     BROADCAST_CALLS.fetch_add(1, Ordering::Relaxed);
-    let num_cores = match shared.dispatcher.lock() {
-        Ok(d) => d.num_cores(),
-        Err(p) => p.into_inner().num_cores(),
-    };
+    let num_cores = shared
+        .dispatcher
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .num_cores();
 
     let mut receivers = Vec::with_capacity(num_cores);
     for core_id in 0..num_cores {
@@ -60,10 +61,11 @@ pub async fn broadcast_to_all_cores(
         };
 
         let rx = shared.tracker.register(request_id);
-        match shared.dispatcher.lock() {
-            Ok(mut d) => d.dispatch_to_core(core_id, request)?,
-            Err(p) => p.into_inner().dispatch_to_core(core_id, request)?,
-        };
+        shared
+            .dispatcher
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .dispatch_to_core(core_id, request)?;
         receivers.push(rx);
     }
 
@@ -157,10 +159,11 @@ pub async fn broadcast_count_to_all_cores(
     count_key: &str,
 ) -> crate::Result<Response> {
     BROADCAST_CALLS.fetch_add(1, Ordering::Relaxed);
-    let num_cores = match shared.dispatcher.lock() {
-        Ok(d) => d.num_cores(),
-        Err(p) => p.into_inner().num_cores(),
-    };
+    let num_cores = shared
+        .dispatcher
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .num_cores();
 
     let mut receivers = Vec::with_capacity(num_cores);
     for core_id in 0..num_cores {
@@ -182,10 +185,11 @@ pub async fn broadcast_count_to_all_cores(
         };
 
         let rx = shared.tracker.register(request_id);
-        match shared.dispatcher.lock() {
-            Ok(mut d) => d.dispatch_to_core(core_id, request)?,
-            Err(p) => p.into_inner().dispatch_to_core(core_id, request)?,
-        };
+        shared
+            .dispatcher
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .dispatch_to_core(core_id, request)?;
         receivers.push(rx);
     }
 
@@ -256,10 +260,11 @@ pub async fn broadcast_raw(
     trace_id: TraceId,
 ) -> crate::Result<Vec<u8>> {
     BROADCAST_CALLS.fetch_add(1, Ordering::Relaxed);
-    let num_cores = match shared.dispatcher.lock() {
-        Ok(d) => d.num_cores(),
-        Err(p) => p.into_inner().num_cores(),
-    };
+    let num_cores = shared
+        .dispatcher
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .num_cores();
 
     let mut receivers = Vec::with_capacity(num_cores);
     for core_id in 0..num_cores {
@@ -281,10 +286,11 @@ pub async fn broadcast_raw(
         };
 
         let rx = shared.tracker.register(request_id);
-        match shared.dispatcher.lock() {
-            Ok(mut d) => d.dispatch_to_core(core_id, request)?,
-            Err(p) => p.into_inner().dispatch_to_core(core_id, request)?,
-        };
+        shared
+            .dispatcher
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .dispatch_to_core(core_id, request)?;
         receivers.push(rx);
     }
 
@@ -389,6 +395,85 @@ fn encode_msgpack_array(rows: &[Vec<u8>]) -> Vec<u8> {
         out.extend_from_slice(row);
     }
     out
+}
+
+/// Broadcast a `DocumentOp::Register` plan to **every** Data Plane core
+/// and await an acknowledgement from each core before returning.
+///
+/// This is the cross-core schema visibility barrier: callers (ALTER DDL,
+/// collection post-apply hooks) must not return success to the client
+/// until every core has applied the new schema.  Any core that returns an
+/// error status or times out causes this function to return a typed error
+/// — no warn-and-continue.
+pub async fn broadcast_register_to_all_cores(
+    shared: &SharedState,
+    tenant_id: TenantId,
+    plan: PhysicalPlan,
+    trace_id: TraceId,
+) -> crate::Result<()> {
+    use std::time::{Duration, Instant};
+
+    let num_cores = shared
+        .dispatcher
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .num_cores();
+
+    let mut receivers = Vec::with_capacity(num_cores);
+    for core_id in 0..num_cores {
+        let request_id = shared.next_request_id();
+        let vshard_id = VShardId::new(core_id as u32);
+        let request = Request {
+            request_id,
+            tenant_id,
+            vshard_id,
+            plan: plan.clone(),
+            deadline: Instant::now()
+                + Duration::from_secs(shared.tuning.network.default_deadline_secs),
+            priority: Priority::Normal,
+            trace_id,
+            consistency: ReadConsistency::Strong,
+            idempotency_key: None,
+            event_source: crate::event::EventSource::User,
+            user_roles: Vec::new(),
+        };
+
+        let rx = shared.tracker.register(request_id);
+        shared
+            .dispatcher
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .dispatch_to_core(core_id, request)?;
+        receivers.push((core_id, rx));
+    }
+
+    for (core_id, mut rx) in receivers {
+        let resp = tokio::time::timeout(
+            Duration::from_secs(shared.tuning.network.default_deadline_secs),
+            async { rx.recv().await.ok_or(()) },
+        )
+        .await
+        .map_err(|_| crate::Error::Dispatch {
+            detail: format!("schema register barrier timeout on core {core_id}"),
+        })?
+        .map_err(|_| crate::Error::Dispatch {
+            detail: format!("schema register barrier channel closed on core {core_id}"),
+        })?;
+
+        if resp.status == crate::bridge::envelope::Status::Error {
+            let code_detail = resp
+                .error_code
+                .map(|ec| format!("{ec:?}"))
+                .unwrap_or_else(|| "unknown".to_string());
+            return Err(crate::Error::Dispatch {
+                detail: format!(
+                    "schema register barrier: core {core_id} returned error: {code_detail}"
+                ),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
