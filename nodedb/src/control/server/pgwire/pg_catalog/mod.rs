@@ -17,6 +17,8 @@ pub mod audit_log;
 pub mod dispatch;
 pub mod dropped_collections;
 pub mod l2_cleanup_queue;
+pub mod oid;
 pub mod tables;
 
 pub use dispatch::{extract_pg_catalog_table, pg_catalog_schema, try_pg_catalog};
+pub use oid::{stable_collection_oid, stable_index_oid};

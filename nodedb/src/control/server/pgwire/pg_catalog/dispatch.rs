@@ -28,7 +28,7 @@ pub async fn try_pg_catalog(
         "pg_type" => tables::pg_type(),
         "pg_class" => tables::pg_class(state, identity),
         "pg_attribute" => tables::pg_attribute(state, identity),
-        "pg_index" => tables::pg_index(),
+        "pg_index" => tables::pg_index(state, identity),
         "pg_authid" => tables::pg_authid(state, identity),
         "_system.audit_log" => audit_log(state, identity, upper),
         "_system.dropped_collections" => dropped_collections(state, identity).await,

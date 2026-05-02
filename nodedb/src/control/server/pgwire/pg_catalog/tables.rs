@@ -9,6 +9,7 @@ use pgwire::error::PgWireResult;
 use nodedb_types::columnar::ColumnType;
 
 use crate::control::security::identity::AuthenticatedIdentity;
+use crate::control::server::pgwire::pg_catalog::oid::{stable_collection_oid, stable_index_oid};
 use crate::control::server::pgwire::types::{bool_field, int4_field, int8_field, text_field};
 use crate::control::state::SharedState;
 
@@ -125,8 +126,8 @@ pub fn pg_class(
     let mut rows = Vec::with_capacity(collections.len());
     let mut encoder = DataRowEncoder::new(schema.clone());
 
-    for (i, coll) in collections.iter().enumerate() {
-        let oid = 16384i64 + i as i64;
+    for coll in &collections {
+        let oid = stable_collection_oid(coll.tenant_id, &coll.name);
         encoder.encode_field(&oid)?;
         encoder.encode_field(&coll.name.as_str())?;
         encoder.encode_field(&2200i64)?;
@@ -160,8 +161,8 @@ pub fn pg_attribute(
     let mut rows = Vec::new();
     let mut encoder = DataRowEncoder::new(schema.clone());
 
-    for (i, coll) in collections.iter().enumerate() {
-        let rel_oid = 16384i64 + i as i64;
+    for coll in &collections {
+        let rel_oid = stable_collection_oid(coll.tenant_id, &coll.name);
         for (col_num, (field_name, field_type)) in coll.fields.iter().enumerate() {
             let type_oid = field_type_to_oid(field_type);
             encoder.encode_field(&rel_oid)?;
@@ -180,13 +181,20 @@ pub fn pg_attribute(
     ))])
 }
 
-/// `pg_index` — secondary indexes.
+/// `pg_index` — one row per secondary index across all collections visible
+/// to `identity`. Rows are derived from `StoredCollection::indexes`, which
+/// is the Control-Plane-owned catalog source for secondary KV/strict indexes.
 ///
-/// Returns an empty result set with the correct schema. Structured
-/// index metadata is not yet surfaced through `StoredCollection`;
-/// once it is, this function will take `(state, identity)` and
-/// populate rows from the catalog.
-pub fn pg_index() -> PgWireResult<Vec<Response>> {
+/// Vector, FTS, spatial, and sparse-vector indexes are not stored in
+/// `StoredCollection::indexes` today; they exist only in Data Plane state.
+/// Reaching into Data Plane state from the Control Plane would violate plane
+/// separation, so those index types are intentionally omitted here. If those
+/// indexes need to appear in `pg_index`, a Control-Plane-visible catalog field
+/// must be added to `StoredCollection` first.
+pub fn pg_index(
+    state: &SharedState,
+    identity: &AuthenticatedIdentity,
+) -> PgWireResult<Vec<Response>> {
     let schema = Arc::new(vec![
         int8_field("indexrelid"),
         int8_field("indrelid"),
@@ -194,7 +202,22 @@ pub fn pg_index() -> PgWireResult<Vec<Response>> {
         bool_field("indisprimary"),
     ]);
 
-    let rows: Vec<Result<_, pgwire::error::PgWireError>> = Vec::new();
+    let collections = load_collections(state, identity);
+
+    let mut rows = Vec::new();
+    let mut encoder = DataRowEncoder::new(schema.clone());
+
+    for coll in &collections {
+        let indrelid = stable_collection_oid(coll.tenant_id, &coll.name);
+        for index in &coll.indexes {
+            let indexrelid = stable_index_oid(coll.tenant_id, &coll.name, &index.name);
+            encoder.encode_field(&indexrelid)?;
+            encoder.encode_field(&indrelid)?;
+            encoder.encode_field(&index.unique)?;
+            encoder.encode_field(&false)?;
+            rows.push(Ok(encoder.take_row()));
+        }
+    }
 
     Ok(vec![Response::Query(QueryResponse::new(
         schema,
