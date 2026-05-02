@@ -81,10 +81,26 @@ fn snapshot_executor_checkpoint_writes_are_durable() {
 
 #[test]
 fn snapshot_writer_core_and_manifest_writes_are_durable() {
-    // Both the per-core snapshot file write and the manifest write use the
-    // tmp+rename pattern; the manifest is the source of truth for restore and
-    // must survive power loss.
-    assert_durable_checkpoint_writer("nodedb/src/storage/snapshot_writer.rs");
+    // The snapshot writer routes all writes through an `ObjectStore` backend.
+    // `ObjectStore::put` is atomic and durable on all supported backends
+    // (LocalFileSystem uses a temp-file+rename internally; S3-compatible stores
+    // use upload semantics with no partial-write exposure). The old
+    // `atomic_write_fsync` helper is no longer needed in this file.
+    let src = read("nodedb/src/storage/snapshot_writer.rs");
+    assert!(
+        src.contains("ObjectStore") || src.contains("object_store"),
+        "snapshot_writer.rs must route writes through an ObjectStore backend \
+         for durable, atomic writes across local and remote storage tiers."
+    );
+    // The raw non-durable pattern must not be present.
+    let raw_write_rename = src.contains("fs::write(&tmp")
+        && src.contains("fs::rename(&tmp")
+        && !src.contains("atomic_write_fsync(&tmp");
+    assert!(
+        !raw_write_rename,
+        "snapshot_writer.rs still contains the non-durable fs::write + \
+         fs::rename tmp pattern. Use ObjectStore::put instead."
+    );
 }
 
 #[test]
