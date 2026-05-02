@@ -1,8 +1,51 @@
-# NodeDB
+<div align="center">
 
-**Eight database engines in a single Rust binary. One SQL dialect. Zero network hops between engines.**
+<img src="assets/wordmark.svg" alt="NodeDB" width="420">
 
-NodeDB replaces the combination of PostgreSQL + pgvector + Redis + Neo4j + ClickHouse + Elasticsearch with a single process. Vector search, graph traversal, document storage, columnar analytics, timeseries, key-value, full-text search, and multi-dimensional arrays share the same storage, memory, and query planner.
+<h3>The distributed multi-model database for AI and agent workloads.</h3>
+
+<p>
+  Eight database engines in a single Rust binary. One SQL dialect. Zero network hops between
+  vector search, graph traversal, document storage, columnar analytics, timeseries, key-value,
+  full-text search, and multi-dimensional arrays.
+</p>
+
+<p>
+  <a href="https://nodedb.dev/docs/introduction/quickstart/"><strong>Quickstart</strong></a>
+  ·
+  <a href="https://nodedb.dev/docs"><strong>Docs</strong></a>
+  ·
+  <a href="#performance"><strong>Benchmarks</strong></a>
+  ·
+  <a href="https://github.com/NodeDB-Lab/nodedb-lite"><strong>NodeDB-Lite</strong></a>
+  ·
+  <a href="https://github.com/NodeDB-Lab/nodedb-cli"><strong>CLI</strong></a>
+</p>
+
+<p align="center">
+  <a href="https://discord.gg/s54gDMVc7B">
+    <img src="assets/discord-cta.svg" alt="Join the NodeDB Discord" width="340">
+  </a>
+</p>
+
+<p>
+  <a href="https://github.com/NodeDB-Lab/nodedb/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/NodeDB-Lab/nodedb/ci.yml?branch=main&label=ci" alt="CI status">
+  </a>
+  <a href="https://github.com/NodeDB-Lab/nodedb/releases">
+    <img src="https://img.shields.io/github/v/release/NodeDB-Lab/nodedb?display_name=tag" alt="Latest release">
+  </a>
+  <a href="https://github.com/NodeDB-Lab/nodedb/blob/main/LICENSE.md">
+    <img src="https://img.shields.io/badge/license-BUSL--1.1-blue" alt="License">
+  </a>
+  <a href="https://github.com/NodeDB-Lab/nodedb/stargazers">
+    <img src="https://img.shields.io/github/stars/NodeDB-Lab/nodedb?style=social" alt="GitHub stars">
+  </a>
+</p>
+
+</div>
+
+NodeDB replaces the combination of PostgreSQL + pgvector + Redis + Neo4j + ClickHouse + Elasticsearch with a single process. Graph queries that feed vector search, full-text ranking, and columnar aggregation execute in one engine with shared storage, shared memory, and one planner.
 
 ## Why NodeDB
 
