@@ -1,0 +1,196 @@
+//! Propose tracker — slot map keyed by `(group_id, log_index)` that lets
+//! proposers wait for a Raft entry to commit and execute, with race-safe
+//! resolution if the apply path beats the proposer's `register()` call.
+
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::sync::{Arc, Mutex};
+
+use tokio::sync::oneshot;
+
+use nodedb_cluster::GroupAppliedWatchers;
+
+/// Response payload sent back to the proposer after commit + execution.
+pub type ProposeResult = std::result::Result<Vec<u8>, crate::Error>;
+
+/// Slot in the propose tracker — either a pending waiter or a completed result
+/// that arrived before the waiter was registered.
+enum TrackerSlot {
+    /// Waiter registered by the proposer; awaiting `complete()`.
+    ///
+    /// `expected_key` is the proposer's idempotency key. The apply path
+    /// passes the applied entry's key to `complete`; if they differ the
+    /// proposer's reservation was overwritten by a different proposer's
+    /// entry under a leader change and we surface
+    /// `RetryableLeaderChange` instead of the (success-shaped) result
+    /// that would otherwise leak the wrong entry's payload back to the
+    /// proposer. `expected_key == 0` is a wildcard accepting any key
+    /// (used for legacy synthetic registrations).
+    Waiting {
+        tx: oneshot::Sender<ProposeResult>,
+        expected_key: u64,
+    },
+    /// `complete()` was called before `register()`. Stored so `register()`
+    /// can resolve the channel immediately.
+    Completed(ProposeResult),
+}
+
+/// Tracks pending proposals awaiting Raft commit.
+///
+/// Keyed by `(group_id, log_index)`. The proposer calls `register()` after
+/// the proposal returns the log index; `run_apply_loop` calls `complete()`
+/// after the entry is applied. Either side may win the race — `complete()`
+/// stores the result if no waiter exists yet, and `register()` picks it up
+/// immediately if `complete()` already fired.
+pub struct ProposeTracker {
+    slots: Mutex<HashMap<(u64, u64), TrackerSlot>>,
+    /// Per-Raft-group apply watermark registry. Bumped on every
+    /// [`Self::complete`] so the watcher reflects "data applied on
+    /// this node up to index N" — the only semantic that's useful
+    /// for cross-node visibility waits. Tick-loop bumps cover the
+    /// metadata group (sync redb apply); this tracker covers data
+    /// groups (async SPSC dispatch through `run_apply_loop`).
+    /// `None` only in tests that don't exercise the watcher.
+    group_watchers: Option<Arc<GroupAppliedWatchers>>,
+}
+
+impl Default for ProposeTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProposeTracker {
+    pub fn new() -> Self {
+        Self {
+            slots: Mutex::new(HashMap::new()),
+            group_watchers: None,
+        }
+    }
+
+    /// Wire the per-group apply watermark registry. Called by
+    /// `start_raft` after `SharedState` is constructed.
+    pub fn with_group_watchers(mut self, watchers: Arc<GroupAppliedWatchers>) -> Self {
+        self.group_watchers = Some(watchers);
+        self
+    }
+
+    /// Register a waiter for a proposed entry. Returns a receiver that
+    /// resolves when the entry is committed and executed.
+    ///
+    /// If `complete()` was called first (the entry was applied before this
+    /// node could register), the receiver is pre-resolved and ready
+    /// immediately.
+    pub fn register(
+        &self,
+        group_id: u64,
+        log_index: u64,
+        expected_key: u64,
+    ) -> oneshot::Receiver<ProposeResult> {
+        let (tx, rx) = oneshot::channel();
+        let mut slots = self.slots.lock().unwrap_or_else(|p| p.into_inner());
+        match slots.entry((group_id, log_index)) {
+            Entry::Vacant(e) => {
+                e.insert(TrackerSlot::Waiting { tx, expected_key });
+            }
+            Entry::Occupied(e) => {
+                match e.get() {
+                    TrackerSlot::Completed(_) => {
+                        // complete() already fired — extract the result, resolve
+                        // the receiver immediately, and clean up the slot.
+                        if let TrackerSlot::Completed(result) = e.remove() {
+                            let _ = tx.send(result);
+                        }
+                    }
+                    TrackerSlot::Waiting { .. } => {
+                        // Duplicate register — shouldn't happen. Insert the new
+                        // sender; the old receiver will see channel-closed.
+                        *e.into_mut() = TrackerSlot::Waiting { tx, expected_key };
+                    }
+                }
+            }
+        }
+        rx
+    }
+
+    /// Complete a waiter after the entry has been committed and executed.
+    ///
+    /// If the proposer has already called `register()`, the result is sent
+    /// immediately. If not, the result is stored so the next `register()`
+    /// call picks it up without waiting.
+    ///
+    /// Returns true if a live waiter was found and notified, false otherwise.
+    pub fn complete(
+        &self,
+        group_id: u64,
+        log_index: u64,
+        applied_key: u64,
+        result: ProposeResult,
+    ) -> bool {
+        // Bump the per-group apply watermark. Bumping unconditionally
+        // (success and error) keeps the watcher monotonic with raft's
+        // commit progression — a data-plane error means "the entry
+        // could not be applied" but the entry IS committed and Raft
+        // has advanced its applied index. Tests waiting on
+        // visibility care about the success path; liveness on the
+        // error path requires the bump too.
+        if let Some(w) = &self.group_watchers {
+            w.bump(group_id, log_index);
+        }
+
+        let mut slots = self.slots.lock().unwrap_or_else(|p| p.into_inner());
+        match slots.entry((group_id, log_index)) {
+            Entry::Vacant(e) => {
+                // No waiter yet — store result for the upcoming register().
+                e.insert(TrackerSlot::Completed(result));
+                false
+            }
+            Entry::Occupied(e) => {
+                match e.get() {
+                    TrackerSlot::Waiting { expected_key, .. } => {
+                        // Idempotency-key gate: the entry that committed
+                        // at this (group_id, log_index) must be the one
+                        // the proposer reserved. If the keys disagree,
+                        // a leader change overwrote the proposer's entry
+                        // with a different one — surface the retryable
+                        // signal instead of the (success-shaped) result
+                        // that belongs to a different proposer. A zero
+                        // applied_key means "no key carried" (empty
+                        // entry / legacy); a zero expected_key means the
+                        // registration is wildcard (legacy callers).
+                        let mismatch =
+                            applied_key != 0 && *expected_key != 0 && applied_key != *expected_key;
+                        let final_result = if mismatch {
+                            tracing::warn!(
+                                group_id,
+                                log_index,
+                                applied_key,
+                                expected_key = *expected_key,
+                                "raft entry at proposer's index was overwritten by \
+                                 a different proposal (idempotency_key mismatch); \
+                                 surfacing RetryableLeaderChange"
+                            );
+                            Err(crate::Error::RetryableLeaderChange {
+                                group_id,
+                                log_index,
+                            })
+                        } else {
+                            result
+                        };
+                        if let TrackerSlot::Waiting { tx, .. } = e.remove() {
+                            let _ = tx.send(final_result);
+                            return true;
+                        }
+                    }
+                    TrackerSlot::Completed(_) => {
+                        // Already completed — overwrite with newer result.
+                        // Duplicate completes should not occur in practice;
+                        // last write wins.
+                        *e.into_mut() = TrackerSlot::Completed(result);
+                    }
+                }
+                false
+            }
+        }
+    }
+}
