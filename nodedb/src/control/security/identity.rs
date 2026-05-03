@@ -398,6 +398,14 @@ pub fn required_permission(plan: &crate::bridge::envelope::PhysicalPlan) -> Perm
             crate::bridge::physical_plan::ClusterArrayOp::Put { .. }
             | crate::bridge::physical_plan::ClusterArrayOp::Delete { .. },
         ) => Permission::Write,
+
+        // Calvin cross-shard execution batches are write operations dispatched
+        // internally by the Calvin scheduler; treat as Write.
+        PhysicalPlan::Meta(
+            MetaOp::CalvinExecuteStatic { .. }
+            | MetaOp::CalvinExecutePassive { .. }
+            | MetaOp::CalvinExecuteActive { .. },
+        ) => Permission::Write,
     }
 }
 

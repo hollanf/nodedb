@@ -269,7 +269,7 @@ impl NodeDbPgHandler {
         }
 
         if upper.starts_with("EXPLAIN ") {
-            return self.handle_explain(identity, sql_trimmed).await;
+            return self.handle_explain(identity, addr, sql_trimmed).await;
         }
 
         // ── Special query forms ───────────────────────────────────────

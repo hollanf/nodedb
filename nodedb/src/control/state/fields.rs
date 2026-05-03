@@ -543,6 +543,22 @@ pub struct SharedState {
     /// `Arc::get_mut`. See `control::startup` for the contract.
     pub startup: Arc<crate::control::startup::StartupGate>,
 
+    /// Calvin sequencer inbox for submitting cross-shard transactions.
+    ///
+    /// `None` in embedded/Lite deployments and single-node mode.
+    /// Cluster startup wires `Some(inbox)` after the sequencer service is up.
+    pub sequencer_inbox: Option<nodedb_cluster::calvin::sequencer::inbox::Inbox>,
+
+    /// OLLP orchestrator for dependent-read Calvin transactions.
+    ///
+    /// `None` in embedded/Lite deployments and single-node mode.
+    /// Cluster startup wires `Some(Arc::new(OllpOrchestrator::new(config)))`.
+    pub ollp_orchestrator: Option<
+        std::sync::Arc<
+            crate::control::cluster::calvin::executor::ollp::orchestrator::OllpOrchestrator,
+        >,
+    >,
+
     /// Per-operation limits announced to clients in `HelloAckFrame`.
     ///
     /// Populated at startup from configuration and used by both the

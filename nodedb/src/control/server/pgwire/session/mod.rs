@@ -1,4 +1,5 @@
 pub mod audit_context;
+pub mod cross_shard_mode;
 mod cursor;
 pub mod cursor_spill;
 pub mod ddl_buffer;
@@ -15,6 +16,7 @@ mod transaction;
 
 pub mod prepared_cache;
 
+pub use self::cross_shard_mode::{CrossShardTxnMode, parse_value as parse_cross_shard_value};
 pub use self::params::{parse_set_command, parse_show_command};
 pub use self::state::{CursorState, PgSession, TransactionState};
 pub use self::store::SessionStore;

@@ -153,6 +153,19 @@ impl NodeDbPgHandler {
             ))));
         }
 
+        if key == super::super::session::cross_shard_mode::PARAM_KEY
+            && super::super::session::cross_shard_mode::parse_value(&value).is_none()
+        {
+            return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                "ERROR".to_owned(),
+                "22023".to_owned(),
+                format!(
+                    "invalid value for {}: '{value}'. Valid values: 'strict', 'best_effort_non_atomic'",
+                    super::super::session::cross_shard_mode::PARAM_KEY
+                ),
+            ))));
+        }
+
         if key == "nodedb.tenant_id" && value.parse::<u64>().is_err() {
             return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                 "ERROR".to_owned(),
@@ -264,6 +277,7 @@ impl NodeDbPgHandler {
     pub(super) async fn handle_explain(
         &self,
         identity: &AuthenticatedIdentity,
+        addr: &std::net::SocketAddr,
         sql: &str,
     ) -> PgWireResult<Vec<Response>> {
         let upper = sql.to_uppercase();
@@ -330,6 +344,16 @@ impl NodeDbPgHandler {
         let schema = Arc::new(vec![text_field("QUERY PLAN")]);
         let mut rows = Vec::new();
         let mut encoder = DataRowEncoder::new(schema.clone());
+
+        // Prepend Calvin preamble row when tasks span multiple vShards.
+        {
+            use crate::control::planner::calvin_explain::calvin_explain_preamble;
+            let mode = self.sessions.cross_shard_txn_mode(addr);
+            if let Some(preamble) = calvin_explain_preamble(&tasks, mode, None) {
+                encoder.encode_field(&preamble)?;
+                rows.push(Ok(encoder.take_row()));
+            }
+        }
 
         if tasks.is_empty() {
             encoder.encode_field(&"Empty plan (no tasks)")?;

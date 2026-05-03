@@ -218,18 +218,6 @@ pub fn error_code_to_sqlstate(code: &ErrorCode) -> (&'static str, &'static str, 
                  shard state is unknown — restart required"
             ),
         ),
-        ErrorCode::CrossShardAborted {
-            txn_id,
-            source_vshard,
-            reason,
-        } => (
-            "ERROR",
-            sqlstate::INTERNAL_ERROR,
-            format!(
-                "cross-shard transaction {txn_id} aborted on shard {source_vshard}: {reason}; \
-                 transaction is in a half-committed state"
-            ),
-        ),
     }
 }
 

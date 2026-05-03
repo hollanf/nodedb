@@ -1,7 +1,44 @@
 //! Control plane meta-operations dispatched to the Data Plane.
 
+use std::collections::BTreeMap;
+
+use nodedb_cluster::calvin::types::PassiveReadKey;
+use nodedb_types::Value;
+
 use crate::engine::timeseries::continuous_agg::ContinuousAggregateDef;
-use crate::types::RequestId;
+use crate::types::{RequestId, TenantId};
+
+/// Identity of a single key read by a passive Calvin participant.
+///
+/// Used as the map key in `CalvinExecuteActive::injected_reads` so active
+/// participants can look up which value belongs to which key.
+///
+/// `String` is used for `collection` rather than `Arc<str>` because
+/// `zerompk` derives work directly with `String`; callers may intern
+/// the string downstream if needed.
+///
+/// `BTreeMap` key: `Ord` is derived lexicographically — collection first,
+/// surrogate second. This is the determinism contract: all replicas must
+/// iterate `injected_reads` in the same order.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    zerompk::ToMessagePack,
+    zerompk::FromMessagePack,
+)]
+pub struct PassiveReadKeyId {
+    /// Collection the key belongs to.
+    pub collection: String,
+    /// Global surrogate for the row.
+    pub surrogate: u32,
+}
 
 /// Meta / maintenance physical operations.
 #[derive(
@@ -223,6 +260,84 @@ pub enum MetaOp {
     /// Query a single series from a collection's last-value cache.
     /// Returns JSON-serialized `Option<(i64, f64)>` — (ts, value).
     QueryLastValue { collection: String, series_id: u64 },
+
+    /// Calvin deterministic executor: static-set multi-shard transaction.
+    ///
+    /// The Calvin scheduler dispatches this variant after lock acquisition for
+    /// transactions whose read/write set is fully known at submission time (the
+    /// common case). The Data Plane handler executes `plans` atomically (same
+    /// semantics as `TransactionBatch`) and the scheduler writes a
+    /// `WalRecord::CalvinApplied` after a successful response.
+    ///
+    /// NOTE: This variant occupies the same msgpack positional tag as the
+    /// original `CalvinExecute` variant it replaces, preserving wire
+    /// compatibility with any in-flight log entries from before the rename.
+    CalvinExecuteStatic {
+        /// Sequencer epoch this transaction belongs to.
+        epoch: u64,
+        /// Zero-based position within the epoch batch.
+        position: u32,
+        /// Tenant scope for all plans in this batch.
+        tenant_id: TenantId,
+        /// Physical plans to execute atomically.
+        plans: Vec<super::PhysicalPlan>,
+        /// Wall-clock ms read once on the sequencer leader at epoch creation.
+        /// Used by engine handlers as the deterministic time anchor (bitemporal
+        /// sys_from, KV TTL expire_at, timeseries system_ms) instead of reading
+        /// the wall clock independently. Wire-additive: defaults to 0 on decode
+        /// of older entries.
+        epoch_system_ms: i64,
+    },
+
+    /// Calvin dependent-read executor: passive participant reads keys and
+    /// returns values for broadcast.
+    ///
+    /// Dispatched by the scheduler to passive vshards (those holding only
+    /// read keys, not write keys) for a dependent-read Calvin transaction.
+    /// The Data Plane handler reads each key from the local engine and
+    /// returns a msgpack-encoded `Vec<(PassiveReadKeyId, Value)>` payload.
+    /// The scheduler then proposes a `ReplicatedWrite::CalvinReadResult`
+    /// to the per-vshard Raft group so all replicas see the same values.
+    CalvinExecutePassive {
+        /// Sequencer epoch this transaction belongs to.
+        epoch: u64,
+        /// Zero-based position within the epoch batch.
+        position: u32,
+        /// Tenant scope.
+        tenant_id: TenantId,
+        /// Keys to read on this passive vshard.
+        keys_to_read: Vec<PassiveReadKey>,
+    },
+
+    /// Calvin dependent-read executor: active participant writes with
+    /// injected read values.
+    ///
+    /// Dispatched by the scheduler to active vshards (those holding write
+    /// keys) once all passive read results have been received. The
+    /// `injected_reads` map is keyed by `PassiveReadKeyId` and carries the
+    /// values broadcast by the passive participants.
+    ///
+    /// OLLP verification: before writing, the handler checks whether the
+    /// predicate match in the txn's read set still matches the actual rows
+    /// in the engine. If mismatched, returns `OllpRetryRequired` status
+    /// and does NOT write. The OLLP orchestrator on the Control Plane
+    /// interprets this status and retries via `Inbox::submit`.
+    CalvinExecuteActive {
+        /// Sequencer epoch this transaction belongs to.
+        epoch: u64,
+        /// Zero-based position within the epoch batch.
+        position: u32,
+        /// Tenant scope.
+        tenant_id: TenantId,
+        /// Physical plans to execute atomically.
+        plans: Vec<super::PhysicalPlan>,
+        /// Read values injected from passive participants.
+        /// `BTreeMap` for deterministic iteration order (determinism contract).
+        injected_reads: BTreeMap<PassiveReadKeyId, Value>,
+        /// Wall-clock ms read once on the sequencer leader at epoch creation.
+        /// Same semantics as `CalvinExecuteStatic::epoch_system_ms`.
+        epoch_system_ms: i64,
+    },
 
     /// Rebuild all indexes (HNSW, FTS LSM, graph CSR) for a collection
     /// on this core in a shadow-build + atomic-swap manner.

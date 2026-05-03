@@ -28,6 +28,33 @@ pub fn decode(bytes: &[u8]) -> Result<PhysicalPlan, Error> {
     })
 }
 
+/// Encode a `Vec<PhysicalPlan>` to MessagePack bytes.
+///
+/// Used by the Calvin scheduler when building `TxClass::plans` bytes for a
+/// cross-shard transaction that will be shipped through the sequencer.
+pub fn encode_batch(plans: &Vec<PhysicalPlan>) -> Result<Vec<u8>, Error> {
+    for plan in plans {
+        if matches!(plan, PhysicalPlan::ClusterArray(_)) {
+            return Err(Error::Internal {
+                detail: "ClusterArray plans must not be shipped via the sequencer".into(),
+            });
+        }
+    }
+    zerompk::to_msgpack_vec(plans).map_err(|e| Error::Internal {
+        detail: format!("plan batch encode: {e}"),
+    })
+}
+
+/// Decode a `Vec<PhysicalPlan>` from MessagePack bytes.
+///
+/// Used by the Calvin scheduler to decode the opaque `TxClass::plans` blob
+/// into executable plans for dispatch via `MetaOp::CalvinExecute`.
+pub fn decode_batch(bytes: &[u8]) -> Result<Vec<PhysicalPlan>, Error> {
+    zerompk::from_msgpack(bytes).map_err(|e| Error::Internal {
+        detail: format!("plan batch decode: {e}"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
