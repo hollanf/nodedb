@@ -207,6 +207,89 @@ pub(super) fn describe_plan(plan: &PhysicalPlan) -> PlanKind {
 // Bring the variant into scope for brevity in match arms above.
 use PlanKind::DmlResult;
 
+/// Returns `true` when a plan can produce a deterministic pgwire tag without
+/// a round-trip to the Data Plane.
+///
+/// The Calvin multi-shard batch completes as a unit; the Data Plane does not
+/// stream individual row counts back per task. For foldable plans we synthesise
+/// a tag at plan time (INSERT 0 1, UPDATE 1, DELETE 1). Conservative list:
+///
+/// **Foldable** — plain point writes where the affected row count is always 1:
+///   - `PointPut`, `PointInsert` (Document) → INSERT 0 1
+///   - `PointUpdate` without RETURNING (Document) → UPDATE 1
+///   - `PointDelete` without RETURNING (Document) → DELETE 1
+///   - `KvOp::Put`, `KvOp::Insert`, `KvOp::InsertIfAbsent` → INSERT 0 1
+///   - `KvOp::Delete` → DELETE 1
+///
+/// **Not foldable** (conservative defaults — do NOT expand without care):
+///   - Any plan with `RETURNING` (response stream carries rows, not a tag)
+///   - `InsertSelect` (row count from source query; unknown at plan time)
+///   - `BatchInsert`, `BatchPut` (N rows; count in payload)
+///   - `BulkUpdate`, `BulkDelete` (predicate-based; count in payload)
+///   - `TimeseriesOp::Ingest` (separate path)
+///   - `ColumnarOp::Insert` (batch path; count in payload)
+///   - Any `Array`, `Spatial`, `Vector`, `Graph`, or `Text` write
+///   - Any `SELECT` / `Query` plan (mixing read responses with a write tag
+///     corrupts the response stream)
+///   - Any other plan not explicitly listed above
+pub(super) fn is_calvin_foldable(plan: &PhysicalPlan) -> bool {
+    use crate::bridge::physical_plan::KvOp;
+
+    match plan {
+        // Plain point document writes — always affects 1 row, no RETURNING.
+        PhysicalPlan::Document(DocumentOp::PointPut { .. })
+        | PhysicalPlan::Document(DocumentOp::PointInsert { .. }) => true,
+
+        // PointUpdate / PointDelete: foldable only when no RETURNING clause.
+        PhysicalPlan::Document(DocumentOp::PointUpdate {
+            returning: None, ..
+        })
+        | PhysicalPlan::Document(DocumentOp::PointDelete {
+            returning: None, ..
+        }) => true,
+
+        // Plain KV point writes.
+        PhysicalPlan::Kv(KvOp::Put { .. })
+        | PhysicalPlan::Kv(KvOp::Insert { .. })
+        | PhysicalPlan::Kv(KvOp::InsertIfAbsent { .. })
+        | PhysicalPlan::Kv(KvOp::Delete { .. }) => true,
+
+        // Everything else: not foldable.
+        _ => false,
+    }
+}
+
+/// Synthesise the pgwire `CommandComplete` tag for a Calvin-foldable plan.
+///
+/// Caller invariant: `plan` must already have passed `is_calvin_foldable`.
+/// The match arms here are kept in lockstep with that predicate so a desync
+/// between the two is loud rather than silent.
+pub(super) fn calvin_tag_for_plan(plan: &PhysicalPlan) -> Tag {
+    use crate::bridge::physical_plan::KvOp;
+
+    match plan {
+        PhysicalPlan::Document(DocumentOp::PointPut { .. })
+        | PhysicalPlan::Document(DocumentOp::PointInsert { .. })
+        | PhysicalPlan::Kv(KvOp::Put { .. })
+        | PhysicalPlan::Kv(KvOp::Insert { .. })
+        | PhysicalPlan::Kv(KvOp::InsertIfAbsent { .. }) => Tag::new("INSERT").with_rows(1),
+
+        PhysicalPlan::Document(DocumentOp::PointUpdate {
+            returning: None, ..
+        }) => Tag::new("UPDATE").with_rows(1),
+
+        PhysicalPlan::Document(DocumentOp::PointDelete {
+            returning: None, ..
+        })
+        | PhysicalPlan::Kv(KvOp::Delete { .. }) => Tag::new("DELETE").with_rows(1),
+
+        other => unreachable!(
+            "calvin_tag_for_plan called on non-foldable plan; \
+             is_calvin_foldable invariant broken: {other:?}"
+        ),
+    }
+}
+
 /// Extract affected row count from a JSON or MessagePack payload.
 ///
 /// Looks for `"affected"`, `"truncated"`, `"inserted"`, or `"accepted"` fields.

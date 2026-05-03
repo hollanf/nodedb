@@ -7,9 +7,13 @@
 use pgwire::api::results::{Response, Tag};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 
+use crate::control::planner::calvin_dispatch::{
+    DispatchClass, DispatchOutcome, classify_dispatch, dispatch_calvin_or_fast,
+};
 use crate::control::security::identity::AuthenticatedIdentity;
 
 use super::core::NodeDbPgHandler;
+use crate::control::server::pgwire::types::error_to_sqlstate;
 
 impl NodeDbPgHandler {
     /// Handle BEGIN / START TRANSACTION.
@@ -78,78 +82,183 @@ impl NodeDbPgHandler {
         if !buffered.is_empty() {
             let tenant_id = identity.tenant_id;
 
-            // Detect cross-shard batches. All writes in a single
-            // TransactionBatch must target the same vShard. Multi-shard
-            // Calvin coordination is not yet wired up — reject explicitly
-            // rather than silently routing everything to buffered[0].vshard_id
-            // and losing atomicity across shards.
-            let first_vshard = buffered[0].vshard_id;
-            if let Some(mismatched) = buffered.iter().find(|t| t.vshard_id != first_vshard) {
-                return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                    "ERROR".to_owned(),
-                    "0A000".to_owned(),
-                    format!(
-                        "cross-shard transactions are not yet supported: \
-                         batch spans vshard {} and vshard {}; \
-                         split writes into separate transactions",
-                        first_vshard.as_u32(),
-                        mismatched.vshard_id.as_u32(),
-                    ),
-                ))));
-            }
-            let vshard_id = first_vshard;
+            match classify_dispatch(&buffered) {
+                DispatchClass::SingleShard { vshard: vshard_id } => {
+                    // Single-shard path: WAL + TransactionBatch dispatch.
+                    let mut sub_records: Vec<(u16, Vec<u8>)> = Vec::with_capacity(buffered.len());
+                    for task in &buffered {
+                        if let Some(entry) = crate::control::wal_replication::to_replicated_entry(
+                            task.tenant_id,
+                            task.vshard_id,
+                            &task.plan,
+                        ) {
+                            let bytes = entry.to_bytes();
+                            sub_records.push((nodedb_wal::record::RecordType::Put as u16, bytes));
+                        }
+                    }
 
-            let mut sub_records: Vec<(u16, Vec<u8>)> = Vec::with_capacity(buffered.len());
-            for task in &buffered {
-                if let Some(entry) = crate::control::wal_replication::to_replicated_entry(
-                    task.tenant_id,
-                    task.vshard_id,
-                    &task.plan,
-                ) {
-                    let bytes = entry.to_bytes();
-                    sub_records.push((nodedb_wal::record::RecordType::Put as u16, bytes));
-                }
-            }
+                    if !sub_records.is_empty() {
+                        let tx_payload = zerompk::to_msgpack_vec(&sub_records).map_err(|e| {
+                            PgWireError::UserError(Box::new(ErrorInfo::new(
+                                "ERROR".to_owned(),
+                                "XX000".to_owned(),
+                                format!("transaction WAL serialization failed: {e}"),
+                            )))
+                        })?;
+                        self.state
+                            .wal
+                            .append_transaction(tenant_id, vshard_id, &tx_payload)
+                            .map_err(|e| {
+                                PgWireError::UserError(Box::new(ErrorInfo::new(
+                                    "ERROR".to_owned(),
+                                    "XX000".to_owned(),
+                                    format!("transaction WAL append failed: {e}"),
+                                )))
+                            })?;
+                    }
 
-            if !sub_records.is_empty() {
-                let tx_payload = zerompk::to_msgpack_vec(&sub_records).map_err(|e| {
-                    PgWireError::UserError(Box::new(ErrorInfo::new(
-                        "ERROR".to_owned(),
-                        "XX000".to_owned(),
-                        format!("transaction WAL serialization failed: {e}"),
-                    )))
-                })?;
-                self.state
-                    .wal
-                    .append_transaction(tenant_id, vshard_id, &tx_payload)
-                    .map_err(|e| {
-                        PgWireError::UserError(Box::new(ErrorInfo::new(
+                    let plans: Vec<crate::bridge::envelope::PhysicalPlan> =
+                        buffered.iter().map(|t| t.plan.clone()).collect();
+                    let batch_task = crate::control::planner::physical::PhysicalTask {
+                        tenant_id,
+                        vshard_id,
+                        plan: crate::bridge::envelope::PhysicalPlan::Meta(
+                            crate::bridge::physical_plan::MetaOp::TransactionBatch { plans },
+                        ),
+                        post_set_op: crate::control::planner::physical::PostSetOp::None,
+                    };
+                    if let Err(e) = self.dispatch_task_no_wal(batch_task).await {
+                        tracing::warn!(error = %e, "transaction batch dispatch failed");
+                        return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                             "ERROR".to_owned(),
-                            "XX000".to_owned(),
-                            format!("transaction WAL append failed: {e}"),
+                            "40001".to_owned(),
+                            format!("transaction commit failed: {e}"),
+                        ))));
+                    }
+                }
+                DispatchClass::MultiShard { .. } => {
+                    // Multi-shard path: route through the Calvin sequencer.
+                    let cross_shard_mode = self.sessions.cross_shard_txn_mode(addr);
+                    let tx_state = self.sessions.transaction_state(addr);
+
+                    let inbox = self.state.sequencer_inbox.get();
+                    let orchestrator = self.state.ollp_orchestrator.get();
+                    let registry =
+                        self.state.calvin_completion_registry.get().ok_or_else(|| {
+                            let (severity, code, message) =
+                                error_to_sqlstate(&crate::Error::SequencerUnavailable);
+                            PgWireError::UserError(Box::new(ErrorInfo::new(
+                                severity.to_owned(),
+                                code.to_owned(),
+                                message,
+                            )))
+                        })?;
+
+                    let dispatch = dispatch_calvin_or_fast(
+                        &buffered,
+                        cross_shard_mode,
+                        tx_state,
+                        inbox,
+                        orchestrator,
+                        tenant_id,
+                    )
+                    .await
+                    .map_err(|e| {
+                        let (severity, code, message) = error_to_sqlstate(&e);
+                        PgWireError::UserError(Box::new(ErrorInfo::new(
+                            severity.to_owned(),
+                            code.to_owned(),
+                            message,
                         )))
                     })?;
-            }
 
-            // Dispatch all writes as a single TransactionBatch for
-            // atomic execution on the Data Plane.
-            let plans: Vec<crate::bridge::envelope::PhysicalPlan> =
-                buffered.iter().map(|t| t.plan.clone()).collect();
-            let batch_task = crate::control::planner::physical::PhysicalTask {
-                tenant_id,
-                vshard_id,
-                plan: crate::bridge::envelope::PhysicalPlan::Meta(
-                    crate::bridge::physical_plan::MetaOp::TransactionBatch { plans },
-                ),
-                post_set_op: crate::control::planner::physical::PostSetOp::None,
-            };
-            if let Err(e) = self.dispatch_task_no_wal(batch_task).await {
-                tracing::warn!(error = %e, "transaction batch dispatch failed");
-                return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
-                    "ERROR".to_owned(),
-                    "40001".to_owned(),
-                    format!("transaction commit failed: {e}"),
-                ))));
+                    match dispatch {
+                        DispatchOutcome::CalvinStatic { inbox_seq }
+                        | DispatchOutcome::CalvinDependent { inbox_seq } => {
+                            let timeout = std::time::Duration::from_secs(
+                                self.state.tuning.network.default_deadline_secs,
+                            );
+                            let assignment_rx = registry.register_submission(inbox_seq);
+                            let (epoch, position, _participants) =
+                                tokio::time::timeout(timeout, assignment_rx)
+                                    .await
+                                    .map_err(|_| {
+                                        PgWireError::UserError(Box::new(ErrorInfo::new(
+                                            "ERROR".to_owned(),
+                                            "57014".to_owned(),
+                                            "timed out waiting for Calvin sequencer assignment"
+                                                .to_owned(),
+                                        )))
+                                    })?
+                                    .map_err(|_| {
+                                        PgWireError::UserError(Box::new(ErrorInfo::new(
+                                            "ERROR".to_owned(),
+                                            "XX000".to_owned(),
+                                            "Calvin sequencer assignment channel closed".to_owned(),
+                                        )))
+                                    })?;
+
+                            let completion_rx = registry.register_completion(
+                                nodedb_cluster::calvin::TxnId::new(epoch, position),
+                            );
+                            tokio::time::timeout(timeout, completion_rx)
+                                .await
+                                .map_err(|_| {
+                                    PgWireError::UserError(Box::new(ErrorInfo::new(
+                                        "ERROR".to_owned(),
+                                        "57014".to_owned(),
+                                        "timed out waiting for Calvin transaction completion"
+                                            .to_owned(),
+                                    )))
+                                })?
+                                .map_err(|_| {
+                                    PgWireError::UserError(Box::new(ErrorInfo::new(
+                                        "ERROR".to_owned(),
+                                        "XX000".to_owned(),
+                                        "Calvin completion channel closed".to_owned(),
+                                    )))
+                                })?;
+                        }
+                        DispatchOutcome::SingleShard | DispatchOutcome::BestEffortNonAtomic => {
+                            // BestEffortNonAtomic: dispatch each vshard's sub-batch independently.
+                            // Group buffered tasks by vshard and dispatch per-vshard TransactionBatches.
+                            let mut by_vshard: std::collections::BTreeMap<
+                                u32,
+                                Vec<crate::bridge::envelope::PhysicalPlan>,
+                            > = std::collections::BTreeMap::new();
+                            for task in &buffered {
+                                by_vshard
+                                    .entry(task.vshard_id.as_u32())
+                                    .or_default()
+                                    .push(task.plan.clone());
+                            }
+                            for (vshard_u32, plans) in by_vshard {
+                                let vshard_id = nodedb_types::id::VShardId::new(vshard_u32);
+                                let batch_task = crate::control::planner::physical::PhysicalTask {
+                                    tenant_id,
+                                    vshard_id,
+                                    plan: crate::bridge::envelope::PhysicalPlan::Meta(
+                                        crate::bridge::physical_plan::MetaOp::TransactionBatch {
+                                            plans,
+                                        },
+                                    ),
+                                    post_set_op: crate::control::planner::physical::PostSetOp::None,
+                                };
+                                if let Err(e) = self.dispatch_task_no_wal(batch_task).await {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "best-effort non-atomic multi-shard batch dispatch failed"
+                                    );
+                                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                                        "ERROR".to_owned(),
+                                        "40001".to_owned(),
+                                        format!("transaction commit failed: {e}"),
+                                    ))));
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
