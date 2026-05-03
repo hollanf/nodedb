@@ -2,6 +2,24 @@ use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, ClusterError>;
 
+/// Errors specific to the Calvin sequencer and transaction-class layer.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum CalvinError {
+    #[error("write set is empty; a Calvin transaction must write at least one key")]
+    EmptyWriteSet,
+
+    #[error(
+        "write set resolves to a single vshard ({vshard}); \
+         use the single-shard fast path instead"
+    )]
+    SingleVshardTxn { vshard: u32 },
+
+    /// A sequencer-layer error. See [`crate::calvin::sequencer::error::SequencerError`]
+    /// for the full variant set.
+    #[error("sequencer error: {0}")]
+    Sequencer(#[from] crate::calvin::sequencer::error::SequencerError),
+}
+
 /// Error emitted when applying or validating a `MigrationCheckpoint` entry.
 #[derive(Debug, Error)]
 pub enum MigrationCheckpointError {
@@ -111,4 +129,7 @@ pub enum ClusterError {
         vshard_id: u32,
         expected_owner_node: Option<u64>,
     },
+
+    #[error("calvin error: {0}")]
+    Calvin(#[from] CalvinError),
 }

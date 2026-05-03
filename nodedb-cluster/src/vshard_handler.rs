@@ -67,10 +67,8 @@ pub fn dispatch_by_type(envelope: &VShardEnvelope) -> DispatchTarget {
         | VShardMessageType::GhostVerifyResponse => DispatchTarget::Ghost,
 
         VShardMessageType::MigrationBaseCopy => DispatchTarget::Migration,
-        VShardMessageType::CrossShardForward => DispatchTarget::Forward,
         VShardMessageType::GsiForward => DispatchTarget::Forward,
         VShardMessageType::EdgeValidation => DispatchTarget::GraphValidation,
-        VShardMessageType::CrossShardAbort => DispatchTarget::Forward,
 
         // Vector distributed search
         VShardMessageType::VectorScatterRequest => DispatchTarget::VectorSearch,
@@ -231,10 +229,8 @@ mod tests {
             VShardMessageType::GhostVerifyRequest,
             VShardMessageType::GhostVerifyResponse,
             VShardMessageType::MigrationBaseCopy,
-            VShardMessageType::CrossShardForward,
             VShardMessageType::GsiForward,
             VShardMessageType::EdgeValidation,
-            VShardMessageType::CrossShardAbort,
             VShardMessageType::GraphAlgoSuperstep,
             VShardMessageType::GraphAlgoContributions,
             VShardMessageType::GraphAlgoSuperstepAck,

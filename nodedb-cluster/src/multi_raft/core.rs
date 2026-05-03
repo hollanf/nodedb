@@ -243,6 +243,18 @@ impl MultiRaft {
         Ok((group_id, log_index))
     }
 
+    /// Returns `true` if this node is currently the leader of `group_id`.
+    ///
+    /// Returns `false` when the group does not exist on this node or when the
+    /// node is a follower, candidate, or learner in the group.
+    pub fn is_group_leader(&self, group_id: u64) -> bool {
+        use nodedb_raft::state::NodeRole;
+        self.groups
+            .get(&group_id)
+            .map(|n| n.role() == NodeRole::Leader)
+            .unwrap_or(false)
+    }
+
     /// Propose a command directly to a specific Raft group (e.g. the
     /// metadata group, which has no vShard mapping).
     ///
@@ -254,7 +266,36 @@ impl MultiRaft {
             .ok_or(ClusterError::GroupNotFound { group_id })?;
         Ok(node.propose(data)?)
     }
+
+    /// Read committed log entries for a Raft group in the inclusive index
+    /// range `[lo, hi]`.
+    ///
+    /// `hi` is clamped to the group's `commit_index` so callers that pass
+    /// `u64::MAX` never read uncommitted entries.
+    ///
+    /// Used by the Calvin scheduler's rebuild path to replay sequenced
+    /// transactions from the sequencer Raft log after a restart.
+    ///
+    /// Returns `Err(ClusterError::Raft(RaftError::LogCompacted))` if `lo`
+    /// has been compacted into a snapshot (caller must install a snapshot
+    /// instead of replaying from log).
+    pub fn read_committed_entries(
+        &self,
+        group_id: u64,
+        lo: u64,
+        hi: u64,
+    ) -> Result<Vec<nodedb_raft::message::LogEntry>> {
+        let node = self
+            .groups
+            .get(&group_id)
+            .ok_or(ClusterError::GroupNotFound { group_id })?;
+        let entries = node.log_entries_range(lo, hi)?;
+        Ok(entries.to_vec())
+    }
 }
+
+// Re-export LogEntry so callers of `read_committed_entries` can name the type.
+pub use nodedb_raft::LogEntry;
 
 #[cfg(test)]
 mod tests {

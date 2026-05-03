@@ -3,6 +3,7 @@ pub mod array_routing;
 pub mod auth;
 pub mod bootstrap;
 pub mod bootstrap_listener;
+pub mod calvin;
 pub mod catalog;
 pub mod circuit_breaker;
 pub mod closed_timestamp;
@@ -57,6 +58,7 @@ pub use applied_watcher::{AppliedIndexWatcher, GroupAppliedWatchers, WaitOutcome
 pub use bootstrap::{
     ClusterConfig, ClusterState, JoinRetryPolicy, start_cluster, start_cluster_subsystems,
 };
+pub use calvin::{EngineKeySet, EpochBatch, ReadWriteSet, SequencedTxn, SortedVec, TxClass};
 pub use catalog::ClusterCatalog;
 pub use circuit_breaker::BreakerSnapshot;
 pub use closed_timestamp::ClosedTimestampTracker;
@@ -72,7 +74,9 @@ pub use decommission::{
     DecommissionCoordinator, DecommissionObserver, DecommissionPlan, DecommissionRunResult,
     DecommissionSafetyError, MetadataProposer, check_can_decommission, plan_full_decommission,
 };
-pub use error::{ClusterError, MigrationCheckpointError, MigrationRecoveryError, Result};
+pub use error::{
+    CalvinError, ClusterError, MigrationCheckpointError, MigrationRecoveryError, Result,
+};
 pub use follower_read::{FollowerReadGate, ReadLevel};
 pub use forward::{NoopPlanExecutor, PlanExecutor};
 pub use ghost::{GhostStub, GhostTable};
@@ -109,7 +113,7 @@ pub use transport::{
 pub use wire::VShardEnvelope;
 
 pub use cross_shard_txn::{
-    CrossShardTransaction, ForwardEntry, GsiForwardEntry, TransactionCoordinator,
+    EdgeValidationRequest, EdgeValidationResult, GsiAction, GsiForwardEntry,
 };
 pub use metadata_group::entry::JoinTokenTransitionKind;
 pub use metadata_group::{
