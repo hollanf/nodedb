@@ -7,13 +7,18 @@ use std::sync::Arc;
 use pgwire::api::results::{Response, Tag};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 
+use crate::control::planner::calvin_dispatch::{
+    DispatchClass, DispatchOutcome, classify_dispatch, dispatch_calvin_or_fast,
+};
 use crate::control::planner::physical::{PhysicalTask, PostSetOp};
 use crate::control::security::identity::AuthenticatedIdentity;
 use crate::types::{ReadConsistency, TenantId};
 
 use super::super::super::types::{error_to_sqlstate, response_status_to_sqlstate};
 use super::super::core::NodeDbPgHandler;
-use super::super::plan::{describe_plan, extract_collection, payload_to_response};
+use super::super::plan::{
+    calvin_tag_for_plan, describe_plan, extract_collection, is_calvin_foldable, payload_to_response,
+};
 use super::catalog::current_descriptor_version;
 use super::kv_wrapping::maybe_wrap_kv_point_get;
 use super::set_ops;
@@ -98,14 +103,22 @@ impl NodeDbPgHandler {
             .await
     }
 
-    async fn execute_planned_sql_inner(
+    /// Plan a SQL statement to physical tasks, handling session auth, RETURNING
+    /// strip, CHECK constraints, plan cache, and RETURNING injection.
+    ///
+    /// This is the single planning code path shared by both the simple-query
+    /// (`execute_planned_sql_inner`) and any future callers that need typed
+    /// physical plans without driving the dispatch loop. Returns the ready-to-
+    /// dispatch task list and the plan-lease scope that must be kept alive until
+    /// dispatch completes.
+    pub(in crate::control::server::pgwire::handler) async fn plan_statement_to_tasks(
         &self,
         identity: &AuthenticatedIdentity,
         sql: &str,
         tenant_id: TenantId,
         addr: &std::net::SocketAddr,
         params: &[nodedb_sql::ParamValue],
-    ) -> PgWireResult<Vec<Response>> {
+    ) -> PgWireResult<(Vec<PhysicalTask>, crate::control::lease::QueryLeaseScope)> {
         // Resolve opaque session handle if SET LOCAL nodedb.auth_session is set.
         // Bind the resolve to the caller's (tenant_id, peer IP) fingerprint so
         // a handle leaked cross-origin does not grant access. The
@@ -189,7 +202,7 @@ impl NodeDbPgHandler {
         // (prepared statements with bound params) currently
         // skips the plan cache and the refcounted lease — that
         // is preserved by returning an empty scope for it.
-        let (tasks, _plan_lease_scope) = if !params.is_empty() {
+        let (tasks, lease_scope) = if !params.is_empty() {
             let perm_cache = self.state.permission_cache.read().await;
             let sec = crate::control::planner::context::PlanSecurityContext {
                 identity,
@@ -278,6 +291,21 @@ impl NodeDbPgHandler {
             tasks
         };
 
+        Ok((tasks, lease_scope))
+    }
+
+    async fn execute_planned_sql_inner(
+        &self,
+        identity: &AuthenticatedIdentity,
+        sql: &str,
+        tenant_id: TenantId,
+        addr: &std::net::SocketAddr,
+        params: &[nodedb_sql::ParamValue],
+    ) -> PgWireResult<Vec<Response>> {
+        let (tasks, _plan_lease_scope) = self
+            .plan_statement_to_tasks(identity, sql, tenant_id, addr, params)
+            .await?;
+
         if tasks.is_empty() {
             return Ok(vec![Response::Execution(Tag::new("OK"))]);
         }
@@ -289,6 +317,135 @@ impl NodeDbPgHandler {
         // (plan bytes over QUIC) instead of the old SQL-string ForwardRequest.
         if self.should_forward_via_gateway(&tasks, consistency) {
             return self.dispatch_tasks_via_gateway(tasks, tenant_id).await;
+        }
+
+        let cross_shard_mode = self.sessions.cross_shard_txn_mode(addr);
+        let tx_state = self.sessions.transaction_state(addr);
+        match classify_dispatch(&tasks) {
+            DispatchClass::SingleShard { .. } => {}
+            DispatchClass::MultiShard { .. } => {
+                if tx_state == crate::control::server::pgwire::session::TransactionState::InBlock {
+                    let (severity, code, message) =
+                        error_to_sqlstate(&crate::Error::CrossShardInExplicitTransaction);
+                    return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                        severity.to_owned(),
+                        code.to_owned(),
+                        message,
+                    ))));
+                }
+
+                if cross_shard_mode
+                    == crate::control::server::pgwire::session::cross_shard_mode::CrossShardTxnMode::Strict
+                {
+                    let inbox = self.state.sequencer_inbox.get();
+                    let orchestrator = self.state.ollp_orchestrator.get();
+                    let registry = self
+                        .state
+                        .calvin_completion_registry
+                        .get()
+                        .ok_or_else(|| {
+                            let (severity, code, message) =
+                                error_to_sqlstate(&crate::Error::SequencerUnavailable);
+                            PgWireError::UserError(Box::new(ErrorInfo::new(
+                                severity.to_owned(),
+                                code.to_owned(),
+                                message,
+                            )))
+                        })?;
+
+                    let dispatch = dispatch_calvin_or_fast(
+                        &tasks,
+                        cross_shard_mode,
+                        tx_state,
+                        inbox,
+                        orchestrator,
+                        tenant_id,
+                    )
+                    .await
+                    .map_err(|e| {
+                        let (severity, code, message) = error_to_sqlstate(&e);
+                        PgWireError::UserError(Box::new(ErrorInfo::new(
+                            severity.to_owned(),
+                            code.to_owned(),
+                            message,
+                        )))
+                    })?;
+
+                    let inbox_seq = match dispatch {
+                        DispatchOutcome::CalvinStatic { inbox_seq }
+                        | DispatchOutcome::CalvinDependent { inbox_seq } => inbox_seq,
+                        DispatchOutcome::SingleShard | DispatchOutcome::BestEffortNonAtomic => {
+                            return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
+                                "ERROR".to_owned(),
+                                "XX000".to_owned(),
+                                "unexpected non-Calvin dispatch outcome for strict multi-shard query"
+                                    .to_owned(),
+                            ))));
+                        }
+                    };
+
+                    let assignment_rx = registry.register_submission(inbox_seq);
+                    let timeout = std::time::Duration::from_secs(
+                        self.state.tuning.network.default_deadline_secs,
+                    );
+                    let (epoch, position, _participants) =
+                        tokio::time::timeout(timeout, assignment_rx)
+                            .await
+                            .map_err(|_| {
+                                PgWireError::UserError(Box::new(ErrorInfo::new(
+                                    "ERROR".to_owned(),
+                                    "57014".to_owned(),
+                                    "timed out waiting for Calvin sequencer assignment".to_owned(),
+                                )))
+                            })?
+                            .map_err(|_| {
+                                PgWireError::UserError(Box::new(ErrorInfo::new(
+                                    "ERROR".to_owned(),
+                                    "XX000".to_owned(),
+                                    "Calvin sequencer assignment channel closed".to_owned(),
+                                )))
+                            })?;
+
+                    let completion_rx = registry
+                        .register_completion(nodedb_cluster::calvin::TxnId::new(epoch, position));
+                    tokio::time::timeout(timeout, completion_rx)
+                        .await
+                        .map_err(|_| {
+                            PgWireError::UserError(Box::new(ErrorInfo::new(
+                                "ERROR".to_owned(),
+                                "57014".to_owned(),
+                                "timed out waiting for Calvin transaction completion".to_owned(),
+                            )))
+                        })?
+                        .map_err(|_| {
+                            PgWireError::UserError(Box::new(ErrorInfo::new(
+                                "ERROR".to_owned(),
+                                "XX000".to_owned(),
+                                "Calvin completion channel closed".to_owned(),
+                            )))
+                        })?;
+
+                    // Emit one CommandComplete tag per accumulated task so
+                    // Postgres clients see N tags matching the N statements
+                    // they sent.  For foldable point-write plans we synthesise
+                    // a specific verb+rowcount tag (INSERT 0 1, UPDATE 1, …);
+                    // any non-foldable task gets a plain OK tag.  The Calvin
+                    // batch has already completed at this point (we waited on
+                    // `completion_rx` above), so this is purely response
+                    // shaping — no Data Plane round-trip.
+                    let mut calvin_responses: Vec<Response> =
+                        Vec::with_capacity(tasks.len());
+                    for task in &tasks {
+                        let tag = if is_calvin_foldable(&task.plan) {
+                            calvin_tag_for_plan(&task.plan)
+                        } else {
+                            Tag::new("OK")
+                        };
+                        calvin_responses.push(Response::Execution(tag));
+                    }
+                    return Ok(calvin_responses);
+                }
+            }
         }
 
         let needs_set_op = tasks.iter().any(|t| t.post_set_op != PostSetOp::None);

@@ -10,6 +10,7 @@ use tracing::debug;
 
 use crate::bridge::envelope::{PhysicalPlan, Priority, Request, Status};
 use crate::control::array_sync::raft_apply::{apply_array_op, apply_array_schema};
+use crate::control::cluster::calvin::ReadResultEvent;
 use crate::control::state::SharedState;
 use crate::control::wal_replication::{ReplicatedEntry, ReplicatedWrite, from_replicated_entry};
 use crate::types::{ReadConsistency, TenantId, TraceId, VShardId};
@@ -93,6 +94,9 @@ pub async fn run_apply_loop(
     mut apply_rx: mpsc::Receiver<ApplyBatch>,
     state: Arc<SharedState>,
     tracker: Arc<ProposeTracker>,
+    calvin_read_result_senders: Arc<
+        std::sync::Mutex<std::collections::BTreeMap<u32, mpsc::Sender<ReadResultEvent>>>,
+    >,
 ) {
     while let Some(batch) = apply_rx.recv().await {
         for entry in &batch.entries {
@@ -106,6 +110,7 @@ pub async fn run_apply_loop(
 
             // ── Array CRDT variants — handled on the Control Plane, bypass Data Plane ──
             if let Some(replicated) = ReplicatedEntry::from_bytes(&entry.data) {
+                let target_vshard = replicated.vshard_id;
                 match replicated.write {
                     ReplicatedWrite::ArrayOp {
                         ref array,
@@ -141,6 +146,63 @@ pub async fn run_apply_loop(
                                 schema_hlc_bytes,
                             },
                         );
+                        continue;
+                    }
+                    ReplicatedWrite::CalvinReadResult {
+                        epoch,
+                        position,
+                        passive_vshard,
+                        tenant_id,
+                        ref values,
+                    } => {
+                        let decoded_values: Vec<(
+                            crate::bridge::physical_plan::meta::PassiveReadKeyId,
+                            nodedb_types::Value,
+                        )> = match zerompk::from_msgpack(values) {
+                            Ok(decoded) => decoded,
+                            Err(e) => {
+                                tracing::warn!(
+                                    group_id = batch.group_id,
+                                    index = entry.index,
+                                    error = %e,
+                                    "failed to decode CalvinReadResult payload"
+                                );
+                                tracker.complete(
+                                    batch.group_id,
+                                    entry.index,
+                                    applied_key,
+                                    Err(crate::Error::Internal {
+                                        detail: format!("decode CalvinReadResult payload: {e}"),
+                                    }),
+                                );
+                                continue;
+                            }
+                        };
+
+                        let event = ReadResultEvent {
+                            epoch,
+                            position,
+                            passive_vshard,
+                            tenant_id: TenantId::new(tenant_id),
+                            values: decoded_values,
+                        };
+
+                        let send_result = calvin_read_result_senders
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .get(&target_vshard)
+                            .cloned()
+                            .map(|sender| sender.try_send(event));
+
+                        if let Some(Err(e)) = send_result {
+                            tracing::warn!(
+                                group_id = batch.group_id,
+                                index = entry.index,
+                                error = %e,
+                                "failed to forward CalvinReadResult to scheduler"
+                            );
+                        }
+                        tracker.complete(batch.group_id, entry.index, applied_key, Ok(vec![]));
                         continue;
                     }
                     _ => {}

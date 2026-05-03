@@ -1,17 +1,26 @@
 //! Start the Raft event loop, RPC server, and both appliers.
 
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tracing::info;
 
+use nodedb_cluster::calvin::{
+    CalvinCompletionRegistry, SEQUENCER_GROUP_ID, SequencerConfig, SequencerService,
+    SequencerStateMachine, new_inbox,
+};
 use nodedb_cluster::distributed_array::{ArrayLocalExecutor, handle_array_shard_rpc};
 use nodedb_cluster::vshard_handler::{DispatchTarget, dispatch_by_type};
 use nodedb_cluster::wire::VShardEnvelope;
 use nodedb_types::config::tuning::ClusterTransportTuning;
 
 use crate::control::cluster::array_executor::DataPlaneArrayExecutor;
+use crate::control::cluster::calvin::executor::ollp::OllpConfig;
+use crate::control::cluster::calvin::executor::ollp::orchestrator::OllpOrchestrator;
+use crate::control::cluster::calvin::scheduler::metrics::SchedulerMetrics;
+use crate::control::cluster::calvin::scheduler::read_last_applied_epoch;
+use crate::control::cluster::calvin::{ReadResultEvent, Scheduler, SchedulerConfig};
 use crate::control::cluster::handle::ClusterHandle;
 use crate::control::cluster::metadata_applier::MetadataCommitApplier;
 use crate::control::cluster::spsc_applier::SpscCommitApplier;
@@ -76,13 +85,26 @@ pub fn start_raft(
     // function. Rebuilding it here from the routing table would lose
     // learner membership for joining nodes and would double-open
     // per-group redb log files.
-    let multi_raft = handle
+    let mut multi_raft = handle
         .multi_raft
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .take()
         .ok_or_else(|| crate::Error::Config {
             detail: "start_raft called twice: cluster multi_raft already consumed".into(),
+        })?;
+
+    let sequencer_peers: Vec<u64> = {
+        let topo = handle.topology.read().unwrap_or_else(|p| p.into_inner());
+        topo.all_nodes()
+            .filter(|node| node.node_id != handle.node_id && node.state.receives_log())
+            .map(|node| node.node_id)
+            .collect()
+    };
+    multi_raft
+        .add_group(SEQUENCER_GROUP_ID, sequencer_peers)
+        .map_err(|e| crate::Error::Config {
+            detail: format!("sequencer raft group add: {e}"),
         })?;
 
     // Build the propose tracker and distributed applier.
@@ -96,13 +118,26 @@ pub fn start_raft(
         Arc::new(ProposeTracker::new().with_group_watchers(handle.group_watchers.clone()));
     let (dist_applier, apply_rx) = create_distributed_applier(tracker.clone());
     let dist_applier = Arc::new(dist_applier);
+    let calvin_completion_registry = CalvinCompletionRegistry::new();
+    let sequencer_state_machine = Arc::new(Mutex::new(SequencerStateMachine::new(
+        std::collections::HashMap::new(),
+        Arc::clone(&calvin_completion_registry),
+    )));
+    let calvin_read_result_senders = Arc::new(Mutex::new(std::collections::BTreeMap::<
+        u32,
+        tokio::sync::mpsc::Sender<ReadResultEvent>,
+    >::new()));
 
     // Install the propose tracker so CP dispatch paths can await commit.
     if shared.propose_tracker.set(tracker.clone()).is_err() {
         tracing::warn!("propose_tracker already set — start_raft appears to have run twice");
     }
 
-    let data_applier = SpscCommitApplier::new(shared.clone(), dist_applier);
+    let data_applier = SpscCommitApplier::new(
+        shared.clone(),
+        dist_applier,
+        Arc::clone(&sequencer_state_machine),
+    );
 
     // Production metadata applier: writes to the shared cache,
     // writes back to the `SystemCatalog` redb so every non-cache
@@ -222,6 +257,70 @@ pub fn start_raft(
             detail: "start_raft called twice: pending_subsystems already consumed".into(),
         })?;
     let raft_loop_handle = raft_loop.multi_raft_handle();
+
+    let sequencer_config = SequencerConfig::default();
+    let (sequencer_inbox, sequencer_inbox_rx) = new_inbox(10_000, &sequencer_config);
+    let ollp_orchestrator = Arc::new(OllpOrchestrator::new(OllpConfig::default()));
+    let mut sequencer_service = SequencerService::new(
+        sequencer_config,
+        handle.node_id,
+        raft_loop_handle.clone(),
+        sequencer_inbox_rx,
+        sequencer_state_machine
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .next_epoch(),
+        Arc::clone(&calvin_completion_registry),
+    );
+    let sequencer_metrics = Arc::clone(&sequencer_service.metrics);
+
+    let scheduler_config = SchedulerConfig::default();
+    let mut local_vshards: Vec<u32> = {
+        let routing = handle.routing.read().unwrap_or_else(|p| p.into_inner());
+        let mut vshards = Vec::new();
+        for (group_id, info) in routing.group_members() {
+            if info.members.contains(&handle.node_id) {
+                vshards.extend(routing.vshards_for_group(*group_id));
+            }
+        }
+        vshards
+    };
+    local_vshards.sort_unstable();
+    local_vshards.dedup();
+
+    for vshard_id in local_vshards {
+        let last_applied_epoch = read_last_applied_epoch(&shared.wal, vshard_id)?;
+        let (sequenced_tx, sequenced_rx) =
+            tokio::sync::mpsc::channel(scheduler_config.channel_capacity);
+        sequencer_state_machine
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .set_vshard_sender(vshard_id, sequenced_tx);
+
+        let (read_result_tx, read_result_rx) =
+            tokio::sync::mpsc::channel(scheduler_config.channel_capacity);
+        calvin_read_result_senders
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(vshard_id, read_result_tx);
+
+        let scheduler = Scheduler::new(
+            vshard_id,
+            sequenced_rx,
+            Arc::clone(&shared),
+            raft_loop_handle.clone(),
+            last_applied_epoch,
+            last_applied_epoch,
+            scheduler_config.clone(),
+            SchedulerMetrics::new(),
+            read_result_rx,
+        );
+        let shutdown = shared.shutdown.subscribe();
+        tokio::spawn(async move {
+            scheduler.run(shutdown).await;
+        });
+    }
+
     let running = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(nodedb_cluster::start_cluster_subsystems(
             &pending.config,
@@ -319,16 +418,29 @@ pub fn start_raft(
     // Data Plane, and notifies propose waiters.
     let apply_state = shared.clone();
     let apply_tracker = tracker.clone();
+    let apply_calvin_read_result_senders = Arc::clone(&calvin_read_result_senders);
     let sr_apply = shutdown_rx.clone();
     tokio::spawn(async move {
         tokio::select! {
-            _ = run_apply_loop(apply_rx, apply_state, apply_tracker) => {}
+            _ = run_apply_loop(
+                apply_rx,
+                apply_state,
+                apply_tracker,
+                apply_calvin_read_result_senders,
+            ) => {}
             _ = async {
                 let mut rx = sr_apply;
                 let _ = rx.changed().await;
             } => {}
         }
     });
+
+    let _ = shared.sequencer_inbox.set(sequencer_inbox);
+    let _ = shared.sequencer_metrics.set(sequencer_metrics);
+    let _ = shared
+        .calvin_completion_registry
+        .set(calvin_completion_registry);
+    let _ = shared.ollp_orchestrator.set(ollp_orchestrator);
 
     // Publish the cluster observability handle to SharedState before
     // any listener starts serving.
@@ -378,6 +490,12 @@ pub fn start_raft(
     tokio::spawn(async move {
         rl_run.run(sr_raft).await;
         info!("raft loop stopped");
+    });
+
+    let sr_sequencer = shutdown_rx.clone();
+    tokio::spawn(async move {
+        sequencer_service.run(sr_sequencer).await;
+        info!("sequencer service stopped");
     });
 
     // Start the RPC server (accepts inbound QUIC connections).

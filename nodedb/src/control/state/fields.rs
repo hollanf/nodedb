@@ -545,15 +545,28 @@ pub struct SharedState {
 
     /// Calvin sequencer inbox for submitting cross-shard transactions.
     ///
-    /// `None` in embedded/Lite deployments and single-node mode.
-    /// Cluster startup wires `Some(inbox)` after the sequencer service is up.
-    pub sequencer_inbox: Option<nodedb_cluster::calvin::sequencer::inbox::Inbox>,
+    /// Empty in embedded/Lite deployments and single-node mode.
+    /// Cluster startup publishes the inbox once the sequencer service is up.
+    pub sequencer_inbox: std::sync::OnceLock<nodedb_cluster::calvin::sequencer::inbox::Inbox>,
+
+    /// Shared metrics registry for the sequencer service.
+    ///
+    /// Published together with [`Self::sequencer_inbox`] so the `/metrics`
+    /// route can expose Calvin sequencer counters and histograms.
+    pub sequencer_metrics: std::sync::OnceLock<
+        std::sync::Arc<nodedb_cluster::calvin::sequencer::metrics::SequencerMetrics>,
+    >,
+
+    /// Calvin completion registry used to bridge sequencer submission,
+    /// `(epoch, position)` assignment, and replicated participant completion.
+    pub calvin_completion_registry:
+        std::sync::OnceLock<std::sync::Arc<nodedb_cluster::calvin::CalvinCompletionRegistry>>,
 
     /// OLLP orchestrator for dependent-read Calvin transactions.
     ///
-    /// `None` in embedded/Lite deployments and single-node mode.
-    /// Cluster startup wires `Some(Arc::new(OllpOrchestrator::new(config)))`.
-    pub ollp_orchestrator: Option<
+    /// Empty in embedded/Lite deployments and single-node mode.
+    /// Cluster startup publishes the orchestrator after Calvin startup.
+    pub ollp_orchestrator: std::sync::OnceLock<
         std::sync::Arc<
             crate::control::cluster::calvin::executor::ollp::orchestrator::OllpOrchestrator,
         >,

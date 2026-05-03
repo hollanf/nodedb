@@ -194,6 +194,13 @@ pub async fn metrics(
     // Auth observability: method-specific counters, duration histograms, anomaly detection.
     output.push_str(&state.shared.auth_metrics.to_prometheus());
 
+    if let Some(sequencer_metrics) = state.shared.sequencer_metrics.get() {
+        output.push_str(&sequencer_metrics.render_prometheus());
+    }
+    if let Some(ollp) = state.shared.ollp_orchestrator.get() {
+        output.push_str(&ollp.render_prometheus());
+    }
+
     // Standardized control-loop metrics: iterations_total,
     // last_iteration_duration_seconds, errors_total{kind}, up.
     // Every spawned driver registers its LoopMetrics handle at
