@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
 use tracing::{error, warn};
 
+use crate::calvin::CalvinCompletionRegistry;
 use crate::calvin::sequencer::entry::SequencerEntry;
 use crate::calvin::types::SequencedTxn;
 
@@ -73,17 +74,22 @@ pub struct SequencerStateMachine {
     /// Per-vshard output channels. The scheduler subscribes on the other end.
     vshard_senders: HashMap<u32, mpsc::Sender<SequencedTxn>>,
     pub metrics: Arc<StateMachineMetrics>,
+    completion_registry: Arc<CalvinCompletionRegistry>,
 }
 
 const NOT_YET_APPLIED: u64 = u64::MAX;
 
 impl SequencerStateMachine {
     /// Construct a fresh state machine with no applied epochs.
-    pub fn new(vshard_senders: HashMap<u32, mpsc::Sender<SequencedTxn>>) -> Self {
+    pub fn new(
+        vshard_senders: HashMap<u32, mpsc::Sender<SequencedTxn>>,
+        completion_registry: Arc<CalvinCompletionRegistry>,
+    ) -> Self {
         Self {
             last_applied_epoch: NOT_YET_APPLIED,
             vshard_senders,
             metrics: StateMachineMetrics::new(),
+            completion_registry,
         }
     }
 
@@ -182,6 +188,7 @@ impl SequencerStateMachine {
                         }
                     }
                 }
+                SequencerEntry::CompletionAck { .. } => {}
             }
         }
 
@@ -283,6 +290,14 @@ impl SequencerStateMachine {
                 self.metrics.epochs_applied.fetch_add(1, Ordering::Relaxed);
                 self.last_applied_epoch = batch.epoch;
             }
+            SequencerEntry::CompletionAck {
+                epoch,
+                position,
+                vshard_id,
+            } => {
+                self.completion_registry
+                    .note_completion_ack(crate::calvin::TxnId::new(epoch, position), vshard_id);
+            }
         }
     }
 }
@@ -368,7 +383,7 @@ mod tests {
         let mut senders = HashMap::new();
         senders.insert(va, tx_a);
         senders.insert(vb, tx_b);
-        let mut sm = SequencerStateMachine::new(senders);
+        let mut sm = SequencerStateMachine::new(senders, CalvinCompletionRegistry::new());
         assert_eq!(sm.last_applied_epoch(), None);
 
         let data = encode_entry(&SequencerEntry::EpochBatch { batch });
@@ -386,7 +401,7 @@ mod tests {
         let mut senders = HashMap::new();
         senders.insert(va, tx_a);
         senders.insert(vb, tx_b);
-        let mut sm = SequencerStateMachine::new(senders);
+        let mut sm = SequencerStateMachine::new(senders, CalvinCompletionRegistry::new());
 
         // Apply epoch 0.
         let data0 = encode_entry(&SequencerEntry::EpochBatch {
@@ -419,7 +434,7 @@ mod tests {
         senders.insert(va, tx_a);
         senders.insert(vb, tx_b);
         senders.insert(999, tx_c);
-        let mut sm = SequencerStateMachine::new(senders);
+        let mut sm = SequencerStateMachine::new(senders, CalvinCompletionRegistry::new());
 
         let data = encode_entry(&SequencerEntry::EpochBatch { batch });
         sm.apply(&data);
@@ -446,7 +461,7 @@ mod tests {
         let mut senders = HashMap::new();
         senders.insert(va, tx_a);
         senders.insert(vb, tx_b);
-        let mut sm = SequencerStateMachine::new(senders);
+        let mut sm = SequencerStateMachine::new(senders, CalvinCompletionRegistry::new());
 
         let data = encode_entry(&SequencerEntry::EpochBatch { batch });
         // Must not panic or block.
@@ -458,7 +473,7 @@ mod tests {
 
     #[test]
     fn next_epoch_is_zero_on_fresh_state_machine() {
-        let sm = SequencerStateMachine::new(HashMap::new());
+        let sm = SequencerStateMachine::new(HashMap::new(), CalvinCompletionRegistry::new());
         assert_eq!(sm.next_epoch(), 0);
     }
 
@@ -470,7 +485,7 @@ mod tests {
         let mut senders = HashMap::new();
         senders.insert(va, tx_a);
         senders.insert(vb, tx_b);
-        let mut sm = SequencerStateMachine::new(senders);
+        let mut sm = SequencerStateMachine::new(senders, CalvinCompletionRegistry::new());
 
         let data = encode_entry(&SequencerEntry::EpochBatch { batch });
         sm.apply(&data);

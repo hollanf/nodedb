@@ -29,6 +29,12 @@ pub enum SequencerEntry {
     /// The state machine fans the batch out to per-vshard output channels after
     /// applying it to local state.
     EpochBatch { batch: EpochBatch },
+    /// Completion acknowledgement from one participating vshard.
+    CompletionAck {
+        epoch: u64,
+        position: u32,
+        vshard_id: u32,
+    },
 }
 
 #[cfg(test)]
@@ -99,6 +105,7 @@ mod tests {
                 assert_eq!(a.txns.len(), b.txns.len());
                 assert_eq!(a.txns[0].position, b.txns[0].position);
             }
+            _ => panic!("decoded wrong sequencer entry variant"),
         }
     }
 
@@ -108,7 +115,9 @@ mod tests {
         let entry = SequencerEntry::EpochBatch { batch };
         let bytes = zerompk::to_msgpack_vec(&entry).expect("encode");
         let decoded: SequencerEntry = zerompk::from_msgpack(&bytes).expect("decode");
-        let SequencerEntry::EpochBatch { batch } = decoded;
+        let SequencerEntry::EpochBatch { batch } = decoded else {
+            panic!("decoded wrong sequencer entry variant");
+        };
         assert_eq!(batch.txns.len(), 1);
         assert_eq!(batch.epoch, 7);
     }

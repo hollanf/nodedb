@@ -129,10 +129,10 @@ fn admitted_sort_key(tx: &AdmittedTx) -> (u64, u64, u64) {
 /// - `RejectedTx.reason` is `SequencerError::Conflict { position_admitted }`.
 ///
 /// The function is pure — no I/O, no global state, deterministic.
-pub fn validate_batch(
+pub fn validate_batch_with_assignments(
     epoch: u64,
     mut candidates: Vec<AdmittedTx>,
-) -> (Vec<SequencedTxn>, Vec<RejectedTx>) {
+) -> (Vec<(u64, SequencedTxn)>, Vec<RejectedTx>) {
     if candidates.is_empty() {
         return (vec![], vec![]);
     }
@@ -193,7 +193,7 @@ pub fn validate_batch(
     }
 
     // Now build admitted/rejected output.
-    let mut admitted_out: Vec<SequencedTxn> = Vec::new();
+    let mut admitted_out: Vec<(u64, SequencedTxn)> = Vec::new();
     let mut rejected_out: Vec<RejectedTx> = Vec::new();
 
     for (idx, tx) in candidates.into_iter().enumerate() {
@@ -210,18 +210,30 @@ pub fn validate_batch(
                 conflict_context,
             });
         } else {
-            admitted_out.push(SequencedTxn {
-                epoch,
-                position: position_map[idx],
-                tx_class: tx.tx_class,
-                // epoch_system_ms is filled in by the service tick() when the
-                // EpochBatch is constructed; 0 is a safe placeholder here.
-                epoch_system_ms: 0,
-            });
+            let inbox_seq = tx.inbox_seq;
+            admitted_out.push((
+                inbox_seq,
+                SequencedTxn {
+                    epoch,
+                    position: position_map[idx],
+                    tx_class: tx.tx_class,
+                    // epoch_system_ms is filled in by the service tick() when the
+                    // EpochBatch is constructed; 0 is a safe placeholder here.
+                    epoch_system_ms: 0,
+                },
+            ));
         }
     }
 
     (admitted_out, rejected_out)
+}
+
+pub fn validate_batch(
+    epoch: u64,
+    candidates: Vec<AdmittedTx>,
+) -> (Vec<SequencedTxn>, Vec<RejectedTx>) {
+    let (admitted, rejected) = validate_batch_with_assignments(epoch, candidates);
+    (admitted.into_iter().map(|(_, txn)| txn).collect(), rejected)
 }
 
 /// Find the position of the admitted (winning) txn that conflicts with

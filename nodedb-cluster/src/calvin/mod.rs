@@ -1,6 +1,8 @@
+pub mod completion;
 pub mod sequencer;
 pub mod types;
 
+pub use completion::{CalvinCompletionRegistry, TxnId};
 pub use sequencer::{
     AdmittedTx, ConflictKey, Inbox, InboxReceiver, RejectedTx, SEQUENCER_GROUP_ID, SequencerConfig,
     SequencerEntry, SequencerError, SequencerMetrics, SequencerService, SequencerStateMachine,

@@ -21,11 +21,12 @@ use std::time::Instant;
 
 use tracing::{debug, info, warn};
 
+use crate::calvin::CalvinCompletionRegistry;
 use crate::calvin::sequencer::config::SEQUENCER_GROUP_ID;
 use crate::calvin::sequencer::config::SequencerConfig;
 use crate::calvin::sequencer::entry::SequencerEntry;
 use crate::calvin::sequencer::inbox::{AdmittedTx, InboxReceiver};
-use crate::calvin::sequencer::validator::validate_batch;
+use crate::calvin::sequencer::validator::validate_batch_with_assignments;
 use crate::calvin::types::EpochBatch;
 use crate::error::ClusterError;
 use crate::multi_raft::MultiRaft;
@@ -48,6 +49,7 @@ pub struct SequencerService {
     /// dropped (in-flight submissions are not in the log and will be retried).
     current_epoch: u64,
     pub metrics: Arc<SequencerMetrics>,
+    completion_registry: Arc<CalvinCompletionRegistry>,
 }
 
 impl SequencerService {
@@ -61,6 +63,7 @@ impl SequencerService {
         multi_raft: Arc<Mutex<MultiRaft>>,
         inbox_receiver: InboxReceiver,
         starting_epoch: u64,
+        completion_registry: Arc<CalvinCompletionRegistry>,
     ) -> Self {
         Self {
             config,
@@ -69,6 +72,7 @@ impl SequencerService {
             inbox_receiver,
             current_epoch: starting_epoch,
             metrics: SequencerMetrics::new(),
+            completion_registry,
         }
     }
 
@@ -155,7 +159,7 @@ impl SequencerService {
         // Pre-validation.
         let epoch = self.current_epoch;
 
-        let (admitted, rejected) = validate_batch(epoch, candidates);
+        let (admitted, rejected) = validate_batch_with_assignments(epoch, candidates);
 
         self.metrics
             .admitted_total
@@ -193,9 +197,16 @@ impl SequencerService {
         // Encode and propose.
         let batch = EpochBatch {
             epoch,
-            txns: admitted,
+            txns: admitted.iter().map(|(_, txn)| txn.clone()).collect(),
             epoch_system_ms,
         };
+        for (inbox_seq, txn) in &admitted {
+            self.completion_registry.note_assigned(
+                *inbox_seq,
+                crate::calvin::TxnId::new(epoch, txn.position),
+                txn.tx_class.participating_vshards().len(),
+            );
+        }
         let entry = SequencerEntry::EpochBatch { batch };
         let txns_count = entry_txn_count(&entry);
         let _replicate_span =
@@ -239,6 +250,7 @@ impl SequencerService {
 fn entry_txn_count(entry: &SequencerEntry) -> usize {
     match entry {
         SequencerEntry::EpochBatch { batch } => batch.txns.len(),
+        SequencerEntry::CompletionAck { .. } => 0,
     }
 }
 
@@ -249,6 +261,7 @@ mod tests {
     use super::*;
     use crate::calvin::sequencer::config::SequencerConfig;
     use crate::calvin::sequencer::inbox::new_inbox;
+    use crate::calvin::sequencer::validator::validate_batch;
     use crate::calvin::types::{EngineKeySet, ReadWriteSet, SortedVec, TxClass};
     use nodedb_types::{TenantId, id::VShardId};
 
