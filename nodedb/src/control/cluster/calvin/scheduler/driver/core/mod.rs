@@ -1,0 +1,40 @@
+//! Calvin scheduler driver core.
+//!
+//! One [`Scheduler`] task runs per vshard hosted on this node. It receives
+//! [`SequencedTxn`]s from the sequencer, acquires deterministic locks,
+//! dispatches static / dependent-read transactions to the Data Plane,
+//! waits for executor responses, and writes `CalvinApplied` WAL records.
+//!
+//! Sub-modules (one concern per file):
+//!
+//! - [`scheduler`] — `Scheduler` struct, ctor, run loop.
+//! - [`process`] — new-txn processing, dependent-read barrier setup,
+//!   txn-completion bookkeeping.
+//! - [`dispatch`] — static / active dispatch to the Data Plane executor.
+//! - [`read_result`] — `CalvinReadResult` handling and barrier timeouts.
+//! - [`propose`] — propose `CalvinReadResult` Raft entries.
+//!
+//! # Determinism
+//!
+//! All bookkeeping uses `BTreeMap`/`BTreeSet` — never `HashMap`/`HashSet`.
+//! Dispatch order is `(epoch, position)` order.
+//!
+//! # Timing / `Instant::now()`
+//!
+//! `Instant::now()` is used for:
+//! - Lock-wait latency metrics (observability only).
+//! - Dependent-read barrier `timeout_at` (off-WAL path only).
+//!
+//! Never used for WAL-influencing values.
+
+pub mod dispatch;
+pub mod process;
+pub mod propose;
+pub mod read_result;
+pub mod scheduler;
+
+#[cfg(test)]
+mod tests;
+
+pub use propose::propose_calvin_read_result;
+pub use scheduler::Scheduler;
