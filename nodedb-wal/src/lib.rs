@@ -50,7 +50,7 @@ pub use preamble::{
     CIPHER_AES_256_GCM, PREAMBLE_SIZE, PREAMBLE_VERSION, SEG_PREAMBLE_MAGIC, SegmentPreamble,
     WAL_PREAMBLE_MAGIC,
 };
-pub use record::{RecordHeader, RecordType, WalRecord};
+pub use record::{CalvinAppliedPayload, RecordHeader, RecordType, WalRecord};
 pub use recovery::{RecoveryInfo, recover};
 pub use replay::{TombstoneSet, extract_tombstones};
 pub use secure_mem::SecureKey;

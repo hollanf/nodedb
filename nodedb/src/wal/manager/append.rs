@@ -176,6 +176,30 @@ impl WalManager {
         )
     }
 
+    /// Append a `CalvinApplied` record after a Calvin executor successfully
+    /// commits a `MetaOp::CalvinExecute` batch.
+    ///
+    /// The scheduler's restart path scans these records to compute
+    /// `last_applied_epoch` for a given vshard without re-reading the full
+    /// Raft sequencer log. `vshard_id` is stored in the payload (not in the
+    /// WAL record header's `vshard_id` field) so it can be decoded during
+    /// a scan of all records regardless of which vshard they were written on.
+    pub fn append_calvin_applied(
+        &self,
+        vshard_id: crate::types::VShardId,
+        epoch: u64,
+        position: u32,
+    ) -> crate::Result<crate::types::Lsn> {
+        let payload =
+            nodedb_wal::CalvinAppliedPayload::new(epoch, position, vshard_id.as_u32()).to_bytes();
+        self.append_record(
+            RecordType::CalvinApplied,
+            TenantId::new(0),
+            vshard_id,
+            &payload,
+        )
+    }
+
     pub fn append_collection_tombstone(
         &self,
         tid: TenantId,

@@ -52,7 +52,8 @@ pub fn replay_surrogate_records(
             | RecordType::Checkpoint
             | RecordType::CollectionTombstoned
             | RecordType::LsnMsAnchor
-            | RecordType::TemporalPurge => {}
+            | RecordType::TemporalPurge
+            | RecordType::CalvinApplied => {}
         }
     }
     Ok(stats)

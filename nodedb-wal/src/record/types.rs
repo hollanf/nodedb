@@ -113,6 +113,21 @@ pub enum RecordType {
     /// Required: a replay that skipped this record would leave purged
     /// versions resurrected and diverge from the leader's state.
     TemporalPurge = 103 | 0x8000,
+
+    /// Calvin scheduler: marks a sequenced transaction as applied on this
+    /// vshard.
+    ///
+    /// Written by the Calvin executor after a `MetaOp::CalvinExecute` batch
+    /// commits successfully. The scheduler's rebuild path scans the WAL for
+    /// these records to determine `last_applied_epoch` on restart.
+    ///
+    /// Payload: zerompk-encoded `CalvinAppliedPayload { epoch: u64,
+    /// position: u32, vshard_id: u32 }`.
+    ///
+    /// Required: a replay that skipped this record would leave the scheduler
+    /// believing the transaction was not applied and re-dispatch it after
+    /// restart, causing double-application.
+    CalvinApplied = 110 | 0x8000,
 }
 
 impl RecordType {
@@ -143,6 +158,7 @@ impl RecordType {
             x if x == 101 | 0x8000 => Some(Self::CollectionTombstoned),
             102 => Some(Self::LsnMsAnchor),
             x if x == 103 | 0x8000 => Some(Self::TemporalPurge),
+            x if x == 110 | 0x8000 => Some(Self::CalvinApplied),
             _ => None,
         }
     }
@@ -186,6 +202,7 @@ mod tests {
             RecordType::CollectionTombstoned,
             RecordType::LsnMsAnchor,
             RecordType::TemporalPurge,
+            RecordType::CalvinApplied,
         ] {
             assert_eq!(RecordType::from_raw(ty as u32), Some(ty));
         }

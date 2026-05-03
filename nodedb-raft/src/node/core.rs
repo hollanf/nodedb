@@ -165,6 +165,20 @@ impl<S: LogStorage> RaftNode<S> {
         self.log.snapshot_term()
     }
 
+    /// Return committed log entries in the inclusive range `[lo, hi]`.
+    ///
+    /// Clamps `hi` to `commit_index` so callers that pass `u64::MAX` never
+    /// read uncommitted entries.  Returns `Err(RaftError::LogCompacted)` if
+    /// `lo` has already been compacted into a snapshot.
+    pub fn log_entries_range(
+        &self,
+        lo: u64,
+        hi: u64,
+    ) -> crate::error::Result<&[crate::message::LogEntry]> {
+        let hi = hi.min(self.volatile.commit_index);
+        self.log.entries_range(lo, hi)
+    }
+
     /// Current voter peer list (excluding self).
     pub fn peers(&self) -> &[u64] {
         &self.config.peers
