@@ -24,7 +24,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.0.6"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.94"
 license = "BUSL-1.1"
@@ -85,8 +85,13 @@ getrandom = { version = "0.3", features = ["std"] }
 aes-gcm = "0.10"
 argon2 = "0.5"
 zeroize = { version = "1", features = ["derive"] }
-aws-sdk-kms = { version = "1", default-features = false, features = ["default-https-client"] }
-aws-config = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-kms = { version = "1", default-features = false, features = [
+  "default-https-client",
+] }
+aws-config = { version = "1", default-features = false, features = [
+  "default-https-client",
+  "rt-tokio",
+] }
 
 # JWT / JWKS (EC key support for ES256/ES384)
 p256 = { version = "0.13", features = ["ecdsa"] }
