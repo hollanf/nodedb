@@ -44,6 +44,8 @@ jobs:
         run: bash scripts/ci/check_warm_storage_gate.sh
       - name: Format-path .expect() gate
         run: bash scripts/ci/check_format_expects.sh
+      - name: Calvin determinism gate
+        run: bash scripts/ci/check_calvin_determinism.sh
 
   test:
     name: Test
