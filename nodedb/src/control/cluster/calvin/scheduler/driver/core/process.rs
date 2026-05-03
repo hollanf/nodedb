@@ -18,7 +18,10 @@ impl Scheduler {
     ) {
         let txn_id = TxnId::new(txn.epoch, txn.position);
 
-        if txn.epoch <= self.last_applied_epoch {
+        if self.last_applied_epoch
+            != crate::control::cluster::calvin::scheduler::NOT_YET_APPLIED_EPOCH
+            && txn.epoch <= self.last_applied_epoch
+        {
             return;
         }
 
@@ -134,7 +137,10 @@ impl Scheduler {
             }
         }
 
-        if epoch > self.last_applied_epoch {
+        if self.last_applied_epoch
+            == crate::control::cluster::calvin::scheduler::NOT_YET_APPLIED_EPOCH
+            || epoch > self.last_applied_epoch
+        {
             self.last_applied_epoch = epoch;
             self.metrics.update_last_applied_epoch(epoch);
         }

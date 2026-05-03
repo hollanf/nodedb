@@ -1,24 +1,33 @@
 //! `Scheduler` struct definition, constructor, and main run loop.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 use tracing::info;
 
+use nodedb_cluster::MultiRaft;
 use nodedb_cluster::calvin::types::SequencedTxn;
+use nodedb_cluster::calvin::{SEQUENCER_GROUP_ID, SequencerEntry};
 
 use super::super::barrier::{PendingDependentBarrier, ReadResultEvent};
 use super::super::config::SchedulerConfig;
 use super::super::types::{BlockedTxn, PendingTxn};
+use crate::bridge::envelope::Response;
 use crate::control::cluster::calvin::scheduler::lock_manager::{LockManager, TxnId};
 use crate::control::cluster::calvin::scheduler::metrics::SchedulerMetrics;
 #[allow(unused_imports)]
 use crate::control::cluster::calvin::scheduler::recovery::read_last_applied_epoch;
-use crate::control::request_tracker::RequestTracker;
 use crate::control::shutdown::ShutdownReceiver;
+use crate::control::state::SharedState;
 use crate::types::RequestId;
-use crate::wal::manager::WalManager;
+
+/// Outcome of an executor response bridge task.
+///
+/// `None` means the executor response channel was closed before a response
+/// arrived (infra error).
+pub(in crate::control::cluster::calvin::scheduler::driver::core) type CompletionItem =
+    (TxnId, RequestId, Option<Response>);
 
 /// The Calvin scheduler for one vshard.
 ///
@@ -32,13 +41,13 @@ pub struct Scheduler {
     /// Incoming sequenced transactions from the sequencer fan-out.
     pub(in crate::control::cluster::calvin::scheduler::driver::core) receiver:
         mpsc::Receiver<SequencedTxn>,
-    /// SPSC bridge dispatcher (shared with the rest of the Control Plane).
-    pub(in crate::control::cluster::calvin::scheduler::driver::core) dispatcher:
-        Arc<std::sync::Mutex<crate::bridge::dispatch::Dispatcher>>,
-    /// Request tracker for response routing.
-    pub(in crate::control::cluster::calvin::scheduler::driver::core) tracker: Arc<RequestTracker>,
-    /// WAL manager for writing `CalvinApplied` records.
-    pub(in crate::control::cluster::calvin::scheduler::driver::core) wal: Arc<WalManager>,
+    /// Shared control-plane state used for dispatch, response tracking, WAL,
+    /// and request-id allocation.
+    pub(in crate::control::cluster::calvin::scheduler::driver::core) shared: Arc<SharedState>,
+    /// Handle to MultiRaft so completion acknowledgements can be proposed to
+    /// the sequencer group.
+    pub(in crate::control::cluster::calvin::scheduler::driver::core) multi_raft:
+        Arc<Mutex<MultiRaft>>,
     /// Deterministic lock manager for this vshard.
     pub(in crate::control::cluster::calvin::scheduler::driver::core) lock_manager: LockManager,
     /// In-flight static/active transactions awaiting executor response.
@@ -64,9 +73,18 @@ pub struct Scheduler {
     pub(in crate::control::cluster::calvin::scheduler::driver::core) config: SchedulerConfig,
     /// Metrics.
     pub(in crate::control::cluster::calvin::scheduler::driver::core) metrics: Arc<SchedulerMetrics>,
-    /// Next monotonic request ID counter.
-    pub(in crate::control::cluster::calvin::scheduler::driver::core) state_request_counter:
-        Arc<std::sync::atomic::AtomicU64>,
+    /// Fan-in receiver for executor responses.
+    ///
+    /// Each dispatched transaction spawns a lightweight bridge task that
+    /// awaits the per-request `mpsc::Receiver<Response>` and forwards the
+    /// result here as a [`CompletionItem`]. The scheduler's `select!` loop
+    /// includes this channel as a first-class arm so it wakes the moment
+    /// any executor response is ready — no polling, no sleep.
+    pub(in crate::control::cluster::calvin::scheduler::driver::core) completion_rx:
+        mpsc::Receiver<CompletionItem>,
+    /// Sender half of the completion fan-in channel, cloned per dispatch.
+    pub(in crate::control::cluster::calvin::scheduler::driver::core) completion_tx:
+        mpsc::Sender<CompletionItem>,
 }
 
 impl Scheduler {
@@ -75,22 +93,24 @@ impl Scheduler {
     pub fn new(
         vshard_id: u32,
         receiver: mpsc::Receiver<SequencedTxn>,
-        dispatcher: Arc<std::sync::Mutex<crate::bridge::dispatch::Dispatcher>>,
-        tracker: Arc<RequestTracker>,
-        wal: Arc<WalManager>,
+        shared: Arc<SharedState>,
+        multi_raft: Arc<Mutex<MultiRaft>>,
         last_applied_epoch: u64,
         rebuild_target_epoch: u64,
         config: SchedulerConfig,
         metrics: Arc<SchedulerMetrics>,
-        request_counter: Arc<std::sync::atomic::AtomicU64>,
         read_result_rx: mpsc::Receiver<ReadResultEvent>,
     ) -> Self {
+        // Capacity: at most one completion per inflight txn. Use the incoming
+        // channel capacity as a proxy for the max concurrent pending count.
+        let completion_cap = config.channel_capacity;
+        let (completion_tx, completion_rx) = mpsc::channel(completion_cap);
+
         Self {
             vshard_id,
             receiver,
-            dispatcher,
-            tracker,
-            wal,
+            shared,
+            multi_raft,
             lock_manager: LockManager::new(),
             pending: BTreeMap::new(),
             blocked: BTreeMap::new(),
@@ -100,13 +120,34 @@ impl Scheduler {
             rebuild_target_epoch,
             config,
             metrics,
-            state_request_counter: request_counter,
+            completion_rx,
+            completion_tx,
         }
     }
 
     /// Whether the scheduler has caught up to the rebuild target epoch.
     pub fn is_caught_up(&self) -> bool {
         self.last_applied_epoch >= self.rebuild_target_epoch
+    }
+
+    /// Spawn a bridge task that awaits a single executor response and forwards
+    /// it to the scheduler's fan-in completion channel.
+    ///
+    /// The bridge task is cancel-safe: it holds only a cloned sender and the
+    /// per-request receiver. Dropping the scheduler's `completion_rx` causes
+    /// the bridge's `send` to fail silently, which is fine on shutdown.
+    pub(in crate::control::cluster::calvin::scheduler::driver::core) fn spawn_response_bridge(
+        &self,
+        txn_id: TxnId,
+        request_id: RequestId,
+        mut response_rx: mpsc::Receiver<Response>,
+    ) {
+        let tx = self.completion_tx.clone();
+        tokio::spawn(async move {
+            let result = response_rx.recv().await;
+            // Ignore send error: scheduler has shut down.
+            let _ = tx.send((txn_id, request_id, result)).await;
+        });
     }
 
     /// Run the scheduler event loop until shutdown is signaled.
@@ -119,7 +160,6 @@ impl Scheduler {
         );
 
         loop {
-            self.poll_pending_responses().await;
             self.check_dependent_barrier_timeouts();
 
             tokio::select! {
@@ -128,6 +168,12 @@ impl Scheduler {
                 _ = shutdown.wait_cancelled() => {
                     info!(vshard_id = self.vshard_id, "calvin scheduler shutting down");
                     break;
+                }
+
+                maybe_completion = self.completion_rx.recv() => {
+                    if let Some((txn_id, request_id, resp_opt)) = maybe_completion {
+                        self.handle_completion(txn_id, request_id, resp_opt);
+                    }
                 }
 
                 maybe_event = self.read_result_rx.recv() => {
@@ -152,28 +198,110 @@ impl Scheduler {
         }
     }
 
-    /// Poll all in-flight pending requests for responses (best-effort).
-    async fn poll_pending_responses(&mut self) {
-        let pending_ids: Vec<(TxnId, RequestId)> = self
-            .pending
-            .iter()
-            .map(|(tid, p)| (*tid, p.request_id))
-            .collect();
-
-        for (txn_id, request_id) in pending_ids {
-            if let Some(pending) = self.pending.get(&txn_id) {
-                let _ = (txn_id, request_id, pending);
+    /// Process a completed executor response (or disconnected channel).
+    ///
+    /// Called from the `completion_rx` arm of the main `select!` loop.
+    fn handle_completion(
+        &mut self,
+        txn_id: TxnId,
+        request_id: RequestId,
+        resp_opt: Option<Response>,
+    ) {
+        let response = match resp_opt {
+            Some(r) => r,
+            None => {
+                // Bridge task observed a closed channel before any response.
+                tracing::warn!(
+                    vshard_id = self.vshard_id,
+                    request_id = request_id.as_u64(),
+                    epoch = txn_id.epoch,
+                    position = txn_id.position,
+                    "calvin: executor response channel disconnected"
+                );
+                self.metrics.record_executor_error();
+                self.metrics.record_infra_abort(
+                    crate::control::cluster::calvin::scheduler::metrics::infra_abort_reason::IO_ERROR,
+                );
+                self.metrics.record_completed();
+                self.on_txn_complete(txn_id);
+                return;
             }
+        };
+
+        let elapsed_ms = self
+            .pending
+            .get(&txn_id)
+            .map(|p| p.dispatch_time.elapsed().as_millis() as u64)
+            .unwrap_or(0);
+        self.metrics.record_executor_txn_duration_ms(elapsed_ms);
+
+        if response.status == crate::bridge::envelope::Status::Ok {
+            if let Err(e) = self.shared.wal.append_calvin_applied(
+                crate::types::VShardId::new(self.vshard_id),
+                txn_id.epoch,
+                txn_id.position,
+            ) {
+                tracing::error!(
+                    vshard_id = self.vshard_id,
+                    epoch = txn_id.epoch,
+                    position = txn_id.position,
+                    error = %e,
+                    "calvin: failed to write CalvinApplied WAL record"
+                );
+            }
+            let ack = SequencerEntry::CompletionAck {
+                epoch: txn_id.epoch,
+                position: txn_id.position,
+                vshard_id: self.vshard_id,
+            };
+            match zerompk::to_msgpack_vec(&ack) {
+                Ok(bytes) => {
+                    if let Err(e) = self
+                        .multi_raft
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .propose_to_group(SEQUENCER_GROUP_ID, bytes)
+                    {
+                        tracing::warn!(
+                            vshard_id = self.vshard_id,
+                            epoch = txn_id.epoch,
+                            position = txn_id.position,
+                            error = %e,
+                            "calvin: failed to propose completion ack"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        vshard_id = self.vshard_id,
+                        epoch = txn_id.epoch,
+                        position = txn_id.position,
+                        error = %e,
+                        "calvin: failed to encode completion ack"
+                    );
+                }
+            }
+        } else {
+            tracing::warn!(
+                vshard_id = self.vshard_id,
+                epoch = txn_id.epoch,
+                position = txn_id.position,
+                "calvin: executor response was not Ok; locks NOT released (shard degraded)"
+            );
+            self.metrics.record_executor_error();
+            self.metrics.record_infra_abort(
+                crate::control::cluster::calvin::scheduler::metrics::infra_abort_reason::IO_ERROR,
+            );
         }
+
+        self.metrics.record_completed();
+        self.on_txn_complete(txn_id);
     }
 
     /// Allocate a fresh request ID for a dispatch.
     pub(in crate::control::cluster::calvin::scheduler::driver::core) fn next_request_id(
         &self,
     ) -> RequestId {
-        let n = self
-            .state_request_counter
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        RequestId::new(n)
+        self.shared.next_request_id()
     }
 }

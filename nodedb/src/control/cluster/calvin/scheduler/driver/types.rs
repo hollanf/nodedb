@@ -10,6 +10,11 @@ use crate::types::RequestId;
 
 /// An in-flight transaction that has been dispatched and is awaiting a
 /// Data Plane response.
+///
+/// The executor response channel is held by a bridge task (see
+/// `Scheduler::spawn_response_bridge`) that forwards completions to the
+/// scheduler's fan-in `completion_rx`. This avoids polling and ensures the
+/// main `select!` loop wakes the moment a response arrives.
 #[allow(dead_code)]
 pub(super) struct PendingTxn {
     /// Original sequenced transaction (for WAL record on completion).

@@ -11,16 +11,20 @@ use tracing::warn;
 
 use crate::wal::manager::WalManager;
 
+/// Sentinel used when no Calvin epoch has ever been applied on this vshard.
+pub const NOT_YET_APPLIED_EPOCH: u64 = u64::MAX;
+
 /// Scan the WAL and return the highest `epoch` from `CalvinApplied` records
 /// for the given vshard.
 ///
-/// Returns `0` for a greenfield node (no `CalvinApplied` records exist).
+/// Returns [`NOT_YET_APPLIED_EPOCH`] for a greenfield node (no
+/// `CalvinApplied` records exist).
 ///
 /// Records that fail to decode are logged and skipped — a corrupt record does
 /// not abort the scan.
 pub fn read_last_applied_epoch(wal: &WalManager, vshard_id: u32) -> crate::Result<u64> {
     let records = wal.replay()?;
-    let mut last_epoch: u64 = 0;
+    let mut last_epoch = NOT_YET_APPLIED_EPOCH;
 
     for record in &records {
         if !is_calvin_applied_record(record) {
@@ -28,7 +32,7 @@ pub fn read_last_applied_epoch(wal: &WalManager, vshard_id: u32) -> crate::Resul
         }
         match CalvinAppliedPayload::from_bytes(&record.payload) {
             Ok(p) if p.vshard_id == vshard_id => {
-                if p.epoch > last_epoch {
+                if last_epoch == NOT_YET_APPLIED_EPOCH || p.epoch > last_epoch {
                     last_epoch = p.epoch;
                 }
             }
@@ -73,7 +77,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let wal = open_wal(&dir);
         let epoch = read_last_applied_epoch(&wal, 1).unwrap();
-        assert_eq!(epoch, 0, "greenfield WAL should return epoch 0");
+        assert_eq!(
+            epoch, NOT_YET_APPLIED_EPOCH,
+            "greenfield WAL should return the not-yet-applied sentinel"
+        );
     }
 
     #[test]
