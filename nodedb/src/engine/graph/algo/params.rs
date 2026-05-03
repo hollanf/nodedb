@@ -136,6 +136,9 @@ pub struct AlgoParams {
     /// Target collection name.
     pub collection: String,
 
+    /// Optional edge label filter — only edges with this label are traversed.
+    pub edge_label: Option<String>,
+
     /// PageRank damping factor (default: 0.85).
     pub damping: Option<f64>,
 

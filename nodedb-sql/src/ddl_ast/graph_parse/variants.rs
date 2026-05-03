@@ -90,10 +90,27 @@ pub(super) fn parse_algo(toks: &[Tok<'_>]) -> Option<NodedbStatement> {
             Tok::Word(w) => Some(w.to_ascii_uppercase()),
             _ => None,
         })?;
-    let collection = word_after(toks, "ON")?.to_lowercase();
+
+    // Reject the `ON (subquery)` form early: the tokenizer strips `(` and `)`,
+    // so `ON (SELECT …)` becomes the token sequence `[ON, SELECT, …]`.
+    // `word_after("ON")` would return `"SELECT"` which would be silently stored
+    // as the collection name and then ignored — producing tenant-wide results.
+    // Returning None here causes the statement to be treated as unparseable,
+    // surfacing a structured error rather than silent wrong data.
+    let collection_raw = word_after(toks, "ON")?;
+    const SUBQUERY_KEYWORDS: &[&str] = &["SELECT", "WITH", "VALUES", "TABLE"];
+    if SUBQUERY_KEYWORDS
+        .iter()
+        .any(|kw| collection_raw.eq_ignore_ascii_case(kw))
+    {
+        return None;
+    }
+    let collection = collection_raw.to_lowercase();
+
     Some(NodedbStatement::GraphAlgo {
         algorithm,
         collection,
+        edge_label: quoted_after(toks, "EDGE_LABEL"),
         damping: super::helpers::float_after(toks, "DAMPING"),
         tolerance: super::helpers::float_after(toks, "TOLERANCE"),
         resolution: super::helpers::float_after(toks, "RESOLUTION"),

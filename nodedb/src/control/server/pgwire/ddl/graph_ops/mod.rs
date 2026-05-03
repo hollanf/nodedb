@@ -71,6 +71,7 @@ pub async fn dispatch_typed(
         NodedbStatement::GraphAlgo {
             algorithm,
             collection,
+            edge_label,
             damping,
             tolerance,
             resolution,
@@ -85,6 +86,7 @@ pub async fn dispatch_typed(
                 identity,
                 &algorithm,
                 collection,
+                edge_label,
                 damping,
                 tolerance,
                 resolution,

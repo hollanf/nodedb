@@ -557,6 +557,7 @@ pub enum NodedbStatement {
     GraphAlgo {
         algorithm: String,
         collection: String,
+        edge_label: Option<String>,
         damping: Option<f64>,
         tolerance: Option<f64>,
         resolution: Option<f64>,

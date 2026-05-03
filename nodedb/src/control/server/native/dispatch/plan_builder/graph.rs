@@ -244,6 +244,7 @@ pub(crate) fn build_algo(fields: &TextFields, collection: &str) -> crate::Result
 
     let params = crate::engine::graph::algo::params::AlgoParams {
         collection: collection.to_string(),
+        edge_label: None,
         source_node: fields.start_node.clone(),
         max_iterations: fields.depth.map(|d| d as usize),
         tolerance: None,

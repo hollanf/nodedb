@@ -24,6 +24,7 @@ pub async fn algo(
     identity: &AuthenticatedIdentity,
     algorithm_name: &str,
     collection: String,
+    edge_label: Option<String>,
     damping: Option<f64>,
     tolerance: Option<f64>,
     resolution: Option<f64>,
@@ -60,6 +61,7 @@ pub async fn algo(
 
     let params = crate::engine::graph::algo::AlgoParams {
         collection: collection.clone(),
+        edge_label,
         damping,
         max_iterations,
         tolerance,

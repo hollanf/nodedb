@@ -2,12 +2,13 @@
 //!
 //! Routes `PhysicalPlan::GraphAlgo` to the appropriate algorithm
 //! implementation in `engine::graph::algo::*`. Each algorithm runs on
-//! the caller's CSR partition and emits results with user-visible node
-//! ids. There is no tenant prefix to strip on the way out — the
-//! partition stores node names in their raw form, so algorithm output
-//! is client-facing by construction.
+//! a collection-scoped CsrIndex built on-demand from the EdgeStore,
+//! ensuring that `ON <collection>` and `EDGE_LABEL` filters are applied
+//! before the algorithm executes rather than post-filtered on output.
 
 use nodedb_graph::CsrIndex;
+use nodedb_graph::csr::weights::extract_weight_from_properties;
+use nodedb_types::TenantId;
 use tracing::debug;
 
 use crate::bridge::envelope::{ErrorCode, Response};
@@ -15,6 +16,7 @@ use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::graph::algo::params::{AlgoParams, GraphAlgorithm};
 use crate::engine::graph::algo::result::AlgoResultBatch;
+use crate::engine::graph::edge_store::EdgeStore;
 
 impl CoreLoop {
     pub(in crate::data::executor) fn execute_graph_algo(
@@ -29,6 +31,7 @@ impl CoreLoop {
             tid,
             algorithm = algorithm.name(),
             collection = %params.collection,
+            edge_label = ?params.edge_label,
             "graph algorithm dispatch"
         );
 
@@ -41,26 +44,96 @@ impl CoreLoop {
             );
         }
 
-        let partition = match self.csr_partition(tid) {
-            Some(p) => p,
-            None => {
-                // Tenant has no graph state — every algorithm returns
-                // the empty batch for its schema. No error, no special
-                // case at the algorithm level.
-                return match AlgoResultBatch::new(*algorithm).to_msgpack() {
-                    Ok(payload) => self.response_with_payload(task, payload),
-                    Err(e) => self.response_error(task, ErrorCode::from(e)),
-                };
-            }
+        let scoped_csr = match build_csr_for_collection(
+            &self.edge_store,
+            tid,
+            &params.collection,
+            params.edge_label.as_deref(),
+            None,
+        ) {
+            Ok(c) => c,
+            Err(e) => return self.response_error(task, ErrorCode::from(e)),
         };
 
-        run_algorithm(partition, algorithm, params, &self.graph_tuning)
+        if scoped_csr.node_count() == 0 {
+            return match AlgoResultBatch::new(*algorithm).to_msgpack() {
+                Ok(payload) => self.response_with_payload(task, payload),
+                Err(e) => self.response_error(task, ErrorCode::from(e)),
+            };
+        }
+
+        run_algorithm(&scoped_csr, algorithm, params, &self.graph_tuning)
             .and_then(|batch| batch.to_msgpack())
             .map_or_else(
                 |e| self.response_error(task, ErrorCode::from(e)),
                 |payload| self.response_with_payload(task, payload),
             )
     }
+}
+
+/// Build a `CsrIndex` containing only the edges for a specific `(tid, collection)`,
+/// optionally filtered to a single edge label. Reads from the versioned EdgeStore
+/// so the result reflects current state (pass `None` for `system_as_of`) or a
+/// historical snapshot (pass a bitemporal ordinal cutoff).
+///
+/// Two-pass construction: first intern all endpoint nodes so isolated nodes get
+/// stable ids, then insert edges. This matches the pattern in `CsrSnapshot::from_edge_store_as_of`.
+pub(super) fn build_csr_for_collection(
+    edge_store: &EdgeStore,
+    tid: u64,
+    collection: &str,
+    edge_label: Option<&str>,
+    system_as_of: Option<i64>,
+) -> crate::Result<CsrIndex> {
+    let records = edge_store.scan_all_edges_decoded(system_as_of)?;
+    let target_tid = TenantId::new(tid);
+
+    let mut csr = CsrIndex::new();
+
+    // Pass 1: intern endpoint nodes.
+    for (rec_tid, coll, src, label, dst, _props) in &records {
+        if *rec_tid != target_tid || coll != collection {
+            continue;
+        }
+        if let Some(el) = edge_label {
+            if label != el {
+                continue;
+            }
+        }
+        csr.add_node(src).map_err(|e| crate::Error::Internal {
+            detail: format!("build_csr_for_collection add src: {e}"),
+        })?;
+        csr.add_node(dst).map_err(|e| crate::Error::Internal {
+            detail: format!("build_csr_for_collection add dst: {e}"),
+        })?;
+    }
+
+    // Pass 2: insert edges.
+    for (rec_tid, coll, src, label, dst, props) in &records {
+        if *rec_tid != target_tid || coll != collection {
+            continue;
+        }
+        if let Some(el) = edge_label {
+            if label != el {
+                continue;
+            }
+        }
+        let weight = extract_weight_from_properties(props);
+        let res = if weight != 1.0 {
+            csr.add_edge_weighted(src, label, dst, weight)
+        } else {
+            csr.add_edge(src, label, dst)
+        };
+        res.map_err(|e| crate::Error::Internal {
+            detail: format!("build_csr_for_collection add edge: {e}"),
+        })?;
+    }
+
+    csr.compact().map_err(|e| crate::Error::Internal {
+        detail: format!("build_csr_for_collection compact: {e}"),
+    })?;
+
+    Ok(csr)
 }
 
 /// Shared implementation used by both current-state and temporal

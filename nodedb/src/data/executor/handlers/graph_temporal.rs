@@ -11,7 +11,6 @@ use crate::bridge::envelope::{ErrorCode, Response};
 use crate::data::executor::core_loop::CoreLoop;
 use crate::data::executor::task::ExecutionTask;
 use crate::engine::graph::algo::params::{AlgoParams, GraphAlgorithm};
-use crate::engine::graph::csr::rebuild::rebuild_sharded_from_store_as_of;
 use crate::engine::graph::edge_store::Direction;
 
 /// Parameters for [`CoreLoop::execute_graph_temporal_neighbors`]. Packed
@@ -148,25 +147,27 @@ impl CoreLoop {
             "graph temporal algorithm dispatch"
         );
         let cutoff_ordinal = system_as_of_ms.map(ms_to_ordinal_upper);
-        let sharded = match rebuild_sharded_from_store_as_of(&self.edge_store, cutoff_ordinal) {
-            Ok(s) => s,
+
+        let scoped_csr = match super::graph_algo::build_csr_for_collection(
+            &self.edge_store,
+            tid,
+            &params.collection,
+            params.edge_label.as_deref(),
+            cutoff_ordinal,
+        ) {
+            Ok(c) => c,
             Err(e) => return self.response_error(task, ErrorCode::from(e)),
         };
-        let csr = match sharded.partition(TenantId::new(tid)) {
-            Some(p) => p,
-            None => {
-                // Tenant has no graph state at this cutoff — every algorithm
-                // returns the empty batch for its schema. Mirrors the
-                // current-state path in `graph_algo.rs`.
-                return match crate::engine::graph::algo::result::AlgoResultBatch::new(*algorithm)
-                    .to_msgpack()
-                {
-                    Ok(payload) => self.response_with_payload(task, payload),
-                    Err(e) => self.response_error(task, ErrorCode::from(e)),
-                };
-            }
-        };
 
-        super::graph_algo::run_algo_response(self, task, csr, algorithm, params)
+        if scoped_csr.node_count() == 0 {
+            return match crate::engine::graph::algo::result::AlgoResultBatch::new(*algorithm)
+                .to_msgpack()
+            {
+                Ok(payload) => self.response_with_payload(task, payload),
+                Err(e) => self.response_error(task, ErrorCode::from(e)),
+            };
+        }
+
+        super::graph_algo::run_algo_response(self, task, &scoped_csr, algorithm, params)
     }
 }
