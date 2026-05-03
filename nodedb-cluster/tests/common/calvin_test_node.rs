@@ -38,10 +38,10 @@ use nodedb_cluster::{
     CacheApplier, ClusterCatalog, ClusterConfig, ClusterLifecycleTracker, ClusterTopology,
     MetadataCache, MultiRaft, NexarTransport, RaftLoop, TransportCredentials,
     calvin::{
-        SEQUENCER_GROUP_ID,
+        CalvinCompletionRegistry, SEQUENCER_GROUP_ID,
         sequencer::{
             InboxReceiver, SequencerConfig, SequencerService, SequencerStateMachine,
-            state_machine::StateMachineMetrics,
+            service::SequencerMetrics, state_machine::StateMachineMetrics,
         },
         types::SequencedTxn,
     },
@@ -136,12 +136,21 @@ impl CalvinTestNode {
 
     /// Start the sequencer service epoch-ticker task on this node.
     ///
-    /// Returns a `watch::Sender<bool>` — send `true` to stop the task.
+    /// Returns `(watch::Sender<bool>, Arc<SequencerMetrics>, JoinHandle<()>)`:
+    /// - Send `true` on the watch to stop the task.
+    /// - The metrics arc can be polled to observe admission counters.
+    /// - The `JoinHandle` must be kept and awaited at test teardown so a
+    ///   panic inside `service.run` surfaces as a test failure instead of
+    ///   silently disappearing into the runtime.
     pub fn start_sequencer_service(
         &self,
         inbox_receiver: InboxReceiver,
         config: SequencerConfig,
-    ) -> watch::Sender<bool> {
+    ) -> (
+        watch::Sender<bool>,
+        std::sync::Arc<SequencerMetrics>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let starting_epoch = self
             .state_machine
             .lock()
@@ -154,13 +163,15 @@ impl CalvinTestNode {
             self.multi_raft.clone(),
             inbox_receiver,
             starting_epoch,
+            CalvinCompletionRegistry::new(),
         );
 
+        let metrics = service.metrics.clone();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             service.run(shutdown_rx).await;
         });
-        shutdown_tx
+        (shutdown_tx, metrics, handle)
     }
 
     pub fn listen_addr(&self) -> SocketAddr {
@@ -258,7 +269,10 @@ async fn spawn_one_calvin_node(
         Arc::new(CacheApplier::new(metadata_cache.clone()));
 
     let sm_metrics = StateMachineMetrics::new();
-    let state_machine = Arc::new(Mutex::new(SequencerStateMachine::new(HashMap::new())));
+    let state_machine = Arc::new(Mutex::new(SequencerStateMachine::new(
+        HashMap::new(),
+        CalvinCompletionRegistry::new(),
+    )));
     let applier = CalvinApplier::new(state_machine.clone());
 
     let raft_loop = Arc::new(

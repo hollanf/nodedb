@@ -143,7 +143,8 @@ async fn scheduler_catchup_via_raft_log_replay() {
     // Start the epoch ticker on the leader only.
     // Followers receive entries purely via Raft log replication.
     let (inbox, inbox_receiver) = new_inbox(1024, &config);
-    let _seq_shutdown = nodes[leader_idx].start_sequencer_service(inbox_receiver, config.clone());
+    let (_seq_shutdown, _, _seq_handle) =
+        nodes[leader_idx].start_sequencer_service(inbox_receiver, config.clone());
 
     // Submit pre-batch txns.
     const PRE_BATCH_TXNS: u32 = 3;

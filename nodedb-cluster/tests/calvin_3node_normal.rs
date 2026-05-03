@@ -103,7 +103,8 @@ async fn sequencer_normal_path_commit_on_all_replicas() {
     }
 
     // Start the epoch ticker on the leader.
-    let _seq_shutdown = nodes[leader_idx].start_sequencer_service(inbox_receiver, config.clone());
+    let (_seq_shutdown, _, _seq_handle) =
+        nodes[leader_idx].start_sequencer_service(inbox_receiver, config.clone());
 
     // Submit a multi-vshard write txn.
     let (tx_class, _va, _vb) = make_multishard_txclass();

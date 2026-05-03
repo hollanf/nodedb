@@ -75,7 +75,7 @@ async fn sequencer_leader_failover_no_committed_epoch_loss() {
 
     // Submit pre-failover txns through the leader.
     let (inbox_pre, inbox_receiver_pre) = new_inbox(1024, &config);
-    let _seq_shutdown =
+    let (_seq_shutdown, _, _seq_handle) =
         nodes[leader_idx].start_sequencer_service(inbox_receiver_pre, config.clone());
 
     const PRE_FAILOVER_TXNS: u32 = 3;
@@ -125,7 +125,7 @@ async fn sequencer_leader_failover_no_committed_epoch_loss() {
 
     // Submit new txns to the new leader to verify it is functional.
     let (inbox_post, inbox_receiver_post) = new_inbox(1024, &config);
-    let _post_shutdown =
+    let (_post_shutdown, _, _post_handle) =
         nodes[new_leader_idx].start_sequencer_service(inbox_receiver_post, config.clone());
 
     const POST_FAILOVER_TXNS: u32 = 2;
