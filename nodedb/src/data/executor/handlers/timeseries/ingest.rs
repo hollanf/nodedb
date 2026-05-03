@@ -71,10 +71,15 @@ impl CoreLoop {
             }
         }
 
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
+        // Use the epoch's deterministic timestamp when executing inside a Calvin
+        // txn; fall back to wall clock for single-shard (non-Calvin) paths.
+        let now_ms: i64 = self.epoch_system_ms.unwrap_or_else(|| {
+            // no-determinism: fallback only reached outside Calvin path; epoch_system_ms is set for Calvin
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0)
+        });
 
         match format {
             "ilp" => self.execute_ilp_ingest(task, tid, collection, payload, wal_lsn, now_ms),
@@ -242,6 +247,7 @@ impl CoreLoop {
                 let entry = self.ts_max_ingested_lsn.entry(key.clone()).or_insert(0);
                 *entry = (*entry).max(lsn);
             }
+            // no-determinism: last_ts_ingest is a flush-trigger timer, not Calvin row data
             self.last_ts_ingest = Some(std::time::Instant::now());
         }
 

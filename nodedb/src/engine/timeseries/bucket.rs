@@ -128,6 +128,7 @@ impl BucketManager {
                 _ => SegmentKind::Metric,
             };
 
+            // no-determinism: background flush timestamp, not Calvin row data
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()

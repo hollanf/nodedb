@@ -18,7 +18,10 @@ impl CoreLoop {
         ttl_ms: u64,
     ) -> Response {
         debug!(core = self.core_id, %collection, ttl_ms, "kv expire");
-        let now_ms = current_ms();
+        let now_ms: u64 = self
+            .epoch_system_ms
+            .map(|ms| ms as u64)
+            .unwrap_or_else(current_ms);
         if self.kv_engine.expire(tid, collection, key, ttl_ms, now_ms) {
             self.response_ok(task)
         } else {

@@ -30,19 +30,25 @@ impl CoreLoop {
     /// Monotonic millisecond stamp for versioned writes. Used as
     /// `system_from_ms` on every write to a bitemporal collection.
     ///
-    /// Returns `max(wall_clock_ms, last_stamp_ms + 1)` and bumps the
-    /// per-core watermark. Guarantees: strictly increasing on this
-    /// core, never less than wall clock, bounded drift past wall clock
-    /// equal to the number of sub-millisecond stamp calls since the
-    /// last clock tick.
+    /// When executing inside a Calvin epoch (`epoch_system_ms` is `Some`),
+    /// uses the epoch's deterministic timestamp anchor so all replicas produce
+    /// byte-identical bitemporal versions. Outside the Calvin path (single-shard
+    /// writes, WAL replay, etc.) falls back to the wall clock.
+    ///
+    /// Returns `max(anchor_ms, last_stamp_ms + 1)` and bumps the per-core
+    /// watermark. Guarantees: strictly increasing on this core.
     #[inline]
     pub(in crate::data::executor) fn bitemporal_now_ms(&self) -> i64 {
         let prev = self.last_stamp_ms.load(Ordering::Relaxed);
-        let wall = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-            .unwrap_or(prev);
-        let next = wall.max(prev.saturating_add(1));
+        let anchor = if let Some(epoch_ms) = self.epoch_system_ms {
+            epoch_ms
+        } else {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+                .unwrap_or(prev)
+        };
+        let next = anchor.max(prev.saturating_add(1));
         self.last_stamp_ms.store(next, Ordering::Relaxed);
         next
     }

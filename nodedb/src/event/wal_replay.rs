@@ -145,6 +145,7 @@ fn record_to_event(record: &WalRecord, sequence: &mut u64) -> Option<WriteEvent>
         | RecordType::CollectionTombstoned
         | RecordType::LsnMsAnchor
         | RecordType::TemporalPurge
+        | RecordType::CalvinApplied
         | RecordType::Noop => None,
     }
 }

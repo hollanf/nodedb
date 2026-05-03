@@ -7,7 +7,13 @@ use crate::engine::document::store::config::CollectionConfig;
 use crate::engine::sparse::btree::SparseEngine;
 
 /// Wall-clock millisecond timestamp for versioned writes.
+///
+/// Used only by [`DocumentEngine`] (the lower-level struct API). The
+/// [`CoreLoop`] Calvin write path uses `bitemporal_now_ms()` instead, which
+/// threads the deterministic epoch timestamp through `CoreLoop::epoch_system_ms`.
+/// This function is therefore NOT reachable from any Calvin write path.
 pub(super) fn wall_now_ms() -> i64 {
+    // no-determinism: off the Calvin path; CoreLoop uses bitemporal_now_ms() which reads epoch_system_ms
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))

@@ -73,7 +73,10 @@ impl CoreLoop {
             );
         }
 
-        let now_ms = current_ms();
+        let now_ms: u64 = self
+            .epoch_system_ms
+            .map(|ms| ms as u64)
+            .unwrap_or_else(current_ms);
         let old = self
             .kv_engine
             .put(tid, collection, key, value, ttl_ms, now_ms, surrogate);

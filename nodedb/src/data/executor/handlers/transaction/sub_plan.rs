@@ -43,6 +43,7 @@ impl CoreLoop {
             plan: PhysicalPlan::Meta(MetaOp::Cancel {
                 target_request_id: crate::types::RequestId::new(0),
             }),
+            // no-determinism: sub-plan deadline is ephemeral, not written to WAL
             deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
             priority: crate::bridge::envelope::Priority::Normal,
             trace_id: TraceId::ZERO,
@@ -331,6 +332,7 @@ impl CoreLoop {
                     tenant_id: TenantId::new(tid),
                     vshard_id: crate::types::VShardId::new(0),
                     plan: plan.clone(),
+                    // no-determinism: sub-plan deadline is ephemeral, not written to WAL
                     deadline: std::time::Instant::now() + std::time::Duration::from_secs(60),
                     priority: crate::bridge::envelope::Priority::Normal,
                     trace_id: TraceId::ZERO,

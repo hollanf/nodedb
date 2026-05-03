@@ -395,6 +395,22 @@ pub struct CoreLoop {
     /// `ErrorCode::Conflict` when a second is attempted.
     pub(in crate::data::executor) pending_reindex:
         Vec<crate::data::executor::handlers::control::reindex::PendingReindex>,
+
+    /// Ambient deterministic timestamp for the current Calvin epoch.
+    ///
+    /// Set to `Some(ms)` by `execute_calvin_execute_static` and
+    /// `execute_calvin_execute_active` before dispatching the inner
+    /// transaction batch, then reset to `None` immediately after.
+    /// Engine handlers that need "current time" (bitemporal sys_from, KV TTL
+    /// expire_at, timeseries system_ms) call
+    /// `self.epoch_system_ms.unwrap_or_else(<wall_clock_read>)` so that
+    /// single-shard (non-Calvin) paths continue working without change.
+    ///
+    /// Safety: this is safe because `CoreLoop` is `!Send` and single-threaded
+    /// per core. Sub-plans inside `execute_transaction_batch` do not recurse
+    /// back into a Calvin execute variant, so the reset after the batch is not
+    /// premature.
+    pub(in crate::data::executor) epoch_system_ms: Option<i64>,
 }
 
 impl CoreLoop {
@@ -535,6 +551,7 @@ impl CoreLoop {
             ts_segment_kek: None,
             quarantine_registry: None,
             pending_reindex: Vec::new(),
+            epoch_system_ms: None,
         })
     }
 

@@ -123,6 +123,51 @@ impl CoreLoop {
             | MetaOp::TemporalPurgeCrdt { .. }
             | MetaOp::TemporalPurgeArray { .. }) => self.dispatch_temporal_purge(task, op),
 
+            MetaOp::CalvinExecuteStatic {
+                epoch,
+                position,
+                tenant_id,
+                plans,
+                epoch_system_ms,
+            } => self.execute_calvin_execute_static(
+                task,
+                *epoch,
+                *position,
+                *epoch_system_ms,
+                tenant_id,
+                plans,
+            ),
+
+            MetaOp::CalvinExecutePassive {
+                epoch,
+                position,
+                tenant_id,
+                keys_to_read,
+            } => self.execute_calvin_execute_passive(
+                task,
+                *epoch,
+                *position,
+                tenant_id,
+                keys_to_read,
+            ),
+
+            MetaOp::CalvinExecuteActive {
+                epoch,
+                position,
+                tenant_id,
+                plans,
+                injected_reads,
+                epoch_system_ms,
+            } => self.execute_calvin_execute_active(
+                task,
+                *epoch,
+                *position,
+                *epoch_system_ms,
+                tenant_id,
+                plans,
+                injected_reads,
+            ),
+
             MetaOp::RawResponse { payload } => self.response_with_payload(task, payload.clone()),
 
             MetaOp::RebuildIndex {

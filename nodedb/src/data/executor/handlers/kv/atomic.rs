@@ -25,7 +25,10 @@ impl CoreLoop {
             return self.response_error(task, ErrorCode::ResourcesExhausted);
         }
 
-        let now_ms = current_ms();
+        let now_ms: u64 = self
+            .epoch_system_ms
+            .map(|ms| ms as u64)
+            .unwrap_or_else(current_ms);
         match self
             .kv_engine
             .incr(tid, collection, key, delta, ttl_ms, now_ms)
@@ -84,7 +87,10 @@ impl CoreLoop {
             return self.response_error(task, ErrorCode::ResourcesExhausted);
         }
 
-        let now_ms = current_ms();
+        let now_ms: u64 = self
+            .epoch_system_ms
+            .map(|ms| ms as u64)
+            .unwrap_or_else(current_ms);
         match self
             .kv_engine
             .incr_float(tid, collection, key, delta, now_ms)
@@ -144,7 +150,10 @@ impl CoreLoop {
             return self.response_error(task, ErrorCode::ResourcesExhausted);
         }
 
-        let now_ms = current_ms();
+        let now_ms: u64 = self
+            .epoch_system_ms
+            .map(|ms| ms as u64)
+            .unwrap_or_else(current_ms);
         let result = self
             .kv_engine
             .cas(tid, collection, key, expected, new_value, now_ms);
@@ -196,7 +205,10 @@ impl CoreLoop {
             return self.response_error(task, ErrorCode::ResourcesExhausted);
         }
 
-        let now_ms = current_ms();
+        let now_ms: u64 = self
+            .epoch_system_ms
+            .map(|ms| ms as u64)
+            .unwrap_or_else(current_ms);
         let old = self
             .kv_engine
             .getset(tid, collection, key, new_value, now_ms);

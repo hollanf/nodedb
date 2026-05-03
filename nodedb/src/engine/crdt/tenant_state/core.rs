@@ -107,6 +107,7 @@ impl TenantCrdtEngine {
             .map_err(crate::Error::Crdt)?;
 
         let is_bitemporal = self.validator.is_bitemporal(&change.collection);
+        // no-determinism: peer delta validation path, not Calvin apply_committed_delta path
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

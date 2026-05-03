@@ -132,6 +132,7 @@ impl QueryCache {
 
 /// Compute a query hash from scan parameters.
 pub fn query_hash(value_column: &str, start_ms: i64, end_ms: i64, bucket_interval_ms: i64) -> u64 {
+    // no-determinism: query cache key, not WAL-affecting data
     let mut hasher = DefaultHasher::new();
     value_column.hash(&mut hasher);
     start_ms.hash(&mut hasher);
