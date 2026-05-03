@@ -242,19 +242,6 @@ pub enum ErrorCode {
     /// fatal error and the operator must restart the shard (WAL replay restores
     /// correct state on startup). Never silently continues.
     RollbackFailed { entry_index: usize, detail: String },
-    /// A forwarded cross-shard transaction batch failed to apply on the
-    /// receiving shard. The transaction is partially committed: the coordinator
-    /// shard's local writes succeeded, but the remote shard rolled back.
-    ///
-    /// Callers must treat this as a hard error. Compensating writes on the
-    /// coordinator shard are NOT applied automatically in this version.
-    ///
-    /// // TODO(cross-shard-abort): compensate locally; tracked separately
-    CrossShardAborted {
-        txn_id: u64,
-        source_vshard: u32,
-        reason: String,
-    },
 }
 
 impl From<crate::Error> for ErrorCode {
@@ -311,15 +298,6 @@ impl From<crate::Error> for ErrorCode {
             } => Self::RateExceeded {
                 gate,
                 retry_after_ms,
-            },
-            crate::Error::CrossShardAborted {
-                txn_id,
-                source_vshard,
-                reason,
-            } => Self::CrossShardAborted {
-                txn_id,
-                source_vshard,
-                reason,
             },
             other => Self::Internal {
                 detail: other.to_string(),

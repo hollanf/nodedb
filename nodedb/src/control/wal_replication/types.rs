@@ -194,29 +194,6 @@ pub enum ReplicatedWrite {
     KvDropSortedIndex {
         index_name: String,
     },
-    /// A cross-shard forwarded transaction batch.
-    ///
-    /// When a Calvin-style coordinator commits a cross-shard transaction, it
-    /// replicates a `CrossShardForward` entry into each remote shard's Raft log.
-    /// The `plans_bytes` field is the MessagePack-encoded `Vec<PhysicalPlan>` for
-    /// the operations the remote shard must apply atomically.
-    ///
-    /// On apply, the receiving node decodes `plans_bytes` into a `TransactionBatch`
-    /// and dispatches it to the local Data Plane. If the apply fails, a
-    /// `CrossShardAbort` notification is sent back to the coordinator shard.
-    CrossShardForward {
-        txn_id: u64,
-        tenant_id: u64,
-        /// MessagePack-encoded `Vec<PhysicalPlan>` for this shard.
-        ///
-        /// Expected to be small (<1 MiB in normal use). Large transactions
-        /// should be split across multiple Calvin rounds at the coordinator
-        /// to keep Raft log entries within WAL segment limits and avoid
-        /// stalling replication.
-        plans_bytes: Vec<u8>,
-        source_vshard: u32,
-        coordinator_log_index: u64,
-    },
     /// An array CRDT op (Put or Delete) from a Lite peer, to be applied via
     /// the distributed applier on all replicas.
     ///
@@ -237,6 +214,33 @@ pub enum ReplicatedWrite {
         array: String,
         snapshot_payload: Vec<u8>,
         schema_hlc_bytes: [u8; 18],
+    },
+
+    /// Dependent-read result broadcast for a Calvin txn.
+    ///
+    /// A passive participant proposes this entry to the per-vshard Raft group
+    /// after reading its declared keys. Active participants on all replicas
+    /// receive this entry via the apply loop, look up the pending dependent
+    /// barrier for `(epoch, position)`, and — once all passive vshards have
+    /// delivered — assemble `injected_reads` and dispatch
+    /// `MetaOp::CalvinExecuteActive`.
+    ///
+    /// **One entry per (passive_vshard, txn_id)**: all read values for a
+    /// single passive participant for a single txn are batched here.  A txn
+    /// reading 10K keys from one shard produces one Raft entry, not 10K.
+    ///
+    /// `values` is msgpack-encoded `Vec<(PassiveReadKeyId, Value)>`.
+    CalvinReadResult {
+        /// Sequencer epoch the transaction belongs to.
+        epoch: u64,
+        /// Zero-based position within the epoch batch.
+        position: u32,
+        /// The vshard that performed the read.
+        passive_vshard: u32,
+        /// Tenant scope.
+        tenant_id: u64,
+        /// Msgpack-encoded `Vec<(PassiveReadKeyId, Value)>`.
+        values: Vec<u8>,
     },
 }
 

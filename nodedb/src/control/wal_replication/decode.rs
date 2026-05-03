@@ -24,14 +24,11 @@ pub fn from_replicated_entry(
         Some(e) => e,
         None => return Ok(None),
     };
-    // Array CRDT variants and CrossShardForward are handled by the distributed
-    // applier before this function is called. Return None so the applier skips
-    // the generic dispatch path for them.
+    // Array CRDT variants are handled by the distributed applier before this
+    // function is called. Return None so the applier skips the generic dispatch
+    // path for them.
     match &entry.write {
         ReplicatedWrite::ArrayOp { .. } | ReplicatedWrite::ArraySchema { .. } => {
-            return Ok(None);
-        }
-        ReplicatedWrite::CrossShardForward { .. } => {
             return Ok(None);
         }
         _ => {}
@@ -42,19 +39,6 @@ pub fn from_replicated_entry(
         VShardId::new(entry.vshard_id),
         plan,
     )))
-}
-
-/// Decode a MessagePack-encoded `Vec<PhysicalPlan>` as produced by a Calvin
-/// coordinator when it serializes the per-shard write set for forwarding.
-///
-/// Returns a typed error on malformed payloads; never silently accepts garbage.
-pub fn decode_forwarded_plans(plans_bytes: &[u8]) -> crate::Result<Vec<PhysicalPlan>> {
-    zerompk::from_msgpack::<Vec<PhysicalPlan>>(plans_bytes).map_err(|e| {
-        crate::Error::Serialization {
-            format: "msgpack".into(),
-            detail: format!("failed to decode forwarded cross-shard plans: {e}"),
-        }
-    })
 }
 
 fn assign_or_zero(
@@ -370,20 +354,24 @@ fn to_physical_plan(
                 index_name: index_name.clone(),
             })
         }
-        // Array CRDT ops and CrossShardForward are intercepted by
-        // `from_replicated_entry` before this function is called; they are never
-        // dispatched through the generic Data Plane path.
-        // These arms are unreachable in practice but required for exhaustiveness.
-        ReplicatedWrite::ArrayOp { .. } | ReplicatedWrite::ArraySchema { .. } => {
+        // The following variants are intercepted upstream (Array CRDT ops by
+        // `from_replicated_entry`, CalvinReadResult by the apply loop) and never
+        // dispatched through the generic Data Plane path. These arms exist only
+        // to keep the match exhaustive.
+        ReplicatedWrite::ArrayOp { .. } => {
             return Err(crate::Error::Internal {
-                detail:
-                    "ArrayOp/ArraySchema reached to_physical_plan (should have been intercepted)"
-                        .into(),
+                detail: "ArrayOp reached to_physical_plan (should have been intercepted)".into(),
             });
         }
-        ReplicatedWrite::CrossShardForward { .. } => {
+        ReplicatedWrite::ArraySchema { .. } => {
             return Err(crate::Error::Internal {
-                detail: "CrossShardForward reached to_physical_plan (should have been intercepted)"
+                detail: "ArraySchema reached to_physical_plan (should have been intercepted)"
+                    .into(),
+            });
+        }
+        ReplicatedWrite::CalvinReadResult { .. } => {
+            return Err(crate::Error::Internal {
+                detail: "CalvinReadResult reached to_physical_plan (should have been intercepted)"
                     .into(),
             });
         }

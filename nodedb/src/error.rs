@@ -227,18 +227,6 @@ pub enum Error {
     #[error("internal error: {detail}")]
     Internal { detail: String },
 
-    /// A forwarded cross-shard transaction batch failed to apply on the receiving
-    /// shard. The transaction is in a half-committed state: the coordinator
-    /// shard's local writes are durable, but the remote shard rolled back.
-    ///
-    /// TODO(cross-shard-abort): compensate locally; tracked separately.
-    #[error("cross-shard transaction {txn_id} aborted on shard {source_vshard}: {reason}")]
-    CrossShardAborted {
-        txn_id: u64,
-        source_vshard: u32,
-        reason: String,
-    },
-
     /// DROP / PURGE refused because other catalog objects still
     /// reference the target. Operator must either drop them first or
     /// retry with `CASCADE`. `dependents` lists `(kind, name)` pairs.
@@ -266,6 +254,38 @@ pub enum Error {
         root: String,
         depth: usize,
     },
+
+    /// A cross-shard write was attempted inside an explicit transaction block.
+    ///
+    /// Calvin cross-shard atomicity requires auto-commit (single-statement).
+    /// Options:
+    ///   1. Remove BEGIN/COMMIT to use auto-commit.
+    ///   2. SET cross_shard_txn = 'best_effort_non_atomic' for non-atomic dispatch.
+    #[error(
+        "cross-shard write inside explicit transaction block is not supported. \
+         Calvin cross-shard atomicity requires auto-commit (single-statement). \
+         Options: 1) Remove BEGIN/COMMIT to use auto-commit. \
+         2) SET cross_shard_txn = 'best_effort_non_atomic' for non-atomic dispatch."
+    )]
+    CrossShardInExplicitTransaction,
+
+    /// The Calvin sequencer inbox is unavailable — this node is running in
+    /// embedded/local mode without a cluster deployment.
+    #[error(
+        "cross-shard transactions require a cluster deployment with the Calvin sequencer; \
+         this node is running in embedded/local mode"
+    )]
+    SequencerUnavailable,
+
+    /// The OLLP dependent-read retry loop exhausted its retry budget.
+    ///
+    /// The predicate's matching set kept changing across retries. Consider
+    /// rephrasing as a static-key UPDATE if possible.
+    #[error(
+        "OLLP dependent-read exhausted {retries} retries; the predicate's matching set kept \
+         changing across retries. Consider rephrasing as a static-key UPDATE if possible."
+    )]
+    OllpExhausted { retries: u8 },
 }
 
 /// Result alias for NodeDB operations.
@@ -475,12 +495,21 @@ impl From<Error> for NodeDbError {
             } => NodeDbError::internal(format!(
                 "cascade cycle / depth-limit ({depth}) exceeded on '{root}'"
             )),
-            Error::CrossShardAborted {
-                txn_id,
-                source_vshard,
-                reason,
-            } => NodeDbError::internal(format!(
-                "cross-shard transaction {txn_id} aborted on shard {source_vshard}: {reason}"
+            Error::CrossShardInExplicitTransaction => NodeDbError::bad_request(
+                "cross-shard write inside explicit transaction block is not supported. \
+                 Calvin cross-shard atomicity requires auto-commit (single-statement). \
+                 Options: 1) Remove BEGIN/COMMIT to use auto-commit. \
+                 2) SET cross_shard_txn = 'best_effort_non_atomic' for non-atomic dispatch."
+                    .to_owned(),
+            ),
+            Error::SequencerUnavailable => NodeDbError::bad_request(
+                "cross-shard transactions require a cluster deployment with the Calvin sequencer; \
+                 this node is running in embedded/local mode"
+                    .to_owned(),
+            ),
+            Error::OllpExhausted { retries } => NodeDbError::bad_request(format!(
+                "OLLP dependent-read exhausted {retries} retries; the predicate's matching set \
+                 kept changing across retries. Consider rephrasing as a static-key UPDATE if possible."
             )),
         }
     }
